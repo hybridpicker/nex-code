@@ -11,8 +11,8 @@ const { gatherProjectContext } = require('./context');
 const { fitToContext, getUsage } = require('./context-engine');
 const { autoSave } = require('./session');
 const { getMemoryContext } = require('./memory');
-const { checkPermission } = require('./permissions');
-const { confirm } = require('./safety');
+const { checkPermission, setPermission, savePermissions } = require('./permissions');
+const { confirm, setAllowAlwaysHandler } = require('./safety');
 const { isPlanMode, getPlanModePrompt } = require('./planner');
 const { renderMarkdown } = require('./render');
 const { runHooks } = require('./hooks');
@@ -22,6 +22,13 @@ const { trackUsage } = require('./costs');
 
 const MAX_ITERATIONS = 30;
 const CWD = process.cwd();
+
+// Wire up "a" (always allow) from confirm dialog → permission system
+setAllowAlwaysHandler((toolName) => {
+  setPermission(toolName, 'allow');
+  savePermissions();
+  console.log(`${C.green}  ✓ ${toolName}: always allow${C.reset}`);
+});
 
 // Persistent conversation state
 let conversationMessages = [];
@@ -186,7 +193,7 @@ async function processInput(userInput) {
         continue;
       }
       if (perm === 'ask') {
-        const ok = await confirm(`  Allow ${fnName}?`);
+        const ok = await confirm(`  Allow ${fnName}?`, { toolName: fnName });
         if (!ok) {
           const toolMsg = { role: 'tool', content: `CANCELLED: User declined ${fnName}`, tool_call_id: callId };
           conversationMessages.push(toolMsg);

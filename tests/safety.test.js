@@ -177,7 +177,7 @@ describe('safety.js', () => {
       expect(result).toBe(true);
     });
 
-    it('treats empty input as no', async () => {
+    it('treats empty input (Enter) as yes (default-yes)', async () => {
       setAutoConfirm(false);
       const mockRl = {
         question: jest.fn((q, cb) => cb('')),
@@ -186,7 +186,7 @@ describe('safety.js', () => {
       jest.spyOn(require('readline'), 'createInterface').mockReturnValueOnce(mockRl);
 
       const result = await confirm('Test?');
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
     it('trims whitespace from answer', async () => {
