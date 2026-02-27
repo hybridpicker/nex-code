@@ -14,13 +14,16 @@ const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
 const { isPlanMode, getPlanModePrompt } = require('./planner');
-const { renderMarkdown } = require('./render');
+const { renderMarkdown, StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
 const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = require('./skills');
 const { trackUsage } = require('./costs');
+const { validateToolArgs } = require('./tool-validator');
+const { filterToolsForModel } = require('./tool-tiers');
 
 const MAX_ITERATIONS = 30;
+const MAX_RATE_LIMIT_RETRIES = 5;
 const CWD = process.cwd();
 
 // Wire up "a" (always allow) from confirm dialog → permission system
@@ -98,18 +101,32 @@ async function processInput(userInput) {
     console.log(`${C.dim}  [context compressed, ~${tokensRemoved} tokens freed]${C.reset}`);
   }
 
+  // Context budget warning
+  const usage = getUsage(fullMessages, TOOL_DEFINITIONS);
+  if (usage.percentage > 85) {
+    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% full — consider /clear or /save + start fresh${C.reset}`);
+  }
+
   // Use fitted messages for the API call, but keep fullMessages reference for appending
   let apiMessages = fittedMessages;
+  let rateLimitRetries = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const spinner = new Spinner('Thinking...');
+    // Step indicator for multi-step tasks
+    if (i > 0) {
+      console.log(`${C.dim}  ⟳ step ${i + 1}${C.reset}`);
+    }
+
+    const spinnerText = i > 0 ? `Thinking... (step ${i + 1})` : 'Thinking...';
+    const spinner = new Spinner(spinnerText);
     spinner.start();
     let firstToken = true;
     let streamedText = '';
+    const stream = new StreamRenderer();
 
     let result;
     try {
-      const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+      const allTools = filterToolsForModel([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
       result = await callStream(apiMessages, allTools, {
         onToken: (text) => {
           if (firstToken) {
@@ -117,6 +134,7 @@ async function processInput(userInput) {
             firstToken = false;
           }
           streamedText += text;
+          stream.push(text);
         },
       });
     } catch (err) {
@@ -124,15 +142,29 @@ async function processInput(userInput) {
       console.log(`${C.red}${err.message}${C.reset}`);
 
       if (err.message.includes('429')) {
-        console.log(`${C.yellow}  Rate limit — waiting 10s...${C.reset}`);
-        await new Promise((r) => setTimeout(r, 10000));
+        rateLimitRetries++;
+        if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+          console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded${C.reset}`);
+          autoSave(conversationMessages);
+          break;
+        }
+        const delay = Math.min(10000 * Math.pow(2, rateLimitRetries - 1), 120000);
+        console.log(`${C.yellow}  Rate limit — waiting ${Math.round(delay / 1000)}s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})...${C.reset}`);
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
+      // Auto-save on error so conversation isn't lost
+      autoSave(conversationMessages);
       break;
     }
 
     if (firstToken) {
       spinner.stop();
+    }
+
+    // Flush remaining stream buffer
+    if (streamedText) {
+      stream.flush();
     }
 
     // Track token usage for cost dashboard
@@ -144,11 +176,6 @@ async function processInput(userInput) {
         result.usage.prompt_tokens || 0,
         result.usage.completion_tokens || 0
       );
-    }
-
-    // Render streamed text with markdown formatting
-    if (streamedText) {
-      console.log(renderMarkdown(streamedText));
     }
 
     const { content, tool_calls } = result;
@@ -174,14 +201,45 @@ async function processInput(userInput) {
       const callId = tc.id || `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
       if (!args) {
-        console.log(`${C.red}  ✗ ${fnName}: malformed arguments${C.reset}`);
-        const toolMsg = { role: 'tool', content: 'ERROR: Malformed tool arguments', tool_call_id: callId };
+        // Find the tool definition to show expected schema
+        const allToolDefs = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+        const toolDef = allToolDefs.find(t => t.function.name === fnName);
+        const schema = toolDef
+          ? JSON.stringify(toolDef.function.parameters, null, 2)
+          : 'unknown';
+
+        console.log(`${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`);
+        const toolMsg = {
+          role: 'tool',
+          content: `ERROR: Malformed tool arguments. Could not parse your arguments as JSON.\n` +
+            `Raw input: ${typeof tc.function.arguments === 'string' ? tc.function.arguments.substring(0, 200) : 'N/A'}\n\n` +
+            `Expected JSON schema for "${fnName}":\n${schema}\n\n` +
+            `Please retry the tool call with valid JSON arguments matching this schema.`,
+          tool_call_id: callId,
+        };
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
         continue;
       }
 
-      console.log(formatToolCall(fnName, args));
+      // Validate arguments against tool schema
+      const validation = validateToolArgs(fnName, args);
+      if (!validation.valid) {
+        console.log(`${C.yellow}  ⚠ ${fnName}: ${validation.error.split('\n')[0]}${C.reset}`);
+        const toolMsg = {
+          role: 'tool',
+          content: validation.error,
+          tool_call_id: callId,
+        };
+        conversationMessages.push(toolMsg);
+        apiMessages.push(toolMsg);
+        continue;
+      }
+
+      // Use corrected args if auto-correction happened
+      const finalArgs = validation.corrected || args;
+
+      console.log(formatToolCall(fnName, finalArgs));
 
       // Permission check
       const perm = checkPermission(fnName);
@@ -207,15 +265,15 @@ async function processInput(userInput) {
 
       // Execute: Skill tools, MCP tools, or built-in tools
       let toolResult;
-      const skillResult = await routeSkillCall(fnName, args);
+      const skillResult = await routeSkillCall(fnName, finalArgs);
       if (skillResult !== null) {
         toolResult = skillResult;
       } else {
-        const mcpResult = await routeMCPCall(fnName, args);
+        const mcpResult = await routeMCPCall(fnName, finalArgs);
         if (mcpResult !== null) {
           toolResult = mcpResult;
         } else {
-          toolResult = await executeTool(fnName, args);
+          toolResult = await executeTool(fnName, finalArgs);
         }
       }
 
