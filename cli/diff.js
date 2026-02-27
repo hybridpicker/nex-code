@@ -159,4 +159,85 @@ async function confirmFileChange(action) {
   return confirm(`  ${action}?`);
 }
 
-module.exports = { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange };
+/**
+ * Show side-by-side diff view for two texts
+ * @param {string} filePath
+ * @param {string} oldText
+ * @param {string} newText
+ * @param {number} width - total terminal width (default: 80)
+ */
+function showSideBySideDiff(filePath, oldText, newText, width) {
+  const termWidth = width || process.stdout.columns || 80;
+  const colWidth = Math.floor((termWidth - 3) / 2); // 3 for separator "│"
+
+  console.log(`\n${C.bold}${C.cyan}  Side-by-side: ${filePath}${C.reset}`);
+  console.log(`  ${C.dim}${'─'.repeat(colWidth)}┬${'─'.repeat(colWidth)}${C.reset}`);
+
+  const ops = diffLines(oldText, newText);
+
+  // Pair up removals and additions
+  const pairs = [];
+  let i = 0;
+  while (i < ops.length) {
+    if (ops[i].type === 'same') {
+      pairs.push({ left: ops[i].line, right: ops[i].line, type: 'same' });
+      i++;
+    } else if (ops[i].type === 'remove') {
+      // Collect consecutive removes, then matching adds
+      const removes = [];
+      while (i < ops.length && ops[i].type === 'remove') {
+        removes.push(ops[i].line);
+        i++;
+      }
+      const adds = [];
+      while (i < ops.length && ops[i].type === 'add') {
+        adds.push(ops[i].line);
+        i++;
+      }
+      const maxLen = Math.max(removes.length, adds.length);
+      for (let j = 0; j < maxLen; j++) {
+        pairs.push({
+          left: j < removes.length ? removes[j] : '',
+          right: j < adds.length ? adds[j] : '',
+          type: 'changed',
+        });
+      }
+    } else if (ops[i].type === 'add') {
+      pairs.push({ left: '', right: ops[i].line, type: 'changed' });
+      i++;
+    }
+  }
+
+  // Show max 40 pairs around changes
+  const changedIdxs = pairs.map((p, idx) => p.type !== 'same' ? idx : -1).filter(x => x >= 0);
+  if (changedIdxs.length === 0) {
+    console.log(`  ${C.gray}(no changes)${C.reset}`);
+    return;
+  }
+
+  const showFrom = Math.max(0, changedIdxs[0] - 2);
+  const showTo = Math.min(pairs.length, changedIdxs[changedIdxs.length - 1] + 3);
+
+  const pad = (s, w) => {
+    const visible = s.replace(/\x1b\[[0-9;]*m/g, '');
+    return visible.length >= w ? s.substring(0, w) : s + ' '.repeat(w - visible.length);
+  };
+
+  if (showFrom > 0) console.log(`  ${C.dim}${'·'.repeat(colWidth)}┊${'·'.repeat(colWidth)}${C.reset}`);
+
+  for (let k = showFrom; k < showTo; k++) {
+    const p = pairs[k];
+    if (p.type === 'same') {
+      console.log(`  ${C.gray}${pad(p.left, colWidth)}${C.reset}│${C.gray}${pad(p.right, colWidth)}${C.reset}`);
+    } else {
+      const leftCol = p.left ? `${C.red}${pad(p.left, colWidth)}${C.reset}` : `${pad('', colWidth)}`;
+      const rightCol = p.right ? `${C.green}${pad(p.right, colWidth)}${C.reset}` : `${pad('', colWidth)}`;
+      console.log(`  ${leftCol}│${rightCol}`);
+    }
+  }
+
+  if (showTo < pairs.length) console.log(`  ${C.dim}${'·'.repeat(colWidth)}┊${'·'.repeat(colWidth)}${C.reset}`);
+  console.log(`  ${C.dim}${'─'.repeat(colWidth)}┴${'─'.repeat(colWidth)}${C.reset}\n`);
+}
+
+module.exports = { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange, showSideBySideDiff };
