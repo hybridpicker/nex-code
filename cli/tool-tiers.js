@@ -8,12 +8,12 @@ const { getActiveModel, getActiveProviderName } = require('./providers/registry'
 /**
  * Tool tier definitions.
  * - essential: Core tools every model gets (5 tools)
- * - standard: Good set for capable models (9 tools)
- * - full: All tools for the most capable models (12 tools)
+ * - standard: Good set for capable models (12 tools)
+ * - full: All tools for the most capable models (15 tools)
  */
 const TIERS = {
   essential: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory'],
-  standard: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory', 'search_files', 'glob', 'grep', 'ask_user'],
+  standard: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory', 'search_files', 'glob', 'grep', 'ask_user', 'git_status', 'git_diff', 'git_log'],
   full: null, // null = all tools, no filtering
 };
 

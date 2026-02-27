@@ -66,6 +66,13 @@ describe('tools.js', () => {
       expect(path.isAbsolute(result)).toBe(true);
       expect(result).toContain('test.js');
     });
+
+    it('blocks sensitive paths', () => {
+      expect(resolvePath('/home/user/.ssh/id_rsa')).toBeNull();
+      expect(resolvePath('/etc/passwd')).toBeNull();
+      expect(resolvePath('/home/user/.aws/credentials')).toBeNull();
+      expect(resolvePath('.env')).toBeNull();
+    });
   });
 
   // ─── bash tool ──────────────────────────────────────────────

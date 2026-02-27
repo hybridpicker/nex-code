@@ -10,14 +10,22 @@ const { confirm, getAutoConfirm } = require('./safety');
  * Simple LCS-based line diff (no external deps)
  * Returns array of { type: 'same'|'add'|'remove', line: string }
  */
+const DIFF_LINE_LIMIT = 2000;
+
 function diffLines(oldText, newText) {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
   const result = [];
 
-  // Build LCS table
+  // Guard against OOM on huge files — fall back to simple summary
   const m = oldLines.length;
   const n = newLines.length;
+  if (m > DIFF_LINE_LIMIT || n > DIFF_LINE_LIMIT) {
+    // Produce a simplified diff: all old lines removed, all new lines added
+    for (const line of oldLines) result.push({ type: 'remove', line });
+    for (const line of newLines) result.push({ type: 'add', line });
+    return result;
+  }
   const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {

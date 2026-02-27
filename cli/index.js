@@ -540,6 +540,8 @@ function handleSlashCommand(input) {
           if (results.length === 0) {
             console.log(`${C.dim}No MCP servers configured in .nex/config.json${C.reset}`);
           }
+        }).catch((err) => {
+          console.log(`${C.red}MCP connection error: ${err.message}${C.reset}`);
         });
         return true;
       }
