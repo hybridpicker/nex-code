@@ -267,7 +267,7 @@ describe('providers/registry.js', () => {
       process.env.OLLAMA_API_KEY = 'test';
 
       registry.setActiveModel('openai:gpt-4o');
-      await expect(registry.callStream([], [])).rejects.toThrow('not configured');
+      await expect(registry.callStream([], [])).rejects.toThrow(/not configured|No configured provider/);
     });
   });
 
@@ -278,7 +278,7 @@ describe('providers/registry.js', () => {
       process.env.OLLAMA_API_KEY = 'test';
       registry.setActiveModel('openai:gpt-4o');
 
-      await expect(registry.callChat([], [])).rejects.toThrow('not configured');
+      await expect(registry.callChat([], [])).rejects.toThrow(/not configured|No configured provider/);
     });
   });
 

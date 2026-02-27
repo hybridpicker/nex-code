@@ -430,7 +430,7 @@ async function executeTool(name, args) {
           timeout: 15000,
           maxContentLength: 1048576,
           responseType: 'text',
-          headers: { 'User-Agent': 'nex-code/0.1.0' },
+          headers: { 'User-Agent': 'nex-code/0.2.0' },
         });
         const out = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
         // Strip HTML tags for cleaner output
@@ -452,7 +452,7 @@ async function executeTool(name, args) {
           params: { q: args.query },
           timeout: 10000,
           responseType: 'text',
-          headers: { 'User-Agent': 'nex-code/0.1.0' },
+          headers: { 'User-Agent': 'nex-code/0.2.0' },
         });
         const out = resp.data;
         // Parse results from DuckDuckGo HTML

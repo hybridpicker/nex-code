@@ -3,6 +3,7 @@ jest.mock('../cli/providers/registry', () => ({
   callStream: jest.fn(),
   getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
   getActiveProviderName: jest.fn().mockReturnValue('ollama'),
+  getActiveModelId: jest.fn().mockReturnValue('kimi-k2.5'),
   _reset: jest.fn(),
 }));
 
@@ -52,6 +53,10 @@ jest.mock('../cli/hooks', () => ({
 jest.mock('../cli/mcp', () => ({
   routeMCPCall: jest.fn().mockResolvedValue(null),
   getMCPToolDefinitions: jest.fn().mockReturnValue([]),
+}));
+
+jest.mock('../cli/costs', () => ({
+  trackUsage: jest.fn(),
 }));
 
 jest.mock('../cli/safety', () => ({

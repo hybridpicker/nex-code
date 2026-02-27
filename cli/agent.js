@@ -17,6 +17,7 @@ const { isPlanMode, getPlanModePrompt } = require('./planner');
 const { renderMarkdown } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
+const { trackUsage } = require('./costs');
 
 const MAX_ITERATIONS = 30;
 const CWD = process.cwd();
@@ -123,6 +124,17 @@ async function processInput(userInput) {
 
     if (firstToken) {
       spinner.stop();
+    }
+
+    // Track token usage for cost dashboard
+    if (result && result.usage) {
+      const { getActiveProviderName, getActiveModelId } = require('./providers/registry');
+      trackUsage(
+        getActiveProviderName(),
+        getActiveModelId(),
+        result.usage.prompt_tokens || 0,
+        result.usage.completion_tokens || 0
+      );
     }
 
     // Render streamed text with markdown formatting

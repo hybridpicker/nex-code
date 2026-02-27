@@ -16,6 +16,7 @@ const { LocalProvider } = require('./local');
 const providers = {};
 let activeProviderName = null;
 let activeModelId = null;
+let fallbackChain = [];
 
 // ─── Initialize Default Providers ──────────────────────────────
 
@@ -37,6 +38,12 @@ function initDefaults() {
   } else {
     activeProviderName = 'ollama';
     activeModelId = 'kimi-k2.5';
+  }
+
+  // Initialize fallback chain from env
+  const envChain = process.env.FALLBACK_CHAIN;
+  if (envChain) {
+    fallbackChain = envChain.split(',').map((s) => s.trim()).filter(Boolean);
   }
 }
 
@@ -198,35 +205,79 @@ function listAllModels() {
   return result;
 }
 
+// ─── Fallback Chain ─────────────────────────────────────────────
+
+function setFallbackChain(chain) {
+  fallbackChain = Array.isArray(chain) ? chain : [];
+}
+
+function getFallbackChain() {
+  return [...fallbackChain];
+}
+
 // ─── Streaming Call (convenience) ──────────────────────────────
 
 /**
+ * Check if an error is retryable (rate limit or server error).
+ */
+function isRetryableError(err) {
+  const msg = err.message || '';
+  return msg.includes('429') || msg.includes('500') || msg.includes('502') ||
+         msg.includes('503') || msg.includes('504');
+}
+
+/**
  * Make a streaming call through the active provider.
- * Convenience method used by agent.js
+ * Falls back to next provider in chain on retryable errors.
  */
 async function callStream(messages, tools, options = {}) {
   initDefaults();
-  const provider = getActiveProvider();
-  if (!provider) throw new Error(`No provider available: ${activeProviderName}`);
-  if (!provider.isConfigured()) {
-    throw new Error(`Provider '${activeProviderName}' is not configured. Set the required API key.`);
+  const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
+
+  let lastError;
+  for (const provName of providersToTry) {
+    const provider = providers[provName];
+    if (!provider || !provider.isConfigured()) continue;
+
+    try {
+      return await provider.stream(messages, tools, { model: activeModelId, ...options });
+    } catch (err) {
+      lastError = err;
+      if (isRetryableError(err) && providersToTry.indexOf(provName) < providersToTry.length - 1) {
+        continue;
+      }
+      throw err;
+    }
   }
 
-  return provider.stream(messages, tools, { model: activeModelId, ...options });
+  throw lastError || new Error('No configured provider available');
 }
 
 /**
  * Make a non-streaming call through the active provider.
+ * Falls back to next provider in chain on retryable errors.
  */
 async function callChat(messages, tools, options = {}) {
   initDefaults();
-  const provider = getActiveProvider();
-  if (!provider) throw new Error(`No provider available: ${activeProviderName}`);
-  if (!provider.isConfigured()) {
-    throw new Error(`Provider '${activeProviderName}' is not configured. Set the required API key.`);
+  const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
+
+  let lastError;
+  for (const provName of providersToTry) {
+    const provider = providers[provName];
+    if (!provider || !provider.isConfigured()) continue;
+
+    try {
+      return await provider.chat(messages, tools, { model: activeModelId, ...options });
+    } catch (err) {
+      lastError = err;
+      if (isRetryableError(err) && providersToTry.indexOf(provName) < providersToTry.length - 1) {
+        continue;
+      }
+      throw err;
+    }
   }
 
-  return provider.chat(messages, tools, { model: activeModelId, ...options });
+  throw lastError || new Error('No configured provider available');
 }
 
 // ─── Reset (for testing) ───────────────────────────────────────
@@ -237,6 +288,7 @@ function _reset() {
   }
   activeProviderName = null;
   activeModelId = null;
+  fallbackChain = [];
 }
 
 module.exports = {
@@ -253,5 +305,7 @@ module.exports = {
   listAllModels,
   callStream,
   callChat,
+  setFallbackChain,
+  getFallbackChain,
   _reset,
 };
