@@ -363,6 +363,7 @@ describe('index.js (REPL commands)', () => {
 
       const mockRl = {
         prompt: jest.fn(),
+        setPrompt: jest.fn(),
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
       };
@@ -381,6 +382,7 @@ describe('index.js (REPL commands)', () => {
     beforeEach(() => {
       mockRl = {
         prompt: jest.fn(),
+        setPrompt: jest.fn(),
         on: jest.fn(function (event, handler) {
           if (event === 'line') lineHandler = handler;
           if (event === 'close') closeHandler = handler;
