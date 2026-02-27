@@ -201,7 +201,7 @@ Persistent project memory that survives across sessions:
 /forget lang
 ```
 
-Also loads `NEX.md` from project root (like `CLAUDE.md`).
+Also loads `NEX.md` from project root for project-level instructions.
 
 ### Plan Mode
 Analyze before executing — the agent creates a plan, you review and approve:

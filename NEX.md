@@ -1,4 +1,4 @@
-# Nex Code — Claude Code Instructions
+# Nex Code — Project Instructions
 
 ## Project Overview
 
@@ -92,7 +92,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Permission-System: allow/ask/deny pro Tool (konfigurierbar in `.nex/config.json`)
 - Context Engine: Token-Counting, Auto-Compression bei >70% Window
 - Session-Persistenz: Auto-Save nach jedem Turn in `.nex/sessions/`
-- Project Memory: Key-Value + NEX.md (wie CLAUDE.md)
+- Project Memory: Key-Value + NEX.md
 - Plan Mode: Analyse → Plan → Approve → Execute
 - Git Intelligence: Smart Commit, Diff-Analyse, Branch-Erstellung
 - MCP Client: JSON-RPC over stdio, Tool-Discovery, Routing über `mcp_` Prefix

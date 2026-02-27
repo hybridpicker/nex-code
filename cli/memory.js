@@ -1,7 +1,7 @@
 /**
  * cli/memory.js — Project Memory
  * Persistent key-value memory stored in .nex/memory/
- * Also loads NEX.md from project root (like CLAUDE.md)
+ * Also loads NEX.md from project root for project-level instructions
  */
 
 const fs = require('fs');
