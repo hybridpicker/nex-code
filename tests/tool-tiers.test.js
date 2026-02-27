@@ -54,11 +54,14 @@ describe('TIERS definitions', () => {
     expect(TIERS.essential).toContain('list_directory');
   });
 
-  it('standard tier has 9 tools', () => {
-    expect(TIERS.standard).toHaveLength(9);
+  it('standard tier has 12 tools', () => {
+    expect(TIERS.standard).toHaveLength(12);
     expect(TIERS.standard).toContain('glob');
     expect(TIERS.standard).toContain('grep');
     expect(TIERS.standard).toContain('ask_user');
+    expect(TIERS.standard).toContain('git_status');
+    expect(TIERS.standard).toContain('git_diff');
+    expect(TIERS.standard).toContain('git_log');
   });
 
   it('full tier is null (all tools)', () => {
@@ -228,7 +231,7 @@ describe('getTierInfo()', () => {
 
     const info = getTierInfo();
     expect(info.tier).toBe('standard');
-    expect(info.toolCount).toBe(9);
+    expect(info.toolCount).toBe(12);
   });
 
   it('returns "all" for full tier', () => {

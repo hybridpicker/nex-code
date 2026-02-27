@@ -7,8 +7,9 @@ const { C } = require('./ui');
 
 const FORBIDDEN_PATTERNS = [
   /rm\s+-rf\s+\/(?:\s|$)/,
-  /rm\s+-rf\s+~\//,
-  /rm\s+-rf\s+\.\//,
+  /rm\s+-rf\s+~(?:\/|\s|$)/,
+  /rm\s+-rf\s+\.(?:\/|\s|$)/,
+  /rm\s+-rf\s+\*(?:\s|$)/,
   /mkfs/,
   /dd\s+if=/,
   /:\(\)\s*\{/,
@@ -47,7 +48,6 @@ const FORBIDDEN_PATTERNS = [
 
 const DANGEROUS_BASH = [
   /git\s+push/,
-  /git\s+push\s+--force/,
   /npm\s+publish/,
   /npx\s+.*publish/,
   /rm\s+-rf\s/,

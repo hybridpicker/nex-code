@@ -14,7 +14,7 @@ const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
 const { isPlanMode, getPlanModePrompt } = require('./planner');
-const { renderMarkdown, StreamRenderer } = require('./render');
+const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
 const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = require('./skills');
@@ -277,10 +277,11 @@ async function processInput(userInput) {
         }
       }
 
+      const safeResult = String(toolResult ?? '');
       const truncated =
-        toolResult.length > 50000
-          ? toolResult.substring(0, 50000) + `\n...(truncated ${toolResult.length - 50000} chars)`
-          : toolResult;
+        safeResult.length > 50000
+          ? safeResult.substring(0, 50000) + `\n...(truncated ${safeResult.length - 50000} chars)`
+          : safeResult;
 
       console.log(formatResult(truncated));
 

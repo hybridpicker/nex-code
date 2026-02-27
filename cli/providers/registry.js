@@ -237,7 +237,8 @@ async function callStream(messages, tools, options = {}) {
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
-  for (const provName of providersToTry) {
+  for (let idx = 0; idx < providersToTry.length; idx++) {
+    const provName = providersToTry[idx];
     const provider = providers[provName];
     if (!provider || !provider.isConfigured()) continue;
 
@@ -245,7 +246,7 @@ async function callStream(messages, tools, options = {}) {
       return await provider.stream(messages, tools, { model: activeModelId, ...options });
     } catch (err) {
       lastError = err;
-      if (isRetryableError(err) && providersToTry.indexOf(provName) < providersToTry.length - 1) {
+      if (isRetryableError(err) && idx < providersToTry.length - 1) {
         continue;
       }
       throw err;
@@ -264,7 +265,8 @@ async function callChat(messages, tools, options = {}) {
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
-  for (const provName of providersToTry) {
+  for (let idx = 0; idx < providersToTry.length; idx++) {
+    const provName = providersToTry[idx];
     const provider = providers[provName];
     if (!provider || !provider.isConfigured()) continue;
 
@@ -272,7 +274,7 @@ async function callChat(messages, tools, options = {}) {
       return await provider.chat(messages, tools, { model: activeModelId, ...options });
     } catch (err) {
       lastError = err;
-      if (isRetryableError(err) && providersToTry.indexOf(provName) < providersToTry.length - 1) {
+      if (isRetryableError(err) && idx < providersToTry.length - 1) {
         continue;
       }
       throw err;

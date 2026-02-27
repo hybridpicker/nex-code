@@ -28,9 +28,21 @@ function ensureCheckpoint() {
   } catch { /* not critical */ }
 }
 
+// Sensitive paths that should never be accessed by file tools
+const SENSITIVE_PATHS = [
+  /\.ssh\//i, /\.gnupg\//i, /\.aws\//i, /\.config\/gcloud/i,
+  /\/etc\/shadow/, /\/etc\/passwd/, /\/etc\/sudoers/,
+  /\.env(?:\.|$)/, /credentials/i, /\.npmrc$/,
+  /\.docker\/config\.json/, /\.kube\/config/,
+];
+
 function resolvePath(p) {
-  if (path.isAbsolute(p)) return p;
-  return path.resolve(CWD, p);
+  const resolved = path.isAbsolute(p) ? path.resolve(p) : path.resolve(CWD, p);
+  // Block access to sensitive paths
+  for (const pat of SENSITIVE_PATHS) {
+    if (pat.test(resolved)) return null;
+  }
+  return resolved;
 }
 
 // ─── Tool Definitions (Ollama format) ─────────────────────────
@@ -306,6 +318,7 @@ async function executeTool(name, args) {
 
     case 'read_file': {
       const fp = resolvePath(args.path);
+      if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
 
       // Binary file detection: check first 8KB for null bytes
@@ -331,6 +344,7 @@ async function executeTool(name, args) {
     case 'write_file': {
       ensureCheckpoint();
       const fp = resolvePath(args.path);
+      if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       const exists = fs.existsSync(fp);
 
       if (exists) {
@@ -353,6 +367,7 @@ async function executeTool(name, args) {
     case 'edit_file': {
       ensureCheckpoint();
       const fp = resolvePath(args.path);
+      if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
       const content = fs.readFileSync(fp, 'utf-8');
       if (!content.includes(args.old_text)) return `ERROR: old_text not found in ${fp}`;
@@ -369,9 +384,19 @@ async function executeTool(name, args) {
 
     case 'list_directory': {
       const dp = resolvePath(args.path);
+      if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
       if (!fs.existsSync(dp)) return `ERROR: Directory not found: ${dp}`;
       const depth = args.max_depth || 2;
-      const pattern = args.pattern ? new RegExp(args.pattern.replace(/\*/g, '.*')) : null;
+      let pattern = null;
+      if (args.pattern) {
+        try {
+          // Escape regex specials, convert glob * to .*
+          const safe = args.pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+          pattern = new RegExp(`^${safe}$`);
+        } catch {
+          return `ERROR: Invalid pattern: ${args.pattern}`;
+        }
+      }
       const result = [];
 
       const walk = (dir, level, prefix) => {
@@ -397,6 +422,7 @@ async function executeTool(name, args) {
 
     case 'search_files': {
       const dp = resolvePath(args.path);
+      if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
       const grepArgs = ['-rn'];
       if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
       grepArgs.push(args.pattern, dp);
@@ -471,6 +497,7 @@ async function executeTool(name, args) {
     case 'patch_file': {
       ensureCheckpoint();
       const fp = resolvePath(args.path);
+      if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
 
       const patches = args.patches;
@@ -585,9 +612,11 @@ async function executeTool(name, args) {
       if (!isGitRepo()) return 'ERROR: Not a git repository';
       let diff;
       if (args.file) {
-        const flag = args.staged ? '--cached' : '';
+        const gitArgs = ['diff'];
+        if (args.staged) gitArgs.push('--cached');
+        gitArgs.push('--', args.file);
         try {
-          diff = execSync(`git diff ${flag} -- ${args.file}`, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+          diff = execFileSync('git', gitArgs, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
         } catch { diff = ''; }
       } else {
         diff = getDiff(!!args.staged);
@@ -598,9 +627,10 @@ async function executeTool(name, args) {
     case 'git_log': {
       if (!isGitRepo()) return 'ERROR: Not a git repository';
       const count = Math.min(args.count || 10, 50);
-      const fileArg = args.file ? `-- ${args.file}` : '';
+      const gitLogArgs = ['log', '--oneline', `-${count}`];
+      if (args.file) gitLogArgs.push('--', args.file);
       try {
-        const out = execSync(`git log --oneline -${count} ${fileArg}`, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+        const out = execFileSync('git', gitLogArgs, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
         return out || '(no commits)';
       } catch {
         return '(no commits)';
