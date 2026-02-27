@@ -8,7 +8,7 @@ const { processInput, clearConversation, getConversationLength, getConversationM
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
 const { printContext } = require('./context');
-const { setAutoConfirm, getAutoConfirm } = require('./safety');
+const { setAutoConfirm, getAutoConfirm, setReadlineInterface } = require('./safety');
 const { getUsage } = require('./context-engine');
 const { TOOL_DEFINITIONS } = require('./tools');
 const { saveSession, loadSession, listSessions, getLastSession } = require('./session');
@@ -676,6 +676,8 @@ function startREPL() {
     prompt: `${C.bold}${C.cyan}>${C.reset} `,
     completer,
   });
+
+  setReadlineInterface(rl);
 
   // ─── Inline slash-command suggestions (live while typing) ───
   let _sugN = 0;
