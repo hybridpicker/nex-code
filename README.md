@@ -84,6 +84,8 @@ The agent decides autonomously whether to use tools or just respond with text. S
 
 ### Commands
 
+Type `/` to see inline suggestions as you type — commands filter live with each keystroke. Tab completion is also supported.
+
 | Command | Description |
 |---------|-------------|
 | `/help` | Show all commands |

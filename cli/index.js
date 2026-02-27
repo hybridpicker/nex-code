@@ -622,9 +622,57 @@ function startREPL() {
     completer,
   });
 
+  // ─── Inline slash-command suggestions (live while typing) ───
+  let _sugN = 0;
+
+  function _clearSug() {
+    if (_sugN > 0) {
+      let s = '\x1b[s';
+      for (let i = 0; i < _sugN; i++) s += '\n\x1b[2K';
+      s += '\x1b[u';
+      process.stdout.write(s);
+      _sugN = 0;
+    }
+  }
+
+  function _showSug(line) {
+    const hits = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(line));
+    if (!hits.length || (hits.length === 1 && hits[0].cmd === line)) return;
+    const maxShow = 10;
+    const show = hits.slice(0, maxShow);
+    const padLen = Math.max(...show.map((c) => c.cmd.length));
+    let buf = '\x1b[s';
+    for (const { cmd, desc } of show) {
+      const typed = cmd.substring(0, line.length);
+      const rest = cmd.substring(line.length);
+      const gap = ' '.repeat(Math.max(0, padLen - cmd.length + 2));
+      buf += `\n  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+    }
+    _sugN = show.length;
+    if (hits.length > maxShow) {
+      buf += `\n  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
+      _sugN++;
+    }
+    buf += '\x1b[u';
+    process.stdout.write(buf);
+  }
+
+  if (process.stdin.isTTY) {
+    process.stdin.on('keypress', (str, key) => {
+      _clearSug();
+      if (key && (key.name === 'tab' || key.name === 'return')) return;
+      setImmediate(() => {
+        if (rl.line && rl.line.startsWith('/')) {
+          _showSug(rl.line);
+        }
+      });
+    });
+  }
+
   rl.prompt();
 
   rl.on('line', async (line) => {
+    _clearSug();
     const input = line.trim();
     if (!input) {
       rl.prompt();
