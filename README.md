@@ -135,19 +135,22 @@ Type `/` to see inline suggestions as you type. Tab completion is supported.
 
 ## Tools
 
-The agent has 12 built-in tools:
+The agent has 15 built-in tools:
 
 | Tool | Description |
 |------|-------------|
 | `bash` | Execute shell commands (90s timeout, 5MB buffer) |
-| `read_file` | Read files with optional line range |
+| `read_file` | Read files with optional line range (binary detection) |
 | `write_file` | Create or overwrite files (with diff preview + confirmation) |
 | `edit_file` | Targeted text replacement (with diff preview + confirmation) |
-| `patch_file` | Multiple replacements in a single operation |
+| `patch_file` | Atomic multi-replacement in a single operation |
 | `list_directory` | Tree view with depth control and glob filtering |
 | `search_files` | Regex search across files (like grep) |
 | `glob` | Fast file search by name/extension pattern |
 | `grep` | Content search with regex and line numbers |
+| `git_status` | Git working tree status |
+| `git_diff` | Git diff with optional path filter |
+| `git_log` | Git commit history with configurable count |
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Search the web via DuckDuckGo |
 | `ask_user` | Ask the user a question and wait for input |
@@ -159,13 +162,14 @@ Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 ## Features
 
 ### Streaming Output
-Tokens appear live as the model generates them. Braille spinner during connection, then real-time text rendering with markdown formatting and syntax highlighting.
+Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Diff Preview
 Every file change is shown as a colored diff before being applied:
 - **edit_file**: Red/green diff with 3 lines of context
-- **write_file** (overwrite): Line-by-line comparison
+- **write_file** (overwrite): Line-by-line comparison (or side-by-side view)
 - **write_file** (new): Preview of the first 20 lines
+- OOM-safe: large diffs (>2000 lines) fall back to add/remove instead of LCS
 - All changes require `[y/n]` confirmation (toggle with `/autoconfirm`)
 
 ### Auto-Context
@@ -179,9 +183,10 @@ On startup, the CLI reads your project and injects context into the system promp
 Automatic token management with compression when the context window gets full. Tracks token usage across system prompt, conversation, tool results, and tool definitions.
 
 ### Safety Layer
-Two tiers of protection:
-- **Forbidden** (blocked): `rm -rf /`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
+Three tiers of protection:
+- **Forbidden** (blocked): `rm -rf /`, `rm -rf .`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
 - **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
+- **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
 
 ### Sessions
 Save and restore conversations:
@@ -249,8 +254,8 @@ Four features that make Nex Code significantly more reliable with open-source mo
 
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
-- **standard** (9 tools): + search_files, glob, grep, ask_user
-- **full** (12 tools): all tools
+- **standard** (12 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log
+- **full** (15 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
@@ -370,8 +375,8 @@ Or place executable scripts in `.nex/hooks/`:
 ```
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
-├── index.js             # REPL + 29 slash commands
-├── agent.js             # Agentic loop + conversation state
+├── index.js             # REPL + ~35 slash commands + history persistence
+├── agent.js             # Agentic loop + conversation state + MCP routing
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
 │   ├── ollama.js        # Ollama Cloud provider
@@ -380,7 +385,7 @@ cli/
 │   ├── gemini.js        # Google Gemini provider
 │   ├── local.js         # Local Ollama server
 │   └── registry.js      # Provider registry + model resolution
-├── tools.js             # 12 tool definitions + implementations
+├── tools.js             # 15 tool definitions + implementations
 ├── skills.js            # Skills system (prompt + script skills)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
 ├── hooks.js             # Hook system (pre/post events)
@@ -391,8 +396,8 @@ cli/
 ├── permissions.js       # Tool permission system
 ├── planner.js           # Plan mode + autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
-├── render.js            # Markdown + syntax highlighting
-├── diff.js              # LCS diff + colored output
+├── render.js            # Markdown + syntax highlighting + StreamRenderer
+├── diff.js              # LCS diff + colored output + side-by-side view
 ├── costs.js             # Token cost tracking
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
@@ -447,7 +452,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-32 test suites, 954 tests, 88% statement coverage.
+33 test suites, 1027 tests, 93% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
