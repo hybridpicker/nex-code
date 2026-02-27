@@ -1,0 +1,108 @@
+/**
+ * cli/safety.js — Forbidden Patterns, Dangerous Commands, Confirm Logic
+ */
+
+const readline = require('readline');
+const { C } = require('./ui');
+
+const FORBIDDEN_PATTERNS = [
+  /rm\s+-rf\s+\/(?:\s|$)/,
+  /rm\s+-rf\s+~\//,
+  /rm\s+-rf\s+\.\//,
+  /mkfs/,
+  /dd\s+if=/,
+  /:\(\)\s*\{/,
+  />\/dev\/sd/,
+  /curl.*\|\s*(?:ba)?sh/,
+  /wget.*\|\s*(?:ba)?sh/,
+  /cat\s+.*\.env\b/,
+  /cat\s+.*credentials/i,
+  /chmod\s+777/,
+  /chown\s+root/,
+  /passwd/,
+  /userdel/,
+  /useradd/,
+  /\beval\s*\(/,
+  /base64.*\|.*bash/,
+  // Environment variable exposure
+  /\bprintenv\b/,
+  // SSH key access
+  /cat\s+.*\.ssh\/id_/,
+  /cat\s+.*\.ssh\/config/,
+  // Reverse shells
+  /\bnc\s+-[el]/,
+  /\bncat\b/,
+  /\bsocat\b/,
+  // Indirect code execution
+  /python3?\s+-c\s/,
+  /node\s+-e\s/,
+  /perl\s+-e\s/,
+  /ruby\s+-e\s/,
+  // History access
+  /\bhistory\b/,
+  // Data exfiltration via POST
+  /curl.*-X\s*POST/,
+  /curl.*--data/,
+];
+
+const DANGEROUS_BASH = [
+  /git\s+push/,
+  /git\s+push\s+--force/,
+  /npm\s+publish/,
+  /npx\s+.*publish/,
+  /rm\s+-rf\s/,
+  /docker\s+rm/,
+  /docker\s+system\s+prune/,
+  /kubectl\s+delete/,
+  /sudo\s/,
+  /ssh\s/,
+  /wget\s/,
+  /curl\s.*-o\s/,
+  /pip\s+install/,
+  /npm\s+install\s+-g/,
+];
+
+let autoConfirm = false;
+
+function setAutoConfirm(val) {
+  autoConfirm = val;
+}
+
+function getAutoConfirm() {
+  return autoConfirm;
+}
+
+function isForbidden(command) {
+  for (const pat of FORBIDDEN_PATTERNS) {
+    if (pat.test(command)) return pat;
+  }
+  return null;
+}
+
+function isDangerous(command) {
+  for (const pat of DANGEROUS_BASH) {
+    if (pat.test(command)) return true;
+  }
+  return false;
+}
+
+function confirm(question) {
+  if (autoConfirm) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
+module.exports = {
+  FORBIDDEN_PATTERNS,
+  DANGEROUS_BASH,
+  isForbidden,
+  isDangerous,
+  confirm,
+  setAutoConfirm,
+  getAutoConfirm,
+};

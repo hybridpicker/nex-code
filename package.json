@@ -1,0 +1,42 @@
+{
+  "name": "nex-code",
+  "version": "0.1.0",
+  "description": "Nex Code — Agentic Coding CLI with Multi-Provider Support",
+  "bin": {
+    "nex-code": "./bin/nex-code.js"
+  },
+  "files": [
+    "bin/",
+    "cli/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node bin/nex-code.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "cli",
+    "coding",
+    "agent",
+    "ai",
+    "llm",
+    "multi-provider",
+    "openai",
+    "anthropic",
+    "ollama"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

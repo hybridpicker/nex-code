@@ -1,0 +1,257 @@
+/**
+ * cli/providers/registry.js — Provider Registry + Model Resolution
+ * Central hub for multi-provider model management.
+ *
+ * Model specs: 'provider:model' (e.g. 'openai:gpt-4o', 'anthropic:claude-sonnet', 'local:llama3')
+ * Short specs: 'model' (resolved against active provider)
+ */
+
+const { OllamaProvider } = require('./ollama');
+const { OpenAIProvider } = require('./openai');
+const { AnthropicProvider } = require('./anthropic');
+const { LocalProvider } = require('./local');
+
+// ─── Registry State ────────────────────────────────────────────
+
+const providers = {};
+let activeProviderName = null;
+let activeModelId = null;
+
+// ─── Initialize Default Providers ──────────────────────────────
+
+function initDefaults() {
+  if (Object.keys(providers).length > 0) return;
+
+  registerProvider('ollama', new OllamaProvider());
+  registerProvider('openai', new OpenAIProvider());
+  registerProvider('anthropic', new AnthropicProvider());
+  registerProvider('local', new LocalProvider());
+
+  // Determine active provider from env or default to ollama
+  const defaultProvider = process.env.DEFAULT_PROVIDER || 'ollama';
+  const defaultModel = process.env.DEFAULT_MODEL || null;
+
+  if (providers[defaultProvider]) {
+    activeProviderName = defaultProvider;
+    activeModelId = defaultModel || providers[defaultProvider].defaultModel;
+  } else {
+    activeProviderName = 'ollama';
+    activeModelId = 'kimi-k2.5';
+  }
+}
+
+// ─── Provider Management ───────────────────────────────────────
+
+function registerProvider(name, provider) {
+  providers[name] = provider;
+}
+
+function getProvider(name) {
+  initDefaults();
+  return providers[name] || null;
+}
+
+function getActiveProvider() {
+  initDefaults();
+  return providers[activeProviderName] || null;
+}
+
+function getActiveProviderName() {
+  initDefaults();
+  return activeProviderName;
+}
+
+function getActiveModelId() {
+  initDefaults();
+  return activeModelId;
+}
+
+/**
+ * Get active model info (compatible with old getActiveModel format)
+ * @returns {{ id: string, name: string, provider: string, maxTokens?: number, contextWindow?: number }}
+ */
+function getActiveModel() {
+  initDefaults();
+  const provider = getActiveProvider();
+  if (!provider) return { id: activeModelId, name: activeModelId, provider: activeProviderName };
+
+  const model = provider.getModel(activeModelId);
+  if (model) {
+    return { ...model, provider: activeProviderName };
+  }
+
+  return { id: activeModelId, name: activeModelId, provider: activeProviderName };
+}
+
+// ─── Model Resolution ──────────────────────────────────────────
+
+/**
+ * Parse a model spec like 'openai:gpt-4o' or just 'gpt-4o'
+ * @param {string} spec
+ * @returns {{ provider: string|null, model: string }}
+ */
+function parseModelSpec(spec) {
+  if (!spec) return { provider: null, model: null };
+  const parts = spec.split(':');
+  if (parts.length >= 2) {
+    return { provider: parts[0], model: parts.slice(1).join(':') };
+  }
+  return { provider: null, model: spec };
+}
+
+/**
+ * Set active model. Accepts 'provider:model' or just 'model'.
+ * @param {string} spec - Model spec (e.g. 'openai:gpt-4o', 'kimi-k2.5')
+ * @returns {boolean} true if model was set successfully
+ */
+function setActiveModel(spec) {
+  initDefaults();
+  const { provider: providerName, model: modelId } = parseModelSpec(spec);
+
+  if (providerName) {
+    const provider = providers[providerName];
+    if (!provider) return false;
+
+    const model = provider.getModel(modelId);
+    if (!model) {
+      // Allow setting model even if not in predefined list (for local models)
+      if (providerName === 'local') {
+        activeProviderName = providerName;
+        activeModelId = modelId;
+        return true;
+      }
+      return false;
+    }
+
+    activeProviderName = providerName;
+    activeModelId = modelId;
+    return true;
+  }
+
+  // No provider prefix — search in active provider first, then all providers
+  const active = getActiveProvider();
+  if (active && active.getModel(modelId)) {
+    activeModelId = modelId;
+    return true;
+  }
+
+  for (const [name, provider] of Object.entries(providers)) {
+    if (provider.getModel(modelId)) {
+      activeProviderName = name;
+      activeModelId = modelId;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Get all model names across all providers (for tab completion, etc.)
+ * Returns just the model ids without provider prefix.
+ */
+function getModelNames() {
+  initDefaults();
+  const names = new Set();
+  for (const provider of Object.values(providers)) {
+    for (const name of provider.getModelNames()) {
+      names.add(name);
+    }
+  }
+  return Array.from(names);
+}
+
+/**
+ * Get all models grouped by provider
+ * @returns {Array<{ provider: string, configured: boolean, models: Array }>}
+ */
+function listProviders() {
+  initDefaults();
+  return Object.entries(providers).map(([name, provider]) => ({
+    provider: name,
+    configured: provider.isConfigured(),
+    models: Object.values(provider.getModels()).map((m) => ({
+      ...m,
+      active: name === activeProviderName && m.id === activeModelId,
+    })),
+  }));
+}
+
+/**
+ * Get flat list of all models with provider prefix
+ * @returns {Array<{ spec: string, name: string, provider: string, configured: boolean }>}
+ */
+function listAllModels() {
+  initDefaults();
+  const result = [];
+  for (const [provName, provider] of Object.entries(providers)) {
+    const configured = provider.isConfigured();
+    for (const model of Object.values(provider.getModels())) {
+      result.push({
+        spec: `${provName}:${model.id}`,
+        name: model.name,
+        provider: provName,
+        configured,
+      });
+    }
+  }
+  return result;
+}
+
+// ─── Streaming Call (convenience) ──────────────────────────────
+
+/**
+ * Make a streaming call through the active provider.
+ * Convenience method used by agent.js
+ */
+async function callStream(messages, tools, options = {}) {
+  initDefaults();
+  const provider = getActiveProvider();
+  if (!provider) throw new Error(`No provider available: ${activeProviderName}`);
+  if (!provider.isConfigured()) {
+    throw new Error(`Provider '${activeProviderName}' is not configured. Set the required API key.`);
+  }
+
+  return provider.stream(messages, tools, { model: activeModelId, ...options });
+}
+
+/**
+ * Make a non-streaming call through the active provider.
+ */
+async function callChat(messages, tools, options = {}) {
+  initDefaults();
+  const provider = getActiveProvider();
+  if (!provider) throw new Error(`No provider available: ${activeProviderName}`);
+  if (!provider.isConfigured()) {
+    throw new Error(`Provider '${activeProviderName}' is not configured. Set the required API key.`);
+  }
+
+  return provider.chat(messages, tools, { model: activeModelId, ...options });
+}
+
+// ─── Reset (for testing) ───────────────────────────────────────
+
+function _reset() {
+  for (const key of Object.keys(providers)) {
+    delete providers[key];
+  }
+  activeProviderName = null;
+  activeModelId = null;
+}
+
+module.exports = {
+  registerProvider,
+  getProvider,
+  getActiveProvider,
+  getActiveProviderName,
+  getActiveModelId,
+  getActiveModel,
+  setActiveModel,
+  getModelNames,
+  parseModelSpec,
+  listProviders,
+  listAllModels,
+  callStream,
+  callChat,
+  _reset,
+};

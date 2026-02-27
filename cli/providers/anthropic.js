@@ -1,0 +1,310 @@
+/**
+ * cli/providers/anthropic.js — Anthropic Claude Provider
+ * Supports Claude Sonnet, Opus, Haiku via Anthropic Messages API with SSE streaming.
+ */
+
+const axios = require('axios');
+const { BaseProvider } = require('./base');
+
+const ANTHROPIC_MODELS = {
+  'claude-sonnet': {
+    id: 'claude-sonnet-4-20250514',
+    name: 'Claude Sonnet',
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
+  'claude-opus': {
+    id: 'claude-opus-4-20250514',
+    name: 'Claude Opus',
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
+  'claude-haiku': {
+    id: 'claude-haiku-4-5-20251001',
+    name: 'Claude Haiku',
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
+};
+
+const ANTHROPIC_VERSION = '2023-06-01';
+
+class AnthropicProvider extends BaseProvider {
+  constructor(config = {}) {
+    super({
+      name: 'anthropic',
+      baseUrl: config.baseUrl || 'https://api.anthropic.com/v1',
+      models: config.models || ANTHROPIC_MODELS,
+      defaultModel: config.defaultModel || 'claude-sonnet',
+      ...config,
+    });
+    this.timeout = config.timeout || 180000;
+    this.temperature = config.temperature ?? 0.2;
+    this.apiVersion = config.apiVersion || ANTHROPIC_VERSION;
+  }
+
+  isConfigured() {
+    return !!this.getApiKey();
+  }
+
+  getApiKey() {
+    return process.env.ANTHROPIC_API_KEY || null;
+  }
+
+  _getHeaders() {
+    const key = this.getApiKey();
+    if (!key) throw new Error('ANTHROPIC_API_KEY not set');
+    return {
+      'x-api-key': key,
+      'anthropic-version': this.apiVersion,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  /**
+   * Convert normalized messages to Anthropic format.
+   * Anthropic uses separate system parameter and different tool_use/tool_result blocks.
+   */
+  formatMessages(messages) {
+    let system = '';
+    const formatted = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        system += (system ? '\n\n' : '') + msg.content;
+        continue;
+      }
+
+      if (msg.role === 'assistant') {
+        const content = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        if (msg.tool_calls) {
+          for (const tc of msg.tool_calls) {
+            content.push({
+              type: 'tool_use',
+              id: tc.id || `toolu-${Date.now()}`,
+              name: tc.function.name,
+              input:
+                typeof tc.function.arguments === 'string'
+                  ? JSON.parse(tc.function.arguments || '{}')
+                  : tc.function.arguments || {},
+            });
+          }
+        }
+        formatted.push({ role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '' }] });
+        continue;
+      }
+
+      if (msg.role === 'tool') {
+        // Anthropic tool results are sent as user messages with tool_result content blocks
+        // Merge consecutive tool results into one user message
+        const last = formatted[formatted.length - 1];
+        const toolResult = {
+          type: 'tool_result',
+          tool_use_id: msg.tool_call_id,
+          content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        };
+
+        if (last && last.role === 'user' && Array.isArray(last.content) && last.content[0]?.type === 'tool_result') {
+          last.content.push(toolResult);
+        } else {
+          formatted.push({ role: 'user', content: [toolResult] });
+        }
+        continue;
+      }
+
+      // user messages
+      formatted.push({ role: 'user', content: msg.content });
+    }
+
+    return { messages: formatted, system };
+  }
+
+  /**
+   * Convert OpenAI/Ollama tool format to Anthropic tool format
+   */
+  formatTools(tools) {
+    if (!tools || tools.length === 0) return [];
+    return tools.map((t) => ({
+      name: t.function.name,
+      description: t.function.description || '',
+      input_schema: t.function.parameters || { type: 'object', properties: {} },
+    }));
+  }
+
+  _resolveModelId(model) {
+    const info = this.getModel(model);
+    return info?.id || model;
+  }
+
+  async chat(messages, tools, options = {}) {
+    const model = options.model || this.defaultModel;
+    const modelId = this._resolveModelId(model);
+    const modelInfo = this.getModel(model);
+    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
+    const { messages: formatted, system } = this.formatMessages(messages);
+
+    const body = {
+      model: modelId,
+      messages: formatted,
+      max_tokens: maxTokens,
+      temperature: options.temperature ?? this.temperature,
+    };
+
+    if (system) body.system = system;
+    const formattedTools = this.formatTools(tools);
+    if (formattedTools.length > 0) body.tools = formattedTools;
+
+    const response = await axios.post(`${this.baseUrl}/messages`, body, {
+      timeout: options.timeout || this.timeout,
+      headers: this._getHeaders(),
+    });
+
+    return this.normalizeResponse(response.data);
+  }
+
+  async stream(messages, tools, options = {}) {
+    const model = options.model || this.defaultModel;
+    const modelId = this._resolveModelId(model);
+    const modelInfo = this.getModel(model);
+    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
+    const onToken = options.onToken || (() => {});
+    const { messages: formatted, system } = this.formatMessages(messages);
+
+    const body = {
+      model: modelId,
+      messages: formatted,
+      max_tokens: maxTokens,
+      temperature: options.temperature ?? this.temperature,
+      stream: true,
+    };
+
+    if (system) body.system = system;
+    const formattedTools = this.formatTools(tools);
+    if (formattedTools.length > 0) body.tools = formattedTools;
+
+    let response;
+    try {
+      response = await axios.post(`${this.baseUrl}/messages`, body, {
+        timeout: options.timeout || this.timeout,
+        headers: this._getHeaders(),
+        responseType: 'stream',
+      });
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || err.message;
+      throw new Error(`API Error: ${msg}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      let content = '';
+      const toolUses = []; // { id, name, inputJson }
+      let currentToolIndex = -1;
+      let buffer = '';
+
+      response.data.on('data', (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
+            let parsed;
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              continue;
+            }
+
+            switch (parsed.type) {
+              case 'content_block_start': {
+                const block = parsed.content_block;
+                if (block?.type === 'tool_use') {
+                  currentToolIndex = toolUses.length;
+                  toolUses.push({ id: block.id, name: block.name, inputJson: '' });
+                }
+                break;
+              }
+
+              case 'content_block_delta': {
+                const delta = parsed.delta;
+                if (delta?.type === 'text_delta' && delta.text) {
+                  onToken(delta.text);
+                  content += delta.text;
+                }
+                if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined) {
+                  if (currentToolIndex >= 0) {
+                    toolUses[currentToolIndex].inputJson += delta.partial_json;
+                  }
+                }
+                break;
+              }
+
+              case 'content_block_stop':
+                currentToolIndex = -1;
+                break;
+
+              case 'message_stop':
+                resolve({ content, tool_calls: this._buildToolCalls(toolUses) });
+                return;
+            }
+          }
+        }
+      });
+
+      response.data.on('error', (err) => {
+        reject(new Error(`Stream error: ${err.message}`));
+      });
+
+      response.data.on('end', () => {
+        resolve({ content, tool_calls: this._buildToolCalls(toolUses) });
+      });
+    });
+  }
+
+  normalizeResponse(data) {
+    let content = '';
+    const toolCalls = [];
+
+    for (const block of data.content || []) {
+      if (block.type === 'text') {
+        content += block.text;
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id,
+          function: {
+            name: block.name,
+            arguments: block.input,
+          },
+        });
+      }
+    }
+
+    return { content, tool_calls: toolCalls };
+  }
+
+  _buildToolCalls(toolUses) {
+    return toolUses
+      .filter((tu) => tu.name)
+      .map((tu) => {
+        let args = {};
+        if (tu.inputJson) {
+          try {
+            args = JSON.parse(tu.inputJson);
+          } catch {
+            args = tu.inputJson;
+          }
+        }
+        return {
+          id: tu.id || `anthropic-${Date.now()}`,
+          function: { name: tu.name, arguments: args },
+        };
+      });
+  }
+}
+
+module.exports = { AnthropicProvider, ANTHROPIC_MODELS };
