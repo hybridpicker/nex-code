@@ -568,6 +568,114 @@ describe('tools.js', () => {
     });
   });
 
+  // ─── read_file binary detection ──────────────────────────────
+  describe('executeTool("read_file") binary detection', () => {
+    it('detects binary files via null bytes', async () => {
+      const fp = path.join(tmpDir, 'binary.dat');
+      const buf = Buffer.alloc(100);
+      buf[50] = 0; // null byte
+      buf.write('text', 0);
+      fs.writeFileSync(fp, buf);
+      const result = await executeTool('read_file', { path: fp });
+      expect(result).toContain('binary file');
+    });
+  });
+
+  // ─── git tools ──────────────────────────────────────────────
+  describe('git tools', () => {
+    describe('executeTool("git_status")', () => {
+      it('includes git_status in tool definitions', () => {
+        expect(TOOL_DEFINITIONS.some((t) => t.function.name === 'git_status')).toBe(true);
+      });
+
+      it('returns branch and status info', async () => {
+        const result = await executeTool('git_status', {});
+        expect(result).toContain('Branch:');
+      });
+    });
+
+    describe('executeTool("git_diff")', () => {
+      it('includes git_diff in tool definitions', () => {
+        expect(TOOL_DEFINITIONS.some((t) => t.function.name === 'git_diff')).toBe(true);
+      });
+
+      it('returns diff or no diff', async () => {
+        const result = await executeTool('git_diff', {});
+        expect(typeof result).toBe('string');
+      });
+
+      it('returns diff for specific file', async () => {
+        const result = await executeTool('git_diff', { file: 'nonexistent-file-xyz.js' });
+        expect(result).toBe('(no diff)');
+      });
+
+      it('supports staged flag', async () => {
+        const result = await executeTool('git_diff', { staged: true });
+        expect(typeof result).toBe('string');
+      });
+    });
+
+    describe('executeTool("git_log")', () => {
+      it('includes git_log in tool definitions', () => {
+        expect(TOOL_DEFINITIONS.some((t) => t.function.name === 'git_log')).toBe(true);
+      });
+
+      it('returns recent commits', async () => {
+        const result = await executeTool('git_log', {});
+        expect(result.length).toBeGreaterThan(0);
+      });
+
+      it('respects count parameter', async () => {
+        const result = await executeTool('git_log', { count: 3 });
+        const lines = result.split('\n').filter(Boolean);
+        expect(lines.length).toBeLessThanOrEqual(3);
+      });
+
+      it('caps count at 50', async () => {
+        const result = await executeTool('git_log', { count: 100 });
+        const lines = result.split('\n').filter(Boolean);
+        expect(lines.length).toBeLessThanOrEqual(50);
+      });
+
+      it('supports file parameter', async () => {
+        const result = await executeTool('git_log', { file: 'package.json' });
+        expect(result.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  // ─── web_search URL decoding fallback ─────────────────────
+  describe('web_search URL decoding fallback', () => {
+    const axios = require('axios');
+
+    it('handles malformed URL encoding gracefully', async () => {
+      // %ZZ is invalid percent-encoding that causes decodeURIComponent to throw
+      const mockHtml = `
+        <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fpage%ZZ&rut=abc">
+          Valid Title
+        </a>
+      `;
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: mockHtml });
+      const result = await executeTool('web_search', { query: 'test' });
+      // Should not throw, should return a result
+      expect(result).toContain('Valid Title');
+      axios.get.mockRestore();
+    });
+  });
+
+  // ─── glob truncation ──────────────────────────────────────
+  describe('glob truncation warning', () => {
+    it('shows truncation warning at 200 results', async () => {
+      // Create 210 files
+      for (let i = 0; i < 210; i++) {
+        fs.writeFileSync(path.join(tmpDir, `file${String(i).padStart(3, '0')}.txt`), '');
+      }
+      const result = await executeTool('glob', { pattern: '*.txt', path: tmpDir });
+      expect(result).toContain('truncated');
+      expect(result).toContain('200');
+    });
+  });
+
   // ─── unknown tool ───────────────────────────────────────────
   describe('unknown tool', () => {
     it('returns error for unknown tool name', async () => {
