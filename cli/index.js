@@ -26,6 +26,53 @@ const { formatCosts, resetCosts } = require('./costs');
 
 const CWD = process.cwd();
 
+// ─── Slash Command Registry ──────────────────────────────────
+const SLASH_COMMANDS = [
+  { cmd: '/help',        desc: 'Show full help' },
+  { cmd: '/model',       desc: 'Show/switch model' },
+  { cmd: '/providers',   desc: 'List providers and models' },
+  { cmd: '/fallback',    desc: 'Show/set fallback chain' },
+  { cmd: '/tokens',      desc: 'Token usage and context budget' },
+  { cmd: '/costs',       desc: 'Session token costs' },
+  { cmd: '/clear',       desc: 'Clear conversation' },
+  { cmd: '/context',     desc: 'Show project context' },
+  { cmd: '/autoconfirm', desc: 'Toggle auto-confirm' },
+  { cmd: '/save',        desc: 'Save session' },
+  { cmd: '/load',        desc: 'Load a saved session' },
+  { cmd: '/sessions',    desc: 'List saved sessions' },
+  { cmd: '/resume',      desc: 'Resume last session' },
+  { cmd: '/remember',    desc: 'Save a memory' },
+  { cmd: '/forget',      desc: 'Delete a memory' },
+  { cmd: '/memory',      desc: 'Show all memories' },
+  { cmd: '/permissions',  desc: 'Show tool permissions' },
+  { cmd: '/allow',       desc: 'Auto-allow a tool' },
+  { cmd: '/deny',        desc: 'Block a tool' },
+  { cmd: '/plan',        desc: 'Plan mode (analyze before executing)' },
+  { cmd: '/plans',       desc: 'List saved plans' },
+  { cmd: '/auto',        desc: 'Set autonomy level' },
+  { cmd: '/commit',      desc: 'Smart commit (diff + message)' },
+  { cmd: '/diff',        desc: 'Show current diff' },
+  { cmd: '/branch',      desc: 'Create feature branch' },
+  { cmd: '/mcp',         desc: 'MCP servers and tools' },
+  { cmd: '/hooks',       desc: 'Show configured hooks' },
+  { cmd: '/exit',        desc: 'Quit' },
+];
+
+function showCommandList() {
+  const maxLen = Math.max(...SLASH_COMMANDS.map((c) => c.cmd.length));
+  console.log('');
+  for (const { cmd, desc } of SLASH_COMMANDS) {
+    console.log(`  ${C.cyan}${cmd.padEnd(maxLen + 2)}${C.reset}${C.dim}${desc}${C.reset}`);
+  }
+  console.log(`\n${C.dim}Type /help for detailed usage${C.reset}\n`);
+}
+
+function completer(line) {
+  if (!line.startsWith('/')) return [[], line];
+  const hits = SLASH_COMMANDS.map((c) => c.cmd).filter((c) => c.startsWith(line));
+  return [hits.length ? hits : SLASH_COMMANDS.map((c) => c.cmd), line];
+}
+
 function showHelp() {
   console.log(`
 ${C.bold}${C.white}Commands:${C.reset}
@@ -572,6 +619,7 @@ function startREPL() {
     input: process.stdin,
     output: process.stdout,
     prompt: `${C.bold}${C.cyan}>${C.reset} `,
+    completer,
   });
 
   rl.prompt();
@@ -584,6 +632,11 @@ function startREPL() {
     }
 
     // Slash commands
+    if (input === '/') {
+      showCommandList();
+      rl.prompt();
+      return;
+    }
     if (input.startsWith('/')) {
       handleSlashCommand(input);
       rl.prompt();
