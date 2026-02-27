@@ -17,6 +17,7 @@ const { isPlanMode, getPlanModePrompt } = require('./planner');
 const { renderMarkdown } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
+const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = require('./skills');
 const { trackUsage } = require('./costs');
 
 const MAX_ITERATIONS = 30;
@@ -29,6 +30,7 @@ function buildSystemPrompt() {
   const projectContext = gatherProjectContext(CWD);
 
   const memoryContext = getMemoryContext();
+  const skillInstructions = getSkillInstructions();
   const planPrompt = isPlanMode() ? getPlanModePrompt() : '';
 
   return `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
@@ -38,7 +40,7 @@ All relative paths resolve from this directory.
 
 PROJECT CONTEXT:
 ${projectContext}
-${memoryContext ? `\n${memoryContext}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
+${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
 BEHAVIOR:
 - You can use tools OR just respond with text — decide based on what's needed.
 - For simple questions, answer directly without tools.
@@ -100,7 +102,7 @@ async function processInput(userInput) {
 
     let result;
     try {
-      const allTools = [...TOOL_DEFINITIONS, ...getMCPToolDefinitions()];
+      const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
       result = await callStream(apiMessages, allTools, {
         onToken: (text) => {
           if (firstToken) {
@@ -196,13 +198,18 @@ async function processInput(userInput) {
       // Pre-tool hook
       runHooks('pre-tool', { tool_name: fnName });
 
-      // Execute: MCP tools or built-in tools
+      // Execute: Skill tools, MCP tools, or built-in tools
       let toolResult;
-      const mcpResult = await routeMCPCall(fnName, args);
-      if (mcpResult !== null) {
-        toolResult = mcpResult;
+      const skillResult = await routeSkillCall(fnName, args);
+      if (skillResult !== null) {
+        toolResult = skillResult;
       } else {
-        toolResult = await executeTool(fnName, args);
+        const mcpResult = await routeMCPCall(fnName, args);
+        if (mcpResult !== null) {
+          toolResult = mcpResult;
+        } else {
+          toolResult = await executeTool(fnName, args);
+        }
       }
 
       const truncated =

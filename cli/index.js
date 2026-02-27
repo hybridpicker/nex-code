@@ -23,6 +23,7 @@ const { isGitRepo, getCurrentBranch, formatDiffSummary, analyzeDiff, commit, cre
 const { listServers, connectAll, disconnectAll } = require('./mcp');
 const { listHooks, runHooks, HOOK_EVENTS } = require('./hooks');
 const { formatCosts, resetCosts } = require('./costs');
+const { loadAllSkills, listSkills, enableSkill, disableSkill, getSkillCommands, handleSkillCommand } = require('./skills');
 
 const CWD = process.cwd();
 
@@ -55,22 +56,29 @@ const SLASH_COMMANDS = [
   { cmd: '/branch',      desc: 'Create feature branch' },
   { cmd: '/mcp',         desc: 'MCP servers and tools' },
   { cmd: '/hooks',       desc: 'Show configured hooks' },
+  { cmd: '/skills',      desc: 'List, enable, disable skills' },
   { cmd: '/exit',        desc: 'Quit' },
 ];
 
 function showCommandList() {
-  const maxLen = Math.max(...SLASH_COMMANDS.map((c) => c.cmd.length));
+  const skillCmds = getSkillCommands();
+  const allCmds = [...SLASH_COMMANDS, ...skillCmds];
+  const maxLen = Math.max(...allCmds.map((c) => c.cmd.length));
   console.log('');
   for (const { cmd, desc } of SLASH_COMMANDS) {
     console.log(`  ${C.cyan}${cmd.padEnd(maxLen + 2)}${C.reset}${C.dim}${desc}${C.reset}`);
+  }
+  for (const { cmd, desc } of skillCmds) {
+    console.log(`  ${C.cyan}${cmd.padEnd(maxLen + 2)}${C.reset}${C.dim}${desc} ${C.yellow}[skill]${C.reset}`);
   }
   console.log(`\n${C.dim}Type /help for detailed usage${C.reset}\n`);
 }
 
 function completer(line) {
   if (!line.startsWith('/')) return [[], line];
-  const hits = SLASH_COMMANDS.map((c) => c.cmd).filter((c) => c.startsWith(line));
-  return [hits.length ? hits : SLASH_COMMANDS.map((c) => c.cmd), line];
+  const allCmds = [...SLASH_COMMANDS, ...getSkillCommands()];
+  const hits = allCmds.map((c) => c.cmd).filter((c) => c.startsWith(line));
+  return [hits.length ? hits : allCmds.map((c) => c.cmd), line];
 }
 
 function showHelp() {
@@ -118,6 +126,9 @@ ${C.bold}${C.cyan}Extensibility:${C.reset}
   ${C.cyan}/mcp${C.reset}              ${C.dim}Show MCP servers and tools${C.reset}
   ${C.cyan}/mcp connect${C.reset}      ${C.dim}Connect all configured MCP servers${C.reset}
   ${C.cyan}/hooks${C.reset}            ${C.dim}Show configured hooks${C.reset}
+  ${C.cyan}/skills${C.reset}           ${C.dim}List loaded skills${C.reset}
+  ${C.cyan}/skills enable${C.reset}    ${C.dim}Enable a skill by name${C.reset}
+  ${C.cyan}/skills disable${C.reset}   ${C.dim}Disable a skill by name${C.reset}
 
   ${C.cyan}/exit${C.reset}             ${C.dim}Quit${C.reset}
 `);
@@ -569,12 +580,54 @@ function handleSlashCommand(input) {
       return true;
     }
 
+    case '/skills': {
+      const skillArg = rest.join(' ').trim();
+      if (skillArg.startsWith('enable ')) {
+        const name = skillArg.substring(7).trim();
+        if (enableSkill(name)) {
+          console.log(`${C.green}Skill enabled: ${name}${C.reset}`);
+        } else {
+          console.log(`${C.red}Skill not found: ${name}${C.reset}`);
+        }
+        return true;
+      }
+      if (skillArg.startsWith('disable ')) {
+        const name = skillArg.substring(8).trim();
+        if (disableSkill(name)) {
+          console.log(`${C.yellow}Skill disabled: ${name}${C.reset}`);
+        } else {
+          console.log(`${C.red}Skill not found: ${name}${C.reset}`);
+        }
+        return true;
+      }
+      const skills = listSkills();
+      if (skills.length === 0) {
+        console.log(`${C.dim}No skills loaded${C.reset}`);
+        console.log(`${C.dim}Add .md or .js files to .nex/skills/${C.reset}`);
+        return true;
+      }
+      console.log(`\n${C.bold}${C.cyan}Skills:${C.reset}`);
+      for (const s of skills) {
+        const status = s.enabled ? `${C.green}✓${C.reset}` : `${C.red}✗${C.reset}`;
+        const tag = s.type === 'prompt' ? `${C.dim}(prompt)${C.reset}` : `${C.dim}(script)${C.reset}`;
+        const extras = [];
+        if (s.commands > 0) extras.push(`${s.commands} cmd`);
+        if (s.tools > 0) extras.push(`${s.tools} tools`);
+        const info = extras.length > 0 ? ` — ${extras.join(', ')}` : '';
+        console.log(`  ${status} ${C.bold}${s.name}${C.reset} ${tag}${info}`);
+      }
+      console.log(`\n${C.dim}Use /skills enable <name> or /skills disable <name>${C.reset}\n`);
+      return true;
+    }
+
     case '/exit':
     case '/quit':
       console.log(`\n${C.gray}Bye!${C.reset}`);
       process.exit(0);
 
     default:
+      // Check if it's a skill command before reporting unknown
+      if (handleSkillCommand(input)) return true;
       console.log(`${C.red}Unknown command: ${cmd}. Type /help${C.reset}`);
       return true;
   }
@@ -610,6 +663,8 @@ function startREPL() {
     }
   }
 
+  loadAllSkills();
+
   const model = getActiveModel();
   const providerName = getActiveProviderName();
   banner(`${providerName}:${model.id}`, CWD);
@@ -636,7 +691,7 @@ function startREPL() {
   }
 
   function _showSug(line) {
-    const hits = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(line));
+    const hits = [...SLASH_COMMANDS, ...getSkillCommands()].filter((c) => c.cmd.startsWith(line));
     if (!hits.length || (hits.length === 1 && hits[0].cmd === line)) return;
     const maxShow = 10;
     const show = hits.slice(0, maxShow);
