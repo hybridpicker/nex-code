@@ -34,7 +34,9 @@ cli/diff.js              → LCS Diff + Colored Output + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
 cli/ui.js                → ANSI Colors, Spinner, Formatting
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
-tests/                   → Jest, 27 Suites, 772 Tests, 95%+ Coverage
+cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
+cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full)
+tests/                   → Jest, 32 Suites, 954 Tests, 88%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -98,6 +100,11 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Lazy `process.cwd()` Evaluation in Modulen (für Jest-Mocking)
 - Tool-Output wird bei 50KB abgeschnitten
 - Max 30 Iterationen pro User-Input im Agentic Loop
+- Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
+- parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
+- Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
+- Tool-Tiers: essential (5) / standard (9) / full (12) — dynamisch pro Model/Provider
+- Local Provider: Dynamische Context-Window-Erkennung via /api/show
 
 ## .nex/ Verzeichnis
 
