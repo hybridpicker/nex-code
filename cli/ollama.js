@@ -47,9 +47,28 @@ function parseToolArgs(raw) {
     try {
       return JSON.parse(match[0]);
     } catch {
+      /* continue */
+    }
+  }
+
+  // Strategy 4: Fix unquoted keys (common in OS models)
+  try {
+    const fixedKeys = raw.replace(/(\{|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
+    return JSON.parse(fixedKeys);
+  } catch {
+    /* continue */
+  }
+
+  // Strategy 5: Strip markdown code fences (DeepSeek R1, Llama wrap JSON in ```json)
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1].trim());
+    } catch {
       /* give up */
     }
   }
+
   return null;
 }
 
