@@ -907,4 +907,4 @@ function startREPL() {
   });
 }
 
-module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX };
+module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, handleSlashCommand, showProviders, showHelp, renderBar };
