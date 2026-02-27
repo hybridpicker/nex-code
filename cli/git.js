@@ -154,16 +154,16 @@ function formatDiffSummary() {
   if (!analysis) return `${C.dim}No changes${C.reset}`;
 
   const lines = [];
-  lines.push(`\n${C.bold}${C.white}Git Diff Summary:${C.reset}`);
+  lines.push(`\n${C.bold}${C.cyan}Git Diff Summary:${C.reset}`);
   lines.push(`  ${C.green}+${analysis.stats.additions}${C.reset} ${C.red}-${analysis.stats.deletions}${C.reset} in ${analysis.files.length} file(s)`);
-  lines.push(`\n${C.bold}${C.white}Files:${C.reset}`);
+  lines.push(`\n${C.bold}${C.cyan}Files:${C.reset}`);
   for (const f of analysis.files.slice(0, 20)) {
     lines.push(`  ${C.dim}${f}${C.reset}`);
   }
   if (analysis.files.length > 20) {
     lines.push(`  ${C.dim}...+${analysis.files.length - 20} more${C.reset}`);
   }
-  lines.push(`\n${C.bold}${C.white}Suggested message:${C.reset}`);
+  lines.push(`\n${C.bold}${C.cyan}Suggested message:${C.reset}`);
   lines.push(`  ${C.cyan}${analysis.summary}${C.reset}\n`);
   return lines.join('\n');
 }

@@ -31,6 +31,35 @@ describe('costs.js', () => {
       expect(PRICING.ollama['kimi-k2.5'].output).toBe(0);
     });
 
+    it('has pricing for gemini models', () => {
+      expect(PRICING.gemini['gemini-2.5-pro']).toBeDefined();
+      expect(PRICING.gemini['gemini-2.5-pro'].input).toBe(1.25);
+      expect(PRICING.gemini['gemini-2.5-pro'].output).toBe(10.0);
+      expect(PRICING.gemini['gemini-2.5-flash'].input).toBe(0.15);
+      expect(PRICING.gemini['gemini-2.0-flash'].input).toBe(0.10);
+      expect(PRICING.gemini['gemini-2.0-flash-lite'].input).toBe(0.075);
+    });
+
+    it('has pricing for new openai models', () => {
+      expect(PRICING.openai['gpt-4.1'].input).toBe(2.0);
+      expect(PRICING.openai['gpt-4.1'].output).toBe(8.0);
+      expect(PRICING.openai['gpt-4.1-mini'].input).toBe(0.4);
+      expect(PRICING.openai['gpt-4.1-nano'].input).toBe(0.1);
+      expect(PRICING.openai['o4-mini'].input).toBe(1.1);
+    });
+
+    it('has pricing for new anthropic models', () => {
+      expect(PRICING.anthropic['claude-sonnet-4-5'].input).toBe(3.0);
+      expect(PRICING.anthropic['claude-3-5-sonnet'].input).toBe(3.0);
+    });
+
+    it('has zero pricing for new ollama models', () => {
+      expect(PRICING.ollama['deepseek-r1'].input).toBe(0);
+      expect(PRICING.ollama['llama-4-scout'].input).toBe(0);
+      expect(PRICING.ollama['qwen3-30b-a3b'].input).toBe(0);
+      expect(PRICING.ollama['devstral'].input).toBe(0);
+    });
+
     it('has empty pricing for local provider', () => {
       expect(PRICING.local).toEqual({});
     });

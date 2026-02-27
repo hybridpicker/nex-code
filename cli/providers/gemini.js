@@ -1,30 +1,26 @@
 /**
- * cli/providers/openai.js — OpenAI-compatible Provider
- * Supports GPT-4o, o1, o3, GPT-4o-mini via OpenAI API with SSE streaming.
+ * cli/providers/gemini.js — Google Gemini Provider
+ * Supports Gemini 2.5 Pro, 2.5 Flash, 2.0 Flash, 2.0 Flash Lite via
+ * Google's OpenAI-compatible endpoint with SSE streaming.
  */
 
 const axios = require('axios');
 const { BaseProvider } = require('./base');
 
-const OPENAI_MODELS = {
-  'gpt-4o': { id: 'gpt-4o', name: 'GPT-4o', maxTokens: 16384, contextWindow: 128000 },
-  'gpt-4o-mini': { id: 'gpt-4o-mini', name: 'GPT-4o Mini', maxTokens: 16384, contextWindow: 128000 },
-  'gpt-4.1': { id: 'gpt-4.1', name: 'GPT-4.1', maxTokens: 32768, contextWindow: 128000 },
-  'gpt-4.1-mini': { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', maxTokens: 32768, contextWindow: 128000 },
-  'gpt-4.1-nano': { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', maxTokens: 16384, contextWindow: 128000 },
-  'o1': { id: 'o1', name: 'o1', maxTokens: 100000, contextWindow: 200000 },
-  'o3': { id: 'o3', name: 'o3', maxTokens: 100000, contextWindow: 200000 },
-  'o3-mini': { id: 'o3-mini', name: 'o3 Mini', maxTokens: 65536, contextWindow: 200000 },
-  'o4-mini': { id: 'o4-mini', name: 'o4 Mini', maxTokens: 100000, contextWindow: 200000 },
+const GEMINI_MODELS = {
+  'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', maxTokens: 65536, contextWindow: 1048576 },
+  'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', maxTokens: 65536, contextWindow: 1048576 },
+  'gemini-2.0-flash': { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', maxTokens: 8192, contextWindow: 1048576 },
+  'gemini-2.0-flash-lite': { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', maxTokens: 8192, contextWindow: 1048576 },
 };
 
-class OpenAIProvider extends BaseProvider {
+class GeminiProvider extends BaseProvider {
   constructor(config = {}) {
     super({
-      name: 'openai',
-      baseUrl: config.baseUrl || 'https://api.openai.com/v1',
-      models: config.models || OPENAI_MODELS,
-      defaultModel: config.defaultModel || 'gpt-4o',
+      name: 'gemini',
+      baseUrl: config.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai',
+      models: config.models || GEMINI_MODELS,
+      defaultModel: config.defaultModel || 'gemini-2.5-flash',
       ...config,
     });
     this.timeout = config.timeout || 180000;
@@ -36,12 +32,12 @@ class OpenAIProvider extends BaseProvider {
   }
 
   getApiKey() {
-    return process.env.OPENAI_API_KEY || null;
+    return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
   }
 
   _getHeaders() {
     const key = this.getApiKey();
-    if (!key) throw new Error('OPENAI_API_KEY not set');
+    if (!key) throw new Error('GEMINI_API_KEY not set');
     return {
       Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
@@ -83,7 +79,7 @@ class OpenAIProvider extends BaseProvider {
   async chat(messages, tools, options = {}) {
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
-    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
+    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
     const { messages: formatted } = this.formatMessages(messages);
 
     const body = {
@@ -108,7 +104,7 @@ class OpenAIProvider extends BaseProvider {
   async stream(messages, tools, options = {}) {
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
-    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
+    const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
     const onToken = options.onToken || (() => {});
     const { messages: formatted } = this.formatMessages(messages);
 
@@ -214,7 +210,7 @@ class OpenAIProvider extends BaseProvider {
     return Object.values(toolCallsMap)
       .filter((tc) => tc.name)
       .map((tc) => ({
-        id: tc.id || `openai-${Date.now()}`,
+        id: tc.id || `gemini-${Date.now()}`,
         function: {
           name: tc.name,
           arguments: tc.arguments,
@@ -223,4 +219,4 @@ class OpenAIProvider extends BaseProvider {
   }
 }
 
-module.exports = { OpenAIProvider, OPENAI_MODELS };
+module.exports = { GeminiProvider, GEMINI_MODELS };

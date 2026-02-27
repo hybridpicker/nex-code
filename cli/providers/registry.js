@@ -9,6 +9,7 @@
 const { OllamaProvider } = require('./ollama');
 const { OpenAIProvider } = require('./openai');
 const { AnthropicProvider } = require('./anthropic');
+const { GeminiProvider } = require('./gemini');
 const { LocalProvider } = require('./local');
 
 // ─── Registry State ────────────────────────────────────────────
@@ -26,6 +27,7 @@ function initDefaults() {
   registerProvider('ollama', new OllamaProvider());
   registerProvider('openai', new OpenAIProvider());
   registerProvider('anthropic', new AnthropicProvider());
+  registerProvider('gemini', new GeminiProvider());
   registerProvider('local', new LocalProvider());
 
   // Determine active provider from env or default to ollama

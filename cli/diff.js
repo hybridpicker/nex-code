@@ -55,7 +55,7 @@ function diffLines(oldText, newText) {
  * Show colored diff for edit_file (old_text → new_text) with context lines
  */
 function showEditDiff(filePath, oldText, newText, contextLines = 3) {
-  console.log(`\n${C.bold}${C.white}  Diff: ${filePath}${C.reset}`);
+  console.log(`\n${C.bold}${C.cyan}  Diff: ${filePath}${C.reset}`);
   const ops = diffLines(oldText, newText);
 
   // Find changed regions and show with context
@@ -96,7 +96,7 @@ function showEditDiff(filePath, oldText, newText, contextLines = 3) {
  * Show diff for write_file when file already exists
  */
 function showWriteDiff(filePath, oldContent, newContent) {
-  console.log(`\n${C.bold}${C.white}  File exists — showing changes: ${filePath}${C.reset}`);
+  console.log(`\n${C.bold}${C.cyan}  File exists — showing changes: ${filePath}${C.reset}`);
   const ops = diffLines(oldContent, newContent);
 
   let changes = 0;
@@ -139,7 +139,7 @@ function showWriteDiff(filePath, oldContent, newContent) {
  * Show preview for new file creation
  */
 function showNewFilePreview(filePath, content) {
-  console.log(`\n${C.bold}${C.white}  New file: ${filePath}${C.reset}`);
+  console.log(`\n${C.bold}${C.cyan}  New file: ${filePath}${C.reset}`);
   const lines = content.split('\n');
   const preview = lines.slice(0, 20);
   for (const line of preview) {

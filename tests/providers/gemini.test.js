@@ -3,97 +3,117 @@ const { EventEmitter } = require('events');
 jest.mock('axios', () => ({ post: jest.fn() }));
 const axios = require('axios');
 
-const { OpenAIProvider, OPENAI_MODELS } = require('../../cli/providers/openai');
+const { GeminiProvider, GEMINI_MODELS } = require('../../cli/providers/gemini');
 
-describe('providers/openai.js', () => {
+describe('providers/gemini.js', () => {
   let provider;
 
   beforeEach(() => {
-    provider = new OpenAIProvider();
-    process.env.OPENAI_API_KEY = 'sk-test-123';
+    provider = new GeminiProvider();
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
     jest.clearAllMocks();
   });
 
   afterEach(() => {
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
   });
 
   // ─── Configuration ──────────────────────────────────────────
   describe('configuration', () => {
     it('has correct provider name', () => {
-      expect(provider.name).toBe('openai');
+      expect(provider.name).toBe('gemini');
     });
 
     it('uses correct base URL', () => {
-      expect(provider.baseUrl).toBe('https://api.openai.com/v1');
+      expect(provider.baseUrl).toBe('https://generativelanguage.googleapis.com/v1beta/openai');
     });
 
     it('has default models', () => {
-      expect(provider.getModelNames()).toContain('gpt-4o');
-      expect(provider.getModelNames()).toContain('gpt-4o-mini');
-      expect(provider.getModelNames()).toContain('gpt-4.1');
-      expect(provider.getModelNames()).toContain('gpt-4.1-mini');
-      expect(provider.getModelNames()).toContain('gpt-4.1-nano');
-      expect(provider.getModelNames()).toContain('o1');
-      expect(provider.getModelNames()).toContain('o3');
-      expect(provider.getModelNames()).toContain('o4-mini');
+      expect(provider.getModelNames()).toContain('gemini-2.5-pro');
+      expect(provider.getModelNames()).toContain('gemini-2.5-flash');
+      expect(provider.getModelNames()).toContain('gemini-2.0-flash');
+      expect(provider.getModelNames()).toContain('gemini-2.0-flash-lite');
     });
 
-    it('defaults to gpt-4o', () => {
-      expect(provider.defaultModel).toBe('gpt-4o');
+    it('defaults to gemini-2.5-flash', () => {
+      expect(provider.defaultModel).toBe('gemini-2.5-flash');
     });
 
     it('allows custom config', () => {
-      const custom = new OpenAIProvider({
-        baseUrl: 'https://custom.openai.com/v1',
-        defaultModel: 'o3',
+      const custom = new GeminiProvider({
+        baseUrl: 'https://custom.google.com/v1',
+        defaultModel: 'gemini-2.5-pro',
       });
-      expect(custom.baseUrl).toBe('https://custom.openai.com/v1');
-      expect(custom.defaultModel).toBe('o3');
+      expect(custom.baseUrl).toBe('https://custom.google.com/v1');
+      expect(custom.defaultModel).toBe('gemini-2.5-pro');
     });
   });
 
   // ─── isConfigured / getApiKey ──────────────────────────────
   describe('isConfigured()', () => {
-    it('returns true when API key is set', () => {
+    it('returns true when GEMINI_API_KEY is set', () => {
       expect(provider.isConfigured()).toBe(true);
     });
 
-    it('returns false when API key is missing', () => {
-      delete process.env.OPENAI_API_KEY;
+    it('returns true when GOOGLE_API_KEY is set', () => {
+      delete process.env.GEMINI_API_KEY;
+      process.env.GOOGLE_API_KEY = 'google-key';
+      expect(provider.isConfigured()).toBe(true);
+    });
+
+    it('returns false when no API key is set', () => {
+      delete process.env.GEMINI_API_KEY;
       expect(provider.isConfigured()).toBe(false);
     });
   });
 
-  // ─── OPENAI_MODELS export ──────────────────────────────────
-  describe('OPENAI_MODELS', () => {
-    it('exports gpt-4o model info', () => {
-      expect(OPENAI_MODELS['gpt-4o']).toMatchObject({
-        id: 'gpt-4o',
-        name: 'GPT-4o',
-        contextWindow: 128000,
+  describe('getApiKey()', () => {
+    it('prefers GEMINI_API_KEY', () => {
+      process.env.GOOGLE_API_KEY = 'google-key';
+      expect(provider.getApiKey()).toBe('test-gemini-key');
+    });
+
+    it('falls back to GOOGLE_API_KEY', () => {
+      delete process.env.GEMINI_API_KEY;
+      process.env.GOOGLE_API_KEY = 'google-key';
+      expect(provider.getApiKey()).toBe('google-key');
+    });
+
+    it('returns null when missing', () => {
+      delete process.env.GEMINI_API_KEY;
+      expect(provider.getApiKey()).toBeNull();
+    });
+  });
+
+  // ─── GEMINI_MODELS export ────────────────────────────────────
+  describe('GEMINI_MODELS', () => {
+    it('exports gemini-2.5-pro model info', () => {
+      expect(GEMINI_MODELS['gemini-2.5-pro']).toMatchObject({
+        id: 'gemini-2.5-pro',
+        name: 'Gemini 2.5 Pro',
+        contextWindow: 1048576,
       });
     });
 
-    it('exports o3 model info', () => {
-      expect(OPENAI_MODELS['o3']).toMatchObject({ id: 'o3', name: 'o3' });
-    });
-
-    it('exports gpt-4.1 model info', () => {
-      expect(OPENAI_MODELS['gpt-4.1']).toMatchObject({
-        id: 'gpt-4.1',
-        name: 'GPT-4.1',
-        maxTokens: 32768,
-        contextWindow: 128000,
+    it('exports gemini-2.5-flash model info', () => {
+      expect(GEMINI_MODELS['gemini-2.5-flash']).toMatchObject({
+        id: 'gemini-2.5-flash',
+        name: 'Gemini 2.5 Flash',
       });
     });
 
-    it('exports o4-mini model info', () => {
-      expect(OPENAI_MODELS['o4-mini']).toMatchObject({
-        id: 'o4-mini',
-        name: 'o4 Mini',
-        maxTokens: 100000,
-        contextWindow: 200000,
+    it('exports gemini-2.0-flash model info', () => {
+      expect(GEMINI_MODELS['gemini-2.0-flash']).toMatchObject({
+        id: 'gemini-2.0-flash',
+        name: 'Gemini 2.0 Flash',
+      });
+    });
+
+    it('exports gemini-2.0-flash-lite model info', () => {
+      expect(GEMINI_MODELS['gemini-2.0-flash-lite']).toMatchObject({
+        id: 'gemini-2.0-flash-lite',
+        name: 'Gemini 2.0 Flash Lite',
       });
     });
   });
@@ -157,19 +177,19 @@ describe('providers/openai.js', () => {
       const result = await provider.chat([{ role: 'user', content: 'Hi' }], []);
       expect(result.content).toBe('Hello');
       expect(axios.post).toHaveBeenCalledWith(
-        'https://api.openai.com/v1/chat/completions',
-        expect.objectContaining({ model: 'gpt-4o' }),
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        expect.objectContaining({ model: 'gemini-2.5-flash' }),
         expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: 'Bearer sk-test-123',
+            Authorization: 'Bearer test-gemini-key',
           }),
         })
       );
     });
 
     it('throws when API key is missing', async () => {
-      delete process.env.OPENAI_API_KEY;
-      await expect(provider.chat([], [])).rejects.toThrow('OPENAI_API_KEY not set');
+      delete process.env.GEMINI_API_KEY;
+      await expect(provider.chat([], [])).rejects.toThrow('GEMINI_API_KEY not set');
     });
 
     it('sends tools when provided', async () => {
@@ -297,28 +317,6 @@ describe('providers/openai.js', () => {
 
       const result = await provider.stream([], []);
       expect(result.content).toBe('partial');
-    });
-
-    it('handles multiple tool calls', async () => {
-      const stream = createSSEStream([
-        JSON.stringify({
-          choices: [{
-            delta: {
-              tool_calls: [
-                { index: 0, id: 'c1', function: { name: 'bash', arguments: '{"command":"ls"}' } },
-                { index: 1, id: 'c2', function: { name: 'read_file', arguments: '{"path":"test.js"}' } },
-              ],
-            },
-          }],
-        }),
-        '[DONE]',
-      ]);
-      axios.post.mockResolvedValueOnce({ data: stream });
-
-      const result = await provider.stream([], []);
-      expect(result.tool_calls).toHaveLength(2);
-      expect(result.tool_calls[0].function.name).toBe('bash');
-      expect(result.tool_calls[1].function.name).toBe('read_file');
     });
   });
 
