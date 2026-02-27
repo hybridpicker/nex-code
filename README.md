@@ -237,6 +237,32 @@ Track token usage and costs per provider:
 /costs reset
 ```
 
+### Open-Source Model Robustness
+
+Four features that make Nex Code significantly more reliable with open-source models:
+
+**Tool Call Retry with Schema Hints** — When a model sends malformed tool arguments, instead of a bare error, the agent sends back the expected JSON schema so the model can self-correct on the next loop iteration.
+
+**Smart Argument Parsing** — 5 fallback strategies for parsing tool arguments: direct JSON, trailing comma/quote fixes, JSON extraction from surrounding text, unquoted key repair, and markdown code fence stripping (common with DeepSeek R1, Llama).
+
+**Tool Argument Validation** — Validates arguments against tool schemas before execution. Auto-corrects similar parameter names (Levenshtein distance), fixes type mismatches (string↔number↔boolean), and provides "did you mean?" suggestions.
+
+**Tool Tiers** — Dynamically reduces the tool set based on model capability:
+- **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
+- **standard** (9 tools): + search_files, glob, grep, ask_user
+- **full** (12 tools): all tools
+
+Models are auto-classified, or override per-model in `.nex/config.json`:
+```json
+{
+  "toolTiers": {
+    "deepseek-r1": "essential",
+    "local:*": "essential",
+    "qwen3-coder": "full"
+  }
+}
+```
+
 ---
 
 ## Skills
@@ -369,6 +395,8 @@ cli/
 ├── diff.js              # LCS diff + colored output
 ├── costs.js             # Token cost tracking
 ├── safety.js            # Forbidden/dangerous pattern detection
+├── tool-validator.js    # Tool argument validation + auto-correction
+├── tool-tiers.js        # Dynamic tool set selection per model
 ├── ui.js                # ANSI colors, spinner, formatting
 └── ollama.js            # Backward-compatible wrapper
 ```
@@ -380,8 +408,14 @@ User Input
     |
 [System Prompt + Context + Memory + Skills + Conversation]
     |
+[Filter tools by model tier (essential/standard/full)]
+    |
 Provider API (streaming) --> Text tokens --> rendered to terminal
-    |                   \--> Tool calls --> execute (skill / MCP / built-in)
+    |                   \--> Tool calls --> parse args (5 strategies)
+    |                                       |
+    |                              [Validate against schema + auto-correct]
+    |                                       |
+    |                              Execute (skill / MCP / built-in)
     |
 [Tool results added to history]
     |
@@ -413,7 +447,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-28 test suites, 831 tests, 93% statement coverage.
+32 test suites, 954 tests, 88% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
