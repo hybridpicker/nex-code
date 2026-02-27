@@ -10,43 +10,16 @@
 </p>
 
 <p align="center">
-  Supports OpenAI, Anthropic, Google Gemini, Ollama Cloud, and local Ollama servers.
+  Supports <b>OpenAI</b>, <b>Anthropic</b>, <b>Google Gemini</b>, <b>Ollama Cloud</b>, and <b>local Ollama</b> servers.
 </p>
 
-## Features
-
-### Streaming Output
-Tokens appear live as the model generates them. No waiting for the full response — you see the agent think in real time. Uses NDJSON streaming over the Ollama API with a braille spinner during connection.
-
-### Conversation Mode
-Context persists across messages. Ask follow-up questions, iterate on code, or have a multi-turn discussion — the agent remembers everything from the current session. Use `/clear` to start fresh.
-
-### Diff Preview
-Every file change is shown as a colored diff before being applied:
-- **edit_file**: Red/green diff with 3 lines of context around changes
-- **write_file** (existing file): Line-by-line comparison, up to 30 changed lines
-- **write_file** (new file): Preview of the first 20 lines
-- All changes require explicit `[y/n]` confirmation (toggle with `/autoconfirm`)
-
-### Auto-Context
-On startup, the CLI reads the project you're working in and injects context into the system prompt:
-- `package.json` — name, version, scripts, dependency counts
-- `README.md` — first 50 lines
-- `git branch`, `git status`, `git log --oneline -5`
-- `.gitignore` content
-
-The agent knows your project before you type a single word.
-
-### Safety Layer
-Two tiers of protection:
-- **Forbidden** (blocked, no override): `rm -rf /`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, `eval()`, reverse shells, code injection — 30+ patterns
-- **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `kubectl delete`, `sudo`, `ssh`, `wget`, `pip install` — 14 patterns
+---
 
 ## Setup
 
 ### Prerequisites
 - Node.js 18+
-- An [Ollama Cloud](https://ollama.com) API key (Pro plan, $20/month flat-rate)
+- At least one API key **or** a local [Ollama](https://ollama.com/download) server
 
 ### Installation
 
@@ -55,12 +28,21 @@ git clone git@github.com:hybridpicker/nex-code.git
 cd nex-code
 npm install
 cp .env.example .env
-# Add your API key to .env:
-#   OLLAMA_API_KEY=your-key-here
 npm link
 ```
 
-After `npm link`, `nex-code` is globally available in your terminal.
+### Configure a Provider
+
+Add one or more API keys to `.env`:
+
+```bash
+# Pick any — only one is required
+OLLAMA_API_KEY=your-key       # Ollama Cloud (Kimi K2.5, Qwen3, DeepSeek R1, Llama 4, Devstral)
+OPENAI_API_KEY=your-key       # OpenAI (GPT-4o, GPT-4.1, o1, o3, o4-mini)
+ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet, Opus, Haiku)
+GEMINI_API_KEY=your-key       # Google Gemini (2.5 Pro/Flash, 2.0 Flash)
+# No key needed for local Ollama — just have it running
+```
 
 ### Verify
 
@@ -69,36 +51,91 @@ cd ~/any-project
 nex-code
 ```
 
-You should see the banner, your project context, and the `nex>` prompt.
+You should see the banner, your project context, and the `>` prompt.
+
+---
 
 ## Usage
 
 ```
-nex> explain the main function in index.js
-nex> add input validation to the createUser handler
-nex> run the tests and fix any failures
-nex> refactor this to use async/await instead of callbacks
+> explain the main function in index.js
+> add input validation to the createUser handler
+> run the tests and fix any failures
+> refactor this to use async/await instead of callbacks
 ```
 
 The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
 
-### Commands
+---
 
-Type `/` to see inline suggestions as you type — commands filter live with each keystroke. Tab completion is also supported.
+## Providers & Models
+
+Switch providers and models at runtime:
+
+```
+/model openai:gpt-4o
+/model anthropic:claude-sonnet
+/model gemini:gemini-2.5-pro
+/model local:llama3
+/providers                     # see all available providers & models
+```
+
+| Provider | Models | Env Variable |
+|----------|--------|-------------|
+| **ollama** | Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral | `OLLAMA_API_KEY` |
+| **openai** | GPT-4o, GPT-4.1, o1, o3, o4-mini | `OPENAI_API_KEY` |
+| **anthropic** | Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet | `ANTHROPIC_API_KEY` |
+| **gemini** | Gemini 2.5 Pro/Flash, 2.0 Flash/Lite | `GEMINI_API_KEY` |
+| **local** | Any model on your local Ollama server | (none) |
+
+Fallback chains let you auto-switch when a provider fails:
+```
+/fallback anthropic,openai,local
+```
+
+---
+
+## Commands
+
+Type `/` to see inline suggestions as you type. Tab completion is supported.
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show all commands |
-| `/model <name>` | Switch model (`kimi-k2.5`, `qwen3-coder`) |
-| `/model` | Show active model |
-| `/clear` | Clear conversation history |
-| `/context` | Show current project context |
-| `/autoconfirm` | Toggle auto-confirm (skip `[y/n]` prompts) |
-| `/exit` | Quit (also `/quit` or Ctrl+C) |
+| `/help` | Full help |
+| `/model [spec]` | Show/switch model (e.g. `openai:gpt-4o`) |
+| `/providers` | List all providers and models |
+| `/fallback [chain]` | Show/set fallback chain |
+| `/tokens` | Token usage and context budget |
+| `/costs` | Session token costs |
+| `/clear` | Clear conversation |
+| `/context` | Show project context |
+| `/autoconfirm` | Toggle auto-confirm for file changes |
+| `/save [name]` | Save current session |
+| `/load <name>` | Load a saved session |
+| `/sessions` | List saved sessions |
+| `/resume` | Resume last session |
+| `/remember <text>` | Save a memory (persists across sessions) |
+| `/forget <key>` | Delete a memory |
+| `/memory` | Show all memories |
+| `/permissions` | Show tool permissions |
+| `/allow <tool>` | Auto-allow a tool |
+| `/deny <tool>` | Block a tool |
+| `/plan [task]` | Plan mode (analyze before executing) |
+| `/plans` | List saved plans |
+| `/auto [level]` | Set autonomy: interactive/semi-auto/autonomous |
+| `/commit [msg]` | Smart commit (analyze diff, suggest message) |
+| `/diff` | Show current diff |
+| `/branch [name]` | Create feature branch |
+| `/mcp` | MCP servers and tools |
+| `/hooks` | Show configured hooks |
+| `/skills` | List, enable, disable skills |
+| `/exit` | Quit |
+
+---
 
 ## Tools
 
-The agent has 6 tools available:
+The agent has 12 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -106,29 +143,111 @@ The agent has 6 tools available:
 | `read_file` | Read files with optional line range |
 | `write_file` | Create or overwrite files (with diff preview + confirmation) |
 | `edit_file` | Targeted text replacement (with diff preview + confirmation) |
+| `patch_file` | Multiple replacements in a single operation |
 | `list_directory` | Tree view with depth control and glob filtering |
-| `search_files` | Regex search across files (like grep, max 50 results) |
+| `search_files` | Regex search across files (like grep) |
+| `glob` | Fast file search by name/extension pattern |
+| `grep` | Content search with regex and line numbers |
+| `web_fetch` | Fetch content from a URL |
+| `web_search` | Search the web via DuckDuckGo |
+| `ask_user` | Ask the user a question and wait for input |
 
-## Models
+Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
-| Model | ID | Description |
-|-------|-----|-------------|
-| **Kimi K2.5** | `kimi-k2.5` | Default. Fast, capable coding model via Ollama Cloud |
-| **Qwen3 Coder** | `qwen3-coder` | Alternative coding model |
+---
 
-Both run on Ollama Cloud (Pro plan). Switch at runtime with `/model <name>`.
+## Features
+
+### Streaming Output
+Tokens appear live as the model generates them. Braille spinner during connection, then real-time text rendering with markdown formatting and syntax highlighting.
+
+### Diff Preview
+Every file change is shown as a colored diff before being applied:
+- **edit_file**: Red/green diff with 3 lines of context
+- **write_file** (overwrite): Line-by-line comparison
+- **write_file** (new): Preview of the first 20 lines
+- All changes require `[y/n]` confirmation (toggle with `/autoconfirm`)
+
+### Auto-Context
+On startup, the CLI reads your project and injects context into the system prompt:
+- `package.json` — name, version, scripts, dependencies
+- `README.md` — first 50 lines
+- Git info — branch, status, recent commits
+- `.gitignore` content
+
+### Context Engine
+Automatic token management with compression when the context window gets full. Tracks token usage across system prompt, conversation, tool results, and tool definitions.
+
+### Safety Layer
+Two tiers of protection:
+- **Forbidden** (blocked): `rm -rf /`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
+- **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
+
+### Sessions
+Save and restore conversations:
+```
+/save my-feature
+/load my-feature
+/resume              # resume last session
+```
+Auto-save after every turn.
+
+### Memory
+Persistent project memory that survives across sessions:
+```
+/remember lang=TypeScript
+/remember always use yarn instead of npm
+/memory
+/forget lang
+```
+
+Also loads `NEX.md` from project root (like `CLAUDE.md`).
+
+### Plan Mode
+Analyze before executing — the agent creates a plan, you review and approve:
+```
+/plan refactor the auth module
+/plan status
+/plan approve
+/auto semi-auto      # set autonomy level
+```
+
+### Git Intelligence
+```
+/commit              # analyze diff, suggest commit message
+/commit feat: add login
+/diff                # show current diff summary
+/branch my-feature   # create and switch to branch
+```
+
+### Permissions
+Control which tools the agent can use:
+```
+/permissions         # show current settings
+/allow read_file     # auto-allow without asking
+/deny bash           # block completely
+```
+
+Persisted in `.nex/config.json`.
+
+### Cost Tracking
+Track token usage and costs per provider:
+```
+/costs
+/costs reset
+```
+
+---
 
 ## Skills
 
 Extend Nex Code with project-specific knowledge, commands, and tools via `.nex/skills/`.
 
 ### Prompt Skills (`.md`)
-Drop a Markdown file into `.nex/skills/` and its content is injected into the system prompt:
+Drop a Markdown file and its content is injected into the system prompt:
 
-```
-.nex/skills/code-style.md
-```
 ```markdown
+<!-- .nex/skills/code-style.md -->
 # Code Style
 - Always use semicolons
 - Prefer const over let
@@ -150,7 +269,7 @@ module.exports = {
   tools: [
     {
       type: 'function',
-      function: { name: 'deploy_status', description: 'Check deploy status', parameters: { type: 'object', properties: {} } },
+      function: { name: 'deploy_status', description: 'Check status', parameters: { type: 'object', properties: {} } },
       execute: async (args) => 'deployed'
     }
   ]
@@ -159,79 +278,150 @@ module.exports = {
 
 ### Management
 
-| Command | Description |
-|---------|-------------|
-| `/skills` | List all loaded skills |
-| `/skills enable <name>` | Enable a skill |
-| `/skills disable <name>` | Disable a skill |
+```
+/skills                    # list loaded skills
+/skills enable code-style  # enable a skill
+/skills disable code-style # disable a skill
+```
 
-Skills are loaded on startup from `.nex/skills/`. All skills are enabled by default. Disabled skills are tracked in `.nex/config.json`.
+Skills are loaded on startup. All enabled by default. Disabled skills tracked in `.nex/config.json`.
+
+---
+
+## MCP
+
+Connect external tool servers via the [Model Context Protocol](https://modelcontextprotocol.io):
+
+```json
+// .nex/config.json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "node",
+      "args": ["path/to/server.js"]
+    }
+  }
+}
+```
+
+```
+/mcp              # show servers and tools
+/mcp connect      # connect all configured servers
+/mcp disconnect   # disconnect all
+```
+
+MCP tools appear with the `mcp_` prefix and are available to the agent alongside built-in tools.
+
+---
+
+## Hooks
+
+Run custom scripts on CLI events:
+
+```json
+// .nex/config.json
+{
+  "hooks": {
+    "pre-tool": ["echo 'before tool'"],
+    "post-tool": ["echo 'after tool'"],
+    "pre-commit": ["npm test"]
+  }
+}
+```
+
+Events: `pre-tool`, `post-tool`, `pre-commit`, `post-response`, `session-start`, `session-end`.
+
+Or place executable scripts in `.nex/hooks/`:
+```
+.nex/hooks/pre-tool
+.nex/hooks/post-tool
+```
+
+---
 
 ## Architecture
 
 ```
-nex-code/
-├── bin/
-│   └── nex-code.js    # Shebang entrypoint — loads .env, starts REPL
-└── cli/
-    ├── index.js           # REPL loop, slash command handling
-    ├── agent.js           # Agentic loop, conversation state (max 30 iterations)
-    ├── ollama.js          # Ollama Cloud API client (streaming + fallback)
-    ├── tools.js           # 6 tool definitions (Ollama format) + implementations
-    ├── diff.js            # LCS-based diff algorithm, colored output, confirmations
-    ├── context.js         # Auto-context: package.json, git, README, .gitignore
-    ├── ui.js              # ANSI colors, braille spinner, formatting helpers
-    └── safety.js          # Forbidden/dangerous pattern detection, confirm logic
+bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
+cli/
+├── index.js             # REPL + 29 slash commands
+├── agent.js             # Agentic loop + conversation state
+├── providers/           # Multi-provider abstraction
+│   ├── base.js          # Abstract provider interface
+│   ├── ollama.js        # Ollama Cloud provider
+│   ├── openai.js        # OpenAI provider
+│   ├── anthropic.js     # Anthropic provider
+│   ├── gemini.js        # Google Gemini provider
+│   ├── local.js         # Local Ollama server
+│   └── registry.js      # Provider registry + model resolution
+├── tools.js             # 12 tool definitions + implementations
+├── skills.js            # Skills system (prompt + script skills)
+├── mcp.js               # MCP client (JSON-RPC over stdio)
+├── hooks.js             # Hook system (pre/post events)
+├── context.js           # Auto-context (package.json, git, README)
+├── context-engine.js    # Token management + context compression
+├── session.js           # Session persistence (.nex/sessions/)
+├── memory.js            # Project memory (.nex/memory/ + NEX.md)
+├── permissions.js       # Tool permission system
+├── planner.js           # Plan mode + autonomy levels
+├── git.js               # Git intelligence (commit, diff, branch)
+├── render.js            # Markdown + syntax highlighting
+├── diff.js              # LCS diff + colored output
+├── costs.js             # Token cost tracking
+├── safety.js            # Forbidden/dangerous pattern detection
+├── ui.js                # ANSI colors, spinner, formatting
+└── ollama.js            # Backward-compatible wrapper
 ```
-
-8 focused modules instead of a single monolithic file. Each module has a single responsibility.
 
 ### Agentic Loop
 
 ```
 User Input
-    ↓
-[System Prompt + Project Context + Conversation History]
-    ↓
-Ollama API (streaming) ──→ Text tokens → stdout (live)
-    ↓                  └──→ Tool calls → execute
-    ↓
-[Tool Results added to history]
-    ↓
+    |
+[System Prompt + Context + Memory + Skills + Conversation]
+    |
+Provider API (streaming) --> Text tokens --> rendered to terminal
+    |                   \--> Tool calls --> execute (skill / MCP / built-in)
+    |
+[Tool results added to history]
+    |
 Loop until: no more tool calls OR 30 iterations
 ```
 
-### API Integration
+---
 
-- **Base URL**: `https://ollama.com/api/chat`
-- **Auth**: `Authorization: Bearer $OLLAMA_API_KEY`
-- **Streaming**: NDJSON (`stream: true`), parsed line-by-line
-- **Temperature**: 0.2 (deterministic coding output)
-- **Max tokens**: 16384 per response
+## .nex/ Directory
+
+Project-local configuration and state (gitignored):
+
+```
+.nex/
+├── config.json        # Permissions, MCP servers, hooks, skills config
+├── sessions/          # Saved conversations
+├── memory/            # Persistent project knowledge
+├── plans/             # Saved plans
+├── hooks/             # Custom hook scripts
+└── skills/            # Skill files (.md and .js)
+```
+
+---
 
 ## Testing
 
 ```bash
 npm test              # Run all tests with coverage
-npm run test:watch    # Watch mode for development
+npm run test:watch    # Watch mode
 ```
 
-**8 test suites, 173 tests, 95% coverage:**
+28 test suites, 831 tests, 93% statement coverage.
 
-| Module | Statements | Lines |
-|--------|-----------|-------|
-| safety.js | 100% | 100% |
-| context.js | 100% | 100% |
-| diff.js | 97.8% | 97.5% |
-| index.js | 97% | 97% |
-| ollama.js | 96.4% | 100% |
-| agent.js | 92.3% | 94% |
-| tools.js | 91.6% | 93.8% |
-| ui.js | 90.9% | 90.3% |
+CI runs on GitHub Actions (Node 18/20/22).
+
+---
 
 ## Dependencies
 
-Only 2 runtime dependencies:
+2 runtime dependencies:
 
 ```json
 {
@@ -240,7 +430,7 @@ Only 2 runtime dependencies:
 }
 ```
 
-Everything else (readline, fs, path, child_process) is Node.js built-in.
+Everything else is Node.js built-in.
 
 ## License
 
