@@ -3,6 +3,8 @@
  */
 
 const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
 const { C, banner } = require('./ui');
 const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages } = require('./agent');
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
@@ -633,6 +635,50 @@ function handleSlashCommand(input) {
   }
 }
 
+// ─── History Persistence ─────────────────────────────────────
+const HISTORY_MAX = 1000;
+
+function getHistoryPath() {
+  return path.join(process.cwd(), '.nex', 'repl_history');
+}
+
+function loadHistory() {
+  try {
+    const histPath = getHistoryPath();
+    if (fs.existsSync(histPath)) {
+      const lines = fs.readFileSync(histPath, 'utf-8').split('\n').filter(Boolean);
+      return lines.slice(-HISTORY_MAX);
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function appendHistory(line) {
+  try {
+    const histPath = getHistoryPath();
+    const dir = path.dirname(histPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(histPath, line + '\n');
+  } catch { /* ignore */ }
+}
+
+// ─── Smart Prompt ────────────────────────────────────────────
+function getPrompt() {
+  const parts = [];
+
+  if (isPlanMode()) parts.push('plan');
+
+  const level = getAutonomyLevel();
+  if (level !== 'interactive') parts.push(level);
+
+  const providerName = getActiveProviderName();
+  const model = getActiveModel();
+  parts.push(`${providerName}:${model.id}`);
+
+  const tag = parts.length > 0 ? `${C.dim}[${parts.join(' · ')}]${C.reset} ` : '';
+  return `${tag}${C.bold}${C.cyan}>${C.reset} `;
+}
+
 function startREPL() {
   // Check that at least one provider is configured
   const providerList = listProviders();
@@ -670,11 +716,15 @@ function startREPL() {
   banner(`${providerName}:${model.id}`, CWD);
   printContext(CWD);
 
+  const history = loadHistory();
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `${C.bold}${C.cyan}>${C.reset} `,
+    prompt: getPrompt(),
     completer,
+    history,
+    historySize: HISTORY_MAX,
   });
 
   setReadlineInterface(rl);
@@ -726,24 +776,112 @@ function startREPL() {
     });
   }
 
+  // ─── Multi-line input state ──────────────────────────────────
+  let multiLineBuffer = null; // null = not in multi-line mode
+  const MULTI_LINE_PROMPT = `${C.dim}...${C.reset} `;
+
+  rl.setPrompt(getPrompt());
   rl.prompt();
 
   rl.on('line', async (line) => {
     _clearSug();
-    const input = line.trim();
-    if (!input) {
+
+    // Multi-line mode handling
+    if (multiLineBuffer !== null) {
+      // """ mode: wait for closing """
+      if (multiLineBuffer._mode === 'triple') {
+        if (line.trim() === '"""') {
+          const input = multiLineBuffer.join('\n').trim();
+          multiLineBuffer = null;
+          if (input) {
+            appendHistory(input.replace(/\n/g, '\\n'));
+            try {
+              await processInput(input);
+            } catch (err) {
+              console.log(`${C.red}Error: ${err.message}${C.reset}`);
+            }
+            const msgCount = getConversationLength();
+            if (msgCount > 0) {
+              process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
+            }
+          }
+          rl.setPrompt(getPrompt());
+          rl.prompt();
+          return;
+        }
+        multiLineBuffer.push(line);
+        rl.setPrompt(MULTI_LINE_PROMPT);
+        rl.prompt();
+        return;
+      }
+
+      // Backslash continuation mode
+      if (line.endsWith('\\')) {
+        multiLineBuffer.push(line.slice(0, -1));
+      } else {
+        multiLineBuffer.push(line);
+        const input = multiLineBuffer.join('\n').trim();
+        multiLineBuffer = null;
+        if (input) {
+          appendHistory(input.replace(/\n/g, '\\n'));
+          try {
+            await processInput(input);
+          } catch (err) {
+            console.log(`${C.red}Error: ${err.message}${C.reset}`);
+          }
+          const msgCount = getConversationLength();
+          if (msgCount > 0) {
+            process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
+          }
+        }
+        rl.setPrompt(getPrompt());
+        rl.prompt();
+        return;
+      }
+      rl.setPrompt(MULTI_LINE_PROMPT);
       rl.prompt();
       return;
     }
 
+    // Check for multi-line start with """
+    if (line.trim() === '"""' || line.trim().startsWith('"""')) {
+      const after = line.trim().substring(3);
+      multiLineBuffer = after ? [after] : [];
+      multiLineBuffer._mode = 'triple';
+      rl.setPrompt(MULTI_LINE_PROMPT);
+      rl.prompt();
+      return;
+    }
+
+    // Backslash continuation
+    if (line.endsWith('\\')) {
+      multiLineBuffer = [line.slice(0, -1)];
+      multiLineBuffer._mode = 'backslash';
+      rl.setPrompt(MULTI_LINE_PROMPT);
+      rl.prompt();
+      return;
+    }
+
+    const input = line.trim();
+    if (!input) {
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    // Persist history
+    appendHistory(input);
+
     // Slash commands
     if (input === '/') {
       showCommandList();
+      rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
     if (input.startsWith('/')) {
       handleSlashCommand(input);
+      rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
@@ -759,6 +897,7 @@ function startREPL() {
     if (msgCount > 0) {
       process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
     }
+    rl.setPrompt(getPrompt());
     rl.prompt();
   });
 
@@ -768,4 +907,4 @@ function startREPL() {
   });
 }
 
-module.exports = { startREPL };
+module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX };
