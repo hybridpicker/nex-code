@@ -35,8 +35,8 @@ describe('ui.js', () => {
       expect(spinner.text).toBe('Loading...');
     });
 
-    it('starts and writes to stdout', () => {
-      const writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    it('starts and writes to stderr', () => {
+      const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
       spinner = new Spinner('test');
       spinner.start();
       expect(spinner.interval).not.toBeNull();
@@ -46,13 +46,14 @@ describe('ui.js', () => {
     });
 
     it('stop clears interval and writes clear sequence', () => {
-      const writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+      const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
       spinner = new Spinner('test');
       spinner.start();
       spinner.stop();
       expect(spinner.interval).toBeNull();
-      // Should write \r\x1b[K to clear the line
-      expect(writeSpy).toHaveBeenCalledWith('\r\x1b[K');
+      // Should write clear line + show cursor to stderr
+      expect(writeSpy).toHaveBeenCalledWith('\x1b[2K\r');
+      expect(writeSpy).toHaveBeenCalledWith('\x1b[?25h');
       writeSpy.mockRestore();
     });
 

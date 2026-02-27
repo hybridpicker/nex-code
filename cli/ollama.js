@@ -61,7 +61,7 @@ async function callOllamaStream(messages, tools) {
   const { C } = require('./ui');
   const { Spinner } = require('./ui');
 
-  const spinner = new Spinner('Connecting...');
+  const spinner = new Spinner('Thinking...');
   spinner.start();
   let firstToken = true;
   let contentStr = '';

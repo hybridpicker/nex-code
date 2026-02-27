@@ -95,7 +95,7 @@ async function processInput(userInput) {
   let apiMessages = fittedMessages;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const spinner = new Spinner('Connecting...');
+    const spinner = new Spinner('Thinking...');
     spinner.start();
     let firstToken = true;
     let streamedText = '';

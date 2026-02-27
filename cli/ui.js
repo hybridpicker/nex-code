@@ -29,14 +29,25 @@ class Spinner {
     this.text = text;
     this.frame = 0;
     this.interval = null;
+    this.startTime = null;
+  }
+
+  _render() {
+    const f = SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length];
+    let elapsed = '';
+    if (this.startTime) {
+      const secs = Math.floor((Date.now() - this.startTime) / 1000);
+      if (secs >= 1) elapsed = ` ${C.dim}${secs}s${C.reset}`;
+    }
+    process.stderr.write(`\x1b[2K\r${C.cyan}${f}${C.reset} ${C.dim}${this.text}${C.reset}${elapsed}`);
+    this.frame++;
   }
 
   start() {
-    this.interval = setInterval(() => {
-      const f = SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length];
-      process.stdout.write(`\r${C.cyan}${f}${C.reset} ${C.gray}${this.text}${C.reset}`);
-      this.frame++;
-    }, 80);
+    this.startTime = Date.now();
+    process.stderr.write('\x1b[?25l'); // hide cursor
+    this._render(); // render first frame immediately
+    this.interval = setInterval(() => this._render(), 80);
   }
 
   update(text) {
@@ -47,8 +58,10 @@ class Spinner {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
-      process.stdout.write('\r\x1b[K');
     }
+    process.stderr.write('\x1b[2K\r'); // clear line
+    process.stderr.write('\x1b[?25h'); // show cursor
+    this.startTime = null;
   }
 }
 
