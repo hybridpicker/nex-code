@@ -111,11 +111,26 @@ function highlightCode(line, lang) {
   if (jsLangs.includes(lang) || !lang) {
     return highlightJS(line);
   }
-  if (lang === 'bash' || lang === 'sh' || lang === 'shell') {
+  if (lang === 'bash' || lang === 'sh' || lang === 'shell' || lang === 'zsh') {
     return highlightBash(line);
   }
-  if (lang === 'json') {
+  if (lang === 'json' || lang === 'jsonc') {
     return highlightJSON(line);
+  }
+  if (lang === 'python' || lang === 'py') {
+    return highlightPython(line);
+  }
+  if (lang === 'go' || lang === 'golang') {
+    return highlightGo(line);
+  }
+  if (lang === 'rust' || lang === 'rs') {
+    return highlightRust(line);
+  }
+  if (lang === 'css' || lang === 'scss' || lang === 'less') {
+    return highlightCSS(line);
+  }
+  if (lang === 'html' || lang === 'xml' || lang === 'svg' || lang === 'htm') {
+    return highlightHTML(line);
   }
 
   // Default: no highlighting
@@ -164,6 +179,94 @@ function highlightJSON(line) {
   result = result.replace(strings, `: ${C.green}$1${C.reset}`);
   result = result.replace(numbers, `: ${C.yellow}$1${C.reset}`);
   result = result.replace(booleans, `: ${C.magenta}$1${C.reset}`);
+
+  return result;
+}
+
+function highlightPython(line) {
+  const keywords = /\b(def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|raise|with|yield|lambda|pass|break|continue|and|or|not|in|is|None|True|False|self|async|await|nonlocal|global)\b/g;
+  const strings = /("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
+  const comments = /(#.*$)/;
+  const numbers = /\b(\d+\.?\d*)\b/g;
+  const decorators = /^(\s*@\w+)/;
+
+  let result = line;
+  result = result.replace(numbers, `${C.yellow}$1${C.reset}`);
+  result = result.replace(keywords, `${C.magenta}$1${C.reset}`);
+  result = result.replace(decorators, `${C.cyan}$1${C.reset}`);
+  result = result.replace(strings, `${C.green}$&${C.reset}`);
+  result = result.replace(comments, `${C.dim}$1${C.reset}`);
+
+  return result;
+}
+
+function highlightGo(line) {
+  const keywords = /\b(func|package|import|var|const|type|struct|interface|map|chan|go|defer|return|if|else|for|range|switch|case|default|break|continue|select|fallthrough|nil|true|false|make|new|len|cap|append|copy|delete|panic|recover)\b/g;
+  const types = /\b(string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|byte|rune|error|any)\b/g;
+  const strings = /(["'`])(?:(?=(\\?))\2.)*?\1/g;
+  const comments = /(\/\/.*$)/;
+  const numbers = /\b(\d+\.?\d*)\b/g;
+
+  let result = line;
+  result = result.replace(numbers, `${C.yellow}$1${C.reset}`);
+  result = result.replace(types, `${C.cyan}$1${C.reset}`);
+  result = result.replace(keywords, `${C.magenta}$1${C.reset}`);
+  result = result.replace(strings, `${C.green}$&${C.reset}`);
+  result = result.replace(comments, `${C.dim}$1${C.reset}`);
+
+  return result;
+}
+
+function highlightRust(line) {
+  const keywords = /\b(fn|let|mut|const|struct|enum|impl|trait|pub|use|mod|crate|self|super|match|if|else|for|while|loop|return|break|continue|where|as|in|ref|move|async|await|unsafe|extern|type|static|dyn|macro_rules)\b/g;
+  const types = /\b(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|bool|char|str|String|Vec|Option|Result|Box|Rc|Arc|Self|Some|None|Ok|Err|true|false)\b/g;
+  const strings = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+  const comments = /(\/\/.*$)/;
+  const numbers = /\b(\d+\.?\d*)\b/g;
+  const macros = /\b(\w+!)/g;
+
+  let result = line;
+  result = result.replace(numbers, `${C.yellow}$1${C.reset}`);
+  result = result.replace(types, `${C.cyan}$1${C.reset}`);
+  result = result.replace(keywords, `${C.magenta}$1${C.reset}`);
+  result = result.replace(macros, `${C.yellow}$1${C.reset}`);
+  result = result.replace(strings, `${C.green}$&${C.reset}`);
+  result = result.replace(comments, `${C.dim}$1${C.reset}`);
+
+  return result;
+}
+
+function highlightCSS(line) {
+  const properties = /^(\s*)([\w-]+)\s*:/;
+  const values = /:\s*([^;]+)/;
+  const selectors = /^(\s*[.#@][\w-]+)/;
+  const numbers = /\b(\d+\.?\d*(px|em|rem|%|vh|vw|s|ms|deg|fr)?)\b/g;
+  const comments = /(\/\*.*?\*\/|\/\/.*$)/;
+  const colors = /(#[0-9a-fA-F]{3,8})\b/g;
+
+  let result = line;
+  result = result.replace(colors, `${C.yellow}$1${C.reset}`);
+  result = result.replace(numbers, `${C.yellow}$1${C.reset}`);
+  result = result.replace(properties, `$1${C.cyan}$2${C.reset}:`);
+  result = result.replace(selectors, `$1${C.magenta}$&${C.reset}`);
+  result = result.replace(comments, `${C.dim}$1${C.reset}`);
+
+  return result;
+}
+
+function highlightHTML(line) {
+  const tags = /<\/?(\w[\w-]*)/g;
+  const attrs = /\s([\w-]+)=/g;
+  const strings = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+  const comments = /(<!--.*?-->)/g;
+  const entities = /(&\w+;)/g;
+
+  let result = line;
+  result = result.replace(comments, `${C.dim}$1${C.reset}`);
+  result = result.replace(strings, `${C.green}$&${C.reset}`);
+  result = result.replace(tags, `<${C.magenta}$1${C.reset}`);
+  result = result.replace(attrs, ` ${C.cyan}$1${C.reset}=`);
+  result = result.replace(entities, `${C.yellow}$1${C.reset}`);
 
   return result;
 }
@@ -217,6 +320,108 @@ function renderProgress(label, current, total, width = 30) {
   return `  ${label} ${color}${'█'.repeat(filled)}${C.dim}${'░'.repeat(empty)}${C.reset} ${pct}% (${current}/${total})`;
 }
 
+/**
+ * StreamRenderer — renders markdown line-by-line as tokens arrive.
+ * Buffers partial lines, flushes complete lines with rendering.
+ */
+class StreamRenderer {
+  constructor() {
+    this.buffer = '';
+    this.inCodeBlock = false;
+    this.codeBlockLang = '';
+    this.lineCount = 0;
+  }
+
+  /**
+   * Push a token chunk into the stream renderer.
+   * Renders complete lines immediately; buffers partial lines.
+   */
+  push(text) {
+    if (!text) return;
+    this.buffer += text;
+
+    // Process all complete lines
+    let nlIdx;
+    while ((nlIdx = this.buffer.indexOf('\n')) !== -1) {
+      const line = this.buffer.substring(0, nlIdx);
+      this.buffer = this.buffer.substring(nlIdx + 1);
+      this._renderLine(line);
+    }
+  }
+
+  /**
+   * Flush remaining buffer content (call at end of stream).
+   */
+  flush() {
+    if (this.buffer) {
+      this._renderLine(this.buffer);
+      this.buffer = '';
+    }
+    // Reset state
+    if (this.inCodeBlock) {
+      process.stdout.write(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
+      this.inCodeBlock = false;
+      this.codeBlockLang = '';
+    }
+  }
+
+  _renderLine(line) {
+    // Code block toggle
+    if (line.trim().startsWith('```')) {
+      if (this.inCodeBlock) {
+        process.stdout.write(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
+        this.inCodeBlock = false;
+        this.codeBlockLang = '';
+      } else {
+        this.inCodeBlock = true;
+        this.codeBlockLang = line.trim().substring(3).trim();
+        const label = this.codeBlockLang ? ` ${this.codeBlockLang} ` : '';
+        process.stdout.write(`${C.dim}${'─'.repeat(3)}${label}${'─'.repeat(Math.max(0, 37 - label.length))}${C.reset}\n`);
+      }
+      return;
+    }
+
+    if (this.inCodeBlock) {
+      process.stdout.write(`  ${highlightCode(line, this.codeBlockLang)}\n`);
+      return;
+    }
+
+    // Headers
+    if (line.startsWith('### ')) {
+      process.stdout.write(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}\n`);
+      return;
+    }
+    if (line.startsWith('## ')) {
+      process.stdout.write(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}\n`);
+      return;
+    }
+    if (line.startsWith('# ')) {
+      process.stdout.write(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}\n`);
+      return;
+    }
+
+    // Lists
+    if (/^\s*[-*]\s/.test(line)) {
+      const indent = line.match(/^(\s*)/)[1];
+      const content = line.replace(/^\s*[-*]\s/, '');
+      process.stdout.write(`${indent}${C.cyan}•${C.reset} ${renderInline(content)}\n`);
+      return;
+    }
+
+    // Numbered lists
+    if (/^\s*\d+\.\s/.test(line)) {
+      const match = line.match(/^(\s*)(\d+)\.\s(.*)/);
+      if (match) {
+        process.stdout.write(`${match[1]}${C.cyan}${match[2]}.${C.reset} ${renderInline(match[3])}\n`);
+        return;
+      }
+    }
+
+    // Regular line
+    process.stdout.write(`${renderInline(line)}\n`);
+  }
+}
+
 module.exports = {
   renderMarkdown,
   renderInline,
@@ -224,6 +429,12 @@ module.exports = {
   highlightJS,
   highlightBash,
   highlightJSON,
+  highlightPython,
+  highlightGo,
+  highlightRust,
+  highlightCSS,
+  highlightHTML,
   renderTable,
   renderProgress,
+  StreamRenderer,
 };
