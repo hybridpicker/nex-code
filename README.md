@@ -118,6 +118,55 @@ The agent has 6 tools available:
 
 Both run on Ollama Cloud (Pro plan). Switch at runtime with `/model <name>`.
 
+## Skills
+
+Extend Nex Code with project-specific knowledge, commands, and tools via `.nex/skills/`.
+
+### Prompt Skills (`.md`)
+Drop a Markdown file into `.nex/skills/` and its content is injected into the system prompt:
+
+```
+.nex/skills/code-style.md
+```
+```markdown
+# Code Style
+- Always use semicolons
+- Prefer const over let
+- Use TypeScript strict mode
+```
+
+### Script Skills (`.js`)
+CommonJS modules that can provide instructions, slash commands, and tools:
+
+```javascript
+// .nex/skills/deploy.js
+module.exports = {
+  name: 'deploy',
+  description: 'Deployment helper',
+  instructions: 'When deploying, always run tests first...',
+  commands: [
+    { cmd: '/deploy', desc: 'Run deployment', handler: (args) => { /* ... */ } }
+  ],
+  tools: [
+    {
+      type: 'function',
+      function: { name: 'deploy_status', description: 'Check deploy status', parameters: { type: 'object', properties: {} } },
+      execute: async (args) => 'deployed'
+    }
+  ]
+};
+```
+
+### Management
+
+| Command | Description |
+|---------|-------------|
+| `/skills` | List all loaded skills |
+| `/skills enable <name>` | Enable a skill |
+| `/skills disable <name>` | Disable a skill |
+
+Skills are loaded on startup from `.nex/skills/`. All skills are enabled by default. Disabled skills are tracked in `.nex/config.json`.
+
 ## Architecture
 
 ```

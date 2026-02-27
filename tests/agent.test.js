@@ -55,6 +55,12 @@ jest.mock('../cli/mcp', () => ({
   getMCPToolDefinitions: jest.fn().mockReturnValue([]),
 }));
 
+jest.mock('../cli/skills', () => ({
+  getSkillInstructions: jest.fn().mockReturnValue(''),
+  getSkillToolDefinitions: jest.fn().mockReturnValue([]),
+  routeSkillCall: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('../cli/costs', () => ({
   trackUsage: jest.fn(),
 }));

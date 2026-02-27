@@ -127,6 +127,15 @@ jest.mock('../cli/costs', () => ({
   resetCosts: jest.fn(),
 }));
 
+jest.mock('../cli/skills', () => ({
+  loadAllSkills: jest.fn().mockReturnValue([]),
+  listSkills: jest.fn().mockReturnValue([]),
+  enableSkill: jest.fn().mockReturnValue(false),
+  disableSkill: jest.fn().mockReturnValue(false),
+  getSkillCommands: jest.fn().mockReturnValue([]),
+  handleSkillCommand: jest.fn().mockReturnValue(false),
+}));
+
 describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
 
@@ -237,6 +246,14 @@ describe('index.js (REPL commands)', () => {
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
         resetCosts: jest.fn(),
       }));
+      jest.mock('../cli/skills', () => ({
+        loadAllSkills: jest.fn().mockReturnValue([]),
+        listSkills: jest.fn().mockReturnValue([]),
+        enableSkill: jest.fn().mockReturnValue(false),
+        disableSkill: jest.fn().mockReturnValue(false),
+        getSkillCommands: jest.fn().mockReturnValue([]),
+        handleSkillCommand: jest.fn().mockReturnValue(false),
+      }));
 
       const { startREPL } = require('../cli/index');
       startREPL();
@@ -331,6 +348,14 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/costs', () => ({
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
         resetCosts: jest.fn(),
+      }));
+      jest.mock('../cli/skills', () => ({
+        loadAllSkills: jest.fn().mockReturnValue([]),
+        listSkills: jest.fn().mockReturnValue([]),
+        enableSkill: jest.fn().mockReturnValue(false),
+        disableSkill: jest.fn().mockReturnValue(false),
+        getSkillCommands: jest.fn().mockReturnValue([]),
+        handleSkillCommand: jest.fn().mockReturnValue(false),
       }));
 
       const mockRl = {
@@ -476,6 +501,14 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+      }));
+      jest.mock('../cli/skills', () => ({
+        loadAllSkills: jest.fn().mockReturnValue([]),
+        listSkills: jest.fn().mockReturnValue([]),
+        enableSkill: jest.fn().mockReturnValue(false),
+        disableSkill: jest.fn().mockReturnValue(false),
+        getSkillCommands: jest.fn().mockReturnValue([]),
+        handleSkillCommand: jest.fn().mockReturnValue(false),
       }));
 
       const { startREPL } = require('../cli/index');
