@@ -47,6 +47,7 @@ jest.mock('../cli/context', () => ({
 jest.mock('../cli/safety', () => ({
   setAutoConfirm: jest.fn(),
   getAutoConfirm: jest.fn().mockReturnValue(false),
+  setReadlineInterface: jest.fn(),
 }));
 
 jest.mock('../cli/context-engine', () => ({
@@ -241,6 +242,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+        setReadlineInterface: jest.fn(),
       }));
       jest.mock('../cli/costs', () => ({
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
@@ -344,6 +346,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+        setReadlineInterface: jest.fn(),
       }));
       jest.mock('../cli/costs', () => ({
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
@@ -501,6 +504,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+        setReadlineInterface: jest.fn(),
       }));
       jest.mock('../cli/skills', () => ({
         loadAllSkills: jest.fn().mockReturnValue([]),

@@ -63,6 +63,7 @@ const DANGEROUS_BASH = [
 ];
 
 let autoConfirm = false;
+let _rl = null;
 
 function setAutoConfirm(val) {
   autoConfirm = val;
@@ -70,6 +71,10 @@ function setAutoConfirm(val) {
 
 function getAutoConfirm() {
   return autoConfirm;
+}
+
+function setReadlineInterface(rl) {
+  _rl = rl;
 }
 
 function isForbidden(command) {
@@ -89,11 +94,17 @@ function isDangerous(command) {
 function confirm(question) {
   if (autoConfirm) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
+    if (_rl) {
+      _rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
+        resolve(answer.trim().toLowerCase() === 'y');
+      });
+    } else {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
+        rl.close();
+        resolve(answer.trim().toLowerCase() === 'y');
+      });
+    }
   });
 }
 
@@ -105,4 +116,5 @@ module.exports = {
   confirm,
   setAutoConfirm,
   getAutoConfirm,
+  setReadlineInterface,
 };

@@ -8,7 +8,7 @@ const { C } = require('./ui');
 
 function exec(cmd) {
   try {
-    return execSync(cmd, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000 }).trim();
+    return execSync(cmd, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' }).trim();
   } catch (e) {
     return null;
   }
@@ -16,7 +16,7 @@ function exec(cmd) {
 
 function execGit(...args) {
   try {
-    return execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000 }).trim();
+    return execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' }).trim();
   } catch (e) {
     return null;
   }
@@ -41,7 +41,7 @@ function getCurrentBranch() {
  */
 function getStatus() {
   try {
-    const raw = execSync('git status --porcelain', { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000 });
+    const raw = execSync('git status --porcelain', { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' });
     if (!raw || !raw.trim()) return [];
     return raw.split('\n').filter(Boolean).map((line) => {
       const status = line.substring(0, 2).trim();

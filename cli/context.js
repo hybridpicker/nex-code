@@ -37,14 +37,14 @@ function gatherProjectContext(cwd) {
   }
 
   // Git info
-  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8' }).trim());
+  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());
   if (branch) parts.push(`GIT BRANCH: ${branch}`);
 
-  const status = safe(() => execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 5000 }).trim());
+  const status = safe(() => execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim());
   if (status) parts.push(`GIT STATUS:\n${status}`);
 
   const log = safe(() =>
-    execSync('git log --oneline -5', { cwd, encoding: 'utf-8', timeout: 5000 }).trim()
+    execSync('git log --oneline -5', { cwd, encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim()
   );
   if (log) parts.push(`RECENT COMMITS:\n${log}`);
 
@@ -66,7 +66,7 @@ function printContext(cwd) {
     project = `${pkg.name || '?'} v${pkg.version || '?'}`;
   }
 
-  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8' }).trim());
+  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());
 
   console.log(`${C.dim}  cwd: ${cwd}${C.reset}`);
   if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
