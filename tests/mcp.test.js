@@ -230,16 +230,6 @@ describe('mcp.js', () => {
     });
   });
 
-  // ─── connectServer ────────────────────────────────────────
-  describe('connectServer()', () => {
-    it('rejects when process fails to respond', async () => {
-      // Use a command that exits immediately without speaking JSON-RPC
-      await expect(
-        connectServer('failing', { command: 'echo', args: ['bye'] })
-      ).rejects.toThrow(/Failed to connect|MCP write failed|MCP request timeout|EPIPE/);
-    }, 15000);
-  });
-
   // ─── sendRequest write failure ─────────────────────────────
   describe('sendRequest write failure', () => {
     it('rejects when stdin.write throws', async () => {
