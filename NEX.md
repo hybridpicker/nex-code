@@ -20,7 +20,7 @@ cli/providers/           → Multi-Provider Abstraction Layer
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
-cli/tools.js             → 12 Tool Definitions + Implementations
+cli/tools.js             → 15 Tool Definitions + Implementations
 cli/context-engine.js    → Token Management + Context Compression
 cli/session.js           → Session Persistence (.nex/sessions/)
 cli/memory.js            → Project Memory (.nex/memory/ + NEX.md)
@@ -36,7 +36,7 @@ cli/ui.js                → ANSI Colors, Spinner, Formatting
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full)
-tests/                   → Jest, 32 Suites, 954 Tests, 88%+ Coverage
+tests/                   → Jest, 33 Suites, 1027 Tests, 93%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -88,7 +88,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming
 - Streaming-Output wird durch `renderMarkdown()` gepiped (rich terminal rendering)
 - `ollama.js` ist Backward-compatible Wrapper (delegiert an Registry)
-- 12 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user
+- 15 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log
 - Permission-System: allow/ask/deny pro Tool (konfigurierbar in `.nex/config.json`)
 - Context Engine: Token-Counting, Auto-Compression bei >70% Window
 - Session-Persistenz: Auto-Save nach jedem Turn in `.nex/sessions/`
@@ -103,7 +103,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
 - parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
-- Tool-Tiers: essential (5) / standard (9) / full (12) — dynamisch pro Model/Provider
+- Tool-Tiers: essential (5) / standard (12) / full (15) — dynamisch pro Model/Provider
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show
 
 ## .nex/ Verzeichnis
