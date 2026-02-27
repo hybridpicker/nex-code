@@ -8,9 +8,25 @@ const { execSync, execFileSync } = require('child_process');
 const axios = require('axios');
 const { isForbidden, isDangerous, confirm } = require('./safety');
 const { showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange } = require('./diff');
-const { C } = require('./ui');
+const { C, Spinner } = require('./ui');
+const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
 
 const CWD = process.cwd();
+
+// Auto-checkpoint: tag last known state before first agent edit
+let _checkpointCreated = false;
+function ensureCheckpoint() {
+  if (_checkpointCreated) return;
+  _checkpointCreated = true;
+  try {
+    // Only in git repos with changes
+    const isGit = execSync('git rev-parse --is-inside-work-tree', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe' }).trim() === 'true';
+    if (!isGit) return;
+    execSync('git stash push -m "nex-code-checkpoint" --include-untracked', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 });
+    execSync('git stash pop', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 });
+    execSync('git tag -f nex-checkpoint', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 5000 });
+  } catch { /* not critical */ }
+}
 
 function resolvePath(p) {
   if (path.isAbsolute(p)) return p;
@@ -213,6 +229,48 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'git_status',
+      description: 'Get git status: current branch, changed files, staged/unstaged state. Only works in git repos.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_diff',
+      description: 'Get git diff for changed files. Shows additions and deletions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          staged: { type: 'boolean', description: 'Show only staged changes (default: false)' },
+          file: { type: 'string', description: 'Diff specific file only (optional)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_log',
+      description: 'Show recent git commits (short format).',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'Number of commits to show (default: 10)' },
+          file: { type: 'string', description: 'Show commits for specific file (optional)' },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
@@ -229,6 +287,8 @@ async function executeTool(name, args) {
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }
 
+      const bashSpinner = new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);
+      bashSpinner.start();
       try {
         const out = execSync(cmd, {
           cwd: CWD,
@@ -236,8 +296,10 @@ async function executeTool(name, args) {
           encoding: 'utf-8',
           maxBuffer: 5 * 1024 * 1024,
         });
+        bashSpinner.stop();
         return out || '(no output)';
       } catch (e) {
+        bashSpinner.stop();
         return `EXIT ${e.status || 1}\n${(e.stderr || e.stdout || e.message || '').toString().substring(0, 5000)}`;
       }
     }
@@ -245,7 +307,18 @@ async function executeTool(name, args) {
     case 'read_file': {
       const fp = resolvePath(args.path);
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
+
+      // Binary file detection: check first 8KB for null bytes
+      const buf = Buffer.alloc(8192);
+      const fd = fs.openSync(fp, 'r');
+      const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
+      fs.closeSync(fd);
+      for (let b = 0; b < bytesRead; b++) {
+        if (buf[b] === 0) return `ERROR: ${fp} is a binary file (not readable as text)`;
+      }
+
       const content = fs.readFileSync(fp, 'utf-8');
+      if (!content && fs.statSync(fp).size > 0) return `WARNING: ${fp} is empty or unreadable`;
       const lines = content.split('\n');
       const start = (args.line_start || 1) - 1;
       const end = args.line_end || lines.length;
@@ -256,6 +329,7 @@ async function executeTool(name, args) {
     }
 
     case 'write_file': {
+      ensureCheckpoint();
       const fp = resolvePath(args.path);
       const exists = fs.existsSync(fp);
 
@@ -277,6 +351,7 @@ async function executeTool(name, args) {
     }
 
     case 'edit_file': {
+      ensureCheckpoint();
       const fp = resolvePath(args.path);
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
       const content = fs.readFileSync(fp, 'utf-8');
@@ -286,7 +361,8 @@ async function executeTool(name, args) {
       const ok = await confirmFileChange('Apply');
       if (!ok) return 'CANCELLED: User declined to apply edit.';
 
-      const updated = content.replace(args.old_text, args.new_text);
+      // Use split/join for literal replacement (no regex interpretation)
+      const updated = content.split(args.old_text).join(args.new_text);
       fs.writeFileSync(fp, updated, 'utf-8');
       return `Edited: ${fp}`;
     }
@@ -336,6 +412,7 @@ async function executeTool(name, args) {
     }
 
     case 'glob': {
+      const GLOB_LIMIT = 200;
       const basePath = args.path ? resolvePath(args.path) : CWD;
       const pattern = args.pattern;
       // Pure Node.js glob: convert glob pattern to regex and walk directory
@@ -352,8 +429,9 @@ async function executeTool(name, args) {
       const nameRegex = globToRegex(namePattern);
       const fullRegex = globToRegex(pattern);
       const matches = [];
+      let truncated = false;
       const walkGlob = (dir, rel) => {
-        if (matches.length >= 100) return;
+        if (matches.length >= GLOB_LIMIT) { truncated = true; return; }
         let entries;
         try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
         for (const e of entries) {
@@ -364,11 +442,13 @@ async function executeTool(name, args) {
           } else if (fullRegex.test(relPath) || nameRegex.test(e.name)) {
             matches.push(path.join(basePath, relPath));
           }
-          if (matches.length >= 100) return;
+          if (matches.length >= GLOB_LIMIT) { truncated = true; return; }
         }
       };
       walkGlob(basePath, '');
-      return matches.join('\n') || '(no matches)';
+      if (matches.length === 0) return '(no matches)';
+      const result = matches.join('\n');
+      return truncated ? `${result}\n\n⚠ Results truncated at ${GLOB_LIMIT}. Use a more specific pattern to narrow results.` : result;
     }
 
     case 'grep': {
@@ -389,6 +469,7 @@ async function executeTool(name, args) {
     }
 
     case 'patch_file': {
+      ensureCheckpoint();
       const fp = resolvePath(args.path);
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
 
@@ -405,20 +486,17 @@ async function executeTool(name, args) {
         }
       }
 
-      // Show combined diff
+      // Apply to a copy first (atomic — validate all patches succeed before writing)
       let preview = content;
       for (const { old_text, new_text } of patches) {
-        preview = preview.replace(old_text, new_text);
+        preview = preview.split(old_text).join(new_text);
       }
       showEditDiff(fp, content, preview);
       const ok = await confirmFileChange('Apply patches');
       if (!ok) return 'CANCELLED: User declined to apply patches.';
 
-      // Apply all patches
-      for (const { old_text, new_text } of patches) {
-        content = content.replace(old_text, new_text);
-      }
-      fs.writeFileSync(fp, content, 'utf-8');
+      // Write the fully-validated preview (atomic — no partial application)
+      fs.writeFileSync(fp, preview, 'utf-8');
       return `Patched: ${fp} (${patches.length} replacements)`;
     }
 
@@ -488,6 +566,45 @@ async function executeTool(name, args) {
           resolve(answer.trim() || '(no response)');
         });
       });
+    }
+
+    case 'git_status': {
+      if (!isGitRepo()) return 'ERROR: Not a git repository';
+      const branch = getCurrentBranch() || '(detached)';
+      const status = getStatus();
+      if (status.length === 0) return `Branch: ${branch}\nClean working tree (no changes)`;
+      const lines = [`Branch: ${branch}`, `Changed files (${status.length}):`];
+      for (const s of status) {
+        const label = s.status === 'M' ? 'modified' : s.status === 'A' ? 'added' : s.status === 'D' ? 'deleted' : s.status === '??' ? 'untracked' : s.status;
+        lines.push(`  ${label}: ${s.file}`);
+      }
+      return lines.join('\n');
+    }
+
+    case 'git_diff': {
+      if (!isGitRepo()) return 'ERROR: Not a git repository';
+      let diff;
+      if (args.file) {
+        const flag = args.staged ? '--cached' : '';
+        try {
+          diff = execSync(`git diff ${flag} -- ${args.file}`, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+        } catch { diff = ''; }
+      } else {
+        diff = getDiff(!!args.staged);
+      }
+      return diff || '(no diff)';
+    }
+
+    case 'git_log': {
+      if (!isGitRepo()) return 'ERROR: Not a git repository';
+      const count = Math.min(args.count || 10, 50);
+      const fileArg = args.file ? `-- ${args.file}` : '';
+      try {
+        const out = execSync(`git log --oneline -${count} ${fileArg}`, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+        return out || '(no commits)';
+      } catch {
+        return '(no commits)';
+      }
     }
 
     default:
