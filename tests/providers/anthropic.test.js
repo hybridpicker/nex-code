@@ -30,8 +30,10 @@ describe('providers/anthropic.js', () => {
 
     it('has default models', () => {
       expect(provider.getModelNames()).toContain('claude-sonnet');
+      expect(provider.getModelNames()).toContain('claude-sonnet-4-5');
       expect(provider.getModelNames()).toContain('claude-opus');
       expect(provider.getModelNames()).toContain('claude-haiku');
+      expect(provider.getModelNames()).toContain('claude-3-5-sonnet');
     });
 
     it('defaults to claude-sonnet', () => {
@@ -72,6 +74,20 @@ describe('providers/anthropic.js', () => {
       expect(ANTHROPIC_MODELS['claude-haiku']).toMatchObject({
         id: 'claude-haiku-4-5-20251001',
         name: 'Claude Haiku',
+      });
+    });
+
+    it('exports claude-sonnet-4-5 model', () => {
+      expect(ANTHROPIC_MODELS['claude-sonnet-4-5']).toMatchObject({
+        id: 'claude-sonnet-4-5-20250514',
+        name: 'Claude 4.5 Sonnet',
+      });
+    });
+
+    it('exports claude-3-5-sonnet model', () => {
+      expect(ANTHROPIC_MODELS['claude-3-5-sonnet']).toMatchObject({
+        id: 'claude-3-5-sonnet-20241022',
+        name: 'Claude 3.5 Sonnet',
       });
     });
   });

@@ -43,15 +43,15 @@ function renderMarkdown(text) {
 
     // Headers
     if (line.startsWith('### ')) {
-      rendered.push(`${C.bold}${C.white}   ${line.substring(4)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}`);
       continue;
     }
     if (line.startsWith('## ')) {
-      rendered.push(`${C.bold}${C.white}  ${line.substring(3)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}`);
       continue;
     }
     if (line.startsWith('# ')) {
-      rendered.push(`${C.bold}${C.white}${line.substring(2)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}`);
       continue;
     }
 
@@ -119,7 +119,7 @@ function highlightCode(line, lang) {
   }
 
   // Default: no highlighting
-  return `${C.white}${line}${C.reset}`;
+  return line;
 }
 
 function highlightJS(line) {

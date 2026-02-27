@@ -13,6 +13,12 @@ const ANTHROPIC_MODELS = {
     maxTokens: 8192,
     contextWindow: 200000,
   },
+  'claude-sonnet-4-5': {
+    id: 'claude-sonnet-4-5-20250514',
+    name: 'Claude 4.5 Sonnet',
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
   'claude-opus': {
     id: 'claude-opus-4-20250514',
     name: 'Claude Opus',
@@ -22,6 +28,12 @@ const ANTHROPIC_MODELS = {
   'claude-haiku': {
     id: 'claude-haiku-4-5-20251001',
     name: 'Claude Haiku',
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
+  'claude-3-5-sonnet': {
+    id: 'claude-3-5-sonnet-20241022',
+    name: 'Claude 3.5 Sonnet',
     maxTokens: 8192,
     contextWindow: 200000,
   },

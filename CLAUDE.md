@@ -13,11 +13,12 @@ cli/index.js             → REPL + ~35 Slash Commands
 cli/agent.js             → Agentic Loop + Conversation State + MCP routing
 cli/providers/           → Multi-Provider Abstraction Layer
   base.js                → Abstract Provider Interface
-  ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder)
-  openai.js              → OpenAI Provider (GPT-4o, o1, o3)
-  anthropic.js           → Anthropic Provider (Claude Sonnet, Opus, Haiku)
+  ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral)
+  openai.js              → OpenAI Provider (GPT-4o, GPT-4.1, o1, o3, o4-mini)
+  anthropic.js           → Anthropic Provider (Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet)
+  gemini.js              → Google Gemini Provider (Gemini 2.5 Pro/Flash, 2.0 Flash/Lite)
   local.js               → Local Ollama Server Provider
-  registry.js            → Provider Registry + Model Resolution
+  registry.js            → Provider Registry + Model Resolution (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
 cli/tools.js             → 12 Tool Definitions + Implementations
 cli/context-engine.js    → Token Management + Context Compression
@@ -33,7 +34,7 @@ cli/diff.js              → LCS Diff + Colored Output + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
 cli/ui.js                → ANSI Colors, Spinner, Formatting
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
-tests/                   → Jest, 23 Suites, 634 Tests, 90%+ Coverage
+tests/                   → Jest, 27 Suites, 772 Tests, 95%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -67,13 +68,14 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - **ollama** — Ollama Cloud (`OLLAMA_API_KEY`)
 - **openai** — OpenAI API (`OPENAI_API_KEY`)
 - **anthropic** — Anthropic API (`ANTHROPIC_API_KEY`)
+- **gemini** — Google Gemini API (`GEMINI_API_KEY` oder `GOOGLE_API_KEY`)
 - **local** — Lokaler Ollama Server (kein Key nötig)
 
 ### Model-Spec-Format:
-`provider:model` (z.B. `openai:gpt-4o`, `anthropic:claude-sonnet`, `local:llama3`)
+`provider:model` (z.B. `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
 
 ### Env-Variablen:
-- `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+- `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
 - `DEFAULT_PROVIDER` (default: `ollama`)
 - `DEFAULT_MODEL` (default: provider-abhängig)
 

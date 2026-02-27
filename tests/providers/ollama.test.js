@@ -31,6 +31,10 @@ describe('providers/ollama.js', () => {
     it('has default models', () => {
       expect(provider.getModelNames()).toContain('kimi-k2.5');
       expect(provider.getModelNames()).toContain('qwen3-coder');
+      expect(provider.getModelNames()).toContain('deepseek-r1');
+      expect(provider.getModelNames()).toContain('llama-4-scout');
+      expect(provider.getModelNames()).toContain('qwen3-30b-a3b');
+      expect(provider.getModelNames()).toContain('devstral');
     });
 
     it('defaults to kimi-k2.5', () => {
@@ -87,6 +91,20 @@ describe('providers/ollama.js', () => {
       expect(OLLAMA_MODELS['qwen3-coder']).toMatchObject({
         id: 'qwen3-coder',
         name: 'Qwen3 Coder',
+      });
+    });
+
+    it('exports deepseek-r1 model info', () => {
+      expect(OLLAMA_MODELS['deepseek-r1']).toMatchObject({
+        id: 'deepseek-r1',
+        name: 'DeepSeek R1',
+      });
+    });
+
+    it('exports llama-4-scout model info', () => {
+      expect(OLLAMA_MODELS['llama-4-scout']).toMatchObject({
+        id: 'llama-4-scout',
+        name: 'Llama 4 Scout',
       });
     });
   });

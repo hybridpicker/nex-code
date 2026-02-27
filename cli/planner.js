@@ -134,7 +134,7 @@ function formatPlan(plan) {
   };
 
   const lines = [];
-  lines.push(`\n${C.bold}${C.white}Plan: ${plan.task}${C.reset}`);
+  lines.push(`\n${C.bold}${C.cyan}Plan: ${plan.task}${C.reset}`);
   lines.push(`${C.dim}Status: ${statusIcon[plan.status] || plan.status}${C.reset}\n`);
 
   for (let i = 0; i < plan.steps.length; i++) {

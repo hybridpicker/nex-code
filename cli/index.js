@@ -75,7 +75,7 @@ function completer(line) {
 
 function showHelp() {
   console.log(`
-${C.bold}${C.white}Commands:${C.reset}
+${C.bold}${C.cyan}Commands:${C.reset}
   ${C.cyan}/help${C.reset}             ${C.dim}Show this help${C.reset}
   ${C.cyan}/model [spec]${C.reset}     ${C.dim}Show/switch model (e.g. openai:gpt-4o, claude-sonnet)${C.reset}
   ${C.cyan}/providers${C.reset}        ${C.dim}Show available providers and models${C.reset}
@@ -86,35 +86,35 @@ ${C.bold}${C.white}Commands:${C.reset}
   ${C.cyan}/context${C.reset}          ${C.dim}Show project context${C.reset}
   ${C.cyan}/autoconfirm${C.reset}      ${C.dim}Toggle auto-confirm for file changes${C.reset}
 
-${C.bold}${C.white}Sessions:${C.reset}
+${C.bold}${C.cyan}Sessions:${C.reset}
   ${C.cyan}/save [name]${C.reset}      ${C.dim}Save current session${C.reset}
   ${C.cyan}/load <name>${C.reset}      ${C.dim}Load a saved session${C.reset}
   ${C.cyan}/sessions${C.reset}         ${C.dim}List all saved sessions${C.reset}
   ${C.cyan}/resume${C.reset}           ${C.dim}Resume last session${C.reset}
 
-${C.bold}${C.white}Memory:${C.reset}
+${C.bold}${C.cyan}Memory:${C.reset}
   ${C.cyan}/remember <text>${C.reset}  ${C.dim}Save a memory (key=value or freeform)${C.reset}
   ${C.cyan}/forget <key>${C.reset}     ${C.dim}Delete a memory${C.reset}
   ${C.cyan}/memory${C.reset}           ${C.dim}Show all memories${C.reset}
 
-${C.bold}${C.white}Permissions:${C.reset}
+${C.bold}${C.cyan}Permissions:${C.reset}
   ${C.cyan}/permissions${C.reset}      ${C.dim}Show tool permissions${C.reset}
   ${C.cyan}/allow <tool>${C.reset}     ${C.dim}Auto-allow a tool${C.reset}
   ${C.cyan}/deny <tool>${C.reset}      ${C.dim}Block a tool${C.reset}
 
-${C.bold}${C.white}Planning:${C.reset}
+${C.bold}${C.cyan}Planning:${C.reset}
   ${C.cyan}/plan [task]${C.reset}      ${C.dim}Enter plan mode (analyze, don't execute)${C.reset}
   ${C.cyan}/plan status${C.reset}      ${C.dim}Show current plan progress${C.reset}
   ${C.cyan}/plan approve${C.reset}     ${C.dim}Approve current plan${C.reset}
   ${C.cyan}/plans${C.reset}            ${C.dim}List saved plans${C.reset}
   ${C.cyan}/auto [level]${C.reset}     ${C.dim}Set autonomy: interactive/semi-auto/autonomous${C.reset}
 
-${C.bold}${C.white}Git:${C.reset}
+${C.bold}${C.cyan}Git:${C.reset}
   ${C.cyan}/commit [msg]${C.reset}    ${C.dim}Smart commit (analyze diff, suggest message)${C.reset}
   ${C.cyan}/diff${C.reset}             ${C.dim}Show current diff summary${C.reset}
   ${C.cyan}/branch [name]${C.reset}   ${C.dim}Create feature branch${C.reset}
 
-${C.bold}${C.white}Extensibility:${C.reset}
+${C.bold}${C.cyan}Extensibility:${C.reset}
   ${C.cyan}/mcp${C.reset}              ${C.dim}Show MCP servers and tools${C.reset}
   ${C.cyan}/mcp connect${C.reset}      ${C.dim}Connect all configured MCP servers${C.reset}
   ${C.cyan}/hooks${C.reset}            ${C.dim}Show configured hooks${C.reset}
@@ -136,7 +136,7 @@ function showProviders() {
   const activeProvider = getActiveProviderName();
   const activeModel = getActiveModel();
 
-  console.log(`\n${C.bold}${C.white}Providers:${C.reset}`);
+  console.log(`\n${C.bold}${C.cyan}Providers:${C.reset}`);
   for (const p of providerList) {
     const isActive = p.provider === activeProvider;
     const status = p.configured ? `${C.green}✓${C.reset}` : `${C.red}✗${C.reset}`;
@@ -165,7 +165,7 @@ function handleSlashCommand(input) {
         const model = getActiveModel();
         const providerName = getActiveProviderName();
         console.log(
-          `${C.bold}${C.white}Active model:${C.reset} ${C.dim}${providerName}:${model.id} (${model.name})${C.reset}`
+          `${C.bold}${C.cyan}Active model:${C.reset} ${C.dim}${providerName}:${model.id} (${model.name})${C.reset}`
         );
         console.log(`${C.gray}Use /model <provider:model> to switch. /providers to see all.${C.reset}`);
         return true;
@@ -197,7 +197,7 @@ function handleSlashCommand(input) {
           console.log(`${C.dim}No fallback chain configured${C.reset}`);
           console.log(`${C.dim}Use /fallback anthropic,openai,local to set${C.reset}`);
         } else {
-          console.log(`${C.bold}${C.white}Fallback chain:${C.reset} ${chain.join(' → ')}`);
+          console.log(`${C.bold}${C.cyan}Fallback chain:${C.reset} ${chain.join(' → ')}`);
         }
         return true;
       }
@@ -213,7 +213,7 @@ function handleSlashCommand(input) {
       const model = getActiveModel();
       const providerName = getActiveProviderName();
 
-      console.log(`\n${C.bold}${C.white}Token Usage:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Token Usage:${C.reset}`);
       console.log(`  ${C.dim}Model:${C.reset} ${providerName}:${model.id} (${(usage.limit / 1000).toFixed(0)}k context)`);
       console.log(`  ${C.dim}Used:${C.reset}  ${usage.used.toLocaleString()} / ${usage.limit.toLocaleString()} (${usage.percentage}%)`);
 
@@ -296,7 +296,7 @@ function handleSlashCommand(input) {
         console.log(`${C.dim}No saved sessions${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.white}Sessions:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Sessions:${C.reset}`);
       for (const s of sessions) {
         const date = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '?';
         const auto = s.name === '_autosave' ? ` ${C.dim}(auto)${C.reset}` : '';
@@ -357,7 +357,7 @@ function handleSlashCommand(input) {
         console.log(`${C.dim}No memories saved${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.white}Memory:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Memory:${C.reset}`);
       for (const m of memories) {
         console.log(`  ${C.cyan}${m.key}${C.reset} = ${m.value}`);
       }
@@ -398,7 +398,7 @@ function handleSlashCommand(input) {
         console.log(`${C.dim}No saved plans${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.white}Plans:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Plans:${C.reset}`);
       for (const p of plans) {
         const statusIcon = p.status === 'completed' ? `${C.green}✓` : p.status === 'executing' ? `${C.blue}→` : `${C.dim}○`;
         console.log(`  ${statusIcon} ${C.reset}${C.bold}${p.name}${C.reset} — ${p.task || '?'} (${p.steps} steps, ${p.status})`);
@@ -410,7 +410,7 @@ function handleSlashCommand(input) {
     case '/auto': {
       const level = rest.join(' ').trim();
       if (!level) {
-        console.log(`${C.bold}${C.white}Autonomy:${C.reset} ${getAutonomyLevel()}`);
+        console.log(`${C.bold}${C.cyan}Autonomy:${C.reset} ${getAutonomyLevel()}`);
         console.log(`${C.dim}Levels: ${AUTONOMY_LEVELS.join(', ')}${C.reset}`);
         return true;
       }
@@ -424,7 +424,7 @@ function handleSlashCommand(input) {
 
     case '/permissions': {
       const perms = listPermissions();
-      console.log(`\n${C.bold}${C.white}Tool Permissions:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Tool Permissions:${C.reset}`);
       for (const p of perms) {
         const icon = p.mode === 'allow' ? `${C.green}✓` : p.mode === 'deny' ? `${C.red}✗` : `${C.yellow}?`;
         console.log(`  ${icon} ${C.reset}${C.bold}${p.tool}${C.reset} ${C.dim}(${p.mode})${C.reset}`);
@@ -500,7 +500,7 @@ function handleSlashCommand(input) {
       const branchArg = rest.join(' ').trim();
       if (!branchArg) {
         const current = getCurrentBranch();
-        console.log(`${C.bold}${C.white}Branch:${C.reset} ${current || '(detached)'}`);
+        console.log(`${C.bold}${C.cyan}Branch:${C.reset} ${current || '(detached)'}`);
         return true;
       }
       const branchName = createBranch(branchArg);
@@ -542,7 +542,7 @@ function handleSlashCommand(input) {
         console.log(`${C.dim}Add servers to .nex/config.json under "mcpServers"${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.white}MCP Servers:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}MCP Servers:${C.reset}`);
       for (const s of servers) {
         const status = s.connected ? `${C.green}✓ connected${C.reset}` : `${C.dim}○ disconnected${C.reset}`;
         console.log(`  ${status} ${C.bold}${s.name}${C.reset} (${s.command}) — ${s.toolCount} tools`);
@@ -558,7 +558,7 @@ function handleSlashCommand(input) {
         console.log(`${C.dim}Add hooks to .nex/config.json or .nex/hooks/${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.white}Hooks:${C.reset}`);
+      console.log(`\n${C.bold}${C.cyan}Hooks:${C.reset}`);
       for (const h of hookList) {
         console.log(`  ${C.cyan}${h.event}${C.reset}`);
         for (const cmd of h.commands) {
@@ -595,7 +595,7 @@ function startREPL() {
         execSync('curl -s --max-time 2 http://localhost:11434/api/tags', { encoding: 'utf-8', stdio: 'pipe' });
         setActiveModel('local:llama3');
         console.log(`${C.green}Local Ollama detected — using local models${C.reset}`);
-        console.log(`${C.dim}Set API keys for cloud providers: OPENAI_API_KEY, ANTHROPIC_API_KEY${C.reset}\n`);
+        console.log(`${C.dim}Set API keys for cloud providers: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY${C.reset}\n`);
         localDetected = true;
       } catch {
         // Local Ollama not available
@@ -605,7 +605,7 @@ function startREPL() {
       console.error(`${C.red}No provider configured and no local Ollama running.${C.reset}`);
       console.error(`${C.gray}Options:${C.reset}`);
       console.error(`${C.gray}  1. Install Ollama: https://ollama.com/download${C.reset}`);
-      console.error(`${C.gray}  2. Set an API key: OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_API_KEY${C.reset}`);
+      console.error(`${C.gray}  2. Set an API key: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or OLLAMA_API_KEY${C.reset}`);
       process.exit(1);
     }
   }

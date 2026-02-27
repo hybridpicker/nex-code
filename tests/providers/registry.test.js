@@ -24,8 +24,8 @@ describe('providers/registry.js', () => {
   describe('initialization', () => {
     it('auto-initializes with default providers', () => {
       const providers = registry.listProviders();
-      expect(providers).toHaveLength(4);
-      expect(providers.map((p) => p.provider)).toEqual(['ollama', 'openai', 'anthropic', 'local']);
+      expect(providers).toHaveLength(5);
+      expect(providers.map((p) => p.provider)).toEqual(['ollama', 'openai', 'anthropic', 'gemini', 'local']);
     });
 
     it('defaults to ollama provider', () => {

@@ -168,10 +168,9 @@ npm install
       expect(result).toContain(C.cyan); // key color
     });
 
-    it('falls back to plain white for unknown languages', () => {
+    it('returns plain text for unknown languages', () => {
       const result = highlightCode('some code', 'python');
-      expect(result).toContain(C.white);
-      expect(result).toContain('some code');
+      expect(result).toBe('some code');
     });
 
     it('uses JS highlighting when no lang specified', () => {

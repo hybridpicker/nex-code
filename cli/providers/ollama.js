@@ -9,6 +9,10 @@ const { BaseProvider } = require('./base');
 const OLLAMA_MODELS = {
   'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', maxTokens: 16384, contextWindow: 131072 },
   'qwen3-coder': { id: 'qwen3-coder', name: 'Qwen3 Coder', maxTokens: 16384, contextWindow: 131072 },
+  'deepseek-r1': { id: 'deepseek-r1', name: 'DeepSeek R1', maxTokens: 16384, contextWindow: 131072 },
+  'llama-4-scout': { id: 'llama-4-scout', name: 'Llama 4 Scout', maxTokens: 16384, contextWindow: 131072 },
+  'qwen3-30b-a3b': { id: 'qwen3-30b-a3b', name: 'Qwen3 30B A3B', maxTokens: 16384, contextWindow: 131072 },
+  'devstral': { id: 'devstral', name: 'Devstral', maxTokens: 16384, contextWindow: 131072 },
 };
 
 class OllamaProvider extends BaseProvider {
