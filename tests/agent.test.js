@@ -44,6 +44,10 @@ jest.mock('../cli/planner', () => ({
 
 jest.mock('../cli/render', () => ({
   renderMarkdown: jest.fn().mockImplementation((text) => text || ''),
+  StreamRenderer: jest.fn().mockImplementation(() => ({
+    push: jest.fn(),
+    flush: jest.fn(),
+  })),
 }));
 
 jest.mock('../cli/hooks', () => ({
@@ -63,6 +67,14 @@ jest.mock('../cli/skills', () => ({
 
 jest.mock('../cli/costs', () => ({
   trackUsage: jest.fn(),
+}));
+
+jest.mock('../cli/tool-validator', () => ({
+  validateToolArgs: jest.fn().mockReturnValue({ valid: true, args: {} }),
+}));
+
+jest.mock('../cli/tool-tiers', () => ({
+  filterToolsForModel: jest.fn().mockImplementation((tools) => tools),
 }));
 
 jest.mock('../cli/safety', () => ({

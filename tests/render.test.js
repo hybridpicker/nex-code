@@ -5,8 +5,14 @@ const {
   highlightJS,
   highlightBash,
   highlightJSON,
+  highlightPython,
+  highlightGo,
+  highlightRust,
+  highlightCSS,
+  highlightHTML,
   renderTable,
   renderProgress,
+  StreamRenderer,
 } = require('../cli/render');
 const { C } = require('../cli/ui');
 
@@ -343,6 +349,300 @@ npm install
     it('respects custom width', () => {
       const result = renderProgress('Custom', 5, 10, 10);
       expect(result).toContain('50%');
+    });
+  });
+
+  // ─── highlightPython ────────────────────────────────────────
+  describe('highlightPython()', () => {
+    it('highlights keywords', () => {
+      const result = highlightPython('def foo(self):');
+      expect(result).toContain(C.magenta);
+    });
+
+    it('highlights strings', () => {
+      const result = highlightPython('x = "hello"');
+      expect(result).toContain(C.green);
+    });
+
+    it('highlights comments', () => {
+      const result = highlightPython('# comment');
+      expect(result).toContain(C.dim);
+    });
+
+    it('highlights numbers', () => {
+      const result = highlightPython('x = 42');
+      expect(result).toContain(C.yellow);
+    });
+
+    it('highlights decorators', () => {
+      const result = highlightPython('@staticmethod');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('highlights None/True/False', () => {
+      const result = highlightPython('return None');
+      expect(result).toContain(C.magenta);
+    });
+  });
+
+  // ─── highlightGo ───────────────────────────────────────────
+  describe('highlightGo()', () => {
+    it('highlights keywords', () => {
+      const result = highlightGo('func main() {');
+      expect(result).toContain(C.magenta);
+    });
+
+    it('highlights types', () => {
+      const result = highlightGo('var x string');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('highlights strings', () => {
+      const result = highlightGo('s := "hello"');
+      expect(result).toContain(C.green);
+    });
+
+    it('highlights comments', () => {
+      const result = highlightGo('// comment');
+      expect(result).toContain(C.dim);
+    });
+
+    it('highlights numbers', () => {
+      const result = highlightGo('x := 42');
+      expect(result).toContain(C.yellow);
+    });
+  });
+
+  // ─── highlightRust ─────────────────────────────────────────
+  describe('highlightRust()', () => {
+    it('highlights keywords', () => {
+      const result = highlightRust('fn main() {');
+      expect(result).toContain(C.magenta);
+    });
+
+    it('highlights types', () => {
+      const result = highlightRust('let x: i32 = 5;');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('highlights strings', () => {
+      const result = highlightRust('let s = "hello";');
+      expect(result).toContain(C.green);
+    });
+
+    it('highlights comments', () => {
+      const result = highlightRust('// comment');
+      expect(result).toContain(C.dim);
+    });
+
+    it('highlights macros', () => {
+      const result = highlightRust('println!("test")');
+      expect(result).toContain(C.yellow);
+    });
+
+    it('highlights numbers', () => {
+      const result = highlightRust('let x = 42;');
+      expect(result).toContain(C.yellow);
+    });
+  });
+
+  // ─── highlightCSS ──────────────────────────────────────────
+  describe('highlightCSS()', () => {
+    it('highlights properties', () => {
+      const result = highlightCSS('  color: red;');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('highlights selectors', () => {
+      const result = highlightCSS('.container {');
+      expect(result).toContain(C.magenta);
+    });
+
+    it('highlights numbers with units', () => {
+      const result = highlightCSS('  width: 100px;');
+      expect(result).toContain(C.yellow);
+    });
+
+    it('highlights hex colors', () => {
+      const result = highlightCSS('  color: #ff0000;');
+      expect(result).toContain(C.yellow);
+    });
+
+    it('highlights comments', () => {
+      const result = highlightCSS('/* comment */');
+      expect(result).toContain(C.dim);
+    });
+  });
+
+  // ─── highlightHTML ─────────────────────────────────────────
+  describe('highlightHTML()', () => {
+    it('highlights tags', () => {
+      const result = highlightHTML('<div>');
+      expect(result).toContain(C.magenta);
+    });
+
+    it('highlights attributes', () => {
+      const result = highlightHTML('<div class="test">');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('highlights string values', () => {
+      const result = highlightHTML('<a href="url">');
+      expect(result).toContain(C.green);
+    });
+
+    it('highlights comments', () => {
+      const result = highlightHTML('<!-- comment -->');
+      expect(result).toContain(C.dim);
+    });
+
+    it('highlights entities', () => {
+      const result = highlightHTML('&amp;');
+      expect(result).toContain(C.yellow);
+    });
+  });
+
+  // ─── highlightCode extended dispatch ───────────────────────
+  describe('highlightCode() extended languages', () => {
+    it('dispatches to Python highlighter', () => {
+      for (const lang of ['python', 'py']) {
+        const result = highlightCode('def foo():', lang);
+        expect(result).toContain(C.magenta);
+      }
+    });
+
+    it('dispatches to Go highlighter', () => {
+      for (const lang of ['go', 'golang']) {
+        const result = highlightCode('func main() {', lang);
+        expect(result).toContain(C.magenta);
+      }
+    });
+
+    it('dispatches to Rust highlighter', () => {
+      for (const lang of ['rust', 'rs']) {
+        const result = highlightCode('fn main() {', lang);
+        expect(result).toContain(C.magenta);
+      }
+    });
+
+    it('dispatches to CSS highlighter', () => {
+      for (const lang of ['css', 'scss', 'less']) {
+        const result = highlightCode('  color: red;', lang);
+        expect(result).toContain(C.cyan);
+      }
+    });
+
+    it('dispatches to HTML highlighter', () => {
+      for (const lang of ['html', 'xml', 'svg', 'htm']) {
+        const result = highlightCode('<div>', lang);
+        expect(result).toContain(C.magenta);
+      }
+    });
+
+    it('dispatches bash for zsh', () => {
+      const result = highlightCode('npm install --save', 'zsh');
+      expect(result).toContain(C.cyan);
+    });
+
+    it('dispatches JSON for jsonc', () => {
+      const result = highlightCode('"key": "value"', 'jsonc');
+      expect(result).toContain(C.cyan);
+    });
+  });
+
+  // ─── StreamRenderer ────────────────────────────────────────
+  describe('StreamRenderer', () => {
+    let writeSpy;
+
+    beforeEach(() => {
+      writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      writeSpy.mockRestore();
+    });
+
+    it('renders complete lines immediately', () => {
+      const sr = new StreamRenderer();
+      sr.push('hello world\n');
+      expect(writeSpy).toHaveBeenCalledWith('hello world\n');
+    });
+
+    it('buffers partial lines until newline', () => {
+      const sr = new StreamRenderer();
+      sr.push('hello');
+      expect(writeSpy).not.toHaveBeenCalled();
+      sr.push(' world\n');
+      expect(writeSpy).toHaveBeenCalledWith('hello world\n');
+    });
+
+    it('flush() outputs remaining buffer', () => {
+      const sr = new StreamRenderer();
+      sr.push('partial');
+      expect(writeSpy).not.toHaveBeenCalled();
+      sr.flush();
+      expect(writeSpy).toHaveBeenCalledWith('partial\n');
+    });
+
+    it('renders headers in stream', () => {
+      const sr = new StreamRenderer();
+      sr.push('# Title\n');
+      const output = writeSpy.mock.calls[0][0];
+      expect(output).toContain(C.bold);
+      expect(output).toContain('Title');
+    });
+
+    it('renders code blocks with highlighting', () => {
+      const sr = new StreamRenderer();
+      sr.push('```js\n');
+      sr.push('const x = 1;\n');
+      sr.push('```\n');
+      // First call: code block header
+      expect(writeSpy.mock.calls[0][0]).toContain('─');
+      expect(writeSpy.mock.calls[0][0]).toContain('js');
+      // Second call: highlighted code
+      expect(writeSpy.mock.calls[1][0]).toContain(C.magenta);
+      // Third call: code block footer
+      expect(writeSpy.mock.calls[2][0]).toContain('─');
+    });
+
+    it('renders lists in stream', () => {
+      const sr = new StreamRenderer();
+      sr.push('- item one\n');
+      const output = writeSpy.mock.calls[0][0];
+      expect(output).toContain('•');
+      expect(output).toContain('item one');
+    });
+
+    it('renders numbered lists in stream', () => {
+      const sr = new StreamRenderer();
+      sr.push('1. first\n');
+      const output = writeSpy.mock.calls[0][0];
+      expect(output).toContain('1.');
+      expect(output).toContain('first');
+    });
+
+    it('handles multiple lines in one push', () => {
+      const sr = new StreamRenderer();
+      sr.push('line one\nline two\nline three\n');
+      expect(writeSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it('flush closes unclosed code blocks', () => {
+      const sr = new StreamRenderer();
+      sr.push('```js\nconst x = 1;');
+      sr.flush();
+      // Should have rendered code block header + code + closing separator
+      const allOutput = writeSpy.mock.calls.map(c => c[0]).join('');
+      expect(allOutput).toContain('─');
+    });
+
+    it('handles empty push', () => {
+      const sr = new StreamRenderer();
+      sr.push('');
+      sr.push(null);
+      sr.push(undefined);
+      expect(writeSpy).not.toHaveBeenCalled();
     });
   });
 });
