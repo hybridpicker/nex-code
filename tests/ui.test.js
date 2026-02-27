@@ -76,7 +76,7 @@ describe('ui.js', () => {
       expect(logSpy).toHaveBeenCalled();
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
       expect(output).toContain('Nex Code');
-      expect(output).toContain('v0.1.0');
+      expect(output).toContain('v0.2.0');
       logSpy.mockRestore();
     });
   });

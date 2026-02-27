@@ -116,7 +116,7 @@ async function connectServer(name, config) {
     await sendRequest(proc, 'initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'nex-code', version: '0.1.0' },
+      clientInfo: { name: 'nex-code', version: '0.2.0' },
     });
 
     // Discover tools

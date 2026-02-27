@@ -236,8 +236,19 @@ describe('mcp.js', () => {
       // Use a command that exits immediately without speaking JSON-RPC
       await expect(
         connectServer('failing', { command: 'echo', args: ['bye'] })
-      ).rejects.toThrow(/Failed to connect|MCP write failed|MCP request timeout/);
+      ).rejects.toThrow(/Failed to connect|MCP write failed|MCP request timeout|EPIPE/);
     }, 15000);
+  });
+
+  // ─── sendRequest write failure ─────────────────────────────
+  describe('sendRequest write failure', () => {
+    it('rejects when stdin.write throws', async () => {
+      const mockProc = {
+        stdin: { write: jest.fn().mockImplementation(() => { throw new Error('write broken'); }) },
+        stdout: { on: jest.fn(), removeListener: jest.fn() },
+      };
+      await expect(sendRequest(mockProc, 'test/write-fail', {}, 5000)).rejects.toThrow('MCP write failed');
+    });
   });
 
   // ─── Integration: sendRequest with error object ───────────

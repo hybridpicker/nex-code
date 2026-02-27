@@ -34,6 +34,9 @@ jest.mock('../cli/providers/registry', () => ({
   listAllModels: jest.fn().mockReturnValue([
     { spec: 'ollama:kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama', configured: true },
   ]),
+  setFallbackChain: jest.fn(),
+  getFallbackChain: jest.fn().mockReturnValue([]),
+  getProvider: jest.fn().mockReturnValue(null),
 }));
 
 jest.mock('../cli/context', () => ({
@@ -117,6 +120,11 @@ jest.mock('../cli/hooks', () => ({
   listHooks: jest.fn().mockReturnValue([]),
   runHooks: jest.fn().mockReturnValue([]),
   HOOK_EVENTS: ['pre-tool', 'post-tool', 'pre-commit', 'post-response', 'session-start', 'session-end'],
+}));
+
+jest.mock('../cli/costs', () => ({
+  formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
+  resetCosts: jest.fn(),
 }));
 
 describe('index.js (REPL commands)', () => {
@@ -213,6 +221,9 @@ describe('index.js (REPL commands)', () => {
         getActiveProviderName: jest.fn().mockReturnValue('ollama'),
         getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5' }),
         listAllModels: jest.fn().mockReturnValue([]),
+        setFallbackChain: jest.fn(),
+        getFallbackChain: jest.fn().mockReturnValue([]),
+        getProvider: jest.fn().mockReturnValue(null),
       }));
       jest.mock('../cli/context', () => ({
         printContext: jest.fn(),
@@ -221,6 +232,10 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+      }));
+      jest.mock('../cli/costs', () => ({
+        formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
+        resetCosts: jest.fn(),
       }));
 
       const { startREPL } = require('../cli/index');
@@ -301,6 +316,9 @@ describe('index.js (REPL commands)', () => {
         getActiveProviderName: jest.fn().mockReturnValue('ollama'),
         getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
         listAllModels: jest.fn().mockReturnValue([]),
+        setFallbackChain: jest.fn(),
+        getFallbackChain: jest.fn().mockReturnValue([]),
+        getProvider: jest.fn().mockReturnValue(null),
       }));
       jest.mock('../cli/context', () => ({
         printContext: jest.fn(),
@@ -309,6 +327,10 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/safety', () => ({
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
+      }));
+      jest.mock('../cli/costs', () => ({
+        formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
+        resetCosts: jest.fn(),
       }));
 
       const mockRl = {
@@ -439,6 +461,13 @@ describe('index.js (REPL commands)', () => {
         getActiveProviderName: jest.fn().mockReturnValue('ollama'),
         getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
         listAllModels: jest.fn().mockReturnValue([]),
+        setFallbackChain: jest.fn(),
+        getFallbackChain: jest.fn().mockReturnValue([]),
+        getProvider: jest.fn().mockReturnValue(null),
+      }));
+      jest.mock('../cli/costs', () => ({
+        formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
+        resetCosts: jest.fn(),
       }));
       jest.mock('../cli/context', () => ({
         printContext: jest.fn(),
@@ -811,6 +840,185 @@ describe('index.js (REPL commands)', () => {
       await lineHandler('/hooks');
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
       expect(output).toContain('No hooks configured');
+    });
+
+    // ─── Costs commands ─────────────────────────────────
+    it('handles /costs command', async () => {
+      await lineHandler('/costs');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No token usage');
+    });
+
+    it('handles /costs reset', async () => {
+      const { resetCosts } = require('../cli/costs');
+      await lineHandler('/costs reset');
+      expect(resetCosts).toHaveBeenCalled();
+    });
+
+    // ─── Fallback commands ──────────────────────────────
+    it('handles /fallback without args (no chain)', async () => {
+      await lineHandler('/fallback');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No fallback chain');
+    });
+
+    it('handles /fallback with chain', async () => {
+      const { setFallbackChain } = require('../cli/providers/registry');
+      await lineHandler('/fallback anthropic,openai,local');
+      expect(setFallbackChain).toHaveBeenCalledWith(['anthropic', 'openai', 'local']);
+    });
+
+    // ─── Additional session commands ────────────────────
+    it('handles /sessions with empty list', async () => {
+      const session = require('../cli/session');
+      session.listSessions.mockReturnValueOnce([]);
+      await lineHandler('/sessions');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No saved sessions');
+    });
+
+    it('handles /resume with no session', async () => {
+      const session = require('../cli/session');
+      session.getLastSession.mockReturnValueOnce(null);
+      await lineHandler('/resume');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No session');
+    });
+
+    // ─── Additional memory commands ─────────────────────
+    it('handles /memory with empty list', async () => {
+      const memory = require('../cli/memory');
+      memory.listMemories.mockReturnValueOnce([]);
+      await lineHandler('/memory');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No memories');
+    });
+
+    // ─── Additional plan commands ───────────────────────
+    it('handles /plan approve with active plan', async () => {
+      const planner = require('../cli/planner');
+      planner.approvePlan.mockReturnValueOnce(true);
+      await lineHandler('/plan approve');
+      expect(planner.startExecution).toHaveBeenCalled();
+      expect(planner.setPlanMode).toHaveBeenCalledWith(false);
+    });
+
+    it('handles /plans with saved plans', async () => {
+      const planner = require('../cli/planner');
+      planner.listPlans.mockReturnValueOnce([
+        { name: 'plan-1', task: 'refactor', steps: 3, status: 'completed' },
+        { name: 'plan-2', task: 'feature', steps: 5, status: 'executing' },
+      ]);
+      await lineHandler('/plans');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('plan-1');
+      expect(output).toContain('plan-2');
+    });
+
+    // ─── Additional git commands ────────────────────────
+    it('handles /commit when commit succeeds', async () => {
+      const git = require('../cli/git');
+      git.commit.mockReturnValueOnce('abc1234');
+      await lineHandler('/commit feat: add feature');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('abc1234');
+    });
+
+    it('handles /commit when commit fails', async () => {
+      const git = require('../cli/git');
+      git.commit.mockReturnValueOnce(null);
+      await lineHandler('/commit test message');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Commit failed');
+    });
+
+    it('handles /branch creation failure', async () => {
+      const git = require('../cli/git');
+      git.createBranch.mockReturnValueOnce(null);
+      await lineHandler('/branch broken-branch');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Failed to create branch');
+    });
+
+    it('handles /diff not in git repo', async () => {
+      const git = require('../cli/git');
+      git.isGitRepo.mockReturnValueOnce(false);
+      await lineHandler('/diff');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Not a git repository');
+    });
+
+    it('handles /commit not in git repo', async () => {
+      const git = require('../cli/git');
+      git.isGitRepo.mockReturnValueOnce(false);
+      await lineHandler('/commit test');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Not a git repository');
+    });
+
+    it('handles /branch not in git repo', async () => {
+      const git = require('../cli/git');
+      git.isGitRepo.mockReturnValueOnce(false);
+      await lineHandler('/branch test');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Not a git repository');
+    });
+
+    // ─── MCP commands extended ──────────────────────────
+    it('handles /mcp connect', async () => {
+      const mcp = require('../cli/mcp');
+      mcp.connectAll.mockResolvedValueOnce([
+        { name: 'server1', tools: 3 },
+        { name: 'server2', tools: 0, error: 'Connection failed' },
+      ]);
+      await lineHandler('/mcp connect');
+      // Need to wait for async .then()
+      await new Promise((r) => setTimeout(r, 10));
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('server1');
+    });
+
+    it('handles /mcp with servers configured', async () => {
+      const mcp = require('../cli/mcp');
+      mcp.listServers.mockReturnValueOnce([
+        { name: 'test-srv', command: 'node', connected: true, toolCount: 5 },
+      ]);
+      await lineHandler('/mcp');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('test-srv');
+      expect(output).toContain('connected');
+    });
+
+    // ─── Hooks with hooks configured ────────────────────
+    it('handles /hooks with hooks configured', async () => {
+      const hooks = require('../cli/hooks');
+      hooks.listHooks.mockReturnValueOnce([
+        { event: 'pre-tool', commands: ['echo "before"'] },
+        { event: 'post-tool', commands: ['echo "after"'] },
+      ]);
+      await lineHandler('/hooks');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('pre-tool');
+      expect(output).toContain('post-tool');
+    });
+
+    // ─── Agent error handling ───────────────────────────
+    it('handles agent processInput error', async () => {
+      const agent = require('../cli/agent');
+      agent.processInput.mockRejectedValueOnce(new Error('Provider error'));
+      await lineHandler('do something');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Provider error');
+    });
+
+    // ─── /commit with smart commit flow ─────────────────
+    it('handles /commit smart commit with changes', async () => {
+      const git = require('../cli/git');
+      git.analyzeDiff.mockReturnValueOnce({ files: 3, additions: 10, deletions: 5 });
+      git.formatDiffSummary.mockReturnValueOnce('3 files changed');
+      await lineHandler('/commit');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('3 files changed');
     });
   });
 });

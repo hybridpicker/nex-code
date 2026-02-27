@@ -6,7 +6,7 @@ const readline = require('readline');
 const { C, banner } = require('./ui');
 const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages } = require('./agent');
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
-const { listProviders, getActiveProviderName, listAllModels } = require('./providers/registry');
+const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
 const { printContext } = require('./context');
 const { setAutoConfirm, getAutoConfirm } = require('./safety');
 const { getUsage } = require('./context-engine');
@@ -22,6 +22,7 @@ const {
 const { isGitRepo, getCurrentBranch, formatDiffSummary, analyzeDiff, commit, createBranch } = require('./git');
 const { listServers, connectAll, disconnectAll } = require('./mcp');
 const { listHooks, runHooks, HOOK_EVENTS } = require('./hooks');
+const { formatCosts, resetCosts } = require('./costs');
 
 const CWD = process.cwd();
 
@@ -31,7 +32,9 @@ ${C.bold}${C.white}Commands:${C.reset}
   ${C.cyan}/help${C.reset}             ${C.dim}Show this help${C.reset}
   ${C.cyan}/model [spec]${C.reset}     ${C.dim}Show/switch model (e.g. openai:gpt-4o, claude-sonnet)${C.reset}
   ${C.cyan}/providers${C.reset}        ${C.dim}Show available providers and models${C.reset}
+  ${C.cyan}/fallback [chain]${C.reset} ${C.dim}Show/set fallback chain (e.g. anthropic,openai,local)${C.reset}
   ${C.cyan}/tokens${C.reset}           ${C.dim}Show token usage and context budget${C.reset}
+  ${C.cyan}/costs${C.reset}            ${C.dim}Show session token costs${C.reset}
   ${C.cyan}/clear${C.reset}            ${C.dim}Clear conversation context${C.reset}
   ${C.cyan}/context${C.reset}          ${C.dim}Show project context${C.reset}
   ${C.cyan}/autoconfirm${C.reset}      ${C.dim}Toggle auto-confirm for file changes${C.reset}
@@ -139,6 +142,24 @@ function handleSlashCommand(input) {
       showProviders();
       return true;
 
+    case '/fallback': {
+      const chainArg = rest.join(' ').trim();
+      if (!chainArg) {
+        const chain = getFallbackChain();
+        if (chain.length === 0) {
+          console.log(`${C.dim}No fallback chain configured${C.reset}`);
+          console.log(`${C.dim}Use /fallback anthropic,openai,local to set${C.reset}`);
+        } else {
+          console.log(`${C.bold}${C.white}Fallback chain:${C.reset} ${chain.join(' → ')}`);
+        }
+        return true;
+      }
+      const chain = chainArg.split(',').map((s) => s.trim()).filter(Boolean);
+      setFallbackChain(chain);
+      console.log(`${C.green}Fallback chain: ${chain.join(' → ')}${C.reset}`);
+      return true;
+    }
+
     case '/tokens': {
       const messages = getConversationMessages();
       const usage = getUsage(messages, TOOL_DEFINITIONS);
@@ -159,6 +180,17 @@ function handleSlashCommand(input) {
       console.log(`    Tool definitions: ${usage.breakdown.toolDefinitions.toLocaleString()} tokens`);
       console.log(`    Messages:         ${usage.messageCount}`);
       console.log();
+      return true;
+    }
+
+    case '/costs': {
+      const costArg = rest.join(' ').trim();
+      if (costArg === 'reset') {
+        resetCosts();
+        console.log(`${C.green}Cost tracking reset${C.reset}`);
+        return true;
+      }
+      console.log(`\n${formatCosts()}\n`);
       return true;
     }
 
@@ -507,10 +539,28 @@ function startREPL() {
   const hasConfigured = providerList.some((p) => p.configured);
 
   if (!hasConfigured) {
-    console.error(`${C.red}ERROR: No provider configured.${C.reset}`);
-    console.error(`${C.gray}Set at least one API key:${C.reset}`);
-    console.error(`${C.gray}  OLLAMA_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY${C.reset}`);
-    process.exit(1);
+    // Check if local Ollama is running
+    const localProvider = getProvider('local');
+    let localDetected = false;
+    if (localProvider) {
+      try {
+        const { execSync } = require('child_process');
+        execSync('curl -s --max-time 2 http://localhost:11434/api/tags', { encoding: 'utf-8', stdio: 'pipe' });
+        setActiveModel('local:llama3');
+        console.log(`${C.green}Local Ollama detected — using local models${C.reset}`);
+        console.log(`${C.dim}Set API keys for cloud providers: OPENAI_API_KEY, ANTHROPIC_API_KEY${C.reset}\n`);
+        localDetected = true;
+      } catch {
+        // Local Ollama not available
+      }
+    }
+    if (!localDetected) {
+      console.error(`${C.red}No provider configured and no local Ollama running.${C.reset}`);
+      console.error(`${C.gray}Options:${C.reset}`);
+      console.error(`${C.gray}  1. Install Ollama: https://ollama.com/download${C.reset}`);
+      console.error(`${C.gray}  2. Set an API key: OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_API_KEY${C.reset}`);
+      process.exit(1);
+    }
   }
 
   const model = getActiveModel();

@@ -61,7 +61,7 @@ function banner(modelName, cwd) {
 
   console.log(`
 ${C.dim}${top}
-${line(` ${C.reset}${C.cyan}✻${C.reset}${C.bold}${C.white} Nex Code ${C.reset}${C.dim}v0.1.0${C.reset}${C.dim}`)}
+${line(` ${C.reset}${C.cyan}✻${C.reset}${C.bold}${C.white} Nex Code ${C.reset}${C.dim}v0.2.0${C.reset}${C.dim}`)}
 ${line(`   ${C.reset}${C.dim}Agentic Coding CLI${C.reset}${C.dim}`)}
 ${line('')}
 ${line(`   ${C.reset}${C.dim}Model: ${modelName}${C.reset}${C.dim}`)}
