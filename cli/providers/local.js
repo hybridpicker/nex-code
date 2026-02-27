@@ -13,7 +13,7 @@ class LocalProvider extends BaseProvider {
   constructor(config = {}) {
     super({
       name: 'local',
-      baseUrl: config.baseUrl || process.env.OLLAMA_LOCAL_URL || DEFAULT_LOCAL_URL,
+      baseUrl: config.baseUrl || process.env.OLLAMA_HOST || process.env.OLLAMA_LOCAL_URL || DEFAULT_LOCAL_URL,
       models: config.models || {},
       defaultModel: config.defaultModel || null,
       ...config,
@@ -43,11 +43,30 @@ class LocalProvider extends BaseProvider {
         const name = m.name || m.model;
         if (!name) continue;
         const id = name.replace(/:latest$/, '');
+
+        // Try to get actual context window from model metadata
+        let contextWindow = 32768; // Conservative fallback
+        try {
+          const showResp = await axios.post(
+            `${this.baseUrl}/api/show`,
+            { name },
+            { timeout: 5000 }
+          );
+          const params = showResp.data?.model_info || showResp.data?.details || {};
+          // Ollama exposes context length in model_info
+          contextWindow = params['general.context_length']
+            || params['llama.context_length']
+            || this._parseContextFromModelfile(showResp.data?.modelfile)
+            || 32768;
+        } catch {
+          // /api/show failed — use fallback
+        }
+
         this.models[id] = {
           id,
           name: m.name,
-          maxTokens: 8192,
-          contextWindow: m.details?.parameter_size ? parseInt(m.details.parameter_size) : 32768,
+          maxTokens: Math.min(8192, Math.floor(contextWindow * 0.1)),
+          contextWindow,
         };
       }
 
@@ -132,8 +151,22 @@ class LocalProvider extends BaseProvider {
       let content = '';
       let toolCalls = [];
       let buffer = '';
+      const CHUNK_TIMEOUT = 60000; // 60s without data → stall
+      let chunkTimer = setTimeout(() => {
+        response.data.destroy();
+        reject(new Error('Stream stalled: no data received for 60s'));
+      }, CHUNK_TIMEOUT);
+
+      const resetChunkTimer = () => {
+        clearTimeout(chunkTimer);
+        chunkTimer = setTimeout(() => {
+          response.data.destroy();
+          reject(new Error('Stream stalled: no data received for 60s'));
+        }, CHUNK_TIMEOUT);
+      };
 
       response.data.on('data', (chunk) => {
+        resetChunkTimer();
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -157,6 +190,7 @@ class LocalProvider extends BaseProvider {
           }
 
           if (parsed.done) {
+            clearTimeout(chunkTimer);
             resolve({ content, tool_calls: this._normalizeToolCalls(toolCalls) });
             return;
           }
@@ -164,10 +198,12 @@ class LocalProvider extends BaseProvider {
       });
 
       response.data.on('error', (err) => {
+        clearTimeout(chunkTimer);
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on('end', () => {
+        clearTimeout(chunkTimer);
         if (buffer.trim()) {
           try {
             const parsed = JSON.parse(buffer);
@@ -193,6 +229,16 @@ class LocalProvider extends BaseProvider {
       content: msg.content || '',
       tool_calls: this._normalizeToolCalls(msg.tool_calls || []),
     };
+  }
+
+  /**
+   * Parse num_ctx from Ollama modelfile string.
+   * Modelfiles contain lines like: PARAMETER num_ctx 131072
+   */
+  _parseContextFromModelfile(modelfile) {
+    if (!modelfile) return null;
+    const match = modelfile.match(/PARAMETER\s+num_ctx\s+(\d+)/i);
+    return match ? parseInt(match[1], 10) : null;
   }
 
   _normalizeToolCalls(toolCalls) {
