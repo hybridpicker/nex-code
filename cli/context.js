@@ -21,12 +21,14 @@ function gatherProjectContext(cwd) {
   // package.json
   const pkgPath = path.join(cwd, 'package.json');
   if (fs.existsSync(pkgPath)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-    const info = { name: pkg.name, version: pkg.version };
-    if (pkg.scripts) info.scripts = Object.keys(pkg.scripts).slice(0, 15);
-    if (pkg.dependencies) info.deps = Object.keys(pkg.dependencies).length;
-    if (pkg.devDependencies) info.devDeps = Object.keys(pkg.devDependencies).length;
-    parts.push(`PACKAGE: ${JSON.stringify(info)}`);
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      const info = { name: pkg.name, version: pkg.version };
+      if (pkg.scripts) info.scripts = Object.keys(pkg.scripts).slice(0, 15);
+      if (pkg.dependencies) info.deps = Object.keys(pkg.dependencies).length;
+      if (pkg.devDependencies) info.devDeps = Object.keys(pkg.devDependencies).length;
+      parts.push(`PACKAGE: ${JSON.stringify(info)}`);
+    } catch { /* ignore corrupt package.json */ }
   }
 
   // README (first 50 lines)
@@ -62,8 +64,10 @@ function printContext(cwd) {
   const pkgPath = path.join(cwd, 'package.json');
   let project = '';
   if (fs.existsSync(pkgPath)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-    project = `${pkg.name || '?'} v${pkg.version || '?'}`;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      project = `${pkg.name || '?'} v${pkg.version || '?'}`;
+    } catch { /* ignore corrupt package.json */ }
   }
 
   const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());

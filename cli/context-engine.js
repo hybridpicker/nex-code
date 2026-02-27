@@ -9,15 +9,36 @@ const { getActiveModel } = require('./providers/registry');
 
 // ─── Token Estimation ──────────────────────────────────────────
 
+// Chars-per-token ratios vary by provider/model
+const TOKEN_RATIOS = {
+  anthropic: 3.5,
+  openai: 4.0,
+  gemini: 4.0,
+  ollama: 4.0,
+  local: 4.0,
+};
+
+/**
+ * Get chars-per-token ratio for current provider.
+ */
+function getTokenRatio() {
+  try {
+    const model = getActiveModel();
+    const provider = model?.provider || 'ollama';
+    return TOKEN_RATIOS[provider] || 4.0;
+  } catch {
+    return 4.0;
+  }
+}
+
 /**
  * Estimate token count for a string.
- * Uses ~4 chars/token heuristic (close to GPT-4/Claude averages).
- * Not exact, but sufficient for context management.
+ * Uses provider-specific chars/token ratio for better accuracy.
  */
 function estimateTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / getTokenRatio());
 }
 
 /**
