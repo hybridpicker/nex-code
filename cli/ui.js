@@ -17,6 +17,9 @@ const C = {
   gray: '\x1b[90m',
   bgRed: '\x1b[41m',
   bgGreen: '\x1b[42m',
+  brightCyan: '\x1b[96m',
+  brightMagenta: '\x1b[95m',
+  brightBlue: '\x1b[94m',
 };
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -50,23 +53,33 @@ class Spinner {
 }
 
 function banner(modelName, cwd) {
-  const width = 44;
-  const top = `╭${'─'.repeat(width)}╮`;
-  const bot = `╰${'─'.repeat(width)}╯`;
-  const pad = (s) => {
-    const visible = s.replace(/\x1b\[[0-9;]*m/g, '');
-    return s + ' '.repeat(Math.max(0, width - visible.length));
-  };
-  const line = (s) => `│${pad(s)}│`;
+  const bc = C.brightCyan;
+  const bm = C.brightMagenta;
+  const bb = C.brightBlue;
+  const B = C.bold;
+  const d = C.dim;
+  const r = C.reset;
+
+  const logo = [
+    `${bb}                    ${bc}⬢${bb} ━━━━━ ${bc}⬢${bb} ━━━━━ ${bm}⬢`,
+    `${bb}              ⣀⠤⠒⠊⠁                     ⠈⠑⠒⠤⣀`,
+    `${bm}        ⬢${bb}⡠⠊         ${bc}╭────────────────╮${bb}         ⠑⢄${bc}⬢`,
+    `${bb}        ⡇           ${bc}│${bb} ───${B}${bc}≫${r}${bc}    ◉─┬─◉  │${bb}           ⢸`,
+    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ◉──┼──◉  │${bb}           ⢸`,
+    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ═══╪════  │${bb}           ⢸`,
+    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ◉──┼──◉  │${bb}           ⢸`,
+    `${bb}        ⡇           ${bc}│${bb} ───${B}${bc}≫${r}${bc}    ◉─┴─◉  │${bb}           ⢸`,
+    `${bm}        ⬢${bb}⢄⡀         ${bc}╰────────────────╯${bb}         ⢀⡠${bc}⬢`,
+    `${bb}              ⠈⠑⠒⠤⣀                     ⣀⠤⠒⠑⠁`,
+    `${bb}                    ${bm}⬢${bb} ━━━━━ ${bc}⬢${bb} ━━━━━ ${bm}⬢${r}`,
+  ].join('\n');
 
   console.log(`
-${C.dim}${top}
-${line(` ${C.reset}${C.cyan}✻${C.reset}${C.bold}${C.cyan} Nex Code ${C.reset}${C.dim}v0.3.0${C.reset}${C.dim}`)}
-${line(`   ${C.reset}${C.dim}Agentic Coding CLI${C.reset}${C.dim}`)}
-${line('')}
-${line(`   ${C.reset}${C.dim}Model: ${modelName}${C.reset}${C.dim}`)}
-${line(`   ${C.reset}${C.dim}/help for commands${C.reset}${C.dim}`)}
-${bot}${C.reset}`);
+${logo}
+                 ${B}${bc}N E X   C O D E${r}  ${d}v0.3.0${r}
+                 ${d}Agentic Coding CLI${r}
+                 ${d}Model: ${modelName}${r}  ${d}·  /help${r}
+`);
 }
 
 function formatToolCall(name, args) {

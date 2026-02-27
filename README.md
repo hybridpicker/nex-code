@@ -1,8 +1,17 @@
-# Nex Code
+<p align="center">
+  <img src="assets/nex-code-logo.jpg" alt="Nex Code Logo" width="280">
+</p>
 
-Standalone agentic coding CLI with multi-provider support. Streaming output, persistent conversations, colored diff previews, automatic project context.
+<h1 align="center">Nex Code</h1>
 
-Supports OpenAI, Anthropic, Ollama Cloud, and local Ollama servers.
+<p align="center">
+  Standalone agentic coding CLI with multi-provider support.<br>
+  Streaming output, persistent conversations, colored diff previews, automatic project context.
+</p>
+
+<p align="center">
+  Supports OpenAI, Anthropic, Google Gemini, Ollama Cloud, and local Ollama servers.
+</p>
 
 ## Features
 
