@@ -91,22 +91,40 @@ function isDangerous(command) {
   return false;
 }
 
-function confirm(question) {
+/**
+ * @param {string} question
+ * @param {{ toolName?: string }} [opts]
+ * @returns {Promise<boolean>}
+ *
+ * Accepts: y / Enter (default yes) / a (always allow tool) / n
+ */
+function confirm(question, opts = {}) {
   if (autoConfirm) return Promise.resolve(true);
+  const hint = opts.toolName ? '[Y/n/a] ' : '[Y/n] ';
   return new Promise((resolve) => {
+    const handler = (answer) => {
+      const a = answer.trim().toLowerCase();
+      if (a === 'a' && opts.toolName) {
+        _onAllowAlways(opts.toolName);
+        resolve(true);
+      } else {
+        resolve(a !== 'n');
+      }
+    };
     if (_rl) {
-      _rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
-        resolve(answer.trim().toLowerCase() === 'y');
-      });
+      _rl.question(`${C.yellow}${question} ${hint}${C.reset}`, handler);
     } else {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      rl.question(`${C.yellow}${question} [y/n] ${C.reset}`, (answer) => {
+      rl.question(`${C.yellow}${question} ${hint}${C.reset}`, (answer) => {
         rl.close();
-        resolve(answer.trim().toLowerCase() === 'y');
+        handler(answer);
       });
     }
   });
 }
+
+let _onAllowAlways = () => {}; // set from outside
+function setAllowAlwaysHandler(fn) { _onAllowAlways = fn; }
 
 module.exports = {
   FORBIDDEN_PATTERNS,
@@ -117,4 +135,5 @@ module.exports = {
   setAutoConfirm,
   getAutoConfirm,
   setReadlineInterface,
+  setAllowAlwaysHandler,
 };

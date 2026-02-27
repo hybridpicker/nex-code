@@ -71,6 +71,7 @@ jest.mock('../cli/safety', () => ({
   confirm: jest.fn().mockResolvedValue(true),
   setAutoConfirm: jest.fn(),
   getAutoConfirm: jest.fn().mockReturnValue(false),
+  setAllowAlwaysHandler: jest.fn(),
 }));
 
 const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages } = require('../cli/agent');
