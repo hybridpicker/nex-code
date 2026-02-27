@@ -137,6 +137,8 @@ jest.mock('../cli/skills', () => ({
   handleSkillCommand: jest.fn().mockReturnValue(false),
 }));
 
+const { showCommandList, completer, showProviders, showHelp, renderBar } = require('../cli/index');
+
 describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
 
@@ -153,6 +155,92 @@ describe('index.js (REPL commands)', () => {
     writeSpy.mockRestore();
     exitSpy.mockRestore();
     jest.clearAllMocks();
+  });
+
+  // ─── showCommandList ──────────────────────────────────────
+  describe('showCommandList()', () => {
+    it('lists all slash commands', () => {
+      showCommandList();
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('/help');
+      expect(output).toContain('/model');
+      expect(output).toContain('/exit');
+    });
+
+    it('includes skill commands when available', () => {
+      const skills = require('../cli/skills');
+      skills.getSkillCommands.mockReturnValueOnce([
+        { cmd: '/custom-skill', desc: 'A custom skill' },
+      ]);
+      showCommandList();
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('/custom-skill');
+      expect(output).toContain('[skill]');
+    });
+  });
+
+  // ─── completer ────────────────────────────────────────────
+  describe('completer()', () => {
+    it('returns matching commands for partial input', () => {
+      const [hits, line] = completer('/he');
+      expect(hits).toContain('/help');
+      expect(line).toBe('/he');
+    });
+
+    it('returns all commands when no match', () => {
+      const [hits, line] = completer('/zzz');
+      expect(hits.length).toBeGreaterThan(1);
+      expect(line).toBe('/zzz');
+    });
+
+    it('returns empty for non-slash input', () => {
+      const [hits, line] = completer('hello');
+      expect(hits).toEqual([]);
+      expect(line).toBe('hello');
+    });
+  });
+
+  // ─── showProviders ────────────────────────────────────────
+  describe('showProviders()', () => {
+    it('shows active provider with marker', () => {
+      showProviders();
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('ollama');
+      expect(output).toContain('active');
+      expect(output).toContain('kimi-k2.5');
+    });
+  });
+
+  // ─── showHelp ─────────────────────────────────────────────
+  describe('showHelp()', () => {
+    it('outputs help text with all sections', () => {
+      showHelp();
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Commands');
+      expect(output).toContain('Sessions');
+      expect(output).toContain('Memory');
+      expect(output).toContain('Planning');
+      expect(output).toContain('Git');
+    });
+  });
+
+  // ─── renderBar ────────────────────────────────────────────
+  describe('renderBar()', () => {
+    it('renders green bar for low percentage', () => {
+      const bar = renderBar(20);
+      expect(bar).toContain('20%');
+      expect(bar).toContain('█');
+    });
+
+    it('renders yellow bar for medium percentage', () => {
+      const bar = renderBar(60);
+      expect(bar).toContain('60%');
+    });
+
+    it('renders red bar for high percentage', () => {
+      const bar = renderBar(90);
+      expect(bar).toContain('90%');
+    });
   });
 
   describe('startREPL()', () => {
@@ -1058,6 +1146,170 @@ describe('index.js (REPL commands)', () => {
       await lineHandler('/commit');
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
       expect(output).toContain('3 files changed');
+    });
+
+    // ─── Skills commands ─────────────────────────────────
+    it('handles /skills with no skills loaded', async () => {
+      await lineHandler('/skills');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No skills loaded');
+    });
+
+    it('handles /skills with skills loaded', async () => {
+      const skills = require('../cli/skills');
+      skills.listSkills.mockReturnValueOnce([
+        { name: 'test-skill', enabled: true, type: 'prompt', commands: 2, tools: 0 },
+        { name: 'other-skill', enabled: false, type: 'script', commands: 0, tools: 3 },
+      ]);
+      await lineHandler('/skills');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('test-skill');
+      expect(output).toContain('other-skill');
+      expect(output).toContain('prompt');
+      expect(output).toContain('script');
+    });
+
+    it('handles /skills enable with found skill', async () => {
+      const skills = require('../cli/skills');
+      skills.enableSkill.mockReturnValueOnce(true);
+      await lineHandler('/skills enable my-skill');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Skill enabled');
+      expect(output).toContain('my-skill');
+    });
+
+    it('handles /skills enable with not found skill', async () => {
+      const skills = require('../cli/skills');
+      skills.enableSkill.mockReturnValueOnce(false);
+      await lineHandler('/skills enable nonexistent');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Skill not found');
+    });
+
+    it('handles /skills disable with found skill', async () => {
+      const skills = require('../cli/skills');
+      skills.disableSkill.mockReturnValueOnce(true);
+      await lineHandler('/skills disable my-skill');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Skill disabled');
+    });
+
+    it('handles /skills disable with not found skill', async () => {
+      const skills = require('../cli/skills');
+      skills.disableSkill.mockReturnValueOnce(false);
+      await lineHandler('/skills disable nonexistent');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Skill not found');
+    });
+
+    // ─── Fallback with chain ─────────────────────────────
+    it('handles /fallback with existing chain', async () => {
+      const registry = require('../cli/providers/registry');
+      registry.getFallbackChain.mockReturnValueOnce(['anthropic', 'openai']);
+      await lineHandler('/fallback');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Fallback chain');
+      expect(output).toContain('→');
+    });
+
+    // ─── MCP connect empty results ──────────────────────
+    it('handles /mcp connect with no servers configured', async () => {
+      const mcp = require('../cli/mcp');
+      mcp.connectAll.mockResolvedValueOnce([]);
+      await lineHandler('/mcp connect');
+      await new Promise((r) => setTimeout(r, 10));
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No MCP servers configured');
+    });
+
+    // ─── Unknown command / skill fallback ────────────────
+    it('handles unknown command with skill fallback', async () => {
+      const skills = require('../cli/skills');
+      skills.handleSkillCommand.mockReturnValueOnce(false);
+      await lineHandler('/unknowncmd');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Unknown command');
+    });
+
+    it('handles unknown command delegated to skill', async () => {
+      const skills = require('../cli/skills');
+      skills.handleSkillCommand.mockReturnValueOnce(true);
+      await lineHandler('/customskill');
+      // No "Unknown command" output since skill handled it
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).not.toContain('Unknown command');
+    });
+
+    // ─── Message count display ───────────────────────────
+    it('shows message count after agent interaction', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationLength.mockReturnValueOnce(5);
+      await lineHandler('test input');
+      const output = writeSpy.mock.calls.map((c) => c[0]).join('');
+      expect(output).toContain('5 messages');
+    });
+  });
+
+  // ─── Exported utility functions ─────────────────────────────
+  describe('getPrompt()', () => {
+    it('includes provider and model', () => {
+      jest.resetModules();
+      jest.mock('../cli/planner', () => ({
+        createPlan: jest.fn(), getActivePlan: jest.fn(), setPlanMode: jest.fn(),
+        isPlanMode: jest.fn().mockReturnValue(false), approvePlan: jest.fn(),
+        startExecution: jest.fn(), formatPlan: jest.fn(), savePlan: jest.fn(),
+        listPlans: jest.fn(), clearPlan: jest.fn(),
+        setAutonomyLevel: jest.fn(), getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
+        AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
+      }));
+      jest.mock('../cli/providers/registry', () => ({
+        listProviders: jest.fn().mockReturnValue([]),
+        getActiveProviderName: jest.fn().mockReturnValue('ollama'),
+        getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
+        listAllModels: jest.fn().mockReturnValue([]),
+        setFallbackChain: jest.fn(), getFallbackChain: jest.fn().mockReturnValue([]),
+        getProvider: jest.fn().mockReturnValue(null),
+      }));
+      jest.mock('../cli/ollama', () => ({
+        getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5' }),
+        setActiveModel: jest.fn(), getModelNames: jest.fn().mockReturnValue([]),
+      }));
+      jest.mock('../cli/agent', () => ({
+        processInput: jest.fn(), clearConversation: jest.fn(),
+        getConversationLength: jest.fn().mockReturnValue(0),
+        getConversationMessages: jest.fn().mockReturnValue([]),
+        setConversationMessages: jest.fn(),
+      }));
+      jest.mock('../cli/context-engine', () => ({ getUsage: jest.fn() }));
+      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
+      jest.mock('../cli/session', () => ({
+        saveSession: jest.fn(), loadSession: jest.fn(),
+        listSessions: jest.fn(), getLastSession: jest.fn(),
+      }));
+      jest.mock('../cli/memory', () => ({ remember: jest.fn(), forget: jest.fn(), listMemories: jest.fn() }));
+      jest.mock('../cli/permissions', () => ({
+        listPermissions: jest.fn(), setPermission: jest.fn(), savePermissions: jest.fn(),
+      }));
+      jest.mock('../cli/git', () => ({
+        isGitRepo: jest.fn(), getCurrentBranch: jest.fn(), formatDiffSummary: jest.fn(),
+        analyzeDiff: jest.fn(), commit: jest.fn(), createBranch: jest.fn(),
+      }));
+      jest.mock('../cli/mcp', () => ({ listServers: jest.fn(), connectAll: jest.fn(), disconnectAll: jest.fn() }));
+      jest.mock('../cli/hooks', () => ({ listHooks: jest.fn(), runHooks: jest.fn(), HOOK_EVENTS: [] }));
+      jest.mock('../cli/costs', () => ({ formatCosts: jest.fn(), resetCosts: jest.fn() }));
+      jest.mock('../cli/context', () => ({ printContext: jest.fn(), gatherProjectContext: jest.fn() }));
+      jest.mock('../cli/safety', () => ({ setAutoConfirm: jest.fn(), getAutoConfirm: jest.fn(), setReadlineInterface: jest.fn() }));
+      jest.mock('../cli/skills', () => ({
+        loadAllSkills: jest.fn(), listSkills: jest.fn(), enableSkill: jest.fn(),
+        disableSkill: jest.fn(), getSkillCommands: jest.fn().mockReturnValue([]),
+        handleSkillCommand: jest.fn(),
+      }));
+
+      const { getPrompt } = require('../cli/index');
+      const prompt = getPrompt();
+      expect(prompt).toContain('ollama');
+      expect(prompt).toContain('kimi-k2.5');
+      expect(prompt).toContain('>');
     });
   });
 });
