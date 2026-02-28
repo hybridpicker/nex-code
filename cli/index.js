@@ -24,6 +24,7 @@ const {
 const { isGitRepo, getCurrentBranch, formatDiffSummary, analyzeDiff, commit, createBranch } = require('./git');
 const { listServers, connectAll, disconnectAll } = require('./mcp');
 const { listHooks, runHooks, HOOK_EVENTS } = require('./hooks');
+const { undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory } = require('./file-history');
 const { formatCosts, resetCosts } = require('./costs');
 const { loadAllSkills, listSkills, enableSkill, disableSkill, getSkillCommands, handleSkillCommand } = require('./skills');
 
@@ -59,6 +60,9 @@ const SLASH_COMMANDS = [
   { cmd: '/mcp',         desc: 'MCP servers and tools' },
   { cmd: '/hooks',       desc: 'Show configured hooks' },
   { cmd: '/skills',      desc: 'List, enable, disable skills' },
+  { cmd: '/undo',        desc: 'Undo last file change' },
+  { cmd: '/redo',        desc: 'Redo last undone change' },
+  { cmd: '/history',     desc: 'Show file change history' },
   { cmd: '/exit',        desc: 'Quit' },
 ];
 
@@ -184,6 +188,11 @@ ${C.bold}${C.cyan}Extensibility:${C.reset}
   ${C.cyan}/skills enable${C.reset}    ${C.dim}Enable a skill by name${C.reset}
   ${C.cyan}/skills disable${C.reset}   ${C.dim}Disable a skill by name${C.reset}
 
+${C.bold}${C.cyan}Undo / Redo:${C.reset}
+  ${C.cyan}/undo${C.reset}             ${C.dim}Undo last file change${C.reset}
+  ${C.cyan}/redo${C.reset}             ${C.dim}Redo last undone change${C.reset}
+  ${C.cyan}/history${C.reset}          ${C.dim}Show file change history${C.reset}
+
   ${C.cyan}/exit${C.reset}             ${C.dim}Quit${C.reset}
 `);
 }
@@ -308,6 +317,7 @@ function handleSlashCommand(input) {
 
     case '/clear':
       clearConversation();
+      clearHistory();
       console.log(`${C.green}Conversation cleared${C.reset}`);
       return true;
 
@@ -673,6 +683,49 @@ function handleSlashCommand(input) {
         console.log(`  ${status} ${C.bold}${s.name}${C.reset} ${tag}${info}`);
       }
       console.log(`\n${C.dim}Use /skills enable <name> or /skills disable <name>${C.reset}\n`);
+      return true;
+    }
+
+    case '/undo': {
+      const undone = undo();
+      if (!undone) {
+        console.log(`${C.yellow}Nothing to undo${C.reset}`);
+        return true;
+      }
+      if (undone.wasCreated) {
+        console.log(`${C.green}Undone: deleted ${undone.filePath} (was created by ${undone.tool})${C.reset}`);
+      } else {
+        console.log(`${C.green}Undone: restored ${undone.filePath} (${undone.tool})${C.reset}`);
+      }
+      const remaining = getUndoCount();
+      if (remaining > 0) console.log(`${C.dim}${remaining} more change(s) to undo${C.reset}`);
+      return true;
+    }
+
+    case '/redo': {
+      const redone = redo();
+      if (!redone) {
+        console.log(`${C.yellow}Nothing to redo${C.reset}`);
+        return true;
+      }
+      console.log(`${C.green}Redone: ${redone.filePath} (${redone.tool})${C.reset}`);
+      const redoRemaining = getRedoCount();
+      if (redoRemaining > 0) console.log(`${C.dim}${redoRemaining} more change(s) to redo${C.reset}`);
+      return true;
+    }
+
+    case '/history': {
+      const history = getHistory(20);
+      if (history.length === 0) {
+        console.log(`${C.dim}No file changes in this session${C.reset}`);
+        return true;
+      }
+      console.log(`\n${C.bold}${C.cyan}File Change History:${C.reset}`);
+      for (const entry of history) {
+        const time = new Date(entry.timestamp).toLocaleTimeString();
+        console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
+      }
+      console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
       return true;
     }
 

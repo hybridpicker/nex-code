@@ -129,6 +129,9 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/mcp` | MCP servers and tools |
 | `/hooks` | Show configured hooks |
 | `/skills` | List, enable, disable skills |
+| `/undo` | Undo last file change |
+| `/redo` | Redo last undone change |
+| `/history` | Show file change history |
 | `/exit` | Quit |
 
 ---
@@ -222,6 +225,15 @@ Analyze before executing — the agent creates a plan, you review and approve:
 /plan approve
 /auto semi-auto      # set autonomy level
 ```
+
+### Undo / Redo
+In-session undo/redo for all file changes (write, edit, patch):
+```
+/undo                # undo last file change
+/redo                # redo last undone change
+/history             # show file change history
+```
+Undo stack holds up to 50 changes. `/clear` resets the history.
 
 ### Git Intelligence
 ```
