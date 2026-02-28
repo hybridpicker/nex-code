@@ -149,5 +149,58 @@ describe('fuzzy-match.js', () => {
       expect(result).not.toBeNull();
       expect(result.distance).toBe(1);
     });
+
+    it('single-line refinement finds target skipped by sampling step', () => {
+      // 501 lines → step=2. Target at odd index 251 is skipped by sampling.
+      // Nearby sampled lines (250, 252) score best → refinement around them finds 251.
+      const lines = Array.from({ length: 501 }, (_, i) => `row_${String(i).padStart(3, '0')}_data`);
+      lines[251] = 'row_251_datX';
+      const content = lines.join('\n');
+      const result = findMostSimilar(content, 'row_251_datX');
+      expect(result).not.toBeNull();
+      expect(result.text.trim()).toBe('row_251_datX');
+      expect(result.distance).toBe(0);
+    });
+
+    it('multi-line refinement finds target skipped by sampling step', () => {
+      // 501 lines, 2-line target at odd position 251. step=2 skips it.
+      // Nearby windows (250, 252) score best → refinement finds exact match at 251.
+      const lines = Array.from({ length: 501 }, (_, i) => `row_${String(i).padStart(3, '0')}_data`);
+      lines[251] = 'row_251_datX';
+      lines[252] = 'row_252_datX';
+      const content = lines.join('\n');
+      const target = 'row_251_datX\nrow_252_datX';
+      const result = findMostSimilar(content, target);
+      expect(result).not.toBeNull();
+      expect(result.text).toContain('row_251_datX');
+      expect(result.text).toContain('row_252_datX');
+      expect(result.distance).toBe(0);
+    });
+  });
+
+  // ─── fuzzyFindText: single-line fallback ────────────────────
+  describe('fuzzyFindText() single-line fallback', () => {
+    it('finds needle as substring of a normalized line via indexOf fallback', () => {
+      // Needle with different whitespace is a substring of (not equal to) a normalized haystack line.
+      // The exact match fails, the line-equality loop fails (needle is shorter than line),
+      // so it falls through to the indexOf fallback at lines 78-87.
+      const haystack = '  prefix  const  x  =  1  suffix  ';
+      const needle = 'prefix const x = 1 suffix';
+      // Exact match fails (whitespace differs). Normalized haystack line =
+      // "  prefix const x = 1 suffix" which contains normalized needle "prefix const x = 1 suffix"
+      // but is NOT equal to it (leading spaces). → indexOf fallback triggers.
+      const result = fuzzyFindText(haystack, needle);
+      expect(result).not.toBeNull();
+      // Returns the full original line
+      expect(result).toBe('  prefix  const  x  =  1  suffix  ');
+    });
+
+    it('returns full line when needle matches a substring with different whitespace', () => {
+      // Tabs in haystack, needle without tabs — only matches after normalization as substring
+      const haystack = '\tprefix\tconst  x  =  1\tsuffix\nother line';
+      const needle = 'prefix const x = 1 suffix';
+      const result = fuzzyFindText(haystack, needle);
+      expect(result).not.toBeNull();
+    });
   });
 });

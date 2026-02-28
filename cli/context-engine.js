@@ -150,6 +150,58 @@ const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
 const TRUNCATE_ASSISTANT = 500; // Truncate old assistant content to N chars
 
 /**
+ * Smart compression for tool result content.
+ * Preserves error messages, test summaries, and error traces at end of output.
+ *
+ * @param {string} content - Tool result text
+ * @param {number} maxChars - Character budget
+ * @returns {string} compressed content
+ */
+function compressToolResult(content, maxChars) {
+  if (!content || content.length <= maxChars) return content;
+
+  // Error/status messages get 3x budget — highest value for LLM recovery
+  const isError = /^(ERROR|EXIT|BLOCKED|CANCELLED)/i.test(content);
+  const budget = isError ? maxChars * 3 : maxChars;
+  if (content.length <= budget) return content;
+
+  const lines = content.split('\n');
+
+  // Short outputs (≤10 lines): character-based 60/40 head/tail split
+  if (lines.length <= 10) {
+    const headChars = Math.floor(budget * 0.6);
+    const tailChars = Math.floor(budget * 0.4);
+    const head = content.substring(0, headChars);
+    const tail = content.substring(content.length - tailChars);
+    return head + `\n...(${content.length} chars total)...\n` + tail;
+  }
+
+  // Long outputs (>10 lines): line-based 40/40 head/tail split
+  const headCount = Math.floor(lines.length * 0.4);
+  const tailCount = Math.floor(lines.length * 0.4);
+
+  // Build head and tail within budget
+  let headLines = [];
+  let headLen = 0;
+  const headBudget = Math.floor(budget * 0.4);
+  for (let i = 0; i < headCount && headLen < headBudget; i++) {
+    headLines.push(lines[i]);
+    headLen += lines[i].length + 1;
+  }
+
+  let tailLines = [];
+  let tailLen = 0;
+  const tailBudget = Math.floor(budget * 0.4);
+  for (let i = lines.length - 1; i >= lines.length - tailCount && tailLen < tailBudget; i--) {
+    tailLines.unshift(lines[i]);
+    tailLen += lines[i].length + 1;
+  }
+
+  const omitted = lines.length - headLines.length - tailLines.length;
+  return headLines.join('\n') + `\n...(${omitted} lines omitted, ${lines.length} total)...\n` + tailLines.join('\n');
+}
+
+/**
  * Compress a single message to reduce token usage.
  * @param {object} msg
  * @param {string} level - 'light' or 'aggressive'
@@ -164,7 +216,7 @@ function compressMessage(msg, level = 'light') {
     if (content.length > maxTool) {
       return {
         ...msg,
-        content: content.substring(0, maxTool) + `\n...(truncated, was ${content.length} chars)`,
+        content: compressToolResult(content, maxTool),
       };
     }
     return msg;
@@ -350,6 +402,7 @@ module.exports = {
   getContextWindow,
   getUsage,
   compressMessage,
+  compressToolResult,
   fitToContext,
   truncateFileContent,
   COMPRESSION_THRESHOLD,

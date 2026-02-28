@@ -16,6 +16,7 @@ const {
   getContextWindow,
   getUsage,
   compressMessage,
+  compressToolResult,
   fitToContext,
   truncateFileContent,
   COMPRESSION_THRESHOLD,
@@ -220,7 +221,7 @@ describe('context-engine.js', () => {
       const msg = { role: 'tool', content: 'x'.repeat(500), tool_call_id: 'c1' };
       const compressed = compressMessage(msg, 'light');
       expect(compressed.content.length).toBeLessThan(msg.content.length);
-      expect(compressed.content).toContain('truncated');
+      expect(compressed.content).toMatch(/truncated|chars total|omitted/);
     });
 
     it('keeps short tool results unchanged', () => {
@@ -358,6 +359,69 @@ describe('context-engine.js', () => {
     it('exports threshold and keep_recent constants', () => {
       expect(COMPRESSION_THRESHOLD).toBe(0.7);
       expect(KEEP_RECENT).toBe(10);
+    });
+  });
+
+  // ─── compressToolResult ────────────────────────────────────
+  describe('compressToolResult()', () => {
+    it('returns short content unchanged', () => {
+      expect(compressToolResult('hello', 100)).toBe('hello');
+    });
+
+    it('returns null/empty unchanged', () => {
+      expect(compressToolResult('', 100)).toBe('');
+      expect(compressToolResult(null, 100)).toBe(null);
+    });
+
+    it('preserves error messages with extra room', () => {
+      const content = 'ERROR: ' + 'x'.repeat(400);
+      const result = compressToolResult(content, 150);
+      // Error gets 3x budget (450), so 407 chars should fit
+      expect(result).toBe(content);
+    });
+
+    it('preserves EXIT status with extra room', () => {
+      const content = 'EXIT 1: ' + 'x'.repeat(300);
+      const result = compressToolResult(content, 110);
+      // EXIT gets 3x budget (330), so 308 chars should fit
+      expect(result).toBe(content);
+    });
+
+    it('short output uses head + tail with chars total', () => {
+      // ≤10 lines but over budget
+      const lines = Array.from({ length: 5 }, (_, i) => 'x'.repeat(100) + `-line${i}`);
+      const content = lines.join('\n');
+      const result = compressToolResult(content, 100);
+      expect(result).toContain('chars total');
+      expect(result.length).toBeLessThan(content.length);
+    });
+
+    it('long output uses head + tail with lines omitted', () => {
+      const lines = Array.from({ length: 50 }, (_, i) => `Line ${i}: ${'y'.repeat(20)}`);
+      const content = lines.join('\n');
+      const result = compressToolResult(content, 200);
+      expect(result).toMatch(/lines omitted/);
+      expect(result).toContain('50 total');
+    });
+
+    it('preserves test summary at end of output', () => {
+      const lines = Array.from({ length: 50 }, (_, i) => `test output line ${i}`);
+      lines.push('Tests: 42 passed, 42 total');
+      lines.push('Time: 3.2s');
+      const content = lines.join('\n');
+      const result = compressToolResult(content, 300);
+      expect(result).toContain('Tests: 42 passed');
+      expect(result).toContain('Time: 3.2s');
+    });
+
+    it('preserves error trace at end of bash output', () => {
+      const lines = Array.from({ length: 50 }, (_, i) => `build output ${i}`);
+      lines.push('TypeError: Cannot read property of undefined');
+      lines.push('    at Object.<anonymous> (src/index.js:42:5)');
+      const content = lines.join('\n');
+      const result = compressToolResult(content, 300);
+      expect(result).toContain('TypeError');
+      expect(result).toContain('src/index.js:42');
     });
   });
 
