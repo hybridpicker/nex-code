@@ -907,9 +907,10 @@ function startREPL() {
 
   function _clearSug() {
     if (_sugN > 0) {
-      let s = '\x1b[s';
-      for (let i = 0; i < _sugN; i++) s += '\n\x1b[2K';
-      s += '\x1b[u';
+      // Use relative cursor movement (scroll-safe, unlike \x1b[s/\x1b[u])
+      let s = '';
+      for (let i = 0; i < _sugN; i++) s += '\x1b[1B\x1b[2K';
+      s += `\x1b[${_sugN}A`;
       process.stdout.write(s);
       _sugN = 0;
     }
@@ -921,20 +922,23 @@ function startREPL() {
     const maxShow = 10;
     const show = hits.slice(0, maxShow);
     const padLen = Math.max(...show.map((c) => c.cmd.length));
-    let buf = '\x1b[s';
+    let buf = '';
     for (const { cmd, desc } of show) {
       const typed = cmd.substring(0, line.length);
       const rest = cmd.substring(line.length);
       const gap = ' '.repeat(Math.max(0, padLen - cmd.length + 2));
-      buf += `\n  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+      buf += `\n\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
     }
     _sugN = show.length;
     if (hits.length > maxShow) {
-      buf += `\n  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
+      buf += `\n\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
       _sugN++;
     }
-    buf += '\x1b[u';
+    // Move back up using relative movement (scroll-safe)
+    buf += `\x1b[${_sugN}A\r`;
     process.stdout.write(buf);
+    // Let readline redraw prompt + cursor at correct position
+    rl._refreshLine();
   }
 
   if (process.stdin.isTTY) {
