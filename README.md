@@ -97,7 +97,7 @@ Fallback chains let you auto-switch when a provider fails:
 
 ## Commands
 
-Type `/` to see inline suggestions as you type. Tab completion is supported.
+Type `/` to see inline suggestions as you type. Tab completion is supported for slash commands and file paths (type a path containing `/` and press Tab).
 
 | Command | Description |
 |---------|-------------|
