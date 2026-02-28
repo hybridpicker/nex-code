@@ -308,6 +308,15 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
 - For multiple changes to the same file, prefer patch_file (single operation, atomic).
 - Never guess file content. Always read first, then edit with the exact text you saw.
 
+# Git Workflow
+
+- Before committing, review changes with git_diff. Write messages that explain WHY, not WHAT.
+- Stage specific files rather than git add -A to avoid committing unrelated changes.
+- Use conventional commits: type(scope): description (feat, fix, refactor, docs, test, chore).
+- Branch naming: feat/, fix/, refactor/, docs/ prefixes with kebab-case.
+- NEVER force-push, skip hooks (--no-verify), or amend published commits without explicit permission.
+- When asked to commit: review diff, propose message, wait for approval, then execute.
+
 # Safety & Reversibility
 
 - Consider reversibility before acting. File reads and searches are safe. File writes and bash commands may not be.

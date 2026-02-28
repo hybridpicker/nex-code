@@ -11,6 +11,7 @@ const { showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange } = r
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
 const { recordChange } = require('./file-history');
+const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 
 const CWD = process.cwd();
 
@@ -433,19 +434,38 @@ async function _executeToolInner(name, args, options = {}) {
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
       const content = fs.readFileSync(fp, 'utf-8');
-      if (!content.includes(args.old_text)) return `ERROR: old_text not found in ${fp}`;
+
+      let matchText = args.old_text;
+      let fuzzyMatched = false;
+
+      if (!content.includes(args.old_text)) {
+        // Try fuzzy whitespace-normalized match
+        const fuzzyResult = fuzzyFindText(content, args.old_text);
+        if (fuzzyResult) {
+          matchText = fuzzyResult;
+          fuzzyMatched = true;
+        } else {
+          // Provide helpful error with most similar text
+          const similar = findMostSimilar(content, args.old_text);
+          if (similar) {
+            return `ERROR: old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+          }
+          return `ERROR: old_text not found in ${fp}`;
+        }
+      }
 
       if (!options.autoConfirm) {
-        showEditDiff(fp, args.old_text, args.new_text);
-        const ok = await confirmFileChange('Apply');
+        showEditDiff(fp, matchText, args.new_text);
+        const label = fuzzyMatched ? 'Apply (fuzzy match)' : 'Apply';
+        const ok = await confirmFileChange(label);
         if (!ok) return 'CANCELLED: User declined to apply edit.';
       }
 
       // Use split/join for literal replacement (no regex interpretation)
-      const updated = content.split(args.old_text).join(args.new_text);
+      const updated = content.split(matchText).join(args.new_text);
       fs.writeFileSync(fp, updated, 'utf-8');
       recordChange('edit_file', fp, content, updated);
-      return `Edited: ${fp}`;
+      return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
     }
 
     case 'list_directory': {
@@ -571,29 +591,45 @@ async function _executeToolInner(name, args, options = {}) {
 
       let content = fs.readFileSync(fp, 'utf-8');
 
-      // Validate all patches first
+      // Validate all patches first (exact → fuzzy → error)
+      const resolvedPatches = [];
+      let anyFuzzy = false;
       for (let i = 0; i < patches.length; i++) {
-        const { old_text } = patches[i];
-        if (!content.includes(old_text)) {
-          return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
+        const { old_text, new_text } = patches[i];
+        if (content.includes(old_text)) {
+          resolvedPatches.push({ old_text, new_text });
+        } else {
+          const fuzzyResult = fuzzyFindText(content, old_text);
+          if (fuzzyResult) {
+            resolvedPatches.push({ old_text: fuzzyResult, new_text });
+            anyFuzzy = true;
+          } else {
+            const similar = findMostSimilar(content, old_text);
+            if (similar) {
+              return `ERROR: Patch ${i + 1} old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+            }
+            return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
+          }
         }
       }
 
       // Apply to a copy first (atomic — validate all patches succeed before writing)
       let preview = content;
-      for (const { old_text, new_text } of patches) {
+      for (const { old_text, new_text } of resolvedPatches) {
         preview = preview.split(old_text).join(new_text);
       }
       if (!options.autoConfirm) {
         showEditDiff(fp, content, preview);
-        const ok = await confirmFileChange('Apply patches');
+        const label = anyFuzzy ? 'Apply patches (fuzzy match)' : 'Apply patches';
+        const ok = await confirmFileChange(label);
         if (!ok) return 'CANCELLED: User declined to apply patches.';
       }
 
       // Write the fully-validated preview (atomic — no partial application)
       fs.writeFileSync(fp, preview, 'utf-8');
       recordChange('patch_file', fp, content, preview);
-      return `Patched: ${fp} (${patches.length} replacements)`;
+      const suffix = anyFuzzy ? ' (fuzzy match)' : '';
+      return `Patched: ${fp} (${patches.length} replacements)${suffix}`;
     }
 
     case 'web_fetch': {

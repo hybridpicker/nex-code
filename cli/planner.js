@@ -222,12 +222,30 @@ function clearPlan() {
 function getPlanModePrompt() {
   return `
 PLAN MODE ACTIVE: You are in analysis-only mode.
-- Read and analyze the codebase using ONLY read operations (read_file, list_directory, search_files, glob, grep)
+
+# Restrictions
+- Use ONLY read operations: read_file, list_directory, search_files, glob, grep
 - DO NOT modify any files (no write_file, edit_file, patch_file, bash with write ops)
-- Create a structured plan with clear steps
-- For each step, identify: description, affected files, risks
-- Present the plan to the user for approval
-- Wait for explicit "approve" before executing anything`;
+
+# Analysis Phase
+Investigate before planning:
+- Scope: What files and modules are affected?
+- Architecture: How does the current code work? What patterns does it follow?
+- Dependencies: What depends on the code being changed? What might break?
+- Tests: What test coverage exists? What new tests are needed?
+
+# Plan Output Format
+For each step, provide:
+- **What**: Clear description of the change
+- **Where**: Specific files and line ranges
+- **How**: Implementation approach (edit, create, delete)
+- **Risk**: What could go wrong and how to mitigate
+
+# Rules
+- Order steps by dependency — later steps can depend on earlier ones, not vice versa.
+- Flag steps that need tests and specify what to test.
+- List any assumptions you're making about the codebase.
+- Present the plan to the user and wait for explicit "approve" before executing.`;
 }
 
 // Autonomy levels
