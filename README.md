@@ -320,6 +320,11 @@ Four features that make Nex Code significantly more reliable with open-source mo
 
 **Tool Argument Validation** — Validates arguments against tool schemas before execution. Auto-corrects similar parameter names (Levenshtein distance), fixes type mismatches (string↔number↔boolean), and provides "did you mean?" suggestions.
 
+**Auto-Fix Engine** — Three layers of automatic error recovery that silently fix common tool failures:
+- **Path auto-fix**: Wrong extension? Finds the right one (`.js` → `.ts`). File moved? Globs for it by basename. Double slashes, missing extensions — all auto-resolved.
+- **Edit auto-fix**: Close match (≤5% Levenshtein distance) in `edit_file`/`patch_file` is auto-applied instead of erroring. Stacks with fuzzy whitespace matching.
+- **Bash error hints**: Enriches error output with actionable hints — "command not found" → install suggestion, `MODULE_NOT_FOUND` → `npm install <pkg>`, port in use, syntax errors, TypeScript errors, test failures, and more.
+
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (13 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list
@@ -455,7 +460,7 @@ cli/
 │   ├── gemini.js        # Google Gemini provider
 │   ├── local.js         # Local Ollama server
 │   └── registry.js      # Provider registry + model resolution + provider routing
-├── tools.js             # 17 tool definitions + implementations
+├── tools.js             # 17 tool definitions + implementations + auto-fix engine
 ├── sub-agent.js         # Parallel sub-agent runner with file locking + model routing
 ├── tasks.js             # Task list management (create, update, render)
 ├── skills.js            # Skills system (prompt + script skills)
@@ -494,6 +499,8 @@ Provider API (streaming) --> Text tokens --> rendered to terminal
     |                              [Validate against schema + auto-correct]
     |                                       |
     |                              Execute (skill / MCP / built-in)
+    |                                       |
+    |                              [Auto-fix: path resolution, edit matching, bash hints]
     |
 [Tool results added to history]
     |
@@ -525,7 +532,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-36 test suites, 1173 tests, 87% statement coverage.
+37 test suites, 1209 tests, 87% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

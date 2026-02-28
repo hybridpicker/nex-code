@@ -20,7 +20,7 @@ cli/providers/           → Multi-Provider Abstraction Layer
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution + Provider Routing (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
-cli/tools.js             → 17 Tool Definitions + Implementations
+cli/tools.js             → 17 Tool Definitions + Implementations + Auto-Fix (path, edit, bash hints)
 cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress, model routing)
 cli/tasks.js             → Task List Management (create, update, render, dependencies)
 cli/context-engine.js    → Token Management + Context Compression
@@ -40,7 +40,7 @@ cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 36 Suites, 1173 Tests, 87%+ Coverage
+tests/                   → Jest, 37 Suites, 1209 Tests, 87%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -108,6 +108,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
 - parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
+- Auto-Fix: Path-Resolution (extension swap, basename glob, double-slash fix), Edit Auto-Fix (≤5% distance auto-apply), Bash Error Hints (command not found, MODULE_NOT_FOUND, port in use, etc.)
 - Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider, getModelTier() für beliebige Models, overrideTier in filterToolsForModel()
 - Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display
 - Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, Multi-Model-Routing (classifyTask → pickModelForTier → resolveSubAgentModel)
