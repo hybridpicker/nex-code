@@ -332,6 +332,7 @@ const TOOL_DEFINITIONS = [
                 task: { type: 'string', description: 'Task description for the agent' },
                 context: { type: 'string', description: 'Additional context (optional)' },
                 max_iterations: { type: 'number', description: 'Max iterations (default: 10, max: 15)' },
+                model: { type: 'string', description: 'Override model for this agent (provider:model, e.g. "anthropic:claude-haiku"). Auto-selected if omitted.' },
               },
               required: ['task'],
             },

@@ -17,14 +17,17 @@ jest.mock('fs', () => mockFs);
 const { getActiveModel, getActiveProviderName } = require('../cli/providers/registry');
 
 // We need to require tool-tiers after mocks are set up
-let filterToolsForModel, getActiveTier, getTierInfo, TIERS, loadConfigOverrides;
+let filterToolsForModel, getActiveTier, getModelTier, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides;
 
 beforeAll(() => {
   const tiers = require('../cli/tool-tiers');
   filterToolsForModel = tiers.filterToolsForModel;
   getActiveTier = tiers.getActiveTier;
+  getModelTier = tiers.getModelTier;
   getTierInfo = tiers.getTierInfo;
   TIERS = tiers.TIERS;
+  MODEL_TIERS = tiers.MODEL_TIERS;
+  PROVIDER_DEFAULT_TIER = tiers.PROVIDER_DEFAULT_TIER;
   loadConfigOverrides = tiers.loadConfigOverrides;
 });
 
@@ -241,5 +244,107 @@ describe('getTierInfo()', () => {
     const info = getTierInfo();
     expect(info.tier).toBe('full');
     expect(info.toolCount).toBe('all');
+  });
+});
+
+// ─── getModelTier() ─────────────────────────────────────────────
+
+describe('getModelTier()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFs.existsSync.mockReturnValue(false);
+    loadConfigOverrides();
+  });
+
+  it('returns tier for known models', () => {
+    expect(getModelTier('kimi-k2.5', 'ollama')).toBe('full');
+    expect(getModelTier('qwen3-30b-a3b', 'ollama')).toBe('essential');
+    expect(getModelTier('gpt-4o', 'openai')).toBe('full');
+    expect(getModelTier('claude-haiku', 'anthropic')).toBe('standard');
+  });
+
+  it('falls back to provider default for unknown models', () => {
+    expect(getModelTier('unknown-model', 'local')).toBe('essential');
+    expect(getModelTier('unknown-model', 'openai')).toBe('full');
+    expect(getModelTier('unknown-model', 'ollama')).toBe('standard');
+  });
+
+  it('returns standard as ultimate fallback', () => {
+    expect(getModelTier('unknown', 'unknown-provider')).toBe('standard');
+  });
+
+  it('respects config overrides', () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({
+      toolTiers: { 'kimi-k2.5': 'essential' },
+    }));
+    loadConfigOverrides();
+
+    expect(getModelTier('kimi-k2.5', 'ollama')).toBe('essential');
+  });
+
+  it('respects provider wildcard overrides', () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({
+      toolTiers: { 'local:*': 'full' },
+    }));
+    loadConfigOverrides();
+
+    expect(getModelTier('some-local-model', 'local')).toBe('full');
+  });
+});
+
+// ─── filterToolsForModel() with overrideTier ─────────────────────
+
+describe('filterToolsForModel() with overrideTier', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFs.existsSync.mockReturnValue(false);
+    loadConfigOverrides();
+  });
+
+  it('uses overrideTier when provided', () => {
+    // Even though active model is full tier, override to essential
+    getActiveModel.mockReturnValue({ id: 'gpt-4o' });
+    getActiveProviderName.mockReturnValue('openai');
+
+    const filtered = filterToolsForModel(SAMPLE_TOOLS, 'essential');
+    expect(filtered).toHaveLength(5);
+    expect(filtered.map(t => t.function.name)).toEqual(TIERS.essential);
+  });
+
+  it('falls back to active tier when overrideTier is undefined', () => {
+    getActiveModel.mockReturnValue({ id: 'gpt-4o' });
+    getActiveProviderName.mockReturnValue('openai');
+
+    const filtered = filterToolsForModel(SAMPLE_TOOLS);
+    expect(filtered).toHaveLength(12); // full tier = all tools
+  });
+
+  it('returns all tools when overrideTier is full', () => {
+    getActiveModel.mockReturnValue({ id: 'qwen3-30b-a3b' });
+    getActiveProviderName.mockReturnValue('ollama');
+
+    const filtered = filterToolsForModel(SAMPLE_TOOLS, 'full');
+    expect(filtered).toHaveLength(12);
+  });
+});
+
+// ─── Exported constants ─────────────────────────────────────────
+
+describe('exported constants', () => {
+  it('MODEL_TIERS contains known models', () => {
+    expect(MODEL_TIERS['kimi-k2.5']).toBe('full');
+    expect(MODEL_TIERS['gpt-4o']).toBe('full');
+    expect(MODEL_TIERS['claude-haiku']).toBe('standard');
+    expect(MODEL_TIERS['qwen3-30b-a3b']).toBe('essential');
+  });
+
+  it('PROVIDER_DEFAULT_TIER has defaults for all providers', () => {
+    expect(PROVIDER_DEFAULT_TIER.ollama).toBe('standard');
+    expect(PROVIDER_DEFAULT_TIER.openai).toBe('full');
+    expect(PROVIDER_DEFAULT_TIER.anthropic).toBe('full');
+    expect(PROVIDER_DEFAULT_TIER.gemini).toBe('standard');
+    expect(PROVIDER_DEFAULT_TIER.local).toBe('essential');
   });
 });

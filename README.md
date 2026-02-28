@@ -168,7 +168,7 @@ The agent has 17 built-in tools:
 | `web_search` | Search the web via DuckDuckGo |
 | `ask_user` | Ask the user a question and wait for input |
 | `task_list` | Create and manage task lists for multi-step operations |
-| `spawn_agents` | Run parallel sub-agents for independent tasks |
+| `spawn_agents` | Run parallel sub-agents with auto model routing |
 
 Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
@@ -274,6 +274,13 @@ Spawn parallel sub-agents for independent tasks:
 - Multi-progress display shows real-time status of each agent
 - Good for: reading multiple files, analyzing separate modules, independent research
 
+**Multi-Model Routing** — Sub-agents auto-select the best model per task based on complexity:
+- **Read/search/list** tasks → fast models (essential tier)
+- **Edit/fix/analyze** tasks → capable models (standard tier)
+- **Refactor/implement/generate** tasks → most powerful models (full tier)
+
+The LLM can also explicitly override with `model: "provider:model"` in the agent definition. When multiple providers are configured, the system prompt includes a routing table showing all available models and their tiers.
+
 ### Git Intelligence
 ```
 /commit              # analyze diff, suggest commit message
@@ -324,6 +331,8 @@ Models are auto-classified, or override per-model in `.nex/config.json`:
   }
 }
 ```
+
+Tiers are also used by sub-agent routing — when a sub-agent auto-selects a model, its tool set is filtered to match that model's tier.
 
 ---
 
@@ -441,9 +450,9 @@ cli/
 │   ├── anthropic.js     # Anthropic provider
 │   ├── gemini.js        # Google Gemini provider
 │   ├── local.js         # Local Ollama server
-│   └── registry.js      # Provider registry + model resolution
+│   └── registry.js      # Provider registry + model resolution + provider routing
 ├── tools.js             # 17 tool definitions + implementations
-├── sub-agent.js         # Parallel sub-agent runner with file locking
+├── sub-agent.js         # Parallel sub-agent runner with file locking + model routing
 ├── tasks.js             # Task list management (create, update, render)
 ├── skills.js            # Skills system (prompt + script skills)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
@@ -461,7 +470,7 @@ cli/
 ├── costs.js             # Token cost tracking
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
-├── tool-tiers.js        # Dynamic tool set selection per model
+├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
 ├── ui.js                # ANSI colors, spinner, formatting, compact summaries
 └── ollama.js            # Backward-compatible wrapper
 ```
@@ -512,7 +521,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-34 test suites, 1102 tests, 92% statement coverage.
+36 test suites, 1173 tests, 87% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

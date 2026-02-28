@@ -26,6 +26,28 @@ class OllamaProvider extends BaseProvider {
     });
     this.timeout = config.timeout || 180000;
     this.temperature = config.temperature ?? 0.2;
+    this._discovered = false;
+  }
+
+  /**
+   * Discover available models from the Ollama API.
+   * Merges discovered models with the hardcoded fallback list.
+   * Cached after first call.
+   */
+  async discoverModels() {
+    if (this._discovered) return;
+    this._discovered = true;
+    try {
+      const resp = await axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000, headers: this._getHeaders(),
+      });
+      const tags = resp.data?.models || [];
+      for (const m of tags) {
+        const id = (m.name || m.model || '').replace(/:latest$/, '');
+        if (!id || this.models[id]) continue;
+        this.models[id] = { id, name: m.name || id, maxTokens: 16384, contextWindow: 131072 };
+      }
+    } catch { /* API unavailable — use hardcoded list */ }
   }
 
   isConfigured() {
@@ -43,6 +65,7 @@ class OllamaProvider extends BaseProvider {
   }
 
   async chat(messages, tools, options = {}) {
+    await this.discoverModels();
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
@@ -63,6 +86,7 @@ class OllamaProvider extends BaseProvider {
   }
 
   async stream(messages, tools, options = {}) {
+    await this.discoverModels();
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;

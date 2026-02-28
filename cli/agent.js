@@ -20,7 +20,8 @@ const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
 const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = require('./skills');
 const { trackUsage } = require('./costs');
 const { validateToolArgs } = require('./tool-validator');
-const { filterToolsForModel } = require('./tool-tiers');
+const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
+const { getConfiguredProviders } = require('./providers/registry');
 
 const MAX_ITERATIONS = 30;
 
@@ -244,6 +245,41 @@ async function executeBatch(prepared, quiet = false) {
 // Persistent conversation state
 let conversationMessages = [];
 
+/**
+ * Build dynamic model routing guide for spawn_agents.
+ * Only shown when 2+ models are available across configured providers.
+ */
+function _buildModelRoutingGuide() {
+  try {
+    const configured = getConfiguredProviders();
+    const allModels = configured.flatMap(p =>
+      p.models.map(m => ({
+        spec: `${p.name}:${m.id}`,
+        tier: getModelTier(m.id, p.name),
+        name: m.name,
+      }))
+    );
+
+    if (allModels.length < 2) return '';
+
+    const tierLabels = {
+      full: 'complex tasks (refactor, implement, generate)',
+      standard: 'regular tasks (edit, fix, analyze)',
+      essential: 'simple tasks (read, search, list)',
+    };
+
+    let guide = '\n# Sub-Agent Model Routing\n\n';
+    guide += 'Sub-agents auto-select models by task complexity. Override with `model: "provider:model"` in agent definition.\n\n';
+    guide += '| Model | Tier | Auto-assigned for |\n|---|---|---|\n';
+    for (const m of allModels) {
+      guide += `| ${m.spec} | ${m.tier} | ${tierLabels[m.tier] || m.tier} |\n`;
+    }
+    return guide;
+  } catch {
+    return '';
+  }
+}
+
 function buildSystemPrompt() {
   const projectContext = gatherProjectContext(CWD);
 
@@ -296,6 +332,7 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
   - Good for: reading multiple files, analyzing separate modules.
   - Bad for: tasks that depend on each other or modify the same file.
   - Max 5 parallel agents.
+${_buildModelRoutingGuide()}
 
 # Edit Reliability (Critical)
 
@@ -307,6 +344,14 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
   - Content changed since last read — read again before retrying.
 - For multiple changes to the same file, prefer patch_file (single operation, atomic).
 - Never guess file content. Always read first, then edit with the exact text you saw.
+
+# Error Recovery
+
+When a tool call returns ERROR:
+- edit_file/patch_file "old_text not found": Read the file again with read_file. Compare your old_text with the actual content. The most common cause is stale content — the file changed since you last read it.
+- bash non-zero exit: Read the error output. Fix the root cause (missing dependency, wrong path, syntax error) rather than retrying the same command.
+- "File not found": Use glob or list_directory to find the correct path. Do not guess.
+- After 2 failed attempts at the same operation, stop and explain the issue to the user.
 
 # Git Workflow
 
