@@ -19,6 +19,7 @@ if (args.includes('--help') || args.includes('-h')) {
 Options:
   --task <prompt>     Run a single task and exit (headless mode)
   --auto              Skip all confirmations (implies --task)
+  --yolo, -yolo       Skip all confirmations (interactive YOLO mode)
   --model <spec>      Set model (e.g. openai:gpt-4o)
   --max-turns <n>     Max agentic loop iterations (default: 30)
   --json              Output result as JSON (for CI parsing)
@@ -33,6 +34,13 @@ if (args.includes('-v') || args.includes('--version')) {
   const pkg = require('../package.json');
   console.log(pkg.version);
   process.exit(0);
+}
+
+// ─── --yolo / -yolo ──────────────────────────────────────────
+const yoloMode = args.includes('--yolo') || args.includes('-yolo');
+if (yoloMode) {
+  const { setAutoConfirm } = require('../cli/safety');
+  setAutoConfirm(true);
 }
 
 // ─── --model ──────────────────────────────────────────────────

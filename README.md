@@ -64,6 +64,16 @@ You should see the banner, your project context, and the `>` prompt.
 > refactor this to use async/await instead of callbacks
 ```
 
+### YOLO Mode
+
+Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved:
+
+```bash
+nex-code -yolo
+```
+
+The banner shows a `⚡ YOLO` indicator. You can also toggle auto-confirm at runtime with `/autoconfirm`.
+
 The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
 
 ---
@@ -182,7 +192,7 @@ Every file change is shown as a colored diff before being applied:
 - **write_file** (overwrite): Line-by-line comparison (or side-by-side view)
 - **write_file** (new): Preview of the first 20 lines
 - OOM-safe: large diffs (>2000 lines) fall back to add/remove instead of LCS
-- All changes require `[y/n]` confirmation (toggle with `/autoconfirm`)
+- All changes require `[y/n]` confirmation (toggle with `/autoconfirm` or start with `-yolo`)
 
 ### Auto-Context
 On startup, the CLI reads your project and injects context into the system prompt:

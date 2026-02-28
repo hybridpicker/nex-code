@@ -837,7 +837,7 @@ function startREPL() {
 
   const model = getActiveModel();
   const providerName = getActiveProviderName();
-  banner(`${providerName}:${model.id}`, CWD);
+  banner(`${providerName}:${model.id}`, CWD, { yolo: getAutoConfirm() });
   printContext(CWD);
 
   const history = loadHistory();

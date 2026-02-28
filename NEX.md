@@ -99,6 +99,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Git Intelligence: Smart Commit, Diff-Analyse, Branch-Erstellung
 - MCP Client: JSON-RPC over stdio, Tool-Discovery, Routing über `mcp_` Prefix
 - Hook System: pre-tool, post-tool, pre-commit, post-response, session-start, session-end
+- YOLO Mode: `nex-code -yolo` setzt autoConfirm=true, überspringt alle Bestätigungsprompts
 - Lazy `process.cwd()` Evaluation in Modulen (für Jest-Mocking)
 - Tool-Output wird bei 50KB abgeschnitten
 - Max 30 Iterationen pro User-Input im Agentic Loop
