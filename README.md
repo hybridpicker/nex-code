@@ -396,7 +396,7 @@ Or place executable scripts in `.nex/hooks/`:
 ```
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
-├── index.js             # REPL + ~35 slash commands + history persistence
+├── index.js             # REPL + ~38 slash commands + history persistence
 ├── agent.js             # Agentic loop + conversation state + MCP routing
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
@@ -419,6 +419,7 @@ cli/
 ├── git.js               # Git intelligence (commit, diff, branch)
 ├── render.js            # Markdown + syntax highlighting + StreamRenderer
 ├── diff.js              # LCS diff + colored output + side-by-side view
+├── file-history.js      # In-session undo/redo for file changes
 ├── costs.js             # Token cost tracking
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
@@ -473,7 +474,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-33 test suites, 1027 tests, 93% statement coverage.
+34 test suites, 1102 tests, 92% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
