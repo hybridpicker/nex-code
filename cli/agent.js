@@ -299,14 +299,28 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
-- IMPORTANT: After gathering information with tools, ALWAYS write a substantive text response presenting your findings, analysis, or summary. Never end a turn with only tool calls and no text. The user cannot see tool results directly — they only see your text responses and 1-line tool summaries.
-- When the user asks a question, requests analysis, or says "status", "analyze", "explain", "summarize", etc. — your main job is to RESPOND WITH TEXT. Use tools to gather data, then present a clear, informative answer.
 - Be concise but complete. Keep responses focused while ensuring the user gets the information they asked for.
 - When referencing code, include file:line (e.g. src/app.js:42) so the user can navigate.
 - Do not make up file paths or URLs. Use tools to discover them.
 
+# Response Quality (Critical)
+
+The user sees your text AND 1-line tool summaries (e.g. "✓ read_file src/app.js (45 lines)"). They do NOT see raw tool output. This means:
+- After using tools to gather information, you MUST write a text response presenting your findings. Tool calls without a follow-up text response leave the user seeing only cryptic summaries.
+- Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
+- Structure longer responses with headers (## Section) so the user can scan quickly.
+
+Response patterns by request type:
+- **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. This is the most common mistake — gathering info but producing no text.
+- **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details.
+- **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
+- **Ambiguous requests**: Briefly clarify your interpretation before acting, or ask the user with ask_user.
+
+After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
+
 # Doing Tasks
 
+- For non-trivial tasks, briefly state your approach before starting (1 sentence). This helps the user know what to expect.
 - ALWAYS read code before modifying it. Never propose changes to code you haven't read.
 - Prefer edit_file for targeted changes over write_file for full rewrites.
 - Do not create new files unless absolutely necessary. Edit existing files instead.
@@ -318,6 +332,7 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
   - Don't add docstrings/comments to code you didn't change.
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
+- After completing work, give a brief summary of what was done and any important details. Don't just silently finish.
 
 # Tool Strategy
 
@@ -395,7 +410,7 @@ function setConversationMessages(messages) {
  * Print résumé + follow-up suggestions after the agent loop.
  * Only shown for multi-step responses (totalSteps >= 1).
  */
-function _printResume(totalSteps, toolCounts, filesModified) {
+function _printResume(totalSteps, toolCounts, filesModified, filesRead) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
@@ -406,9 +421,11 @@ function _printResume(totalSteps, toolCounts, filesModified) {
   resume += ' ──';
   console.log(`\n${C.dim}  ${resume}${C.reset}`);
 
-  // Follow-up suggestions (only when files were modified)
+  // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
     console.log(`${C.dim}  💡 /diff · /commit · /undo${C.reset}`);
+  } else if (filesRead.size > 0 && totalSteps >= 2) {
+    console.log(`${C.dim}  💡 /save · /clear${C.reset}`);
   }
 }
 
@@ -446,6 +463,7 @@ async function processInput(userInput) {
   let totalSteps = 0;
   const toolCounts = new Map();
   const filesModified = new Set();
+  const filesRead = new Set();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     // Step indicator for multi-step tasks
@@ -481,7 +499,7 @@ async function processInput(userInput) {
         rateLimitRetries++;
         if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
           console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded${C.reset}`);
-          _printResume(totalSteps, toolCounts, filesModified);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead);
           autoSave(conversationMessages);
           break;
         }
@@ -491,7 +509,7 @@ async function processInput(userInput) {
         continue;
       }
       // Auto-save on error so conversation isn't lost
-      _printResume(totalSteps, toolCounts, filesModified);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead);
       autoSave(conversationMessages);
       break;
     }
@@ -528,7 +546,7 @@ async function processInput(userInput) {
 
     // No tool calls → response complete
     if (!tool_calls || tool_calls.length === 0) {
-      _printResume(totalSteps, toolCounts, filesModified);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead);
       autoSave(conversationMessages);
       return;
     }
@@ -549,14 +567,17 @@ async function processInput(userInput) {
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const toolMessages = await executeBatch(prepared, true);
 
-    // Track modified files
+    // Track modified and read files
     for (let j = 0; j < prepared.length; j++) {
       const prep = prepared[j];
-      if (prep.canExecute && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
-        const res = toolMessages[j].content;
-        if (!res.startsWith('ERROR') && !res.includes('CANCELLED')) {
-          if (prep.args && prep.args.path) filesModified.add(prep.args.path);
-        }
+      if (!prep.canExecute) continue;
+      const res = toolMessages[j].content;
+      const isOk = !res.startsWith('ERROR') && !res.includes('CANCELLED');
+      if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
+        if (prep.args && prep.args.path) filesModified.add(prep.args.path);
+      }
+      if (isOk && prep.fnName === 'read_file') {
+        if (prep.args && prep.args.path) filesRead.add(prep.args.path);
       }
     }
 
@@ -566,7 +587,7 @@ async function processInput(userInput) {
     }
   }
 
-  _printResume(totalSteps, toolCounts, filesModified);
+  _printResume(totalSteps, toolCounts, filesModified, filesRead);
   autoSave(conversationMessages);
   console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached.${C.reset}`);
 }
