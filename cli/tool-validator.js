@@ -4,7 +4,6 @@
  * Returns helpful error messages for open-source models.
  */
 
-const { TOOL_DEFINITIONS } = require('./tools');
 const { getSkillToolDefinitions } = require('./skills');
 const { getMCPToolDefinitions } = require('./mcp');
 
@@ -51,6 +50,8 @@ function levenshtein(a, b) {
  * @returns {{ valid: boolean, error?: string, corrected?: object }}
  */
 function validateToolArgs(toolName, args) {
+  // Lazy require to break circular dependency (tools.js → fuzzy-match.js → tool-validator.js → tools.js)
+  const { TOOL_DEFINITIONS } = require('./tools');
   const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
   const toolDef = allTools.find(t => t.function.name === toolName);
 
