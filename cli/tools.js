@@ -8,7 +8,7 @@ const { execSync, execFileSync } = require('child_process');
 const axios = require('axios');
 const { isForbidden, isDangerous, confirm } = require('./safety');
 const { showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange } = require('./diff');
-const { C, Spinner } = require('./ui');
+const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
 
 const CWD = process.cwd();
@@ -286,7 +286,7 @@ const TOOL_DEFINITIONS = [
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
-async function executeTool(name, args) {
+async function _executeToolInner(name, args) {
   switch (name) {
     case 'bash': {
       const cmd = args.command;
@@ -639,6 +639,23 @@ async function executeTool(name, args) {
 
     default:
       return `ERROR: Unknown tool: ${name}`;
+  }
+}
+
+// ─── Spinner Wrapper ──────────────────────────────────────────
+async function executeTool(name, args) {
+  const spinnerText = getToolSpinnerText(name, args);
+  if (!spinnerText) return _executeToolInner(name, args);
+
+  const spinner = new Spinner(spinnerText);
+  spinner.start();
+  try {
+    const result = await _executeToolInner(name, args);
+    spinner.stop();
+    return result;
+  } catch (err) {
+    spinner.stop();
+    throw err;
   }
 }
 

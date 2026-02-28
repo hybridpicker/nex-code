@@ -683,6 +683,37 @@ describe('tools.js', () => {
     });
   });
 
+  // ─── spinner wrapper for non-interactive tools ─────────────
+  describe('spinner wrapper', () => {
+    it('shows spinner for read_file', async () => {
+      const fp = path.join(tmpDir, 'spinner-test.txt');
+      fs.writeFileSync(fp, 'hello');
+      const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+      await executeTool('read_file', { path: fp });
+      const output = writeSpy.mock.calls.map((c) => c[0]).join('');
+      expect(output).toContain('Reading:');
+      writeSpy.mockRestore();
+    });
+
+    it('shows spinner for grep', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'g.js'), 'const x = 1;\n');
+      const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+      await executeTool('grep', { pattern: 'const', path: tmpDir });
+      const output = writeSpy.mock.calls.map((c) => c[0]).join('');
+      expect(output).toContain('Grep:');
+      writeSpy.mockRestore();
+    });
+
+    it('does not show spinner for bash (has own)', async () => {
+      const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+      await executeTool('bash', { command: 'echo hi' });
+      const output = writeSpy.mock.calls.map((c) => c[0]).join('');
+      // bash has its own spinner with "Running:" prefix, not our wrapper
+      expect(output).toContain('Running:');
+      writeSpy.mockRestore();
+    });
+  });
+
   // ─── unknown tool ───────────────────────────────────────────
   describe('unknown tool', () => {
     it('returns error for unknown tool name', async () => {

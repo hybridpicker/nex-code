@@ -1,4 +1,4 @@
-const { C, Spinner, banner, formatToolCall, formatResult } = require('../cli/ui');
+const { C, Spinner, banner, formatToolCall, formatResult, getToolSpinnerText } = require('../cli/ui');
 
 describe('ui.js', () => {
   // ─── Color constants ────────────────────────────────────────
@@ -119,6 +119,89 @@ describe('ui.js', () => {
     it('handles write_file with no content', () => {
       const result = formatToolCall('write_file', { path: 'x.js' });
       expect(result).toContain('0 chars');
+    });
+  });
+
+  // ─── getToolSpinnerText ────────────────────────────────────
+  describe('getToolSpinnerText()', () => {
+    it('returns null for bash (has own spinner)', () => {
+      expect(getToolSpinnerText('bash', { command: 'ls' })).toBeNull();
+    });
+
+    it('returns null for ask_user (interactive)', () => {
+      expect(getToolSpinnerText('ask_user', { question: 'hi' })).toBeNull();
+    });
+
+    it('returns null for write_file (interactive)', () => {
+      expect(getToolSpinnerText('write_file', { path: 'x.js', content: '' })).toBeNull();
+    });
+
+    it('returns null for edit_file (interactive)', () => {
+      expect(getToolSpinnerText('edit_file', { path: 'x.js' })).toBeNull();
+    });
+
+    it('returns null for patch_file (interactive)', () => {
+      expect(getToolSpinnerText('patch_file', { path: 'x.js', patches: [] })).toBeNull();
+    });
+
+    it('returns Reading: text for read_file', () => {
+      expect(getToolSpinnerText('read_file', { path: 'src/app.js' })).toBe('Reading: src/app.js');
+    });
+
+    it('returns Listing: text for list_directory', () => {
+      expect(getToolSpinnerText('list_directory', { path: 'src' })).toBe('Listing: src');
+    });
+
+    it('returns Searching: text for search_files', () => {
+      expect(getToolSpinnerText('search_files', { path: '.', pattern: 'TODO' })).toBe('Searching: TODO');
+    });
+
+    it('returns Glob: text for glob', () => {
+      expect(getToolSpinnerText('glob', { pattern: '**/*.js' })).toBe('Glob: **/*.js');
+    });
+
+    it('returns Grep: text for grep', () => {
+      expect(getToolSpinnerText('grep', { pattern: 'import' })).toBe('Grep: import');
+    });
+
+    it('returns Fetching: text for web_fetch', () => {
+      expect(getToolSpinnerText('web_fetch', { url: 'https://example.com' })).toBe('Fetching: https://example.com');
+    });
+
+    it('truncates long URLs for web_fetch', () => {
+      const longUrl = 'https://example.com/' + 'a'.repeat(100);
+      const result = getToolSpinnerText('web_fetch', { url: longUrl });
+      expect(result.length).toBeLessThan(80);
+    });
+
+    it('returns Searching web: text for web_search', () => {
+      expect(getToolSpinnerText('web_search', { query: 'node.js tutorial' })).toBe('Searching web: node.js tutorial');
+    });
+
+    it('returns Git status... for git_status', () => {
+      expect(getToolSpinnerText('git_status', {})).toBe('Git status...');
+    });
+
+    it('returns Git diff... for git_diff without file', () => {
+      expect(getToolSpinnerText('git_diff', {})).toBe('Git diff...');
+    });
+
+    it('returns Git diff: file for git_diff with file', () => {
+      expect(getToolSpinnerText('git_diff', { file: 'index.js' })).toBe('Git diff: index.js...');
+    });
+
+    it('returns Git log... for git_log', () => {
+      expect(getToolSpinnerText('git_log', {})).toBe('Git log...');
+    });
+
+    it('returns Running: name for unknown tools', () => {
+      expect(getToolSpinnerText('custom_tool', {})).toBe('Running: custom_tool');
+    });
+
+    it('handles missing args gracefully', () => {
+      expect(getToolSpinnerText('read_file', {})).toBe('Reading: file');
+      expect(getToolSpinnerText('grep', {})).toBe('Grep: ...');
+      expect(getToolSpinnerText('web_fetch', {})).toBe('Fetching: ');
     });
   });
 

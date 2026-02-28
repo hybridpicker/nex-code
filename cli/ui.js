@@ -122,4 +122,43 @@ function formatResult(text, maxLines = 8) {
   return out;
 }
 
-module.exports = { C, Spinner, banner, formatToolCall, formatResult };
+/**
+ * Returns spinner text for a tool execution, or null if the tool
+ * should not show a spinner (interactive or has its own spinner).
+ */
+function getToolSpinnerText(name, args) {
+  switch (name) {
+    // Tools with their own spinner or interactive UI — skip
+    case 'bash':
+    case 'ask_user':
+    case 'write_file':
+    case 'edit_file':
+    case 'patch_file':
+      return null;
+
+    case 'read_file':
+      return `Reading: ${args.path || 'file'}`;
+    case 'list_directory':
+      return `Listing: ${args.path || '.'}`;
+    case 'search_files':
+      return `Searching: ${args.pattern || '...'}`;
+    case 'glob':
+      return `Glob: ${args.pattern || '...'}`;
+    case 'grep':
+      return `Grep: ${args.pattern || '...'}`;
+    case 'web_fetch':
+      return `Fetching: ${(args.url || '').substring(0, 60)}`;
+    case 'web_search':
+      return `Searching web: ${(args.query || '').substring(0, 50)}`;
+    case 'git_status':
+      return 'Git status...';
+    case 'git_diff':
+      return `Git diff${args.file ? `: ${args.file}` : ''}...`;
+    case 'git_log':
+      return `Git log${args.file ? `: ${args.file}` : ''}...`;
+    default:
+      return `Running: ${name}`;
+  }
+}
+
+module.exports = { C, Spinner, banner, formatToolCall, formatResult, getToolSpinnerText };
