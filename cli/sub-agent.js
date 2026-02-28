@@ -3,11 +3,9 @@
  * Spawns parallel sub-agents with their own conversation contexts.
  */
 
-const { callChat } = require('./providers/registry');
-const { getActiveProviderName, getActiveModelId } = require('./providers/registry');
+const { callChat, getActiveProviderName, getActiveModelId, getConfiguredProviders, getProvider, getActiveProvider, parseModelSpec } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
-const { TOOL_DEFINITIONS, executeTool } = require('./tools');
-const { filterToolsForModel } = require('./tool-tiers');
+const { filterToolsForModel, getModelTier } = require('./tool-tiers');
 const { trackUsage } = require('./costs');
 const { MultiProgress, C } = require('./ui');
 
@@ -39,6 +37,76 @@ const EXCLUDED_TOOLS = new Set(['ask_user', 'task_list', 'spawn_agents']);
 // Tools that need file locking
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'patch_file']);
 
+// ─── Task Classification + Model Routing ──────────────────────
+
+const FAST_PATTERNS = /\b(read|summarize|search|find|list|check|count|inspect|scan)\b/i;
+const HEAVY_PATTERNS = /\b(refactor|rewrite|implement|create|architect|design|generate|migrate)\b/i;
+
+/**
+ * Classify a task description into a complexity tier.
+ * @param {string} taskDesc
+ * @returns {'essential'|'standard'|'full'}
+ */
+function classifyTask(taskDesc) {
+  if (HEAVY_PATTERNS.test(taskDesc)) return 'full';
+  if (FAST_PATTERNS.test(taskDesc)) return 'essential';
+  return 'standard';
+}
+
+/**
+ * Pick the best available model at a target tier.
+ * Prefers the active provider, then falls back to others.
+ * @param {string} targetTier
+ * @returns {{ provider: string, model: string }|null}
+ */
+function pickModelForTier(targetTier) {
+  const configured = getConfiguredProviders();
+  const activeProv = getActiveProviderName();
+
+  const sorted = [...configured].sort((a, b) =>
+    (a.name === activeProv ? -1 : 1) - (b.name === activeProv ? -1 : 1)
+  );
+
+  for (const p of sorted) {
+    for (const m of p.models) {
+      if (getModelTier(m.id, p.name) === targetTier) {
+        return { provider: p.name, model: m.id };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the model for a sub-agent: explicit override or auto-routing.
+ * @param {{ task: string, model?: string }} agentDef
+ * @returns {{ provider: string|null, model: string|null, tier: string|null }}
+ */
+function resolveSubAgentModel(agentDef) {
+  // Explicit LLM override: parse "provider:model" format
+  if (agentDef.model) {
+    const { provider, model } = parseModelSpec(agentDef.model);
+    const prov = provider ? getProvider(provider) : getActiveProvider();
+    const provName = provider || getActiveProviderName();
+    if (prov && prov.isConfigured() && (prov.getModel(model) || provName === 'local')) {
+      const tier = getModelTier(model, provName);
+      return { provider: provName, model, tier };
+    }
+    // Invalid spec → fall through to auto-routing
+  }
+
+  // Auto-routing: classify task → pick model at matching tier
+  const targetTier = classifyTask(agentDef.task);
+  const pick = pickModelForTier(targetTier);
+  if (pick) {
+    const tier = getModelTier(pick.model, pick.provider);
+    return { provider: pick.provider, model: pick.model, tier };
+  }
+
+  // Ultimate fallback: use global active model
+  return { provider: null, model: null, tier: null };
+}
+
 /**
  * Run a single sub-agent to completion.
  * @param {{ task: string, context?: string, max_iterations?: number }} agentDef
@@ -60,23 +128,47 @@ ${agentDef.context ? `\nCONTEXT: ${agentDef.context}` : ''}
 WORKING DIRECTORY: ${process.cwd()}
 
 RULES:
-- Focus only on your assigned task.
-- Be concise and efficient. Use minimal tool calls.
+- Focus only on your assigned task. Be concise and efficient.
 - When done, respond with a clear summary of what you did and the result.
 - Do not ask questions — make reasonable decisions.
-- Use relative paths when possible.`;
+- Use relative paths when possible.
+
+TOOL STRATEGY:
+- Use read_file to read files (not bash cat). Use edit_file/patch_file to modify (not bash sed).
+- Use glob to find files by name. Use grep to search contents. Only use bash for shell operations.
+- ALWAYS read a file with read_file before editing it. edit_file old_text must match exactly.
+
+ERROR RECOVERY:
+- If edit_file fails with "old_text not found": read the file again, compare, and retry with exact text.
+- If bash fails: read the error, fix the root cause, then retry.
+- After 2 failed attempts at the same operation, summarize the issue and stop.`;
 
   const messages = [{ role: 'system', content: systemPrompt }];
   messages.push({ role: 'user', content: agentDef.task });
 
-  // Filter tools: exclude interactive/meta tools
+  // Resolve model routing
+  const routing = resolveSubAgentModel(agentDef);
+  const agentProvider = routing.provider;
+  const agentModel = routing.model;
+  const agentTier = routing.tier;
+
+  // Lazy require to avoid circular dependency (tools.js ↔ sub-agent.js)
+  const { TOOL_DEFINITIONS, executeTool } = require('./tools');
+
+  // Filter tools: exclude interactive/meta tools, apply tier override
   const availableTools = filterToolsForModel(
-    TOOL_DEFINITIONS.filter(t => !EXCLUDED_TOOLS.has(t.function.name))
+    TOOL_DEFINITIONS.filter(t => !EXCLUDED_TOOLS.has(t.function.name)),
+    agentTier
   );
+
+  // Build callChat options for provider/model routing
+  const chatOptions = {};
+  if (agentProvider) chatOptions.provider = agentProvider;
+  if (agentModel) chatOptions.model = agentModel;
 
   try {
     for (let i = 0; i < maxIter; i++) {
-      const result = await callChat(messages, availableTools);
+      const result = await callChat(messages, availableTools, chatOptions);
 
       // Track tokens
       if (result && result.usage) {
@@ -84,7 +176,9 @@ RULES:
         const outputT = result.usage.completion_tokens || 0;
         tokensUsed.input += inputT;
         tokensUsed.output += outputT;
-        trackUsage(getActiveProviderName(), getActiveModelId(), inputT, outputT);
+        const trackProvider = agentProvider || getActiveProviderName();
+        const trackModel = agentModel || getActiveModelId();
+        trackUsage(trackProvider, trackModel, inputT, outputT);
       }
 
       const { content, tool_calls } = result;
@@ -107,6 +201,7 @@ RULES:
           result: content || '(no response)',
           toolsUsed,
           tokensUsed,
+          modelSpec: agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
         };
       }
 
@@ -173,6 +268,7 @@ RULES:
       result: messages[messages.length - 1]?.content || '(max iterations reached)',
       toolsUsed,
       tokensUsed,
+      modelSpec: agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
     };
   } catch (err) {
     // Release locks on error
@@ -184,6 +280,7 @@ RULES:
       result: `Error: ${err.message}`,
       toolsUsed,
       tokensUsed,
+      modelSpec: agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
     };
   }
 }
@@ -238,7 +335,8 @@ async function executeSpawnAgents(args) {
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const statusIcon = r.status === 'done' ? '✓' : '✗';
-      lines.push(`${statusIcon} Agent ${i + 1}: ${r.task}`);
+      const modelLabel = r.modelSpec ? ` [${r.modelSpec}]` : '';
+      lines.push(`${statusIcon} Agent ${i + 1}${modelLabel}: ${r.task}`);
       lines.push(`  Status: ${r.status}`);
       lines.push(`  Tools used: ${r.toolsUsed.length > 0 ? r.toolsUsed.join(', ') : 'none'}`);
       lines.push(`  Result: ${r.result}`);
@@ -257,4 +355,4 @@ async function executeSpawnAgents(args) {
   }
 }
 
-module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks };
+module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel };

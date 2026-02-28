@@ -262,6 +262,16 @@ async function callStream(messages, tools, options = {}) {
  */
 async function callChat(messages, tools, options = {}) {
   initDefaults();
+
+  // Direct provider override: skip fallback chain
+  if (options.provider) {
+    const provider = providers[options.provider];
+    if (!provider || !provider.isConfigured()) {
+      throw new Error(`Provider '${options.provider}' is not available`);
+    }
+    return await provider.chat(messages, tools, { model: options.model || activeModelId, ...options });
+  }
+
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
@@ -282,6 +292,21 @@ async function callChat(messages, tools, options = {}) {
   }
 
   throw lastError || new Error('No configured provider available');
+}
+
+/**
+ * Get all configured providers with their models.
+ * @returns {Array<{ name: string, models: Array<{ id: string, name: string, maxTokens?: number, contextWindow?: number }> }>}
+ */
+function getConfiguredProviders() {
+  initDefaults();
+  const result = [];
+  for (const [name, provider] of Object.entries(providers)) {
+    if (provider.isConfigured()) {
+      result.push({ name, models: Object.values(provider.getModels()) });
+    }
+  }
+  return result;
 }
 
 // ─── Reset (for testing) ───────────────────────────────────────
@@ -309,6 +334,7 @@ module.exports = {
   listAllModels,
   callStream,
   callChat,
+  getConfiguredProviders,
   setFallbackChain,
   getFallbackChain,
   _reset,

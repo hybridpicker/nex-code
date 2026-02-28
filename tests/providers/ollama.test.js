@@ -311,6 +311,85 @@ describe('providers/ollama.js', () => {
     });
   });
 
+  // ─── discoverModels() ──────────────────────────────────────
+  describe('discoverModels()', () => {
+    it('merges discovered models with hardcoded list', async () => {
+      axios.post.mockImplementation(() => Promise.resolve({ data: { message: {} } }));
+      const mockGet = jest.fn().mockResolvedValueOnce({
+        data: {
+          models: [
+            { name: 'new-model:latest', model: 'new-model:latest' },
+            { name: 'another-model', model: 'another-model' },
+          ],
+        },
+      });
+      // axios is mocked globally, but only post. We need to mock get too.
+      const origGet = axios.get;
+      axios.get = mockGet;
+
+      // Reset discovery cache
+      provider._discovered = false;
+      await provider.discoverModels();
+
+      // Hardcoded models should still exist
+      expect(provider.getModel('kimi-k2.5')).toBeTruthy();
+      expect(provider.getModel('qwen3-coder')).toBeTruthy();
+
+      // New models should be added (without :latest suffix)
+      expect(provider.getModel('new-model')).toBeTruthy();
+      expect(provider.getModel('new-model').name).toBe('new-model:latest');
+      expect(provider.getModel('another-model')).toBeTruthy();
+
+      axios.get = origGet;
+    });
+
+    it('handles API failure gracefully', async () => {
+      const origGet = axios.get;
+      axios.get = jest.fn().mockRejectedValueOnce(new Error('Connection refused'));
+
+      const modelsBefore = { ...provider.models };
+      provider._discovered = false;
+      await provider.discoverModels();
+
+      // Should still have all hardcoded models
+      expect(Object.keys(provider.models)).toEqual(Object.keys(modelsBefore));
+
+      axios.get = origGet;
+    });
+
+    it('does not overwrite existing models', async () => {
+      const origGet = axios.get;
+      axios.get = jest.fn().mockResolvedValueOnce({
+        data: {
+          models: [{ name: 'kimi-k2.5', model: 'kimi-k2.5' }],
+        },
+      });
+
+      const originalModel = { ...provider.getModel('kimi-k2.5') };
+      provider._discovered = false;
+      await provider.discoverModels();
+
+      // Should keep the original model info, not overwrite
+      expect(provider.getModel('kimi-k2.5')).toEqual(originalModel);
+
+      axios.get = origGet;
+    });
+
+    it('caches after first call', async () => {
+      const origGet = axios.get;
+      const mockGet = jest.fn().mockResolvedValue({ data: { models: [] } });
+      axios.get = mockGet;
+
+      provider._discovered = false;
+      await provider.discoverModels();
+      await provider.discoverModels();
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      axios.get = origGet;
+    });
+  });
+
   // ─── normalizeResponse ──────────────────────────────────────
   describe('normalizeResponse()', () => {
     it('normalizes message with content', () => {

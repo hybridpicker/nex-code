@@ -108,12 +108,28 @@ function getActiveTier() {
 }
 
 /**
+ * Get the tool tier for a specific model.
+ * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'standard'
+ * @param {string} modelId
+ * @param {string} providerName
+ * @returns {string} Tier name ('essential', 'standard', or 'full')
+ */
+function getModelTier(modelId, providerName) {
+  if (modelId && configOverrides[modelId]) return configOverrides[modelId];
+  if (providerName && configOverrides[`${providerName}:*`]) return configOverrides[`${providerName}:*`];
+  if (modelId && MODEL_TIERS[modelId]) return MODEL_TIERS[modelId];
+  if (providerName && PROVIDER_DEFAULT_TIER[providerName]) return PROVIDER_DEFAULT_TIER[providerName];
+  return 'standard';
+}
+
+/**
  * Filter tool definitions based on the active model's tier.
  * @param {Array} tools - Full tool definitions array
+ * @param {string} [overrideTier] - Override tier (bypasses active model detection)
  * @returns {Array} Filtered tool definitions
  */
-function filterToolsForModel(tools) {
-  const tier = getActiveTier();
+function filterToolsForModel(tools, overrideTier) {
+  const tier = overrideTier || getActiveTier();
   if (tier === 'full' || !TIERS[tier]) return tools;
 
   const allowedNames = new Set(TIERS[tier]);
@@ -129,4 +145,4 @@ function getTierInfo() {
   return { tier, toolCount };
 }
 
-module.exports = { filterToolsForModel, getActiveTier, getTierInfo, TIERS, loadConfigOverrides };
+module.exports = { filterToolsForModel, getActiveTier, getModelTier, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides };

@@ -18,10 +18,10 @@ cli/providers/           → Multi-Provider Abstraction Layer
   anthropic.js           → Anthropic Provider (Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet)
   gemini.js              → Google Gemini Provider (Gemini 2.5 Pro/Flash, 2.0 Flash/Lite)
   local.js               → Local Ollama Server Provider
-  registry.js            → Provider Registry + Model Resolution (5 providers)
+  registry.js            → Provider Registry + Model Resolution + Provider Routing (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
 cli/tools.js             → 17 Tool Definitions + Implementations
-cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress)
+cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress, model routing)
 cli/tasks.js             → Task List Management (create, update, render, dependencies)
 cli/context-engine.js    → Token Management + Context Compression
 cli/session.js           → Session Persistence (.nex/sessions/)
@@ -38,9 +38,9 @@ cli/file-history.js      → In-session Undo/Redo for file changes
 cli/ui.js                → ANSI Colors, Spinner, Formatting, Compact Summaries (formatToolSummary)
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
-cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full)
+cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 34 Suites, 1102 Tests, 92%+ Coverage
+tests/                   → Jest, 36 Suites, 1173 Tests, 87%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -108,9 +108,10 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
 - parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
-- Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider
+- Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider, getModelTier() für beliebige Models, overrideTier in filterToolsForModel()
 - Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display
-- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>
+- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, Multi-Model-Routing (classifyTask → pickModelForTier → resolveSubAgentModel)
+- Sub-Agent Routing: Keyword-basierte Task-Klassifizierung (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM kann mit `model: "provider:model"` überschreiben
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show
 - File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
 - Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()

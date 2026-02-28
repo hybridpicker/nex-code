@@ -259,5 +259,82 @@ describe('registry.js', () => {
       openai.chat.mockRestore();
       openai.isConfigured.mockRestore();
     });
+
+    it('routes directly to specified provider via options.provider', async () => {
+      process.env.OPENAI_API_KEY = 'sk-test';
+      registry.getActiveProviderName();
+
+      const openai = registry.getProvider('openai');
+      jest.spyOn(openai, 'isConfigured').mockReturnValue(true);
+      jest.spyOn(openai, 'chat').mockResolvedValueOnce({ content: 'from openai' });
+
+      const result = await registry.callChat([], [], { provider: 'openai', model: 'gpt-4o' });
+      expect(result).toEqual({ content: 'from openai' });
+      expect(openai.chat).toHaveBeenCalledWith(
+        [], [],
+        expect.objectContaining({ model: 'gpt-4o', provider: 'openai' })
+      );
+
+      openai.chat.mockRestore();
+      openai.isConfigured.mockRestore();
+    });
+
+    it('throws when specified provider is not configured', async () => {
+      registry.getActiveProviderName();
+
+      const anthropic = registry.getProvider('anthropic');
+      jest.spyOn(anthropic, 'isConfigured').mockReturnValue(false);
+
+      await expect(
+        registry.callChat([], [], { provider: 'anthropic' })
+      ).rejects.toThrow("Provider 'anthropic' is not available");
+
+      anthropic.isConfigured.mockRestore();
+    });
+
+    it('throws when specified provider does not exist', async () => {
+      registry.getActiveProviderName();
+
+      await expect(
+        registry.callChat([], [], { provider: 'nonexistent' })
+      ).rejects.toThrow("Provider 'nonexistent' is not available");
+    });
+  });
+
+  // ─── getConfiguredProviders ─────────────────────────────────
+  describe('getConfiguredProviders()', () => {
+    it('returns only configured providers with models', () => {
+      registry.getActiveProviderName(); // init
+      const configured = registry.getConfiguredProviders();
+
+      // ollama should be configured (OLLAMA_API_KEY is set in beforeEach)
+      const ollamaEntry = configured.find(p => p.name === 'ollama');
+      expect(ollamaEntry).toBeDefined();
+      expect(ollamaEntry.models.length).toBeGreaterThan(0);
+
+      // Each model should have id and name
+      for (const m of ollamaEntry.models) {
+        expect(m).toHaveProperty('id');
+        expect(m).toHaveProperty('name');
+      }
+    });
+
+    it('does not include unconfigured providers', () => {
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+      registry._reset();
+      process.env.OLLAMA_API_KEY = 'test-key';
+
+      const configured = registry.getConfiguredProviders();
+      const providerNames = configured.map(p => p.name);
+
+      expect(providerNames).toContain('ollama');
+      // local is always configured (no API key needed)
+      expect(providerNames).toContain('local');
+      expect(providerNames).not.toContain('openai');
+      expect(providerNames).not.toContain('anthropic');
+    });
   });
 });
