@@ -9,7 +9,7 @@ Repo: `github.com/hybridpicker/nex-code`
 
 ```
 bin/nex-code.js       → Entrypoint (shebang, .env, startREPL)
-cli/index.js             → REPL + ~35 Slash Commands
+cli/index.js             → REPL + ~38 Slash Commands
 cli/agent.js             → Agentic Loop + Conversation State + MCP routing
 cli/providers/           → Multi-Provider Abstraction Layer
   base.js                → Abstract Provider Interface
@@ -37,7 +37,8 @@ cli/ui.js                → ANSI Colors, Spinner, Formatting
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full)
-tests/                   → Jest, 33 Suites, 1027 Tests, 93%+ Coverage
+cli/skills.js            → Skills System (prompt + script skills)
+tests/                   → Jest, 34 Suites, 1102 Tests, 92%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -106,6 +107,10 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
 - Tool-Tiers: essential (5) / standard (12) / full (15) — dynamisch pro Model/Provider
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show
+- File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
+- Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()
+- Tab-Completion: completeFilePath() für Dateipfad-Vervollständigung neben Slash-Commands
+- Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
 
 ## .nex/ Verzeichnis
 
