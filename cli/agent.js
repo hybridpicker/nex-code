@@ -299,7 +299,9 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
-- Be concise. Keep responses short and focused.
+- IMPORTANT: After gathering information with tools, ALWAYS write a substantive text response presenting your findings, analysis, or summary. Never end a turn with only tool calls and no text. The user cannot see tool results directly — they only see your text responses and 1-line tool summaries.
+- When the user asks a question, requests analysis, or says "status", "analyze", "explain", "summarize", etc. — your main job is to RESPOND WITH TEXT. Use tools to gather data, then present a clear, informative answer.
+- Be concise but complete. Keep responses focused while ensuring the user gets the information they asked for.
 - When referencing code, include file:line (e.g. src/app.js:42) so the user can navigate.
 - Do not make up file paths or URLs. Use tools to discover them.
 
