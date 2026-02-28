@@ -935,10 +935,10 @@ function startREPL() {
       _sugN++;
     }
     // Move back up using relative movement (scroll-safe)
-    buf += `\x1b[${_sugN}A\r`;
+    // Then restore cursor column (prompt length + cursor position)
+    const promptVisible = rl._prompt.replace(/\x1b\[[0-9;]*m/g, '').length;
+    buf += `\x1b[${_sugN}A\x1b[${promptVisible + rl.cursor + 1}G`;
     process.stdout.write(buf);
-    // Let readline redraw prompt + cursor at correct position
-    rl._refreshLine();
   }
 
   if (process.stdin.isTTY) {
