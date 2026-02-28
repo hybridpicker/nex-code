@@ -161,6 +161,12 @@ Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
 ## Features
 
+### Progress Indicators
+Every tool execution shows a contextual spinner with elapsed time:
+- `Reading: src/app.js`, `Grep: TODO`, `Fetching: https://...`
+- `Git status...`, `Git diff...`, `Searching web: query`
+- Interactive tools (`write_file`, `edit_file`, `patch_file`, `ask_user`) and `bash` (which has its own spinner) are excluded
+
 ### Streaming Output
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
