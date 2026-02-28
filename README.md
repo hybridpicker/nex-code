@@ -148,7 +148,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 
 ## Tools
 
-The agent has 15 built-in tools:
+The agent has 17 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -167,6 +167,8 @@ The agent has 15 built-in tools:
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Search the web via DuckDuckGo |
 | `ask_user` | Ask the user a question and wait for input |
+| `task_list` | Create and manage task lists for multi-step operations |
+| `spawn_agents` | Run parallel sub-agents for independent tasks |
 
 Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
@@ -174,11 +176,20 @@ Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
 ## Features
 
-### Progress Indicators
-Every tool execution shows a contextual spinner with elapsed time:
-- `Reading: src/app.js`, `Grep: TODO`, `Fetching: https://...`
-- `Git status...`, `Git diff...`, `Searching web: query`
-- Interactive tools (`write_file`, `edit_file`, `patch_file`, `ask_user`) and `bash` (which has its own spinner) are excluded
+### Compact Output
+The agent loop uses a single spinner during tool execution, then prints compact 1-line summaries:
+```
+  ⠋ ▸ 3 tools: read_file, grep, edit_file
+  ✓ read_file src/app.js (45 lines)
+  ✓ grep TODO → 12 matches
+  ✗ edit_file src/x.js → old_text not found
+```
+
+After multi-step tasks, a résumé and follow-up suggestions are shown:
+```
+  ── 3 steps · 8 tools · 2 files modified ──
+  💡 /diff · /commit · /undo
+```
 
 ### Streaming Output
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
@@ -248,6 +259,21 @@ In-session undo/redo for all file changes (write, edit, patch):
 ```
 Undo stack holds up to 50 changes. `/clear` resets the history.
 
+### Task Management
+Create structured task lists for complex multi-step operations:
+```
+/tasks                # show current task list
+/tasks clear          # clear all tasks
+```
+The agent uses `task_list` to create, update, and track progress on tasks with dependency support.
+
+### Sub-Agents
+Spawn parallel sub-agents for independent tasks:
+- Up to 5 agents run simultaneously with their own conversation contexts
+- File locking prevents concurrent writes to the same file
+- Multi-progress display shows real-time status of each agent
+- Good for: reading multiple files, analyzing separate modules, independent research
+
 ### Git Intelligence
 ```
 /commit              # analyze diff, suggest commit message
@@ -285,8 +311,8 @@ Four features that make Nex Code significantly more reliable with open-source mo
 
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
-- **standard** (12 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log
-- **full** (15 tools): all tools
+- **standard** (13 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list
+- **full** (17 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
@@ -407,7 +433,7 @@ Or place executable scripts in `.nex/hooks/`:
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
 ├── index.js             # REPL + ~38 slash commands + history persistence
-├── agent.js             # Agentic loop + conversation state + MCP routing
+├── agent.js             # Agentic loop + conversation state + compact output + résumé
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
 │   ├── ollama.js        # Ollama Cloud provider
@@ -416,7 +442,9 @@ cli/
 │   ├── gemini.js        # Google Gemini provider
 │   ├── local.js         # Local Ollama server
 │   └── registry.js      # Provider registry + model resolution
-├── tools.js             # 15 tool definitions + implementations
+├── tools.js             # 17 tool definitions + implementations
+├── sub-agent.js         # Parallel sub-agent runner with file locking
+├── tasks.js             # Task list management (create, update, render)
 ├── skills.js            # Skills system (prompt + script skills)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
 ├── hooks.js             # Hook system (pre/post events)
@@ -434,7 +462,7 @@ cli/
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model
-├── ui.js                # ANSI colors, spinner, formatting
+├── ui.js                # ANSI colors, spinner, formatting, compact summaries
 └── ollama.js            # Backward-compatible wrapper
 ```
 

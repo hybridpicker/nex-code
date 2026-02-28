@@ -13,7 +13,7 @@ const { getActiveModel, getActiveProviderName } = require('./providers/registry'
  */
 const TIERS = {
   essential: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory'],
-  standard: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory', 'search_files', 'glob', 'grep', 'ask_user', 'git_status', 'git_diff', 'git_log'],
+  standard: ['bash', 'read_file', 'write_file', 'edit_file', 'list_directory', 'search_files', 'glob', 'grep', 'ask_user', 'git_status', 'git_diff', 'git_log', 'task_list'],
   full: null, // null = all tools, no filtering
 };
 

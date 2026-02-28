@@ -185,7 +185,7 @@ describe('Tool Call Retry with Schema Hints', () => {
 
     await processInput('run echo hello');
 
-    expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo hello' });
+    expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo hello' }, { silent: true });
   });
 });
 

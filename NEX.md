@@ -10,7 +10,7 @@ Repo: `github.com/hybridpicker/nex-code`
 ```
 bin/nex-code.js       → Entrypoint (shebang, .env, startREPL)
 cli/index.js             → REPL + ~38 Slash Commands
-cli/agent.js             → Agentic Loop + Conversation State + MCP routing
+cli/agent.js             → Agentic Loop + Conversation State + Compact Output + Résumé
 cli/providers/           → Multi-Provider Abstraction Layer
   base.js                → Abstract Provider Interface
   ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral)
@@ -20,7 +20,9 @@ cli/providers/           → Multi-Provider Abstraction Layer
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
-cli/tools.js             → 15 Tool Definitions + Implementations
+cli/tools.js             → 17 Tool Definitions + Implementations
+cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress)
+cli/tasks.js             → Task List Management (create, update, render, dependencies)
 cli/context-engine.js    → Token Management + Context Compression
 cli/session.js           → Session Persistence (.nex/sessions/)
 cli/memory.js            → Project Memory (.nex/memory/ + NEX.md)
@@ -33,7 +35,7 @@ cli/hooks.js             → Hook System (pre-tool, post-tool, etc.)
 cli/diff.js              → LCS Diff + Colored Output + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
 cli/file-history.js      → In-session Undo/Redo for file changes
-cli/ui.js                → ANSI Colors, Spinner, Formatting
+cli/ui.js                → ANSI Colors, Spinner, Formatting, Compact Summaries (formatToolSummary)
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full)
@@ -90,7 +92,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming
 - Streaming-Output wird durch `renderMarkdown()` gepiped (rich terminal rendering)
 - `ollama.js` ist Backward-compatible Wrapper (delegiert an Registry)
-- 15 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log
+- 17 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents
 - Permission-System: allow/ask/deny pro Tool (konfigurierbar in `.nex/config.json`)
 - Context Engine: Token-Counting, Auto-Compression bei >70% Window
 - Session-Persistenz: Auto-Save nach jedem Turn in `.nex/sessions/`
@@ -106,10 +108,15 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
 - parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
-- Tool-Tiers: essential (5) / standard (12) / full (15) — dynamisch pro Model/Provider
+- Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider
+- Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display
+- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show
 - File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
 - Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()
+- Compact Output: executeBatch(quiet=true) → single spinner + formatToolSummary() 1-line summaries
+- Résumé: _printResume() zeigt Steps/Tools/Files-Modified nach Multi-Step-Tasks
+- Follow-Up: 💡 /diff · /commit · /undo Vorschläge nach File-Modifikationen
 - Tab-Completion: completeFilePath() für Dateipfad-Vervollständigung neben Slash-Commands
 - Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
 

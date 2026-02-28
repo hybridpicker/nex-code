@@ -136,6 +136,8 @@ function getToolSpinnerText(name, args) {
     case 'write_file':
     case 'edit_file':
     case 'patch_file':
+    case 'task_list':
+    case 'spawn_agents':
       return null;
 
     case 'read_file':
@@ -163,4 +165,213 @@ function getToolSpinnerText(name, args) {
   }
 }
 
-module.exports = { C, Spinner, banner, formatToolCall, formatResult, getToolSpinnerText };
+// ─── MultiProgress ────────────────────────────────────────────
+const MULTI_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+class MultiProgress {
+  /**
+   * @param {string[]} labels - Labels for each parallel task
+   */
+  constructor(labels) {
+    this.labels = labels;
+    this.statuses = labels.map(() => 'running'); // 'running' | 'done' | 'error'
+    this.frame = 0;
+    this.interval = null;
+    this.lineCount = labels.length;
+  }
+
+  _render() {
+    const f = MULTI_FRAMES[this.frame % MULTI_FRAMES.length];
+    let buf = '';
+
+    for (let i = 0; i < this.labels.length; i++) {
+      let icon, color;
+      switch (this.statuses[i]) {
+        case 'done':
+          icon = `${C.green}✓${C.reset}`;
+          color = C.dim;
+          break;
+        case 'error':
+          icon = `${C.red}✗${C.reset}`;
+          color = C.dim;
+          break;
+        default:
+          icon = `${C.cyan}${f}${C.reset}`;
+          color = '';
+      }
+      buf += `\x1b[2K  ${icon} ${color}${this.labels[i]}${C.reset}\n`;
+    }
+
+    // Move cursor back up to start of our block
+    if (this.lineCount > 0) {
+      buf += `\x1b[${this.lineCount}A`;
+    }
+
+    process.stderr.write(buf);
+    this.frame++;
+  }
+
+  start() {
+    process.stderr.write('\x1b[?25l'); // hide cursor
+    // Write initial blank lines so we have room
+    for (let i = 0; i < this.lineCount; i++) {
+      process.stderr.write('\n');
+    }
+    if (this.lineCount > 0) {
+      process.stderr.write(`\x1b[${this.lineCount}A`);
+    }
+    this._render();
+    this.interval = setInterval(() => this._render(), 80);
+  }
+
+  /**
+   * @param {number} index - Index of the task to update
+   * @param {'running'|'done'|'error'} status
+   */
+  update(index, status) {
+    if (index >= 0 && index < this.statuses.length) {
+      this.statuses[index] = status;
+    }
+  }
+
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    // Final render to show final states
+    this._renderFinal();
+    process.stderr.write('\x1b[?25h'); // show cursor
+  }
+
+  _renderFinal() {
+    let buf = '';
+    for (let i = 0; i < this.labels.length; i++) {
+      let icon;
+      switch (this.statuses[i]) {
+        case 'done':
+          icon = `${C.green}✓${C.reset}`;
+          break;
+        case 'error':
+          icon = `${C.red}✗${C.reset}`;
+          break;
+        default:
+          icon = `${C.yellow}○${C.reset}`;
+      }
+      buf += `\x1b[2K  ${icon} ${C.dim}${this.labels[i]}${C.reset}\n`;
+    }
+    process.stderr.write(buf);
+  }
+}
+
+/**
+ * Restore terminal to a clean state (show cursor, clear spinner line).
+ * Call this on SIGINT or unexpected exit to avoid broken terminal.
+ */
+function cleanupTerminal() {
+  process.stderr.write('\x1b[?25h');  // show cursor
+  process.stderr.write('\x1b[2K\r'); // clear line
+}
+
+/**
+ * Compact 1-line summary for a tool execution result.
+ * Used by the agent loop in quiet mode.
+ */
+function formatToolSummary(name, args, result, isError) {
+  const r = String(result || '');
+  const icon = isError ? `${C.red}✗${C.reset}` : `${C.green}✓${C.reset}`;
+
+  if (isError) {
+    const errMsg = r.split('\n')[0].replace(/^ERROR:\s*/i, '').substring(0, 60);
+    return `  ${icon} ${C.dim}${name}${C.reset} ${C.red}→ ${errMsg}${C.reset}`;
+  }
+
+  let detail;
+  switch (name) {
+    case 'read_file': {
+      const lines = r.split('\n').filter(Boolean).length;
+      detail = `${args.path || 'file'} (${lines} lines)`;
+      break;
+    }
+    case 'write_file': {
+      const chars = (args.content || '').length;
+      detail = `${args.path || 'file'} (${chars} chars)`;
+      break;
+    }
+    case 'edit_file':
+      detail = `${args.path || 'file'} → edited`;
+      break;
+    case 'patch_file': {
+      const n = (args.patches || []).length;
+      detail = `${args.path || 'file'} (${n} patches)`;
+      break;
+    }
+    case 'bash': {
+      const cmd = (args.command || '').substring(0, 40);
+      const suffix = (args.command || '').length > 40 ? '...' : '';
+      if (r.includes('EXIT')) {
+        const code = (r.match(/EXIT (\d+)/) || [])[1] || '?';
+        detail = `${cmd}${suffix} → exit ${code}`;
+      } else {
+        detail = `${cmd}${suffix} → ok`;
+      }
+      break;
+    }
+    case 'grep':
+    case 'search_files': {
+      if (r.includes('(no matches)') || r === 'no matches') {
+        detail = `${args.pattern || '...'} → no matches`;
+      } else {
+        const lines = r.split('\n').filter(Boolean).length;
+        detail = `${args.pattern || '...'} → ${lines} matches`;
+      }
+      break;
+    }
+    case 'glob': {
+      if (r === '(no matches)') {
+        detail = `${args.pattern || '...'} → no matches`;
+      } else {
+        const files = r.split('\n').filter(Boolean).length;
+        detail = `${args.pattern || '...'} → ${files} files`;
+      }
+      break;
+    }
+    case 'list_directory': {
+      const entries = r === '(empty)' ? 0 : r.split('\n').filter(Boolean).length;
+      detail = `${args.path || '.'} → ${entries} entries`;
+      break;
+    }
+    case 'git_status': {
+      const branchMatch = r.match(/Branch:\s*(\S+)/);
+      const changeLines = r.split('\n').filter(l => /^\s*[MADRCU?!]/.test(l)).length;
+      detail = branchMatch ? `${branchMatch[1]}, ${changeLines} changes` : 'done';
+      break;
+    }
+    case 'git_diff':
+    case 'git_log':
+      detail = 'done';
+      break;
+    case 'web_fetch':
+      detail = `${(args.url || '').substring(0, 50)} → fetched`;
+      break;
+    case 'web_search': {
+      const blocks = r.split('\n\n').filter(Boolean).length;
+      detail = `${(args.query || '').substring(0, 40)} → ${blocks} results`;
+      break;
+    }
+    case 'task_list':
+      detail = `${args.action || 'list'} → done`;
+      break;
+    case 'spawn_agents': {
+      const n = (args.agents || []).length;
+      detail = `${n} agents → done`;
+      break;
+    }
+    default:
+      detail = 'done';
+  }
+
+  return `  ${icon} ${C.dim}${name} ${detail}${C.reset}`;
+}
+
+module.exports = { C, Spinner, MultiProgress, banner, formatToolCall, formatResult, formatToolSummary, getToolSpinnerText, cleanupTerminal };

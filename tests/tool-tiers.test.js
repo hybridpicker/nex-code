@@ -54,8 +54,8 @@ describe('TIERS definitions', () => {
     expect(TIERS.essential).toContain('list_directory');
   });
 
-  it('standard tier has 12 tools', () => {
-    expect(TIERS.standard).toHaveLength(12);
+  it('standard tier has 13 tools', () => {
+    expect(TIERS.standard).toHaveLength(13);
     expect(TIERS.standard).toContain('glob');
     expect(TIERS.standard).toContain('grep');
     expect(TIERS.standard).toContain('ask_user');
@@ -231,7 +231,7 @@ describe('getTierInfo()', () => {
 
     const info = getTierInfo();
     expect(info.tier).toBe('standard');
-    expect(info.toolCount).toBe(12);
+    expect(info.toolCount).toBe(13);
   });
 
   it('returns "all" for full tier', () => {
