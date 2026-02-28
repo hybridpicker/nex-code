@@ -756,6 +756,53 @@ describe('tools.js', () => {
     });
   });
 
+  // ─── edit_file fuzzy matching ──────────────────────────────
+  describe('edit_file fuzzy matching', () => {
+    it('succeeds with whitespace mismatch (tabs vs spaces)', async () => {
+      const fp = path.join(tmpDir, 'fuzzy-edit.txt');
+      fs.writeFileSync(fp, '\tconst x = 1;\n\tconst y = 2;\n');
+      const result = await executeTool('edit_file', {
+        path: fp,
+        old_text: '  const x = 1;\n  const y = 2;',
+        new_text: '  const x = 10;\n  const y = 20;',
+      });
+      expect(result).toContain('Edited');
+      expect(result).toContain('fuzzy match');
+      const content = fs.readFileSync(fp, 'utf-8');
+      expect(content).toContain('const x = 10;');
+    });
+
+    it('shows "Most similar text" on typo mismatch', async () => {
+      const fp = path.join(tmpDir, 'fuzzy-error.txt');
+      fs.writeFileSync(fp, 'const hello = "world";\n');
+      const result = await executeTool('edit_file', {
+        path: fp,
+        old_text: 'const helo = "world";',
+        new_text: 'const hello = "earth";',
+      });
+      expect(result).toContain('Most similar text');
+      expect(result).toContain('line');
+    });
+  });
+
+  // ─── patch_file fuzzy matching ─────────────────────────────
+  describe('patch_file fuzzy matching', () => {
+    it('succeeds with whitespace mismatch', async () => {
+      const fp = path.join(tmpDir, 'fuzzy-patch.txt');
+      fs.writeFileSync(fp, '\tconst a = 1;\n\tconst b = 2;\n');
+      const result = await executeTool('patch_file', {
+        path: fp,
+        patches: [
+          { old_text: '  const a = 1;', new_text: '  const a = 10;' },
+        ],
+      });
+      expect(result).toContain('Patched');
+      expect(result).toContain('fuzzy match');
+      const content = fs.readFileSync(fp, 'utf-8');
+      expect(content).toContain('const a = 10;');
+    });
+  });
+
   // ─── unknown tool ───────────────────────────────────────────
   describe('unknown tool', () => {
     it('returns error for unknown tool name', async () => {
