@@ -185,11 +185,15 @@ The agent loop uses a single spinner during tool execution, then prints compact 
   ✗ edit_file src/x.js → old_text not found
 ```
 
-After multi-step tasks, a résumé and follow-up suggestions are shown:
+After multi-step tasks, a résumé and context-aware follow-up suggestions are shown:
 ```
   ── 3 steps · 8 tools · 2 files modified ──
   💡 /diff · /commit · /undo
 ```
+Read-heavy sessions (analysis, status checks) suggest `/save · /clear` instead.
+
+### Response Quality
+The system prompt enforces substantive responses: the model always presents findings as formatted text after using tools (users only see 1-line tool summaries). Responses use markdown with headers, bullet lists, and code blocks. The model states its approach before non-trivial tasks and summarizes results after completing work.
 
 ### Streaming Output
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).

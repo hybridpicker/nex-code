@@ -116,8 +116,9 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
 - Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()
 - Compact Output: executeBatch(quiet=true) → single spinner + formatToolSummary() 1-line summaries
-- Résumé: _printResume() zeigt Steps/Tools/Files-Modified nach Multi-Step-Tasks
-- Follow-Up: 💡 /diff · /commit · /undo Vorschläge nach File-Modifikationen
+- Response Quality: System-Prompt erzwingt substantive Text-Antworten nach Tool-Use, Markdown-Formatierung, Approach-Statement vor Tasks, Completion-Summary
+- Résumé: _printResume() zeigt Steps/Tools/Files-Modified/Files-Read nach Multi-Step-Tasks
+- Follow-Up: Kontext-basierte Vorschläge — 💡 /diff · /commit · /undo nach Edits, 💡 /save · /clear nach Read-Sessions
 - Tab-Completion: completeFilePath() für Dateipfad-Vervollständigung neben Slash-Commands
 - Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
 
