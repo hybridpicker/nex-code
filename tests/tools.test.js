@@ -11,6 +11,10 @@ jest.mock('../cli/safety', () => ({
   setAutoConfirm: jest.fn(),
 }));
 
+jest.mock('../cli/file-history', () => ({
+  recordChange: jest.fn(),
+}));
+
 jest.mock('../cli/diff', () => ({
   showEditDiff: jest.fn(),
   showWriteDiff: jest.fn(),
@@ -680,6 +684,44 @@ describe('tools.js', () => {
       const result = await executeTool('glob', { pattern: '*.txt', path: tmpDir });
       expect(result).toContain('truncated');
       expect(result).toContain('200');
+    });
+  });
+
+  // ─── recordChange calls for file operations ────────────────
+  describe('recordChange integration', () => {
+    it('records change after write_file (new file)', async () => {
+      const { recordChange } = require('../cli/file-history');
+      recordChange.mockClear();
+      const fp = path.join(tmpDir, 'recorded-new.txt');
+      await executeTool('write_file', { path: fp, content: 'hello' });
+      expect(recordChange).toHaveBeenCalledWith('write_file', fp, null, 'hello');
+    });
+
+    it('records change after write_file (overwrite)', async () => {
+      const { recordChange } = require('../cli/file-history');
+      recordChange.mockClear();
+      const fp = path.join(tmpDir, 'recorded-ow.txt');
+      fs.writeFileSync(fp, 'old');
+      await executeTool('write_file', { path: fp, content: 'new' });
+      expect(recordChange).toHaveBeenCalledWith('write_file', fp, 'old', 'new');
+    });
+
+    it('records change after edit_file', async () => {
+      const { recordChange } = require('../cli/file-history');
+      recordChange.mockClear();
+      const fp = path.join(tmpDir, 'recorded-edit.txt');
+      fs.writeFileSync(fp, 'hello world');
+      await executeTool('edit_file', { path: fp, old_text: 'world', new_text: 'nex' });
+      expect(recordChange).toHaveBeenCalledWith('edit_file', fp, 'hello world', 'hello nex');
+    });
+
+    it('records change after patch_file', async () => {
+      const { recordChange } = require('../cli/file-history');
+      recordChange.mockClear();
+      const fp = path.join(tmpDir, 'recorded-patch.txt');
+      fs.writeFileSync(fp, 'hello world');
+      await executeTool('patch_file', { path: fp, patches: [{ old_text: 'hello', new_text: 'hi' }] });
+      expect(recordChange).toHaveBeenCalledWith('patch_file', fp, 'hello world', 'hi world');
     });
   });
 

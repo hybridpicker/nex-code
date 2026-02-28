@@ -32,6 +32,7 @@ cli/mcp.js               → MCP Client (JSON-RPC over stdio)
 cli/hooks.js             → Hook System (pre-tool, post-tool, etc.)
 cli/diff.js              → LCS Diff + Colored Output + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
+cli/file-history.js      → In-session Undo/Redo for file changes
 cli/ui.js                → ANSI Colors, Spinner, Formatting
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction

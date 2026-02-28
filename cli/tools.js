@@ -10,6 +10,7 @@ const { isForbidden, isDangerous, confirm } = require('./safety');
 const { showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
+const { recordChange } = require('./file-history');
 
 const CWD = process.cwd();
 
@@ -346,9 +347,10 @@ async function _executeToolInner(name, args) {
       const fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
       const exists = fs.existsSync(fp);
+      let oldContent = null;
 
       if (exists) {
-        const oldContent = fs.readFileSync(fp, 'utf-8');
+        oldContent = fs.readFileSync(fp, 'utf-8');
         showWriteDiff(fp, oldContent, args.content);
         const ok = await confirmFileChange('Overwrite');
         if (!ok) return 'CANCELLED: User declined to overwrite file.';
@@ -361,6 +363,7 @@ async function _executeToolInner(name, args) {
       const dir = path.dirname(fp);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(fp, args.content, 'utf-8');
+      recordChange('write_file', fp, oldContent, args.content);
       return `Written: ${fp} (${args.content.length} chars)`;
     }
 
@@ -379,6 +382,7 @@ async function _executeToolInner(name, args) {
       // Use split/join for literal replacement (no regex interpretation)
       const updated = content.split(args.old_text).join(args.new_text);
       fs.writeFileSync(fp, updated, 'utf-8');
+      recordChange('edit_file', fp, content, updated);
       return `Edited: ${fp}`;
     }
 
@@ -524,6 +528,7 @@ async function _executeToolInner(name, args) {
 
       // Write the fully-validated preview (atomic — no partial application)
       fs.writeFileSync(fp, preview, 'utf-8');
+      recordChange('patch_file', fp, content, preview);
       return `Patched: ${fp} (${patches.length} replacements)`;
     }
 

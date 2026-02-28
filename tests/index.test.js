@@ -131,6 +131,15 @@ jest.mock('../cli/costs', () => ({
   resetCosts: jest.fn(),
 }));
 
+jest.mock('../cli/file-history', () => ({
+  undo: jest.fn().mockReturnValue(null),
+  redo: jest.fn().mockReturnValue(null),
+  getHistory: jest.fn().mockReturnValue([]),
+  getUndoCount: jest.fn().mockReturnValue(0),
+  getRedoCount: jest.fn().mockReturnValue(0),
+  clearHistory: jest.fn(),
+}));
+
 jest.mock('../cli/skills', () => ({
   loadAllSkills: jest.fn().mockReturnValue([]),
   listSkills: jest.fn().mockReturnValue([]),
@@ -752,10 +761,73 @@ describe('index.js (REPL commands)', () => {
       expect(output).toContain('128k context');
     });
 
-    it('handles /clear command', async () => {
+    it('handles /clear command and clears history', async () => {
       const { clearConversation } = require('../cli/agent');
+      const { clearHistory } = require('../cli/file-history');
       await lineHandler('/clear');
       expect(clearConversation).toHaveBeenCalled();
+      expect(clearHistory).toHaveBeenCalled();
+    });
+
+    it('handles /undo with nothing to undo', async () => {
+      await lineHandler('/undo');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Nothing to undo');
+    });
+
+    it('handles /undo with successful undo', async () => {
+      const fh = require('../cli/file-history');
+      fh.undo.mockReturnValueOnce({ tool: 'edit_file', filePath: '/tmp/x.js', wasCreated: false });
+      fh.getUndoCount.mockReturnValueOnce(2);
+      await lineHandler('/undo');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Undone');
+      expect(output).toContain('restored');
+      expect(output).toContain('/tmp/x.js');
+    });
+
+    it('handles /undo for newly created file', async () => {
+      const fh = require('../cli/file-history');
+      fh.undo.mockReturnValueOnce({ tool: 'write_file', filePath: '/tmp/new.js', wasCreated: true });
+      await lineHandler('/undo');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('deleted');
+    });
+
+    it('handles /redo with nothing to redo', async () => {
+      await lineHandler('/redo');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Nothing to redo');
+    });
+
+    it('handles /redo with successful redo', async () => {
+      const fh = require('../cli/file-history');
+      fh.redo.mockReturnValueOnce({ tool: 'edit_file', filePath: '/tmp/x.js' });
+      fh.getRedoCount.mockReturnValueOnce(1);
+      await lineHandler('/redo');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Redone');
+    });
+
+    it('handles /history with no changes', async () => {
+      await lineHandler('/history');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('No file changes');
+    });
+
+    it('handles /history with entries', async () => {
+      const fh = require('../cli/file-history');
+      fh.getHistory.mockReturnValueOnce([
+        { tool: 'edit_file', filePath: '/tmp/a.js', timestamp: Date.now() },
+        { tool: 'write_file', filePath: '/tmp/b.js', timestamp: Date.now() },
+      ]);
+      fh.getUndoCount.mockReturnValueOnce(2);
+      fh.getRedoCount.mockReturnValueOnce(0);
+      await lineHandler('/history');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('File Change History');
+      expect(output).toContain('edit_file');
+      expect(output).toContain('write_file');
     });
 
     it('handles /context command', async () => {
