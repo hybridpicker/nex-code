@@ -786,6 +786,23 @@ function getPrompt() {
   return `${tag}${C.bold}${C.cyan}>${C.reset} `;
 }
 
+// ─── Bracketed Paste Detection ──────────────────────────────
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+function hasPasteStart(data) {
+  return typeof data === 'string' && data.includes(PASTE_START);
+}
+
+function hasPasteEnd(data) {
+  return typeof data === 'string' && data.includes(PASTE_END);
+}
+
+function stripPasteSequences(data) {
+  if (typeof data !== 'string') return data;
+  return data.split(PASTE_START).join('').split(PASTE_END).join('');
+}
+
 function startREPL() {
   // Check that at least one provider is configured
   const providerList = listProviders();
@@ -835,6 +852,55 @@ function startREPL() {
   });
 
   setReadlineInterface(rl);
+
+  // ─── Bracketed Paste Mode ──────────────────────────────────
+  let _pasteActive = false;
+  let _pasteLines = [];
+
+  if (process.stdin.isTTY) {
+    process.stdout.write('\x1b[?2004h'); // enable bracketed paste
+
+    const origEmit = process.stdin.emit.bind(process.stdin);
+    process.stdin.emit = function (event, ...args) {
+      if (event === 'data' && typeof args[0] === 'string') {
+        let data = args[0];
+        if (hasPasteStart(data)) {
+          _pasteActive = true;
+          data = stripPasteSequences(data);
+          if (data) {
+            const lines = data.split('\n');
+            _pasteLines.push(...lines);
+          }
+          return true;
+        }
+        if (hasPasteEnd(data)) {
+          _pasteActive = false;
+          data = stripPasteSequences(data);
+          if (data) {
+            const lines = data.split('\n');
+            _pasteLines.push(...lines);
+          }
+          // Emit the combined paste as a single input
+          const combined = _pasteLines.join('\n').trim();
+          _pasteLines = [];
+          if (combined) {
+            console.log(`${C.dim}[pasted ${combined.split('\n').length} lines]${C.reset}`);
+            return origEmit.call(process.stdin, event, combined + '\n');
+          }
+          return true;
+        }
+        if (_pasteActive) {
+          data = stripPasteSequences(data);
+          if (data) {
+            const lines = data.split('\n');
+            _pasteLines.push(...lines);
+          }
+          return true;
+        }
+      }
+      return origEmit.call(process.stdin, event, ...args);
+    };
+  }
 
   // ─── Inline slash-command suggestions (live while typing) ───
   let _sugN = 0;
@@ -1009,9 +1075,10 @@ function startREPL() {
   });
 
   rl.on('close', () => {
+    if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l'); // disable bracketed paste
     console.log(`\n${C.gray}Bye!${C.reset}`);
     process.exit(0);
   });
 }
 
-module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, completeFilePath, handleSlashCommand, showProviders, showHelp, renderBar };
+module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, completeFilePath, handleSlashCommand, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences };

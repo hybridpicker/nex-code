@@ -149,7 +149,7 @@ jest.mock('../cli/skills', () => ({
   handleSkillCommand: jest.fn().mockReturnValue(false),
 }));
 
-const { showCommandList, completer, completeFilePath, showProviders, showHelp, renderBar } = require('../cli/index');
+const { showCommandList, completer, completeFilePath, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences } = require('../cli/index');
 
 describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
@@ -1464,6 +1464,70 @@ describe('index.js (REPL commands)', () => {
       expect(prompt).toContain('ollama');
       expect(prompt).toContain('kimi-k2.5');
       expect(prompt).toContain('>');
+    });
+  });
+
+  // ─── Bracketed Paste Helpers ───────────────────────────────
+  describe('hasPasteStart()', () => {
+    it('detects paste start sequence', () => {
+      expect(hasPasteStart('\x1b[200~hello')).toBe(true);
+    });
+
+    it('returns false for normal text', () => {
+      expect(hasPasteStart('hello world')).toBe(false);
+    });
+
+    it('returns false for non-string', () => {
+      expect(hasPasteStart(null)).toBe(false);
+      expect(hasPasteStart(undefined)).toBe(false);
+      expect(hasPasteStart(42)).toBe(false);
+    });
+  });
+
+  describe('hasPasteEnd()', () => {
+    it('detects paste end sequence', () => {
+      expect(hasPasteEnd('hello\x1b[201~')).toBe(true);
+    });
+
+    it('returns false for normal text', () => {
+      expect(hasPasteEnd('hello world')).toBe(false);
+    });
+
+    it('returns false for non-string', () => {
+      expect(hasPasteEnd(null)).toBe(false);
+      expect(hasPasteEnd(undefined)).toBe(false);
+    });
+  });
+
+  describe('stripPasteSequences()', () => {
+    it('strips paste start sequence', () => {
+      expect(stripPasteSequences('\x1b[200~hello')).toBe('hello');
+    });
+
+    it('strips paste end sequence', () => {
+      expect(stripPasteSequences('hello\x1b[201~')).toBe('hello');
+    });
+
+    it('strips both sequences', () => {
+      expect(stripPasteSequences('\x1b[200~hello world\x1b[201~')).toBe('hello world');
+    });
+
+    it('returns original string when no sequences', () => {
+      expect(stripPasteSequences('normal text')).toBe('normal text');
+    });
+
+    it('returns non-string input unchanged', () => {
+      expect(stripPasteSequences(null)).toBe(null);
+      expect(stripPasteSequences(42)).toBe(42);
+    });
+
+    it('handles empty string', () => {
+      expect(stripPasteSequences('')).toBe('');
+    });
+
+    it('handles multiple paste sequences', () => {
+      const input = '\x1b[200~line1\x1b[201~\x1b[200~line2\x1b[201~';
+      expect(stripPasteSequences(input)).toBe('line1line2');
     });
   });
 });

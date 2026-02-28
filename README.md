@@ -173,6 +173,9 @@ Every tool execution shows a contextual spinner with elapsed time:
 ### Streaming Output
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
+### Paste Detection
+Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input instead of firing line-by-line. A `[pasted X lines]` indicator is shown.
+
 ### Diff Preview
 Every file change is shown as a colored diff before being applied:
 - **edit_file**: Red/green diff with 3 lines of context
