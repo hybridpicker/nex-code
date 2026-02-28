@@ -65,7 +65,7 @@ class Spinner {
   }
 }
 
-function banner(modelName, cwd) {
+function banner(modelName, cwd, opts = {}) {
   const bc = C.brightCyan;
   const bm = C.brightMagenta;
   const bb = C.brightBlue;
@@ -87,11 +87,13 @@ function banner(modelName, cwd) {
     `${bb}                    ${bm}⬢${bb} ━━━━━ ${bc}⬢${bb} ━━━━━ ${bm}⬢${r}`,
   ].join('\n');
 
+  const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
+
   console.log(`
 ${logo}
                  ${B}${bc}N E X   C O D E${r}  ${d}v0.3.0${r}
                  ${d}Agentic Coding CLI${r}
-                 ${d}Model: ${modelName}${r}  ${d}·  /help${r}
+                 ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
 `);
 }
 
