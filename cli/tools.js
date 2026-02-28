@@ -53,7 +53,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: 'bash',
       description:
-        'Execute a bash command in the project directory. Max timeout 90s. Use for running tests, installing packages, git commands, etc.',
+        'Execute a bash command in the project directory. Timeout: 90s. Use for: running tests, installing packages, git commands, build tools, starting servers. Do NOT use bash for file operations when a dedicated tool exists — use read_file instead of cat, edit_file instead of sed, glob instead of find, grep instead of grep/rg. Always quote paths with spaces. Prefer specific commands over rm -rf. Destructive or dangerous commands require user confirmation.',
       parameters: {
         type: 'object',
         properties: { command: { type: 'string', description: 'The bash command to execute' } },
@@ -65,7 +65,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: "Read a file's contents. Supports optional line range.",
+      description: "Read a file's contents with line numbers. Always read a file BEFORE editing it to see exact content. Use line_start/line_end for large files to read specific sections. Prefer this over bash cat/head/tail.",
       parameters: {
         type: 'object',
         properties: {
@@ -81,7 +81,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Create or overwrite a file with the given content.',
+      description: 'Create a new file or completely overwrite an existing file. For targeted changes to existing files, prefer edit_file or patch_file instead — they only send the diff and are safer. Only use write_file when creating new files or when the entire content needs to be replaced.',
       parameters: {
         type: 'object',
         properties: {
@@ -96,12 +96,12 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: 'Replace specific text in a file. old_text must match exactly (including whitespace).',
+      description: 'Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. Always read_file first to see the exact content before editing. If old_text is not found, the edit fails. For multiple changes to the same file, prefer patch_file instead.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'File path' },
-          old_text: { type: 'string', description: 'Exact text to find' },
+          old_text: { type: 'string', description: 'Exact text to find (must match file content precisely)' },
           new_text: { type: 'string', description: 'Replacement text' },
         },
         required: ['path', 'old_text', 'new_text'],
@@ -112,7 +112,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'list_directory',
-      description: 'List files and directories in a tree view.',
+      description: 'List files and directories in a tree view. Use this to understand project structure. For finding specific files by pattern, prefer glob instead.',
       parameters: {
         type: 'object',
         properties: {
@@ -128,7 +128,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'search_files',
-      description: 'Search for a text pattern in files (like grep). Returns matching lines with file paths.',
+      description: 'Search for a text pattern across files (regex). Returns matching lines with file paths. For simple content search, grep is equivalent. For finding files by name, use glob instead.',
       parameters: {
         type: 'object',
         properties: {
@@ -144,7 +144,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'glob',
-      description: 'Find files matching a glob pattern. Fast file search by name/extension.',
+      description: "Find files matching a glob pattern. Fast file search by name/extension. Use this to find files before reading them. Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src). Prefer this over bash find/ls.",
       parameters: {
         type: 'object',
         properties: {
@@ -159,7 +159,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'grep',
-      description: 'Search file contents with regex. Returns matching lines with file paths and line numbers.',
+      description: 'Search file contents with regex. Returns matching lines with file paths and line numbers. Use this to find where functions/variables/classes are defined or used. Prefer this over bash grep/rg.',
       parameters: {
         type: 'object',
         properties: {
@@ -176,7 +176,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'patch_file',
-      description: 'Apply multiple text replacements to a file in a single operation. Each replacement has old_text and new_text.',
+      description: 'Apply multiple text replacements to a file atomically. All patches are validated before any are applied — if one fails, none are written. Prefer this over multiple edit_file calls when making several changes to the same file. Like edit_file, all old_text values must match exactly.',
       parameters: {
         type: 'object',
         properties: {
@@ -202,7 +202,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'web_fetch',
-      description: 'Fetch content from a URL. Returns the text content of the page.',
+      description: 'Fetch content from a URL and return text. HTML tags are stripped. Use for reading documentation, API responses, or web pages. Will not work with authenticated/private URLs.',
       parameters: {
         type: 'object',
         properties: {
@@ -217,7 +217,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the web using DuckDuckGo. Returns search results with titles and snippets.',
+      description: 'Search the web using DuckDuckGo. Returns titles and URLs. Use to find documentation, solutions, or current information beyond your knowledge cutoff.',
       parameters: {
         type: 'object',
         properties: {
@@ -232,7 +232,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'ask_user',
-      description: 'Ask the user a question and wait for their response. Use when you need clarification or confirmation.',
+      description: 'Ask the user a question and wait for their response. Use when requirements are ambiguous, you need to choose between approaches, or a decision has significant impact. Do not ask unnecessary questions — proceed if the intent is clear.',
       parameters: {
         type: 'object',
         properties: {
@@ -246,7 +246,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'git_status',
-      description: 'Get git status: current branch, changed files, staged/unstaged state. Only works in git repos.',
+      description: 'Get git status: current branch, changed files, staged/unstaged state. Use before git operations to understand the current state.',
       parameters: {
         type: 'object',
         properties: {},
@@ -284,24 +284,80 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'task_list',
+      description: 'Create and manage a task list for complex multi-step tasks. Use for tasks with 3+ steps to track progress. Actions: create (new list with tasks), update (mark task in_progress/done/failed), get (view current list). Always update task status as you work.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'update', 'get'], description: 'Action to perform' },
+          name: { type: 'string', description: 'Task list name (for create)' },
+          tasks: {
+            type: 'array',
+            description: 'Array of tasks to create (for create)',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string', description: 'Task description' },
+                depends_on: { type: 'array', items: { type: 'string' }, description: 'IDs of prerequisite tasks' },
+              },
+              required: ['description'],
+            },
+          },
+          task_id: { type: 'string', description: 'Task ID to update (for update)' },
+          status: { type: 'string', enum: ['in_progress', 'done', 'failed'], description: 'New status (for update)' },
+          result: { type: 'string', description: 'Result summary (for update, optional)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'spawn_agents',
+      description: 'Run multiple independent sub-agents in parallel (max 5). Each agent has its own conversation context. Use when 2+ tasks can run simultaneously — e.g. reading multiple files, analyzing separate modules, independent research. Do NOT use for tasks that depend on each other or modify the same file. Keep task descriptions specific and self-contained.',
+      parameters: {
+        type: 'object',
+        properties: {
+          agents: {
+            type: 'array',
+            description: 'Array of agent definitions to run in parallel (max 5)',
+            items: {
+              type: 'object',
+              properties: {
+                task: { type: 'string', description: 'Task description for the agent' },
+                context: { type: 'string', description: 'Additional context (optional)' },
+                max_iterations: { type: 'number', description: 'Max iterations (default: 10, max: 15)' },
+              },
+              required: ['task'],
+            },
+          },
+        },
+        required: ['agents'],
+      },
+    },
+  },
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
-async function _executeToolInner(name, args) {
+async function _executeToolInner(name, args, options = {}) {
   switch (name) {
     case 'bash': {
       const cmd = args.command;
       const forbidden = isForbidden(cmd);
       if (forbidden) return `BLOCKED: Command matches forbidden pattern: ${forbidden}`;
 
-      if (isDangerous(cmd)) {
+      if (isDangerous(cmd) && !options.autoConfirm) {
         console.log(`\n${C.yellow}  ⚠ Dangerous command: ${cmd}${C.reset}`);
         const ok = await confirm('  Execute?');
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }
 
-      const bashSpinner = new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);
-      bashSpinner.start();
+      const bashSpinner = options.silent ? null : new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);
+      if (bashSpinner) bashSpinner.start();
       try {
         const out = execSync(cmd, {
           cwd: CWD,
@@ -309,10 +365,10 @@ async function _executeToolInner(name, args) {
           encoding: 'utf-8',
           maxBuffer: 5 * 1024 * 1024,
         });
-        bashSpinner.stop();
+        if (bashSpinner) bashSpinner.stop();
         return out || '(no output)';
       } catch (e) {
-        bashSpinner.stop();
+        if (bashSpinner) bashSpinner.stop();
         return `EXIT ${e.status || 1}\n${(e.stderr || e.stdout || e.message || '').toString().substring(0, 5000)}`;
       }
     }
@@ -349,15 +405,19 @@ async function _executeToolInner(name, args) {
       const exists = fs.existsSync(fp);
       let oldContent = null;
 
-      if (exists) {
+      if (!options.autoConfirm) {
+        if (exists) {
+          oldContent = fs.readFileSync(fp, 'utf-8');
+          showWriteDiff(fp, oldContent, args.content);
+          const ok = await confirmFileChange('Overwrite');
+          if (!ok) return 'CANCELLED: User declined to overwrite file.';
+        } else {
+          showNewFilePreview(fp, args.content);
+          const ok = await confirmFileChange('Create');
+          if (!ok) return 'CANCELLED: User declined to create file.';
+        }
+      } else if (exists) {
         oldContent = fs.readFileSync(fp, 'utf-8');
-        showWriteDiff(fp, oldContent, args.content);
-        const ok = await confirmFileChange('Overwrite');
-        if (!ok) return 'CANCELLED: User declined to overwrite file.';
-      } else {
-        showNewFilePreview(fp, args.content);
-        const ok = await confirmFileChange('Create');
-        if (!ok) return 'CANCELLED: User declined to create file.';
       }
 
       const dir = path.dirname(fp);
@@ -375,9 +435,11 @@ async function _executeToolInner(name, args) {
       const content = fs.readFileSync(fp, 'utf-8');
       if (!content.includes(args.old_text)) return `ERROR: old_text not found in ${fp}`;
 
-      showEditDiff(fp, args.old_text, args.new_text);
-      const ok = await confirmFileChange('Apply');
-      if (!ok) return 'CANCELLED: User declined to apply edit.';
+      if (!options.autoConfirm) {
+        showEditDiff(fp, args.old_text, args.new_text);
+        const ok = await confirmFileChange('Apply');
+        if (!ok) return 'CANCELLED: User declined to apply edit.';
+      }
 
       // Use split/join for literal replacement (no regex interpretation)
       const updated = content.split(args.old_text).join(args.new_text);
@@ -522,9 +584,11 @@ async function _executeToolInner(name, args) {
       for (const { old_text, new_text } of patches) {
         preview = preview.split(old_text).join(new_text);
       }
-      showEditDiff(fp, content, preview);
-      const ok = await confirmFileChange('Apply patches');
-      if (!ok) return 'CANCELLED: User declined to apply patches.';
+      if (!options.autoConfirm) {
+        showEditDiff(fp, content, preview);
+        const ok = await confirmFileChange('Apply patches');
+        if (!ok) return 'CANCELLED: User declined to apply patches.';
+      }
 
       // Write the fully-validated preview (atomic — no partial application)
       fs.writeFileSync(fp, preview, 'utf-8');
@@ -642,20 +706,53 @@ async function _executeToolInner(name, args) {
       }
     }
 
+    case 'task_list': {
+      const { createTasks, updateTask, getTaskList, renderTaskList } = require('./tasks');
+      switch (args.action) {
+        case 'create': {
+          if (!args.name || !args.tasks) return 'ERROR: task_list create requires name and tasks';
+          const created = createTasks(args.name, args.tasks);
+          console.log('\n' + renderTaskList());
+          return `Created task list "${args.name}" with ${created.length} tasks:\n` +
+            created.map(t => `  ${t.id}: ${t.description}`).join('\n');
+        }
+        case 'update': {
+          if (!args.task_id || !args.status) return 'ERROR: task_list update requires task_id and status';
+          const updated = updateTask(args.task_id, args.status, args.result);
+          if (!updated) return `ERROR: Task not found: ${args.task_id}`;
+          console.log('\n' + renderTaskList());
+          return `Updated ${args.task_id}: ${args.status}${args.result ? ' — ' + args.result : ''}`;
+        }
+        case 'get': {
+          const list = getTaskList();
+          if (list.tasks.length === 0) return 'No active tasks';
+          console.log('\n' + renderTaskList());
+          return JSON.stringify(list, null, 2);
+        }
+        default:
+          return `ERROR: Unknown task_list action: ${args.action}. Use: create, update, get`;
+      }
+    }
+
+    case 'spawn_agents': {
+      const { executeSpawnAgents } = require('./sub-agent');
+      return executeSpawnAgents(args);
+    }
+
     default:
       return `ERROR: Unknown tool: ${name}`;
   }
 }
 
 // ─── Spinner Wrapper ──────────────────────────────────────────
-async function executeTool(name, args) {
-  const spinnerText = getToolSpinnerText(name, args);
-  if (!spinnerText) return _executeToolInner(name, args);
+async function executeTool(name, args, options = {}) {
+  const spinnerText = options.silent ? null : getToolSpinnerText(name, args);
+  if (!spinnerText) return _executeToolInner(name, args, options);
 
   const spinner = new Spinner(spinnerText);
   spinner.start();
   try {
-    const result = await _executeToolInner(name, args);
+    const result = await _executeToolInner(name, args, options);
     spinner.stop();
     return result;
   } catch (err) {

@@ -21,6 +21,8 @@ const DEFAULT_PERMISSIONS = {
   web_fetch: 'allow',
   web_search: 'allow',
   ask_user: 'allow',
+  task_list: 'allow',
+  spawn_agents: 'ask',
 };
 
 let permissions = { ...DEFAULT_PERMISSIONS };

@@ -5,7 +5,7 @@
 const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
-const { C, banner } = require('./ui');
+const { C, banner, cleanupTerminal } = require('./ui');
 const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages } = require('./agent');
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
@@ -60,6 +60,7 @@ const SLASH_COMMANDS = [
   { cmd: '/mcp',         desc: 'MCP servers and tools' },
   { cmd: '/hooks',       desc: 'Show configured hooks' },
   { cmd: '/skills',      desc: 'List, enable, disable skills' },
+  { cmd: '/tasks',       desc: 'Show task list' },
   { cmd: '/undo',        desc: 'Undo last file change' },
   { cmd: '/redo',        desc: 'Redo last undone change' },
   { cmd: '/history',     desc: 'Show file change history' },
@@ -187,6 +188,10 @@ ${C.bold}${C.cyan}Extensibility:${C.reset}
   ${C.cyan}/skills${C.reset}           ${C.dim}List loaded skills${C.reset}
   ${C.cyan}/skills enable${C.reset}    ${C.dim}Enable a skill by name${C.reset}
   ${C.cyan}/skills disable${C.reset}   ${C.dim}Disable a skill by name${C.reset}
+
+${C.bold}${C.cyan}Tasks:${C.reset}
+  ${C.cyan}/tasks${C.reset}            ${C.dim}Show current task list${C.reset}
+  ${C.cyan}/tasks clear${C.reset}      ${C.dim}Clear all tasks${C.reset}
 
 ${C.bold}${C.cyan}Undo / Redo:${C.reset}
   ${C.cyan}/undo${C.reset}             ${C.dim}Undo last file change${C.reset}
@@ -686,6 +691,18 @@ function handleSlashCommand(input) {
       return true;
     }
 
+    case '/tasks': {
+      const { renderTaskList, clearTasks } = require('./tasks');
+      const taskArg = rest.join(' ').trim();
+      if (taskArg === 'clear') {
+        clearTasks();
+        console.log(`${C.green}Tasks cleared${C.reset}`);
+        return true;
+      }
+      console.log('\n' + renderTaskList() + '\n');
+      return true;
+    }
+
     case '/undo': {
       const undone = undo();
       if (!undone) {
@@ -853,6 +870,34 @@ function startREPL() {
 
   setReadlineInterface(rl);
 
+  // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
+  let _processing = false;
+  let _sigintCount = 0;
+
+  process.on('SIGINT', () => {
+    cleanupTerminal();
+    if (_processing) {
+      _sigintCount++;
+      if (_sigintCount >= 3) {
+        // Force exit after 3 rapid Ctrl+C during processing
+        if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
+        console.log(`\n${C.gray}Bye!${C.reset}`);
+        process.exit(0);
+      }
+      console.log(`\n${C.yellow}  Cancelled${C.reset}`);
+      // Return to prompt — the await in processInput will reject
+      // but we still need to re-show the prompt
+      _processing = false;
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+    // At prompt — clean exit
+    if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
+    console.log(`\n${C.gray}Bye!${C.reset}`);
+    process.exit(0);
+  });
+
   // ─── Bracketed Paste Mode ──────────────────────────────────
   let _pasteActive = false;
   let _pasteLines = [];
@@ -972,11 +1017,14 @@ function startREPL() {
           multiLineBuffer = null;
           if (input) {
             appendHistory(input.replace(/\n/g, '\\n'));
+            _processing = true;
+            _sigintCount = 0;
             try {
               await processInput(input);
             } catch (err) {
               console.log(`${C.red}Error: ${err.message}${C.reset}`);
             }
+            _processing = false;
             const msgCount = getConversationLength();
             if (msgCount > 0) {
               process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
@@ -1001,11 +1049,14 @@ function startREPL() {
         multiLineBuffer = null;
         if (input) {
           appendHistory(input.replace(/\n/g, '\\n'));
+          _processing = true;
+          _sigintCount = 0;
           try {
             await processInput(input);
           } catch (err) {
             console.log(`${C.red}Error: ${err.message}${C.reset}`);
           }
+          _processing = false;
           const msgCount = getConversationLength();
           if (msgCount > 0) {
             process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
@@ -1064,11 +1115,14 @@ function startREPL() {
     }
 
     // Process through agent
+    _processing = true;
+    _sigintCount = 0;
     try {
       await processInput(input);
     } catch (err) {
       console.log(`${C.red}Error: ${err.message}${C.reset}`);
     }
+    _processing = false;
 
     const msgCount = getConversationLength();
     if (msgCount > 0) {
