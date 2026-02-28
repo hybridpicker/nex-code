@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+
 // Test the REPL command handling logic
 jest.mock('../cli/agent', () => ({
   processInput: jest.fn().mockResolvedValue(undefined),
@@ -137,7 +140,7 @@ jest.mock('../cli/skills', () => ({
   handleSkillCommand: jest.fn().mockReturnValue(false),
 }));
 
-const { showCommandList, completer, showProviders, showHelp, renderBar } = require('../cli/index');
+const { showCommandList, completer, completeFilePath, showProviders, showHelp, renderBar } = require('../cli/index');
 
 describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
@@ -193,10 +196,89 @@ describe('index.js (REPL commands)', () => {
       expect(line).toBe('/zzz');
     });
 
-    it('returns empty for non-slash input', () => {
+    it('returns empty for non-slash input without path', () => {
       const [hits, line] = completer('hello');
       expect(hits).toEqual([]);
       expect(line).toBe('hello');
+    });
+
+    it('completes file paths when last token contains /', () => {
+      // cli/ exists in this project
+      const [hits, lastToken] = completer('read cli/');
+      expect(lastToken).toBe('cli/');
+      expect(hits.length).toBeGreaterThan(0);
+      // Should find cli/index.js etc.
+      expect(hits.some((h) => h.includes('index.js'))).toBe(true);
+    });
+
+    it('completes file paths starting with ./', () => {
+      const [hits, lastToken] = completer('read ./cli/');
+      expect(lastToken).toBe('./cli/');
+      expect(hits.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── completeFilePath ──────────────────────────────────────
+  describe('completeFilePath()', () => {
+    const os = require('os');
+    let tmpDir;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-complete-'));
+      fs.writeFileSync(path.join(tmpDir, 'app.js'), '');
+      fs.writeFileSync(path.join(tmpDir, 'style.css'), '');
+      fs.mkdirSync(path.join(tmpDir, 'src'));
+      fs.writeFileSync(path.join(tmpDir, 'src', 'main.js'), '');
+      fs.writeFileSync(path.join(tmpDir, '.hidden'), '');
+      fs.mkdirSync(path.join(tmpDir, 'node_modules'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('lists files in a directory', () => {
+      const matches = completeFilePath(tmpDir + '/');
+      expect(matches.some((m) => m.includes('app.js'))).toBe(true);
+      expect(matches.some((m) => m.includes('style.css'))).toBe(true);
+    });
+
+    it('adds / suffix to directories', () => {
+      const matches = completeFilePath(tmpDir + '/');
+      const srcMatch = matches.find((m) => m.includes('src'));
+      expect(srcMatch).toBeDefined();
+      expect(srcMatch.endsWith('/')).toBe(true);
+    });
+
+    it('filters hidden files', () => {
+      const matches = completeFilePath(tmpDir + '/');
+      expect(matches.some((m) => m.includes('.hidden'))).toBe(false);
+    });
+
+    it('filters node_modules', () => {
+      const matches = completeFilePath(tmpDir + '/');
+      expect(matches.some((m) => m.includes('node_modules'))).toBe(false);
+    });
+
+    it('matches partial file name', () => {
+      const matches = completeFilePath(tmpDir + '/app');
+      expect(matches.length).toBe(1);
+      expect(matches[0]).toContain('app.js');
+    });
+
+    it('returns empty for non-existent directory', () => {
+      const matches = completeFilePath('/nonexistent/dir/');
+      expect(matches).toEqual([]);
+    });
+
+    it('returns empty for file path (not directory)', () => {
+      const matches = completeFilePath(tmpDir + '/app.js/foo');
+      expect(matches).toEqual([]);
+    });
+
+    it('completes subdirectory contents', () => {
+      const matches = completeFilePath(tmpDir + '/src/');
+      expect(matches.some((m) => m.includes('main.js'))).toBe(true);
     });
   });
 

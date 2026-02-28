@@ -76,11 +76,63 @@ function showCommandList() {
   console.log(`\n${C.dim}Type /help for detailed usage${C.reset}\n`);
 }
 
+function completeFilePath(partial) {
+  try {
+    let dir, prefix;
+    if (partial.endsWith('/') || partial.endsWith(path.sep)) {
+      dir = partial;
+      prefix = '';
+    } else {
+      dir = path.dirname(partial);
+      prefix = path.basename(partial);
+    }
+
+    // Resolve ~ to home directory
+    if (dir.startsWith('~')) {
+      dir = path.join(require('os').homedir(), dir.slice(1));
+    }
+
+    const resolved = path.isAbsolute(dir) ? dir : path.resolve(CWD, dir);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) return [];
+
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    const matches = [];
+    for (const entry of entries) {
+      // Skip hidden files and node_modules
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      if (prefix && !entry.name.startsWith(prefix)) continue;
+
+      const basePath = partial.endsWith('/') || partial.endsWith(path.sep)
+        ? partial
+        : path.dirname(partial) + '/';
+      const completedPath = (basePath === './' && !partial.startsWith('./'))
+        ? entry.name
+        : basePath + entry.name;
+      matches.push(entry.isDirectory() ? completedPath + '/' : completedPath);
+    }
+    return matches;
+  } catch {
+    return [];
+  }
+}
+
 function completer(line) {
-  if (!line.startsWith('/')) return [[], line];
-  const allCmds = [...SLASH_COMMANDS, ...getSkillCommands()];
-  const hits = allCmds.map((c) => c.cmd).filter((c) => c.startsWith(line));
-  return [hits.length ? hits : allCmds.map((c) => c.cmd), line];
+  // Slash commands
+  if (line.startsWith('/')) {
+    const allCmds = [...SLASH_COMMANDS, ...getSkillCommands()];
+    const hits = allCmds.map((c) => c.cmd).filter((c) => c.startsWith(line));
+    return [hits.length ? hits : allCmds.map((c) => c.cmd), line];
+  }
+
+  // File path completion: check last token
+  const tokens = line.split(/\s+/);
+  const lastToken = tokens[tokens.length - 1] || '';
+  if (lastToken && (lastToken.includes('/') || lastToken.startsWith('./') || lastToken.startsWith('../') || lastToken.startsWith('~'))) {
+    const matches = completeFilePath(lastToken);
+    return [matches, lastToken];
+  }
+
+  return [[], line];
 }
 
 function showHelp() {
@@ -909,4 +961,4 @@ function startREPL() {
   });
 }
 
-module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, handleSlashCommand, showProviders, showHelp, renderBar };
+module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, completeFilePath, handleSlashCommand, showProviders, showHelp, renderBar };
