@@ -772,12 +772,27 @@ describe('tools.js', () => {
       expect(content).toContain('const x = 10;');
     });
 
-    it('shows "Most similar text" on typo mismatch', async () => {
+    it('auto-fixes close typo mismatch (≤5% distance)', async () => {
       const fp = path.join(tmpDir, 'fuzzy-error.txt');
       fs.writeFileSync(fp, 'const hello = "world";\n');
       const result = await executeTool('edit_file', {
         path: fp,
         old_text: 'const helo = "world";',
+        new_text: 'const hello = "earth";',
+      });
+      expect(result).toContain('auto-fixed');
+      expect(result).toContain('Edited');
+      const content = fs.readFileSync(fp, 'utf-8');
+      expect(content).toContain('const hello = "earth"');
+    });
+
+    it('shows "Most similar text" on moderate mismatch', async () => {
+      const fp = path.join(tmpDir, 'fuzzy-error-large.txt');
+      fs.writeFileSync(fp, 'const hello = "world";\n');
+      const result = await executeTool('edit_file', {
+        path: fp,
+        // ~30% different — above auto-fix threshold but within findMostSimilar range
+        old_text: 'const xyz = "world";',
         new_text: 'const hello = "earth";',
       });
       expect(result).toContain('Most similar text');

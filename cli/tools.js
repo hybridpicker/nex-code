@@ -15,6 +15,182 @@ const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 
 const CWD = process.cwd();
 
+// ─── Auto-Fix Helpers ─────────────────────────────────────────
+
+/**
+ * Auto-fix file path: try to find the correct file when path doesn't exist.
+ * Strategies:
+ * 1. Normalize path (remove double slashes, expand ~)
+ * 2. Try basename glob (e.g. "src/comp/Button.tsx" → glob for "Button.tsx")
+ * 3. Try with/without common extensions (.js, .ts, .jsx, .tsx, .mjs)
+ * @param {string} originalPath - The path that wasn't found
+ * @returns {{ fixedPath: string|null, message: string }}
+ */
+function autoFixPath(originalPath) {
+  if (!originalPath) return { fixedPath: null, message: '' };
+
+  // Strategy 1: normalize path issues
+  let normalized = originalPath
+    .replace(/\/+/g, '/')           // double slashes
+    .replace(/^~\//, `${require('os').homedir()}/`); // expand ~
+  const np = resolvePath(normalized);
+  if (np && fs.existsSync(np)) {
+    return { fixedPath: np, message: `(auto-fixed path: ${originalPath} → ${normalized})` };
+  }
+
+  // Strategy 2: try with/without extensions
+  const extVariants = ['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs', '.json'];
+  const hasExt = path.extname(originalPath);
+  if (!hasExt) {
+    for (const ext of extVariants) {
+      const withExt = resolvePath(originalPath + ext);
+      if (withExt && fs.existsSync(withExt)) {
+        return { fixedPath: withExt, message: `(auto-fixed: added ${ext} extension)` };
+      }
+    }
+  }
+  // Try stripping extension and trying others
+  if (hasExt) {
+    const base = originalPath.replace(/\.[^.]+$/, '');
+    for (const ext of extVariants) {
+      if (ext === hasExt) continue;
+      const alt = resolvePath(base + ext);
+      if (alt && fs.existsSync(alt)) {
+        return { fixedPath: alt, message: `(auto-fixed: ${hasExt} → ${ext})` };
+      }
+    }
+  }
+
+  // Strategy 3: glob for basename in project directory
+  const basename = path.basename(originalPath);
+  if (basename && basename.length > 2) {
+    try {
+      const walkForFile = (dir, target, depth = 0) => {
+        if (depth > 5) return [];
+        const matches = [];
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+        for (const e of entries) {
+          if (e.name === 'node_modules' || e.name === '.git' || e.name.startsWith('.')) continue;
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) {
+            matches.push(...walkForFile(full, target, depth + 1));
+          } else if (e.name === target) {
+            matches.push(full);
+          }
+        }
+        return matches;
+      };
+      const found = walkForFile(CWD, basename);
+      if (found.length === 1) {
+        return { fixedPath: found[0], message: `(auto-fixed: found ${basename} at ${path.relative(CWD, found[0])})` };
+      }
+      if (found.length > 1 && found.length <= 5) {
+        const relative = found.map(f => path.relative(CWD, f));
+        return { fixedPath: null, message: `File not found. Did you mean one of:\n${relative.map(r => `  - ${r}`).join('\n')}` };
+      }
+    } catch { /* glob failed, skip */ }
+  }
+
+  return { fixedPath: null, message: '' };
+}
+
+/**
+ * Enrich bash error output with actionable hints.
+ * @param {string} errorOutput - Raw stderr/stdout from bash
+ * @param {string} command - The command that was run
+ * @returns {string} Enriched error message
+ */
+function enrichBashError(errorOutput, command) {
+  const hints = [];
+
+  // Command not found
+  if (/command not found|not recognized/i.test(errorOutput)) {
+    const cmdMatch = command.match(/^(\S+)/);
+    const cmd = cmdMatch ? cmdMatch[1] : '';
+    if (/^(npx|npm|node|yarn|pnpm|bun)$/.test(cmd)) {
+      hints.push('HINT: Node.js/npm may not be in PATH. Check your Node.js installation.');
+    } else if (/^(python|python3|pip|pip3)$/.test(cmd)) {
+      hints.push('HINT: Python may not be installed. Try: brew install python3 (macOS) or apt install python3 (Linux)');
+    } else {
+      hints.push(`HINT: "${cmd}" is not installed. Try installing it with your package manager.`);
+    }
+  }
+
+  // Module not found (Node.js)
+  if (/Cannot find module|MODULE_NOT_FOUND/i.test(errorOutput)) {
+    const modMatch = errorOutput.match(/Cannot find module '([^']+)'/);
+    const mod = modMatch ? modMatch[1] : '';
+    if (mod && !mod.startsWith('.') && !mod.startsWith('/')) {
+      hints.push(`HINT: Missing npm package "${mod}". Run: npm install ${mod}`);
+    } else {
+      hints.push('HINT: Module not found. Check the import path or run npm install.');
+    }
+  }
+
+  // Permission denied
+  if (/permission denied|EACCES/i.test(errorOutput)) {
+    hints.push('HINT: Permission denied. Check file permissions or try a different approach.');
+  }
+
+  // Port already in use
+  if (/EADDRINUSE|address already in use/i.test(errorOutput)) {
+    const portMatch = errorOutput.match(/port (\d+)|:(\d+)/);
+    const port = portMatch ? (portMatch[1] || portMatch[2]) : '';
+    hints.push(`HINT: Port ${port || ''} is already in use. Kill the process or use a different port.`);
+  }
+
+  // Syntax error
+  if (/SyntaxError|Unexpected token/i.test(errorOutput)) {
+    hints.push('HINT: Syntax error in the code. Check the file at the line number shown above.');
+  }
+
+  // TypeScript errors
+  if (/TS\d{4}:/i.test(errorOutput)) {
+    hints.push('HINT: TypeScript compilation error. Fix the type issue at the indicated line.');
+  }
+
+  // Jest/test failures
+  if (/Test Suites:.*failed|Tests:.*failed/i.test(errorOutput)) {
+    hints.push('HINT: Test failures detected. Read the error output above to identify failing tests.');
+  }
+
+  // Git errors
+  if (/fatal: not a git repository/i.test(errorOutput)) {
+    hints.push('HINT: Not inside a git repository. Run git init or cd to a git project.');
+  }
+
+  if (hints.length === 0) return errorOutput;
+  return errorOutput + '\n\n' + hints.join('\n');
+}
+
+/**
+ * Auto-apply a close edit match instead of erroring.
+ * If findMostSimilar returns a match with distance ≤ AUTO_APPLY_THRESHOLD,
+ * use the similar text as the old_text.
+ *
+ * @param {string} content - File content
+ * @param {string} oldText - The old_text that wasn't found
+ * @param {string} newText - The new_text replacement
+ * @returns {{ autoFixed: boolean, matchText: string, content: string, distance: number, line: number }|null}
+ */
+function autoFixEdit(content, oldText, newText) {
+  const similar = findMostSimilar(content, oldText);
+  if (!similar) return null;
+
+  // Auto-apply threshold: ≤ 5% of target length or ≤ 3 chars difference
+  const threshold = Math.max(3, Math.ceil(oldText.length * 0.05));
+  if (similar.distance > threshold) return null;
+
+  return {
+    autoFixed: true,
+    matchText: similar.text,
+    content: content.split(similar.text).join(newText),
+    distance: similar.distance,
+    line: similar.line,
+  };
+}
+
 // Auto-checkpoint: tag last known state before first agent edit
 let _checkpointCreated = false;
 function ensureCheckpoint() {
@@ -371,14 +547,25 @@ async function _executeToolInner(name, args, options = {}) {
         return out || '(no output)';
       } catch (e) {
         if (bashSpinner) bashSpinner.stop();
-        return `EXIT ${e.status || 1}\n${(e.stderr || e.stdout || e.message || '').toString().substring(0, 5000)}`;
+        const rawError = (e.stderr || e.stdout || e.message || '').toString().substring(0, 5000);
+        const enriched = enrichBashError(rawError, cmd);
+        return `EXIT ${e.status || 1}\n${enriched}`;
       }
     }
 
     case 'read_file': {
-      const fp = resolvePath(args.path);
+      let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
+      if (!fs.existsSync(fp)) {
+        // Auto-fix: try to find the file
+        const fix = autoFixPath(args.path);
+        if (fix.fixedPath) {
+          fp = fix.fixedPath;
+          // Log the auto-fix silently (result will show it)
+        } else {
+          return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
+        }
+      }
 
       // Binary file detection: check first 8KB for null bytes
       const buf = Buffer.alloc(8192);
@@ -431,13 +618,22 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'edit_file': {
       ensureCheckpoint();
-      const fp = resolvePath(args.path);
+      let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
+      if (!fs.existsSync(fp)) {
+        // Auto-fix: try to find the file
+        const fix = autoFixPath(args.path);
+        if (fix.fixedPath) {
+          fp = fix.fixedPath;
+        } else {
+          return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
+        }
+      }
       const content = fs.readFileSync(fp, 'utf-8');
 
       let matchText = args.old_text;
       let fuzzyMatched = false;
+      let autoFixed = false;
 
       if (!content.includes(args.old_text)) {
         // Try fuzzy whitespace-normalized match
@@ -446,6 +642,18 @@ async function _executeToolInner(name, args, options = {}) {
           matchText = fuzzyResult;
           fuzzyMatched = true;
         } else {
+          // Try auto-fix: apply close matches automatically (≤5% distance)
+          const fix = autoFixEdit(content, args.old_text, args.new_text);
+          if (fix) {
+            if (!options.autoConfirm) {
+              showEditDiff(fp, fix.matchText, args.new_text);
+              const ok = await confirmFileChange(`Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`);
+              if (!ok) return 'CANCELLED: User declined to apply edit.';
+            }
+            fs.writeFileSync(fp, fix.content, 'utf-8');
+            recordChange('edit_file', fp, content, fix.content);
+            return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance})`;
+          }
           // Provide helpful error with most similar text
           const similar = findMostSimilar(content, args.old_text);
           if (similar) {
@@ -470,9 +678,18 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'list_directory': {
-      const dp = resolvePath(args.path);
+      let dp = resolvePath(args.path);
       if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(dp)) return `ERROR: Directory not found: ${dp}`;
+      if (!fs.existsSync(dp)) {
+        // Auto-fix: normalize path
+        const normalized = args.path.replace(/\/+/g, '/').replace(/^~\//, `${require('os').homedir()}/`);
+        const np = resolvePath(normalized);
+        if (np && fs.existsSync(np)) {
+          dp = np;
+        } else {
+          return `ERROR: Directory not found: ${args.path}`;
+        }
+      }
       const depth = args.max_depth || 2;
       let pattern = null;
       if (args.pattern) {
@@ -583,18 +800,27 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'patch_file': {
       ensureCheckpoint();
-      const fp = resolvePath(args.path);
+      let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) return `ERROR: File not found: ${fp}`;
+      if (!fs.existsSync(fp)) {
+        // Auto-fix: try to find the file
+        const fix = autoFixPath(args.path);
+        if (fix.fixedPath) {
+          fp = fix.fixedPath;
+        } else {
+          return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
+        }
+      }
 
       const patches = args.patches;
       if (!Array.isArray(patches) || patches.length === 0) return 'ERROR: No patches provided';
 
       let content = fs.readFileSync(fp, 'utf-8');
 
-      // Validate all patches first (exact → fuzzy → error)
+      // Validate all patches first (exact → fuzzy → auto-fix → error)
       const resolvedPatches = [];
       let anyFuzzy = false;
+      let anyAutoFixed = false;
       for (let i = 0; i < patches.length; i++) {
         const { old_text, new_text } = patches[i];
         if (content.includes(old_text)) {
@@ -605,11 +831,19 @@ async function _executeToolInner(name, args, options = {}) {
             resolvedPatches.push({ old_text: fuzzyResult, new_text });
             anyFuzzy = true;
           } else {
+            // Auto-fix: try close match (≤5% distance)
             const similar = findMostSimilar(content, old_text);
             if (similar) {
-              return `ERROR: Patch ${i + 1} old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+              const threshold = Math.max(3, Math.ceil(old_text.length * 0.05));
+              if (similar.distance <= threshold) {
+                resolvedPatches.push({ old_text: similar.text, new_text });
+                anyAutoFixed = true;
+              } else {
+                return `ERROR: Patch ${i + 1} old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+              }
+            } else {
+              return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
             }
-            return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
           }
         }
       }
@@ -629,7 +863,7 @@ async function _executeToolInner(name, args, options = {}) {
       // Write the fully-validated preview (atomic — no partial application)
       fs.writeFileSync(fp, preview, 'utf-8');
       recordChange('patch_file', fp, content, preview);
-      const suffix = anyFuzzy ? ' (fuzzy match)' : '';
+      const suffix = anyAutoFixed ? ' (auto-fixed)' : anyFuzzy ? ' (fuzzy match)' : '';
       return `Patched: ${fp} (${patches.length} replacements)${suffix}`;
     }
 
@@ -798,4 +1032,4 @@ async function executeTool(name, args, options = {}) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath };
+module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError };
