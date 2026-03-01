@@ -22,7 +22,7 @@ cli/providers/           → Multi-Provider Abstraction Layer
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
 cli/tools.js             → 17 Tool Definitions + Implementations + Auto-Fix (path, edit, bash hints)
 cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress, model routing)
-cli/tasks.js             → Task List Management (create, update, render, dependencies)
+cli/tasks.js             → Task List Management (create, update, render, dependencies, onChange callbacks)
 cli/context-engine.js    → Token Management + Context Compression
 cli/session.js           → Session Persistence (.nex/sessions/)
 cli/memory.js            → Project Memory (.nex/memory/ + NEX.md)
@@ -35,13 +35,13 @@ cli/hooks.js             → Hook System (pre-tool, post-tool, etc.)
 cli/diff.js              → LCS Diff + Colored Output + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
 cli/file-history.js      → In-session Undo/Redo for file changes
-cli/ui.js                → ANSI Colors, Spinner, Formatting, Compact Summaries (formatToolSummary)
+cli/ui.js                → ANSI Colors, Spinner, TaskProgress (live animated display), Formatting, Compact Summaries
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 38 Suites, 1247 Tests, 87%+ Coverage
+tests/                   → Jest, 39 Suites, 1264 Tests, 87%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -111,7 +111,8 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
 - Auto-Fix: Path-Resolution (extension swap, basename glob, double-slash fix), Edit Auto-Fix (≤5% distance auto-apply), Bash Error Hints (command not found, MODULE_NOT_FOUND, port in use, etc.)
 - Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider, getModelTier() für beliebige Models, overrideTier in filterToolsForModel()
-- Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display
+- Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display, onChange-Callbacks für Live-Display-Integration
+- TaskProgress: Live animated multi-line display (✔/◼/◻/✗), Spinner-Header mit elapsed/tokens, pause/resume für sauberes Text-Streaming, koordiniert mit Spinner-System in agent.js
 - Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, Multi-Model-Routing (classifyTask → pickModelForTier → resolveSubAgentModel)
 - Sub-Agent Routing: Keyword-basierte Task-Klassifizierung (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM kann mit `model: "provider:model"` überschreiben
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show

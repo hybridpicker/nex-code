@@ -273,6 +273,20 @@ Create structured task lists for complex multi-step operations:
 ```
 The agent uses `task_list` to create, update, and track progress on tasks with dependency support.
 
+When the agent creates a task list, a **live animated display** replaces the static output:
+```
+✽ Adding cost limit functions… (1m 35s · ↓ 2.6k tokens)
+  ⎿  ✔ Create cli/picker.js — Interactive Terminal Picker
+     ◼ Add cost limits to cli/costs.js
+     ◻ Add budget gate to cli/providers/registry.js
+     ◻ Update cli/index.js
+     ◻ Run tests
+```
+- Animated spinner header with elapsed time and cumulative token count
+- Per-task status icons: `✔` done, `◼` in progress, `◻` pending, `✗` failed
+- Automatically pauses during text streaming and resumes during tool execution
+- Falls back to the static `/tasks` view when no live display is active
+
 ### Sub-Agents
 Spawn parallel sub-agents for independent tasks:
 - Up to 5 agents run simultaneously with their own conversation contexts
@@ -321,7 +335,16 @@ Set per-provider spending limits. When a provider exceeds its budget, calls auto
 /budget anthropic off      # remove limit
 ```
 
-Limits are persisted in `.nex/config.json`.
+Limits are persisted in `.nex/config.json`. You can also set them directly:
+```json
+// .nex/config.json
+{
+  "costLimits": {
+    "anthropic": 5,
+    "openai": 10
+  }
+}
+```
 
 ### Open-Source Model Robustness
 
@@ -475,7 +498,7 @@ cli/
 │   └── registry.js      # Provider registry + model resolution + provider routing
 ├── tools.js             # 17 tool definitions + implementations + auto-fix engine
 ├── sub-agent.js         # Parallel sub-agent runner with file locking + model routing
-├── tasks.js             # Task list management (create, update, render)
+├── tasks.js             # Task list management (create, update, render, onChange callbacks)
 ├── skills.js            # Skills system (prompt + script skills)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
 ├── hooks.js             # Hook system (pre/post events)
@@ -494,7 +517,7 @@ cli/
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
-├── ui.js                # ANSI colors, spinner, formatting, compact summaries
+├── ui.js                # ANSI colors, spinner, TaskProgress, formatting, compact summaries
 └── ollama.js            # Backward-compatible wrapper
 ```
 
@@ -529,7 +552,7 @@ Project-local configuration and state (gitignored):
 
 ```
 .nex/
-├── config.json        # Permissions, MCP servers, hooks, skills config
+├── config.json        # Permissions, MCP servers, hooks, skills, cost limits
 ├── sessions/          # Saved conversations
 ├── memory/            # Persistent project knowledge
 ├── plans/             # Saved plans
@@ -546,7 +569,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-38 test suites, 1247 tests, 87% statement coverage.
+39 test suites, 1264 tests, 87% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
