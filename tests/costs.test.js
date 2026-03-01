@@ -6,11 +6,18 @@ const {
   formatCostHint,
   resetCosts,
   getPricing,
+  setCostLimit,
+  removeCostLimit,
+  getCostLimits,
+  getProviderSpend,
+  checkBudget,
+  resetCostLimits,
 } = require('../cli/costs');
 
 describe('costs.js', () => {
   beforeEach(() => {
     resetCosts();
+    resetCostLimits();
   });
 
   // ─── PRICING ───────────────────────────────────────────────
@@ -203,6 +210,143 @@ describe('costs.js', () => {
       resetCosts();
       expect(getSessionCosts().totalInput).toBe(0);
       expect(getSessionCosts().breakdown).toEqual([]);
+    });
+  });
+
+  // ─── Cost Limits ─────────────────────────────────────────
+  describe('setCostLimit()', () => {
+    it('sets a cost limit for a provider', () => {
+      setCostLimit('anthropic', 5.00);
+      const limits = getCostLimits();
+      expect(limits.anthropic).toBe(5.00);
+    });
+
+    it('overwrites existing limit', () => {
+      setCostLimit('anthropic', 5.00);
+      setCostLimit('anthropic', 10.00);
+      expect(getCostLimits().anthropic).toBe(10.00);
+    });
+  });
+
+  describe('removeCostLimit()', () => {
+    it('removes a cost limit', () => {
+      setCostLimit('anthropic', 5.00);
+      removeCostLimit('anthropic');
+      expect(getCostLimits().anthropic).toBeUndefined();
+    });
+
+    it('is a no-op for non-existent limit', () => {
+      removeCostLimit('nonexistent');
+      expect(getCostLimits().nonexistent).toBeUndefined();
+    });
+  });
+
+  describe('getCostLimits()', () => {
+    it('returns empty object initially', () => {
+      expect(getCostLimits()).toEqual({});
+    });
+
+    it('returns all set limits', () => {
+      setCostLimit('anthropic', 5.00);
+      setCostLimit('openai', 10.00);
+      const limits = getCostLimits();
+      expect(limits).toEqual({ anthropic: 5.00, openai: 10.00 });
+    });
+
+    it('returns a copy (not reference)', () => {
+      setCostLimit('anthropic', 5.00);
+      const limits = getCostLimits();
+      limits.anthropic = 999;
+      expect(getCostLimits().anthropic).toBe(5.00);
+    });
+  });
+
+  describe('getProviderSpend()', () => {
+    it('returns 0 when no usage', () => {
+      expect(getProviderSpend('openai')).toBe(0);
+    });
+
+    it('returns total spend for a provider', () => {
+      trackUsage('openai', 'gpt-4o', 1_000_000, 1_000_000);
+      const spend = getProviderSpend('openai');
+      // 1M * $2.50/1M + 1M * $10.00/1M = $12.50
+      expect(spend).toBeCloseTo(12.5, 2);
+    });
+
+    it('only counts specified provider', () => {
+      trackUsage('openai', 'gpt-4o', 1000, 500);
+      trackUsage('anthropic', 'claude-sonnet', 2000, 1000);
+      const spend = getProviderSpend('openai');
+      const anthropicSpend = getProviderSpend('anthropic');
+      expect(spend).toBeGreaterThan(0);
+      expect(anthropicSpend).toBeGreaterThan(0);
+      expect(spend).not.toBe(anthropicSpend);
+    });
+  });
+
+  describe('checkBudget()', () => {
+    it('returns allowed=true when no limit set', () => {
+      const budget = checkBudget('openai');
+      expect(budget.allowed).toBe(true);
+      expect(budget.limit).toBeNull();
+      expect(budget.remaining).toBeNull();
+    });
+
+    it('returns allowed=true when under budget', () => {
+      setCostLimit('openai', 100.00);
+      trackUsage('openai', 'gpt-4o', 1000, 500);
+      const budget = checkBudget('openai');
+      expect(budget.allowed).toBe(true);
+      expect(budget.limit).toBe(100.00);
+      expect(budget.remaining).toBeGreaterThan(0);
+    });
+
+    it('returns allowed=false when over budget', () => {
+      setCostLimit('openai', 0.001);
+      trackUsage('openai', 'gpt-4o', 1_000_000, 1_000_000);
+      const budget = checkBudget('openai');
+      expect(budget.allowed).toBe(false);
+      expect(budget.spent).toBeCloseTo(12.5, 2);
+      expect(budget.remaining).toBe(0);
+    });
+
+    it('returns correct remaining amount', () => {
+      setCostLimit('anthropic', 10.00);
+      trackUsage('anthropic', 'claude-opus', 100_000, 50_000);
+      const budget = checkBudget('anthropic');
+      // Spent: $1.50 + $3.75 = $5.25
+      expect(budget.spent).toBeCloseTo(5.25, 2);
+      expect(budget.remaining).toBeCloseTo(4.75, 2);
+    });
+  });
+
+  describe('resetCostLimits()', () => {
+    it('clears all cost limits', () => {
+      setCostLimit('anthropic', 5.00);
+      setCostLimit('openai', 10.00);
+      resetCostLimits();
+      expect(getCostLimits()).toEqual({});
+    });
+  });
+
+  describe('trackUsage() budget warning', () => {
+    it('writes warning to stderr when budget exceeded', () => {
+      const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation();
+      setCostLimit('openai', 0.001);
+      trackUsage('openai', 'gpt-4o', 1_000_000, 1_000_000);
+      expect(stderrSpy).toHaveBeenCalled();
+      const output = stderrSpy.mock.calls[0][0];
+      expect(output).toContain('Budget limit reached');
+      expect(output).toContain('openai');
+      stderrSpy.mockRestore();
+    });
+
+    it('does not warn when within budget', () => {
+      const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation();
+      setCostLimit('openai', 100.00);
+      trackUsage('openai', 'gpt-4o', 1000, 500);
+      expect(stderrSpy).not.toHaveBeenCalled();
+      stderrSpy.mockRestore();
     });
   });
 });

@@ -1,4 +1,4 @@
-const { C, Spinner, banner, formatToolCall, formatResult, getToolSpinnerText } = require('../cli/ui');
+const { C, Spinner, TaskProgress, banner, formatToolCall, formatResult, getToolSpinnerText, getActiveTaskProgress, setActiveTaskProgress } = require('../cli/ui');
 
 describe('ui.js', () => {
   // ─── Color constants ────────────────────────────────────────
@@ -240,6 +240,132 @@ describe('ui.js', () => {
     it('handles empty string', () => {
       const result = formatResult('');
       expect(result).toContain('');
+    });
+  });
+
+  // ─── TaskProgress ──────────────────────────────────────────
+  describe('TaskProgress', () => {
+    let tp;
+    let writeSpy;
+
+    const sampleTasks = [
+      { id: 't1', description: 'Create picker module', status: 'done' },
+      { id: 't2', description: 'Add cost limits', status: 'in_progress' },
+      { id: 't3', description: 'Update CLI entry', status: 'pending' },
+    ];
+
+    beforeEach(() => {
+      writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      if (tp) tp.stop();
+      tp = null;
+      writeSpy.mockRestore();
+    });
+
+    it('creates with name and tasks', () => {
+      tp = new TaskProgress('Adding features', sampleTasks);
+      expect(tp.name).toBe('Adding features');
+      expect(tp.tasks).toHaveLength(3);
+      expect(tp.tasks[0].status).toBe('done');
+      expect(tp.tasks[1].status).toBe('in_progress');
+      expect(tp.tasks[2].status).toBe('pending');
+    });
+
+    it('defaults task status to pending', () => {
+      tp = new TaskProgress('Test', [{ id: 't1', description: 'task' }]);
+      expect(tp.tasks[0].status).toBe('pending');
+    });
+
+    it('start/stop lifecycle', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.start();
+      expect(tp.interval).not.toBeNull();
+      expect(tp.isActive()).toBe(true);
+      tp.stop();
+      expect(tp.interval).toBeNull();
+      expect(tp.isActive()).toBe(false);
+    });
+
+    it('updateTask changes task status', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.updateTask('t3', 'done');
+      expect(tp.tasks[2].status).toBe('done');
+    });
+
+    it('updateTask ignores unknown ids', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.updateTask('t99', 'done');
+      expect(tp.tasks[0].status).toBe('done');
+    });
+
+    it('setStats updates token count', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.setStats({ tokens: 2600 });
+      expect(tp.tokens).toBe(2600);
+    });
+
+    it('formats tokens as k for >= 1000', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.setStats({ tokens: 2600 });
+      expect(tp._formatTokens()).toBe('2.6k');
+    });
+
+    it('formats tokens as raw number for < 1000', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.setStats({ tokens: 500 });
+      expect(tp._formatTokens()).toBe('500');
+    });
+
+    it('formats elapsed time', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.startTime = Date.now() - 95000; // 1m 35s
+      const elapsed = tp._formatElapsed();
+      expect(elapsed).toMatch(/1m \d+s/);
+    });
+
+    it('pause/resume lifecycle', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.start();
+      expect(tp.isActive()).toBe(true);
+
+      tp.pause();
+      expect(tp._paused).toBe(true);
+      expect(tp.interval).toBeNull();
+      expect(tp.isActive()).toBe(true);
+
+      tp.resume();
+      expect(tp._paused).toBe(false);
+      expect(tp.interval).not.toBeNull();
+      expect(tp.isActive()).toBe(true);
+
+      tp.stop();
+    });
+
+    it('pause is idempotent', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.start();
+      tp.pause();
+      tp.pause();
+      expect(tp._paused).toBe(true);
+      tp.stop();
+    });
+
+    it('resume is idempotent when not paused', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.start();
+      tp.resume();
+      expect(tp.isActive()).toBe(true);
+      tp.stop();
+    });
+
+    it('sets and clears active task progress', () => {
+      tp = new TaskProgress('Test', sampleTasks);
+      tp.start();
+      expect(getActiveTaskProgress()).toBe(tp);
+      tp.stop();
+      expect(getActiveTaskProgress()).toBeNull();
     });
   });
 });

@@ -39,8 +39,9 @@ cli/ui.js                → ANSI Colors, Spinner, Formatting, Compact Summaries
 cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
+cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 37 Suites, 1209 Tests, 87%+ Coverage
+tests/                   → Jest, 38 Suites, 1247 Tests, 87%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -122,6 +123,8 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Follow-Up: Kontext-basierte Vorschläge — 💡 /diff · /commit · /undo nach Edits, 💡 /save · /clear nach Read-Sessions
 - Tab-Completion: completeFilePath() für Dateipfad-Vervollständigung neben Slash-Commands
 - Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
+- Interactive Picker: pickFromList() generic cursor-based list picker, showModelPicker() for `/model`
+- Cost Limits: setCostLimit/removeCostLimit/checkBudget pro Provider, Budget-Gate in callStream/callChat, Auto-Fallback bei Budget-Überschreitung, Persistenz in .nex/config.json
 
 ## .nex/ Verzeichnis
 

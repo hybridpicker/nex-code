@@ -978,12 +978,14 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'task_list': {
-      const { createTasks, updateTask, getTaskList, renderTaskList } = require('./tasks');
+      const { createTasks, updateTask, getTaskList, renderTaskList, hasActiveTasks } = require('./tasks');
+      const { getActiveTaskProgress } = require('./ui');
+      const liveDisplay = getActiveTaskProgress();
       switch (args.action) {
         case 'create': {
           if (!args.name || !args.tasks) return 'ERROR: task_list create requires name and tasks';
           const created = createTasks(args.name, args.tasks);
-          console.log('\n' + renderTaskList());
+          if (!liveDisplay) console.log('\n' + renderTaskList());
           return `Created task list "${args.name}" with ${created.length} tasks:\n` +
             created.map(t => `  ${t.id}: ${t.description}`).join('\n');
         }
@@ -991,13 +993,13 @@ async function _executeToolInner(name, args, options = {}) {
           if (!args.task_id || !args.status) return 'ERROR: task_list update requires task_id and status';
           const updated = updateTask(args.task_id, args.status, args.result);
           if (!updated) return `ERROR: Task not found: ${args.task_id}`;
-          console.log('\n' + renderTaskList());
+          if (!liveDisplay) console.log('\n' + renderTaskList());
           return `Updated ${args.task_id}: ${args.status}${args.result ? ' — ' + args.result : ''}`;
         }
         case 'get': {
           const list = getTaskList();
           if (list.tasks.length === 0) return 'No active tasks';
-          console.log('\n' + renderTaskList());
+          if (!liveDisplay) console.log('\n' + renderTaskList());
           return JSON.stringify(list, null, 2);
         }
         default:

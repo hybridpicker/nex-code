@@ -83,7 +83,8 @@ The agent decides autonomously whether to use tools or just respond with text. S
 Switch providers and models at runtime:
 
 ```
-/model openai:gpt-4o
+/model                         # interactive model picker (arrow keys + Enter)
+/model openai:gpt-4o           # switch directly
 /model anthropic:claude-sonnet
 /model gemini:gemini-2.5-pro
 /model local:llama3
@@ -117,6 +118,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/fallback [chain]` | Show/set fallback chain |
 | `/tokens` | Token usage and context budget |
 | `/costs` | Session token costs |
+| `/budget` | Show/set per-provider cost limits |
 | `/clear` | Clear conversation |
 | `/context` | Show project context |
 | `/autoconfirm` | Toggle auto-confirm for file changes |
@@ -310,6 +312,17 @@ Track token usage and costs per provider:
 /costs reset
 ```
 
+### Cost Limits
+Set per-provider spending limits. When a provider exceeds its budget, calls automatically fall back to the next provider in the fallback chain:
+```
+/budget                    # show all limits + current spend
+/budget anthropic 5        # set $5 limit for Anthropic
+/budget openai 10          # set $10 limit for OpenAI
+/budget anthropic off      # remove limit
+```
+
+Limits are persisted in `.nex/config.json`.
+
 ### Open-Source Model Robustness
 
 Four features that make Nex Code significantly more reliable with open-source models:
@@ -476,7 +489,8 @@ cli/
 ├── render.js            # Markdown + syntax highlighting + StreamRenderer
 ├── diff.js              # LCS diff + colored output + side-by-side view
 ├── file-history.js      # In-session undo/redo for file changes
-├── costs.js             # Token cost tracking
+├── picker.js            # Interactive terminal picker (model selection)
+├── costs.js             # Token cost tracking + per-provider budget limits
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
@@ -532,7 +546,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-37 test suites, 1209 tests, 87% statement coverage.
+38 test suites, 1247 tests, 87% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

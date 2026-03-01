@@ -11,6 +11,7 @@ const { OpenAIProvider } = require('./openai');
 const { AnthropicProvider } = require('./anthropic');
 const { GeminiProvider } = require('./gemini');
 const { LocalProvider } = require('./local');
+const { checkBudget } = require('../costs');
 
 // ─── Registry State ────────────────────────────────────────────
 
@@ -231,16 +232,28 @@ function isRetryableError(err) {
 /**
  * Make a streaming call through the active provider.
  * Falls back to next provider in chain on retryable errors.
+ * Skips providers that are over budget.
  */
 async function callStream(messages, tools, options = {}) {
   initDefaults();
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
+  let budgetBlockedCount = 0;
+  let configuredCount = 0;
   for (let idx = 0; idx < providersToTry.length; idx++) {
     const provName = providersToTry[idx];
     const provider = providers[provName];
     if (!provider || !provider.isConfigured()) continue;
+    configuredCount++;
+
+    // Budget gate: skip providers that are over budget
+    const budget = checkBudget(provName);
+    if (!budget.allowed) {
+      budgetBlockedCount++;
+      lastError = new Error(`Budget limit reached for ${provName}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}`);
+      continue;
+    }
 
     try {
       return await provider.stream(messages, tools, { model: activeModelId, ...options });
@@ -253,12 +266,16 @@ async function callStream(messages, tools, options = {}) {
     }
   }
 
+  if (budgetBlockedCount > 0 && budgetBlockedCount === configuredCount) {
+    throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
+  }
   throw lastError || new Error('No configured provider available');
 }
 
 /**
  * Make a non-streaming call through the active provider.
  * Falls back to next provider in chain on retryable errors.
+ * Skips providers that are over budget.
  */
 async function callChat(messages, tools, options = {}) {
   initDefaults();
@@ -275,10 +292,21 @@ async function callChat(messages, tools, options = {}) {
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
+  let budgetBlockedCount = 0;
+  let configuredCount = 0;
   for (let idx = 0; idx < providersToTry.length; idx++) {
     const provName = providersToTry[idx];
     const provider = providers[provName];
     if (!provider || !provider.isConfigured()) continue;
+    configuredCount++;
+
+    // Budget gate: skip providers that are over budget
+    const budget = checkBudget(provName);
+    if (!budget.allowed) {
+      budgetBlockedCount++;
+      lastError = new Error(`Budget limit reached for ${provName}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}`);
+      continue;
+    }
 
     try {
       return await provider.chat(messages, tools, { model: activeModelId, ...options });
@@ -291,6 +319,9 @@ async function callChat(messages, tools, options = {}) {
     }
   }
 
+  if (budgetBlockedCount > 0 && budgetBlockedCount === configuredCount) {
+    throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
+  }
   throw lastError || new Error('No configured provider available');
 }
 

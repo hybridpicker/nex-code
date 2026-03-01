@@ -10,6 +10,17 @@ let taskListName = '';
 let tasks = [];
 let taskIdCounter = 0;
 
+// onChange callback for live display integration
+let _onChange = null;
+
+/**
+ * Register a callback fired on task list changes.
+ * @param {function|null} fn - Callback: fn(event, data) where event is 'create'|'update'|'clear'
+ */
+function setOnChange(fn) {
+  _onChange = fn;
+}
+
 /**
  * Create a new task list with a name and array of task descriptions.
  * @param {string} name - Name/title for the task list
@@ -33,7 +44,9 @@ function createTasks(name, taskDefs) {
     });
   }
 
-  return tasks.map(t => ({ ...t }));
+  const snapshot = tasks.map(t => ({ ...t }));
+  if (_onChange) _onChange('create', { name, tasks: snapshot });
+  return snapshot;
 }
 
 /**
@@ -50,6 +63,7 @@ function updateTask(id, status, result) {
   task.status = status;
   if (result !== undefined) task.result = result;
 
+  if (_onChange) _onChange('update', { id, status, result });
   return { ...task };
 }
 
@@ -71,6 +85,7 @@ function clearTasks() {
   taskListName = '';
   tasks = [];
   taskIdCounter = 0;
+  if (_onChange) _onChange('clear', {});
 }
 
 /**
@@ -144,6 +159,14 @@ function renderTaskList() {
   return lines.join('\n');
 }
 
+/**
+ * Check if there are active (non-done/failed) tasks.
+ * @returns {boolean}
+ */
+function hasActiveTasks() {
+  return tasks.length > 0 && tasks.some(t => t.status === 'pending' || t.status === 'in_progress');
+}
+
 module.exports = {
   createTasks,
   updateTask,
@@ -151,4 +174,6 @@ module.exports = {
   clearTasks,
   getReadyTasks,
   renderTaskList,
+  setOnChange,
+  hasActiveTasks,
 };
