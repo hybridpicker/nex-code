@@ -23,6 +23,7 @@ const C = {
 };
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const TASK_FRAMES = ['✽', '✦', '✧', '✦'];
 
 class Spinner {
   constructor(text = 'Thinking...') {
@@ -264,11 +265,172 @@ class MultiProgress {
   }
 }
 
+// ─── TaskProgress ────────────────────────────────────────────
+const TASK_ICONS = { done: '✔', in_progress: '◼', pending: '◻', failed: '✗' };
+const TASK_COLORS = { done: C.green, in_progress: C.cyan, pending: C.dim, failed: C.red };
+
+let _activeTaskProgress = null;
+
+class TaskProgress {
+  /**
+   * @param {string} name - Header label for the task list
+   * @param {Array<{id: string, description: string, status: string}>} tasks
+   */
+  constructor(name, tasks) {
+    this.name = name;
+    this.tasks = tasks.map(t => ({ id: t.id, description: t.description, status: t.status || 'pending' }));
+    this.frame = 0;
+    this.interval = null;
+    this.startTime = null;
+    this.tokens = 0;
+    this.lineCount = 1 + this.tasks.length; // header + task lines
+    this._paused = false;
+  }
+
+  _formatElapsed() {
+    if (!this.startTime) return '';
+    const totalSecs = Math.floor((Date.now() - this.startTime) / 1000);
+    if (totalSecs < 1) return '';
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return mins > 0 ? `${mins}m ${String(secs).padStart(2, '0')}s` : `${secs}s`;
+  }
+
+  _formatTokens() {
+    if (this.tokens <= 0) return '';
+    if (this.tokens >= 1000) return `${(this.tokens / 1000).toFixed(1)}k`;
+    return String(this.tokens);
+  }
+
+  _render() {
+    const f = TASK_FRAMES[this.frame % TASK_FRAMES.length];
+    const elapsed = this._formatElapsed();
+    const tokStr = this._formatTokens();
+    const stats = [elapsed, tokStr ? `↓ ${tokStr} tokens` : ''].filter(Boolean).join(' · ');
+    const statsStr = stats ? ` ${C.dim}(${stats})${C.reset}` : '';
+
+    let buf = `\x1b[2K${C.cyan}${f}${C.reset} ${this.name}…${statsStr}\n`;
+
+    for (let i = 0; i < this.tasks.length; i++) {
+      const t = this.tasks[i];
+      const connector = i === 0 ? '⎿' : ' ';
+      const icon = TASK_ICONS[t.status] || TASK_ICONS.pending;
+      const color = TASK_COLORS[t.status] || TASK_COLORS.pending;
+      const desc = t.description.length > 55 ? t.description.substring(0, 52) + '...' : t.description;
+      buf += `\x1b[2K  ${C.dim}${connector}${C.reset}  ${color}${icon}${C.reset} ${desc}\n`;
+    }
+
+    // Move cursor back up
+    buf += `\x1b[${this.lineCount}A`;
+    process.stderr.write(buf);
+    this.frame++;
+  }
+
+  start() {
+    this.startTime = Date.now();
+    this._paused = false;
+    process.stderr.write('\x1b[?25l');
+    // Reserve lines
+    for (let i = 0; i < this.lineCount; i++) process.stderr.write('\n');
+    process.stderr.write(`\x1b[${this.lineCount}A`);
+    this._render();
+    this.interval = setInterval(() => this._render(), 120);
+    _activeTaskProgress = this;
+  }
+
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    if (!this._paused) {
+      this._renderFinal();
+    }
+    process.stderr.write('\x1b[?25h');
+    this._paused = false;
+    if (_activeTaskProgress === this) _activeTaskProgress = null;
+  }
+
+  /** Erase the block from stderr so text streaming can happen cleanly */
+  pause() {
+    if (this._paused) return;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    // Clear the lines we occupied
+    for (let i = 0; i < this.lineCount; i++) {
+      process.stderr.write('\x1b[2K\n');
+    }
+    process.stderr.write(`\x1b[${this.lineCount}A`);
+    this._paused = true;
+  }
+
+  /** Re-reserve lines and restart animation after a pause */
+  resume() {
+    if (!this._paused) return;
+    this._paused = false;
+    process.stderr.write('\x1b[?25l');
+    for (let i = 0; i < this.lineCount; i++) process.stderr.write('\n');
+    process.stderr.write(`\x1b[${this.lineCount}A`);
+    this._render();
+    this.interval = setInterval(() => this._render(), 120);
+  }
+
+  /**
+   * @param {string} id - Task ID
+   * @param {string} status - 'pending' | 'in_progress' | 'done' | 'failed'
+   */
+  updateTask(id, status) {
+    const t = this.tasks.find(task => task.id === id);
+    if (t) t.status = status;
+  }
+
+  setStats({ tokens }) {
+    if (tokens !== undefined) this.tokens = tokens;
+  }
+
+  isActive() {
+    return this.interval !== null || this._paused;
+  }
+
+  _renderFinal() {
+    const elapsed = this._formatElapsed();
+    const done = this.tasks.filter(t => t.status === 'done').length;
+    const failed = this.tasks.filter(t => t.status === 'failed').length;
+    const total = this.tasks.length;
+    const summary = failed > 0 ? `${done}/${total} done, ${failed} failed` : `${done}/${total} done`;
+
+    let buf = `\x1b[2K${C.green}✔${C.reset} ${this.name} ${C.dim}(${elapsed} · ${summary})${C.reset}\n`;
+    for (let i = 0; i < this.tasks.length; i++) {
+      const t = this.tasks[i];
+      const connector = i === 0 ? '⎿' : ' ';
+      const icon = TASK_ICONS[t.status] || TASK_ICONS.pending;
+      const color = TASK_COLORS[t.status] || TASK_COLORS.pending;
+      const desc = t.description.length > 55 ? t.description.substring(0, 52) + '...' : t.description;
+      buf += `\x1b[2K  ${C.dim}${connector}${C.reset}  ${color}${icon}${C.reset} ${C.dim}${desc}${C.reset}\n`;
+    }
+    process.stderr.write(buf);
+  }
+}
+
+function setActiveTaskProgress(tp) {
+  _activeTaskProgress = tp;
+}
+
+function getActiveTaskProgress() {
+  return _activeTaskProgress;
+}
+
 /**
  * Restore terminal to a clean state (show cursor, clear spinner line).
  * Call this on SIGINT or unexpected exit to avoid broken terminal.
  */
 function cleanupTerminal() {
+  if (_activeTaskProgress) {
+    _activeTaskProgress.stop();
+    _activeTaskProgress = null;
+  }
   process.stderr.write('\x1b[?25h');  // show cursor
   process.stderr.write('\x1b[2K\r'); // clear line
 }
@@ -374,4 +536,4 @@ function formatToolSummary(name, args, result, isError) {
   return `  ${icon} ${C.dim}${name} ${detail}${C.reset}`;
 }
 
-module.exports = { C, Spinner, MultiProgress, banner, formatToolCall, formatResult, formatToolSummary, getToolSpinnerText, cleanupTerminal };
+module.exports = { C, Spinner, MultiProgress, TaskProgress, banner, formatToolCall, formatResult, formatToolSummary, getToolSpinnerText, cleanupTerminal, setActiveTaskProgress, getActiveTaskProgress };

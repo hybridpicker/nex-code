@@ -16,6 +16,10 @@ jest.mock('../cli/ollama', () => ({
   getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder']),
 }));
 
+jest.mock('../cli/picker', () => ({
+  showModelPicker: jest.fn().mockResolvedValue(true),
+}));
+
 jest.mock('../cli/providers/registry', () => ({
   listProviders: jest.fn().mockReturnValue([
     {
@@ -33,7 +37,9 @@ jest.mock('../cli/providers/registry', () => ({
     },
   ]),
   getActiveProviderName: jest.fn().mockReturnValue('ollama'),
+  getActiveModelId: jest.fn().mockReturnValue('kimi-k2.5'),
   getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
+  setActiveModel: jest.fn().mockReturnValue(true),
   listAllModels: jest.fn().mockReturnValue([
     { spec: 'ollama:kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama', configured: true },
   ]),
@@ -713,10 +719,10 @@ describe('index.js (REPL commands)', () => {
       expect(output).toContain('/providers');
     });
 
-    it('handles /model without args (shows current)', async () => {
+    it('handles /model without args (shows picker)', async () => {
       await lineHandler('/model');
-      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain('kimi-k2.5');
+      const { showModelPicker } = require('../cli/picker');
+      expect(showModelPicker).toHaveBeenCalled();
     });
 
     it('handles /model with valid name', async () => {

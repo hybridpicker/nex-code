@@ -3,7 +3,7 @@
  * Hybrid: chat + tool-use in a single conversation.
  */
 
-const { C, Spinner, formatToolCall, formatResult, formatToolSummary } = require('./ui');
+const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, setActiveTaskProgress } = require('./ui');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { TOOL_DEFINITIONS, executeTool } = require('./tools');
@@ -170,14 +170,14 @@ async function executeSingleTool(prep, quiet = false) {
  * Consecutive PARALLEL_SAFE tools run via Promise.all.
  * @param {boolean} quiet - use spinner + compact summaries instead of verbose output
  */
-async function executeBatch(prepared, quiet = false) {
+async function executeBatch(prepared, quiet = false, options = {}) {
   const results = new Array(prepared.length);
   const summaries = [];
   let batch = [];
 
   // Quiet mode: show a single spinner for all tools
   let spinner = null;
-  if (quiet) {
+  if (quiet && !options.skipSpinner) {
     const execTools = prepared.filter(p => p.canExecute);
     if (execTools.length > 0) {
       let label;
@@ -235,7 +235,7 @@ async function executeBatch(prepared, quiet = false) {
 
   // Stop spinner and print compact summaries
   if (spinner) spinner.stop();
-  if (quiet && summaries.length > 0) {
+  if (quiet && summaries.length > 0 && !options.skipSummaries) {
     for (const s of summaries) console.log(s);
   }
 
@@ -436,6 +436,27 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead) {
 async function processInput(userInput) {
   conversationMessages.push({ role: 'user', content: userInput });
 
+  const { setOnChange } = require('./tasks');
+  let taskProgress = null;
+  let cumulativeTokens = 0;
+
+  // Wire task onChange to create/update live task display
+  setOnChange((event, data) => {
+    if (event === 'create') {
+      if (taskProgress) taskProgress.stop();
+      taskProgress = new TaskProgress(data.name, data.tasks);
+      taskProgress.setStats({ tokens: cumulativeTokens });
+      taskProgress.start();
+    } else if (event === 'update' && taskProgress) {
+      taskProgress.updateTask(data.id, data.status);
+    } else if (event === 'clear') {
+      if (taskProgress) {
+        taskProgress.stop();
+        taskProgress = null;
+      }
+    }
+  });
+
   const systemPrompt = buildSystemPrompt();
   const fullMessages = [{ role: 'system', content: systemPrompt }, ...conversationMessages];
 
@@ -471,9 +492,15 @@ async function processInput(userInput) {
       console.log(`${C.dim}  ⟳ step ${i + 1}${C.reset}`);
     }
 
-    const spinnerText = i > 0 ? `Thinking... (step ${i + 1})` : 'Thinking...';
-    const spinner = new Spinner(spinnerText);
-    spinner.start();
+    let spinner = null;
+    if (taskProgress && taskProgress.isActive()) {
+      // Resume the live task display instead of a plain spinner
+      if (taskProgress._paused) taskProgress.resume();
+    } else if (!taskProgress) {
+      const spinnerText = i > 0 ? `Thinking... (step ${i + 1})` : 'Thinking...';
+      spinner = new Spinner(spinnerText);
+      spinner.start();
+    }
     let firstToken = true;
     let streamedText = '';
     const stream = new StreamRenderer();
@@ -484,7 +511,11 @@ async function processInput(userInput) {
       result = await callStream(apiMessages, allTools, {
         onToken: (text) => {
           if (firstToken) {
-            spinner.stop();
+            if (taskProgress && !taskProgress._paused) {
+              taskProgress.pause();
+            } else if (spinner) {
+              spinner.stop();
+            }
             firstToken = false;
           }
           streamedText += text;
@@ -492,13 +523,16 @@ async function processInput(userInput) {
         },
       });
     } catch (err) {
-      spinner.stop();
+      if (taskProgress && !taskProgress._paused) taskProgress.pause();
+      if (spinner) spinner.stop();
       console.log(`${C.red}${err.message}${C.reset}`);
 
       if (err.message.includes('429')) {
         rateLimitRetries++;
         if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
           console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead);
           autoSave(conversationMessages);
           break;
@@ -509,13 +543,16 @@ async function processInput(userInput) {
         continue;
       }
       // Auto-save on error so conversation isn't lost
+      if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+      setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead);
       autoSave(conversationMessages);
       break;
     }
 
     if (firstToken) {
-      spinner.stop();
+      if (taskProgress && !taskProgress._paused) taskProgress.pause();
+      if (spinner) spinner.stop();
     }
 
     // Flush remaining stream buffer
@@ -532,6 +569,8 @@ async function processInput(userInput) {
         result.usage.prompt_tokens || 0,
         result.usage.completion_tokens || 0
       );
+      cumulativeTokens += (result.usage.prompt_tokens || 0) + (result.usage.completion_tokens || 0);
+      if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
     }
 
     const { content, tool_calls } = result;
@@ -546,6 +585,8 @@ async function processInput(userInput) {
 
     // No tool calls → response complete
     if (!tool_calls || tool_calls.length === 0) {
+      if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+      setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead);
       autoSave(conversationMessages);
       return;
@@ -565,7 +606,8 @@ async function processInput(userInput) {
     }
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
-    const toolMessages = await executeBatch(prepared, true);
+    const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
+    const toolMessages = await executeBatch(prepared, true, batchOpts);
 
     // Track modified and read files
     for (let j = 0; j < prepared.length; j++) {
@@ -587,6 +629,8 @@ async function processInput(userInput) {
     }
   }
 
+  if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+  setOnChange(null);
   _printResume(totalSteps, toolCounts, filesModified, filesRead);
   autoSave(conversationMessages);
   console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached.${C.reset}`);

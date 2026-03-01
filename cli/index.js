@@ -25,8 +25,9 @@ const { isGitRepo, getCurrentBranch, formatDiffSummary, analyzeDiff, commit, cre
 const { listServers, connectAll, disconnectAll } = require('./mcp');
 const { listHooks, runHooks, HOOK_EVENTS } = require('./hooks');
 const { undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory } = require('./file-history');
-const { formatCosts, resetCosts } = require('./costs');
+const { formatCosts, resetCosts, setCostLimit, removeCostLimit, getCostLimits, checkBudget, getProviderSpend, saveCostLimits } = require('./costs');
 const { loadAllSkills, listSkills, enableSkill, disableSkill, getSkillCommands, handleSkillCommand } = require('./skills');
+const { showModelPicker } = require('./picker');
 
 const CWD = process.cwd();
 
@@ -38,6 +39,7 @@ const SLASH_COMMANDS = [
   { cmd: '/fallback',    desc: 'Show/set fallback chain' },
   { cmd: '/tokens',      desc: 'Token usage and context budget' },
   { cmd: '/costs',       desc: 'Session token costs' },
+  { cmd: '/budget',      desc: 'Show/set cost limits per provider' },
   { cmd: '/clear',       desc: 'Clear conversation' },
   { cmd: '/context',     desc: 'Show project context' },
   { cmd: '/autoconfirm', desc: 'Toggle auto-confirm' },
@@ -149,6 +151,7 @@ ${C.bold}${C.cyan}Commands:${C.reset}
   ${C.cyan}/fallback [chain]${C.reset} ${C.dim}Show/set fallback chain (e.g. anthropic,openai,local)${C.reset}
   ${C.cyan}/tokens${C.reset}           ${C.dim}Show token usage and context budget${C.reset}
   ${C.cyan}/costs${C.reset}            ${C.dim}Show session token costs${C.reset}
+  ${C.cyan}/budget [prov] [n]${C.reset}${C.dim}Show/set cost limits per provider${C.reset}
   ${C.cyan}/clear${C.reset}            ${C.dim}Clear conversation context${C.reset}
   ${C.cyan}/context${C.reset}          ${C.dim}Show project context${C.reset}
   ${C.cyan}/autoconfirm${C.reset}      ${C.dim}Toggle auto-confirm for file changes${C.reset}
@@ -230,7 +233,7 @@ function showProviders() {
   console.log();
 }
 
-function handleSlashCommand(input) {
+async function handleSlashCommand(input, rl) {
   const [cmd, ...rest] = input.split(/\s+/);
 
   switch (cmd) {
@@ -241,12 +244,16 @@ function handleSlashCommand(input) {
     case '/model': {
       const name = rest.join(' ').trim();
       if (!name) {
-        const model = getActiveModel();
-        const providerName = getActiveProviderName();
-        console.log(
-          `${C.bold}${C.cyan}Active model:${C.reset} ${C.dim}${providerName}:${model.id} (${model.name})${C.reset}`
-        );
-        console.log(`${C.gray}Use /model <provider:model> to switch. /providers to see all.${C.reset}`);
+        if (rl) {
+          await showModelPicker(rl);
+        } else {
+          const model = getActiveModel();
+          const providerName = getActiveProviderName();
+          console.log(
+            `${C.bold}${C.cyan}Active model:${C.reset} ${C.dim}${providerName}:${model.id} (${model.name})${C.reset}`
+          );
+          console.log(`${C.gray}Use /model <provider:model> to switch. /providers to see all.${C.reset}`);
+        }
         return true;
       }
       if (name === 'list') {
@@ -317,6 +324,69 @@ function handleSlashCommand(input) {
         return true;
       }
       console.log(`\n${formatCosts()}\n`);
+      return true;
+    }
+
+    case '/budget': {
+      const budgetArg = rest[0];
+      if (!budgetArg) {
+        // Show all limits + current spend
+        const limits = getCostLimits();
+        const provList = listProviders();
+        console.log(`\n${C.bold}${C.cyan}Cost Limits:${C.reset}`);
+        let hasAny = false;
+        for (const p of provList) {
+          const spent = getProviderSpend(p.provider);
+          const limit = limits[p.provider];
+          if (limit !== undefined) {
+            hasAny = true;
+            const pct = Math.min(100, Math.round((spent / limit) * 100));
+            const barWidth = 10;
+            const filled = Math.round((pct / 100) * barWidth);
+            const empty = barWidth - filled;
+            const barColor = pct >= 100 ? C.red : pct >= 80 ? C.yellow : C.green;
+            const bar = `${barColor}${'█'.repeat(filled)}${C.dim}${'░'.repeat(empty)}${C.reset}`;
+            console.log(`  ${C.bold}${p.provider}:${C.reset}  $${spent.toFixed(2)} / $${limit.toFixed(2)}  (${pct}%)  ${bar}`);
+          } else {
+            const isFree = p.provider === 'ollama' || p.provider === 'local';
+            if (isFree) {
+              console.log(`  ${C.bold}${p.provider}:${C.reset}  ${C.dim}free (no limit)${C.reset}`);
+            } else if (spent > 0) {
+              console.log(`  ${C.bold}${p.provider}:${C.reset}  $${spent.toFixed(2)} ${C.dim}(no limit)${C.reset}`);
+            }
+          }
+        }
+        if (!hasAny) {
+          console.log(`  ${C.dim}No limits set. Use /budget <provider> <amount> to set one.${C.reset}`);
+        }
+        console.log();
+        return true;
+      }
+      const budgetVal = rest[1];
+      if (!budgetVal) {
+        // Show single provider budget
+        const budget = checkBudget(budgetArg);
+        if (budget.limit !== null) {
+          console.log(`${C.bold}${budgetArg}:${C.reset} $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)} ($${budget.remaining.toFixed(2)} remaining)`);
+        } else {
+          console.log(`${C.bold}${budgetArg}:${C.reset} $${budget.spent.toFixed(2)} ${C.dim}(no limit)${C.reset}`);
+        }
+        return true;
+      }
+      if (budgetVal === 'off' || budgetVal === 'remove' || budgetVal === 'clear') {
+        removeCostLimit(budgetArg);
+        saveCostLimits();
+        console.log(`${C.green}Removed cost limit for ${budgetArg}${C.reset}`);
+        return true;
+      }
+      const amount = parseFloat(budgetVal);
+      if (isNaN(amount) || amount <= 0) {
+        console.log(`${C.red}Invalid amount: ${budgetVal}. Use a positive number or 'off'.${C.reset}`);
+        return true;
+      }
+      setCostLimit(budgetArg, amount);
+      saveCostLimits();
+      console.log(`${C.green}Set ${budgetArg} budget limit: $${amount.toFixed(2)}${C.reset}`);
       return true;
     }
 
@@ -1108,7 +1178,7 @@ function startREPL() {
       return;
     }
     if (input.startsWith('/')) {
-      handleSlashCommand(input);
+      await handleSlashCommand(input, rl);
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;

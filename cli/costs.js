@@ -1,7 +1,11 @@
 /**
- * cli/costs.js — Token Cost Tracking + Dashboard
+ * cli/costs.js — Token Cost Tracking + Dashboard + Budget Limits
  * Tracks token usage per provider/model and estimates session costs.
+ * Supports per-provider cost limits with budget gating.
  */
+
+const fs = require('fs');
+const path = require('path');
 
 const PRICING = {
   'openai': {
@@ -42,6 +46,9 @@ const PRICING = {
 // Session usage accumulator
 let usageLog = [];
 
+// Per-provider cost limits (e.g. { anthropic: 5.00, openai: 10.00 })
+let costLimits = {};
+
 /**
  * Track token usage for a single API call.
  * @param {string} provider
@@ -51,6 +58,14 @@ let usageLog = [];
  */
 function trackUsage(provider, model, inputTokens, outputTokens) {
   usageLog.push({ provider, model, input: inputTokens, output: outputTokens });
+
+  // Check budget after tracking
+  if (costLimits[provider] !== undefined) {
+    const budget = checkBudget(provider);
+    if (!budget.allowed) {
+      process.stderr.write(`\x1b[33m\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}\x1b[0m\n`);
+    }
+  }
 }
 
 /**
@@ -146,6 +161,111 @@ function resetCosts() {
   usageLog = [];
 }
 
+// ─── Cost Limits ───────────────────────────────────────────────
+
+/**
+ * Set a cost limit for a provider (in dollars).
+ */
+function setCostLimit(provider, maxDollars) {
+  costLimits[provider] = maxDollars;
+}
+
+/**
+ * Remove a cost limit for a provider.
+ */
+function removeCostLimit(provider) {
+  delete costLimits[provider];
+}
+
+/**
+ * Get all cost limits.
+ * @returns {object}
+ */
+function getCostLimits() {
+  return { ...costLimits };
+}
+
+/**
+ * Get total spend for a specific provider in this session.
+ */
+function getProviderSpend(provider) {
+  let total = 0;
+  for (const entry of usageLog) {
+    if (entry.provider === provider) {
+      total += calcCost(entry);
+    }
+  }
+  return total;
+}
+
+/**
+ * Check if a provider is within budget.
+ * @returns {{ allowed: boolean, spent: number, limit: number|null, remaining: number|null }}
+ */
+function checkBudget(provider) {
+  const spent = getProviderSpend(provider);
+  const limit = costLimits[provider];
+
+  if (limit === undefined) {
+    return { allowed: true, spent, limit: null, remaining: null };
+  }
+
+  const remaining = Math.max(0, limit - spent);
+  return {
+    allowed: spent < limit,
+    spent,
+    limit,
+    remaining,
+  };
+}
+
+/**
+ * Load cost limits from .nex/config.json
+ */
+function loadCostLimits() {
+  const configPath = path.join(process.cwd(), '.nex', 'config.json');
+  if (!fs.existsSync(configPath)) return;
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (config.costLimits && typeof config.costLimits === 'object') {
+      costLimits = { ...config.costLimits };
+    }
+  } catch {
+    // ignore corrupt config
+  }
+}
+
+/**
+ * Save cost limits to .nex/config.json
+ */
+function saveCostLimits() {
+  const configDir = path.join(process.cwd(), '.nex');
+  const configPath = path.join(configDir, 'config.json');
+
+  let config = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    } catch {
+      config = {};
+    }
+  }
+
+  config.costLimits = costLimits;
+  if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+/**
+ * Reset cost limits (for testing).
+ */
+function resetCostLimits() {
+  costLimits = {};
+}
+
+// Load cost limits on init
+loadCostLimits();
+
 module.exports = {
   PRICING,
   trackUsage,
@@ -154,4 +274,12 @@ module.exports = {
   formatCostHint,
   resetCosts,
   getPricing,
+  setCostLimit,
+  removeCostLimit,
+  getCostLimits,
+  getProviderSpend,
+  checkBudget,
+  loadCostLimits,
+  saveCostLimits,
+  resetCostLimits,
 };
