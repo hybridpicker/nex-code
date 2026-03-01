@@ -5,14 +5,19 @@ const os = require('os');
 describe('memory.js', () => {
   let memory;
   let tmpDir;
+  let globalDir;
   let nexMdPath;
+  let globalNexMdPath;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-memory-'));
+    globalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-global-'));
     nexMdPath = path.join(tmpDir, 'NEX.md');
+    globalNexMdPath = path.join(globalDir, '.nex', 'NEX.md');
 
     jest.resetModules();
     jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    jest.spyOn(os, 'homedir').mockReturnValue(globalDir);
 
     memory = require('../cli/memory');
   });
@@ -20,6 +25,7 @@ describe('memory.js', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(globalDir)) fs.rmSync(globalDir, { recursive: true });
   });
 
   describe('remember()', () => {
@@ -119,6 +125,24 @@ describe('memory.js', () => {
     });
   });
 
+  describe('loadGlobalInstructions()', () => {
+    it('returns empty string when ~/.nex/NEX.md does not exist', () => {
+      expect(memory.loadGlobalInstructions()).toBe('');
+    });
+
+    it('returns global NEX.md contents', () => {
+      fs.mkdirSync(path.dirname(globalNexMdPath), { recursive: true });
+      fs.writeFileSync(globalNexMdPath, '# Global Rules\nNo force push\n', 'utf-8');
+      expect(memory.loadGlobalInstructions()).toContain('Global Rules');
+    });
+
+    it('trims whitespace', () => {
+      fs.mkdirSync(path.dirname(globalNexMdPath), { recursive: true });
+      fs.writeFileSync(globalNexMdPath, '  global rule  \n\n', 'utf-8');
+      expect(memory.loadGlobalInstructions()).toBe('global rule');
+    });
+  });
+
   describe('loadProjectInstructions()', () => {
     it('returns empty string when NEX.md does not exist', () => {
       expect(memory.loadProjectInstructions()).toBe('');
@@ -162,6 +186,35 @@ describe('memory.js', () => {
       const ctx = memory.getMemoryContext();
       expect(ctx).toContain('PROJECT INSTRUCTIONS');
       expect(ctx).toContain('PROJECT MEMORY');
+    });
+
+    it('includes global NEX.md content', () => {
+      fs.mkdirSync(path.dirname(globalNexMdPath), { recursive: true });
+      fs.writeFileSync(globalNexMdPath, '# Global\nNo AI attribution', 'utf-8');
+      const ctx = memory.getMemoryContext();
+      expect(ctx).toContain('GLOBAL INSTRUCTIONS');
+      expect(ctx).toContain('No AI attribution');
+    });
+
+    it('includes global, project, and memories together', () => {
+      fs.mkdirSync(path.dirname(globalNexMdPath), { recursive: true });
+      fs.writeFileSync(globalNexMdPath, 'Global rules', 'utf-8');
+      fs.writeFileSync(nexMdPath, 'Project rules', 'utf-8');
+      memory.remember('lang', 'JS');
+      const ctx = memory.getMemoryContext();
+      expect(ctx).toContain('GLOBAL INSTRUCTIONS');
+      expect(ctx).toContain('PROJECT INSTRUCTIONS');
+      expect(ctx).toContain('PROJECT MEMORY');
+    });
+
+    it('global instructions appear before project instructions', () => {
+      fs.mkdirSync(path.dirname(globalNexMdPath), { recursive: true });
+      fs.writeFileSync(globalNexMdPath, 'Global rules', 'utf-8');
+      fs.writeFileSync(nexMdPath, 'Project rules', 'utf-8');
+      const ctx = memory.getMemoryContext();
+      const globalIdx = ctx.indexOf('GLOBAL INSTRUCTIONS');
+      const projectIdx = ctx.indexOf('PROJECT INSTRUCTIONS');
+      expect(globalIdx).toBeLessThan(projectIdx);
     });
   });
 });

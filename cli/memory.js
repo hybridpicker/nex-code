@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 function getMemoryDir() {
   return path.join(process.cwd(), '.nex', 'memory');
@@ -17,6 +18,10 @@ function getMemoryFile() {
 
 function getNexMdPath() {
   return path.join(process.cwd(), 'NEX.md');
+}
+
+function getGlobalNexMdPath() {
+  return path.join(os.homedir(), '.nex', 'NEX.md');
 }
 
 function ensureDir() {
@@ -93,6 +98,20 @@ function listMemories() {
 }
 
 /**
+ * Load global NEX.md from ~/.nex/NEX.md (if it exists)
+ * @returns {string} — Contents of global NEX.md or empty string
+ */
+function loadGlobalInstructions() {
+  const globalMd = getGlobalNexMdPath();
+  if (!fs.existsSync(globalMd)) return '';
+  try {
+    return fs.readFileSync(globalMd, 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Load NEX.md from project root (if it exists)
  * @returns {string} — Contents of NEX.md or empty string
  */
@@ -114,7 +133,13 @@ function loadProjectInstructions() {
 function getMemoryContext() {
   const parts = [];
 
-  // Load NEX.md
+  // Load global NEX.md (~/.nex/NEX.md)
+  const globalInstructions = loadGlobalInstructions();
+  if (globalInstructions) {
+    parts.push(`GLOBAL INSTRUCTIONS (~/.nex/NEX.md):\n${globalInstructions}`);
+  }
+
+  // Load project NEX.md
   const instructions = loadProjectInstructions();
   if (instructions) {
     parts.push(`PROJECT INSTRUCTIONS (NEX.md):\n${instructions}`);
@@ -135,9 +160,11 @@ module.exports = {
   recall,
   forget,
   listMemories,
+  loadGlobalInstructions,
   loadProjectInstructions,
   getMemoryContext,
   // exported for testing
   _getMemoryDir: getMemoryDir,
   _getMemoryFile: getMemoryFile,
+  _getGlobalNexMdPath: getGlobalNexMdPath,
 };
