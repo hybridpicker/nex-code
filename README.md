@@ -204,10 +204,11 @@ Tokens appear live as the model generates them. Braille spinner during connectio
 Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input instead of firing line-by-line. A `[pasted X lines]` indicator is shown.
 
 ### Diff Preview
-Every file change is shown as a colored diff before being applied:
-- **edit_file**: Red/green diff with 3 lines of context
-- **write_file** (overwrite): Line-by-line comparison (or side-by-side view)
-- **write_file** (new): Preview of the first 20 lines
+Every file change is shown in Claude Code-style format before being applied:
+- **Header**: `⏺ Update(file)` or `⏺ Create(file)` with relative path
+- **Summary**: `⎿  Added N lines, removed M lines`
+- **Numbered lines**: right-justified line numbers with red `-` / green `+` markers
+- **Context**: 3 lines of surrounding context per change, multiple hunks separated by `···`
 - OOM-safe: large diffs (>2000 lines) fall back to add/remove instead of LCS
 - All changes require `[y/n]` confirmation (toggle with `/autoconfirm` or start with `-yolo`)
 

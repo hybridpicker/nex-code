@@ -7,7 +7,7 @@ const path = require('path');
 const { execSync, execFileSync } = require('child_process');
 const axios = require('axios');
 const { isForbidden, isDangerous, confirm } = require('./safety');
-const { showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange } = require('./diff');
+const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
 const { recordChange } = require('./file-history');
@@ -597,11 +597,11 @@ async function _executeToolInner(name, args, options = {}) {
       if (!options.autoConfirm) {
         if (exists) {
           oldContent = fs.readFileSync(fp, 'utf-8');
-          showWriteDiff(fp, oldContent, args.content);
+          showClaudeDiff(fp, oldContent, args.content);
           const ok = await confirmFileChange('Overwrite');
           if (!ok) return 'CANCELLED: User declined to overwrite file.';
         } else {
-          showNewFilePreview(fp, args.content);
+          showClaudeNewFile(fp, args.content);
           const ok = await confirmFileChange('Create');
           if (!ok) return 'CANCELLED: User declined to create file.';
         }
@@ -646,7 +646,7 @@ async function _executeToolInner(name, args, options = {}) {
           const fix = autoFixEdit(content, args.old_text, args.new_text);
           if (fix) {
             if (!options.autoConfirm) {
-              showEditDiff(fp, fix.matchText, args.new_text);
+              showClaudeDiff(fp, content, fix.content);
               const ok = await confirmFileChange(`Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`);
               if (!ok) return 'CANCELLED: User declined to apply edit.';
             }
@@ -664,7 +664,8 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       if (!options.autoConfirm) {
-        showEditDiff(fp, matchText, args.new_text);
+        const preview = content.split(matchText).join(args.new_text);
+        showClaudeDiff(fp, content, preview);
         const label = fuzzyMatched ? 'Apply (fuzzy match)' : 'Apply';
         const ok = await confirmFileChange(label);
         if (!ok) return 'CANCELLED: User declined to apply edit.';
@@ -854,7 +855,7 @@ async function _executeToolInner(name, args, options = {}) {
         preview = preview.split(old_text).join(new_text);
       }
       if (!options.autoConfirm) {
-        showEditDiff(fp, content, preview);
+        showClaudeDiff(fp, content, preview);
         const label = anyFuzzy ? 'Apply patches (fuzzy match)' : 'Apply patches';
         const ok = await confirmFileChange(label);
         if (!ok) return 'CANCELLED: User declined to apply patches.';

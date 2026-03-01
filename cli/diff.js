@@ -3,6 +3,7 @@
  * Minimal Myers-diff-lite for line-by-line comparison.
  */
 
+const path = require('path');
 const { C } = require('./ui');
 const { confirm, getAutoConfirm } = require('./safety');
 
@@ -248,4 +249,118 @@ function showSideBySideDiff(filePath, oldText, newText, width) {
   console.log(`  ${C.dim}${'─'.repeat(colWidth)}┴${'─'.repeat(colWidth)}${C.reset}\n`);
 }
 
-module.exports = { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange, showSideBySideDiff };
+/**
+ * Claude Code-style diff display
+ * Header: ⏺ Update(relPath) or ⏺ Create(relPath)
+ * Summary: ⎿  Added N lines, removed M lines
+ * Numbered context/change lines with ···  hunk separators
+ */
+function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
+  const label = options.label || 'Update';
+  const contextSize = options.context || 3;
+  const relPath = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
+
+  const ops = diffLines(oldContent, newContent);
+
+  // Assign line numbers to each op
+  let oldLine = 1, newLine = 1;
+  for (const op of ops) {
+    if (op.type === 'same') {
+      op.oldLine = oldLine++;
+      op.newLine = newLine++;
+    } else if (op.type === 'remove') {
+      op.oldLine = oldLine++;
+      op.newLine = null;
+    } else {
+      op.oldLine = null;
+      op.newLine = newLine++;
+    }
+  }
+
+  // Count additions and removals
+  let added = 0, removed = 0;
+  for (const op of ops) {
+    if (op.type === 'add') added++;
+    else if (op.type === 'remove') removed++;
+  }
+
+  // Header
+  console.log(`\n${C.cyan}⏺${C.reset} ${C.bold}${label}(${relPath})${C.reset}`);
+
+  if (added === 0 && removed === 0) {
+    console.log(`  ${C.dim}⎿  (no changes)${C.reset}\n`);
+    return;
+  }
+
+  // Summary
+  const parts = [];
+  if (added > 0) parts.push(`Added ${added} line${added !== 1 ? 's' : ''}`);
+  if (removed > 0) parts.push(`removed ${removed} line${removed !== 1 ? 's' : ''}`);
+  console.log(`  ${C.dim}⎿  ${parts.join(', ')}${C.reset}`);
+
+  // Build hunks: groups of changes with surrounding context
+  const changeIndices = [];
+  ops.forEach((op, i) => { if (op.type !== 'same') changeIndices.push(i); });
+
+  const hunks = [];
+  let hunkStart = null, hunkEnd = null;
+  for (const ci of changeIndices) {
+    const start = Math.max(0, ci - contextSize);
+    const end = Math.min(ops.length - 1, ci + contextSize);
+    if (hunkStart === null) {
+      hunkStart = start;
+      hunkEnd = end;
+    } else if (start <= hunkEnd + 1) {
+      hunkEnd = end;
+    } else {
+      hunks.push([hunkStart, hunkEnd]);
+      hunkStart = start;
+      hunkEnd = end;
+    }
+  }
+  if (hunkStart !== null) hunks.push([hunkStart, hunkEnd]);
+
+  const PAD = '      '; // 6-char left padding
+
+  for (let h = 0; h < hunks.length; h++) {
+    if (h > 0) console.log(`${PAD}${C.dim}···${C.reset}`);
+    const [from, to] = hunks[h];
+    for (let i = from; i <= to; i++) {
+      const op = ops[i];
+      const lineNum = op.newLine != null ? op.newLine : op.oldLine;
+      const numStr = String(lineNum).padStart(4);
+      if (op.type === 'remove') {
+        console.log(`${PAD}${C.red}${numStr} -${op.line}${C.reset}`);
+      } else if (op.type === 'add') {
+        console.log(`${PAD}${C.green}${numStr} +${op.line}${C.reset}`);
+      } else {
+        console.log(`${PAD}${C.dim}${numStr}${C.reset} ${op.line}`);
+      }
+    }
+  }
+  console.log();
+}
+
+/**
+ * Claude Code-style new file display
+ */
+function showClaudeNewFile(filePath, content) {
+  const relPath = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
+  const lines = content.split('\n');
+
+  console.log(`\n${C.cyan}⏺${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
+  console.log(`  ${C.dim}⎿  ${lines.length} line${lines.length !== 1 ? 's' : ''}${C.reset}`);
+
+  const PAD = '      ';
+  const show = Math.min(lines.length, 20);
+  for (let i = 0; i < show; i++) {
+    const numStr = String(i + 1).padStart(4);
+    console.log(`${PAD}${C.green}${numStr} +${lines[i]}${C.reset}`);
+  }
+  if (lines.length > 20) {
+    console.log(`${PAD}${C.dim}   ...+${lines.length - 20} more lines${C.reset}`);
+  }
+  console.log();
+}
+
+module.exports = { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange, showSideBySideDiff, showClaudeDiff, showClaudeNewFile };
