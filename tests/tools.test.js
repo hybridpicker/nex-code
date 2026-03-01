@@ -16,9 +16,9 @@ jest.mock('../cli/file-history', () => ({
 }));
 
 jest.mock('../cli/diff', () => ({
+  showClaudeDiff: jest.fn(),
+  showClaudeNewFile: jest.fn(),
   showEditDiff: jest.fn(),
-  showWriteDiff: jest.fn(),
-  showNewFilePreview: jest.fn(),
   confirmFileChange: jest.fn().mockResolvedValue(true),
 }));
 
