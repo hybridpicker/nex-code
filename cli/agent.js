@@ -232,6 +232,11 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       batch.push(i);
     } else {
       await flushBatch();
+      // spawn_agents manages its own display (MultiProgress) — stop outer spinner
+      if (prep.fnName === 'spawn_agents' && spinner) {
+        spinner.stop();
+        spinner = null;
+      }
       const { msg, summary } = await executeSingleTool(prep, quiet);
       results[i] = msg;
       summaries.push(summary);
@@ -598,8 +603,10 @@ async function processInput(userInput) {
           break;
         }
         const delay = Math.min(10000 * Math.pow(2, rateLimitRetries - 1), 120000);
-        console.log(`${C.yellow}  Rate limit — waiting ${Math.round(delay / 1000)}s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})...${C.reset}`);
+        const waitSpinner = new Spinner(`Rate limit — waiting ${Math.round(delay / 1000)}s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`);
+        waitSpinner.start();
         await new Promise((r) => setTimeout(r, delay));
+        waitSpinner.stop();
         continue;
       }
 
@@ -619,8 +626,10 @@ async function processInput(userInput) {
           break;
         }
         const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
-        console.log(`${C.yellow}  Network error — waiting ${Math.round(delay / 1000)}s (retry ${networkRetries}/${MAX_NETWORK_RETRIES})...${C.reset}`);
+        const waitSpinner = new Spinner(`Network error — retrying in ${Math.round(delay / 1000)}s (${networkRetries}/${MAX_NETWORK_RETRIES})`);
+        waitSpinner.start();
         await new Promise((r) => setTimeout(r, delay));
+        waitSpinner.stop();
         i--; // Don't count network errors as iterations
         continue;
       }
@@ -702,6 +711,8 @@ async function processInput(userInput) {
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
     if (!batchOpts.skipSummaries) printStepIfNeeded();
+    // Resume TaskProgress animation during tool execution so the UI never looks frozen
+    if (taskProgress && taskProgress._paused) taskProgress.resume();
     const toolMessages = await executeBatch(prepared, true, batchOpts);
 
     // Track modified and read files

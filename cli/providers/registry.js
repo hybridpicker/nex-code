@@ -300,7 +300,19 @@ async function callChat(messages, tools, options = {}) {
     if (!provider || !provider.isConfigured()) {
       throw new Error(`Provider '${options.provider}' is not available`);
     }
-    return await provider.chat(messages, tools, { model: options.model || activeModelId, ...options });
+    const chatOpts = { model: options.model || activeModelId, ...options };
+    try {
+      return await provider.chat(messages, tools, chatOpts);
+    } catch (chatErr) {
+      // Fallback: some providers handle stream:true better than stream:false
+      // Use streaming endpoint but collect the full response silently
+      if (typeof provider.stream === 'function') {
+        try {
+          return await provider.stream(messages, tools, { ...chatOpts, onToken: () => {} });
+        } catch { /* stream fallback also failed — throw original error */ }
+      }
+      throw chatErr;
+    }
   }
 
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
@@ -325,6 +337,12 @@ async function callChat(messages, tools, options = {}) {
     try {
       return await provider.chat(messages, tools, { model: activeModelId, ...options });
     } catch (err) {
+      // Fallback: try streaming endpoint before giving up on this provider
+      if (typeof provider.stream === 'function') {
+        try {
+          return await provider.stream(messages, tools, { model: activeModelId, ...options, onToken: () => {} });
+        } catch { /* stream fallback also failed — continue with original error */ }
+      }
       lastError = err;
       if (isRetryableError(err) && idx < providersToTry.length - 1) {
         continue;

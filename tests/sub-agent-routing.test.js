@@ -6,7 +6,7 @@ jest.mock('../cli/providers/registry', () => {
   const actual = jest.requireActual('../cli/providers/registry');
   return {
     ...actual,
-    callChat: jest.fn(),
+    callStream: jest.fn(),
     getActiveProviderName: jest.fn().mockReturnValue('ollama'),
     getActiveModelId: jest.fn().mockReturnValue('kimi-k2.5'),
     getConfiguredProviders: jest.fn(),
@@ -50,10 +50,11 @@ const {
   resolveSubAgentModel,
   runSubAgent,
   executeSpawnAgents,
+  isRetryableError,
 } = require('../cli/sub-agent');
 
 const {
-  callChat,
+  callStream,
   getActiveProviderName,
   getConfiguredProviders,
   getProvider,
@@ -172,27 +173,25 @@ describe('resolveSubAgentModel()', () => {
     expect(result).toBeDefined();
   });
 
-  it('auto-routes heavy task to full-tier model', () => {
+  it('always uses active model, applies full tier for heavy tasks', () => {
     const result = resolveSubAgentModel({ task: 'Refactor the auth module' });
     expect(result.provider).toBe('ollama');
     expect(result.model).toBe('kimi-k2.5');
     expect(result.tier).toBe('full');
   });
 
-  it('auto-routes read task to essential-tier model', () => {
+  it('always uses active model, applies essential tier for read tasks', () => {
     const result = resolveSubAgentModel({ task: 'Read the config file' });
     expect(result.provider).toBe('ollama');
-    expect(result.model).toBe('qwen3-30b-a3b');
+    expect(result.model).toBe('kimi-k2.5');
     expect(result.tier).toBe('essential');
   });
 
-  it('returns null fields when no model matches', () => {
-    getConfiguredProviders.mockReturnValue([]);
-
+  it('applies standard tier for ambiguous tasks', () => {
     const result = resolveSubAgentModel({ task: 'Fix the bug' });
-    expect(result.provider).toBeNull();
-    expect(result.model).toBeNull();
-    expect(result.tier).toBeNull();
+    expect(result.provider).toBe('ollama');
+    expect(result.model).toBe('kimi-k2.5');
+    expect(result.tier).toBe('standard');
   });
 });
 
@@ -207,41 +206,41 @@ describe('runSubAgent()', () => {
     ]);
   });
 
-  it('passes provider+model to callChat when routing resolves', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+  it('passes model to callStream when routing resolves', async () => {
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Refactor the module' });
 
-    expect(callChat).toHaveBeenCalledWith(
+    expect(callStream).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
-      expect.objectContaining({ provider: 'ollama', model: 'kimi-k2.5' })
+      expect.objectContaining({ model: 'kimi-k2.5', onToken: expect.any(Function) })
     );
   });
 
-  it('uses default when routing returns null', async () => {
+  it('uses active model as fallback when no tier match', async () => {
     getConfiguredProviders.mockReturnValue([]);
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Fix bug' });
 
-    // chatOptions should be empty (no provider/model override)
-    expect(callChat).toHaveBeenCalledWith(
+    // Falls back to active model (kimi-k2.5) via callStream
+    expect(callStream).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
-      {}
+      expect.objectContaining({ model: 'kimi-k2.5' })
     );
   });
 
   it('includes modelSpec in result when routing resolves', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.modelSpec).toBe('ollama:kimi-k2.5');
   });
 
   it('passes overrideTier to filterToolsForModel', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Refactor the module' });
 
@@ -264,12 +263,102 @@ describe('executeSpawnAgents()', () => {
   });
 
   it('includes model label in output', async () => {
-    callChat.mockResolvedValue({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
 
     const result = await executeSpawnAgents({
       agents: [{ task: 'Refactor the module' }],
     });
 
     expect(result).toContain('[ollama:kimi-k2.5]');
+  });
+});
+
+// ─── isRetryableError() ──────────────────────────────────────
+
+describe('isRetryableError()', () => {
+  it('retries on 429 rate limit', () => {
+    expect(isRetryableError(new Error('Request failed with status 429'))).toBe(true);
+  });
+
+  it('retries on server errors (500-504)', () => {
+    expect(isRetryableError(new Error('500 Internal Server Error'))).toBe(true);
+    expect(isRetryableError(new Error('502 Bad Gateway'))).toBe(true);
+    expect(isRetryableError(new Error('503 Service Unavailable'))).toBe(true);
+    expect(isRetryableError(new Error('504 Gateway Timeout'))).toBe(true);
+  });
+
+  it('retries on network errors', () => {
+    const econnreset = new Error('Connection reset');
+    econnreset.code = 'ECONNRESET';
+    expect(isRetryableError(econnreset)).toBe(true);
+
+    const etimedout = new Error('Timed out');
+    etimedout.code = 'ETIMEDOUT';
+    expect(isRetryableError(etimedout)).toBe(true);
+
+    expect(isRetryableError(new Error('socket disconnected'))).toBe(true);
+    expect(isRetryableError(new Error('TLS handshake failed'))).toBe(true);
+    expect(isRetryableError(new Error('fetch failed'))).toBe(true);
+  });
+
+  it('does NOT retry on auth errors', () => {
+    expect(isRetryableError(new Error('401 Unauthorized'))).toBe(false);
+    expect(isRetryableError(new Error('403 Forbidden'))).toBe(false);
+  });
+
+  it('does NOT retry on bad request', () => {
+    expect(isRetryableError(new Error('400 Bad Request'))).toBe(false);
+  });
+
+  it('does NOT retry on unknown errors', () => {
+    expect(isRetryableError(new Error('Something went wrong'))).toBe(false);
+  });
+});
+
+// ─── Retry behavior in runSubAgent() ────────────────────────
+
+describe('runSubAgent() retry', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getActiveProviderName.mockReturnValue('ollama');
+    getConfiguredProviders.mockReturnValue([
+      { name: 'ollama', models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5' }] },
+    ]);
+  });
+
+  it('retries on transient error then succeeds', async () => {
+    callStream
+      .mockRejectedValueOnce(new Error('502 Bad Gateway'))
+      .mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+
+    const result = await runSubAgent({ task: 'Refactor the module' });
+    expect(result.status).toBe('done');
+    expect(result.result).toBe('Done');
+    expect(callStream).toHaveBeenCalledTimes(2);
+  }, 15000);
+
+  it('fails after exhausting retries on persistent error', async () => {
+    callStream.mockRejectedValue(new Error('502 Bad Gateway'));
+
+    const result = await runSubAgent({ task: 'Refactor the module' });
+    expect(result.status).toBe('failed');
+    expect(result.result).toContain('502');
+    expect(callStream).toHaveBeenCalledTimes(4);
+  }, 30000);
+
+  it('does NOT retry on auth errors (401)', async () => {
+    callStream.mockRejectedValue(new Error('401 Unauthorized'));
+
+    const result = await runSubAgent({ task: 'Refactor the module' });
+    expect(result.status).toBe('failed');
+    expect(callStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles null response from provider', async () => {
+    callStream.mockResolvedValueOnce(null);
+
+    const result = await runSubAgent({ task: 'Refactor the module' });
+    expect(result.status).toBe('failed');
+    expect(result.result).toContain('Empty or invalid response');
   });
 });

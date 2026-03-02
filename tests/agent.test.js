@@ -243,9 +243,8 @@ describe('agent.js', () => {
 
       global.setTimeout = origSetTimeout;
 
+      // First call fails with 429, second succeeds
       expect(callStream).toHaveBeenCalledTimes(2);
-      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain('Rate limit');
     });
 
     it('passes onToken callback to callStream', async () => {
