@@ -668,8 +668,15 @@ async function processInput(userInput) {
     conversationMessages.push(assistantMsg);
     apiMessages.push(assistantMsg);
 
-    // No tool calls → response complete
+    // No tool calls → response complete (or nudge if empty after tools)
     if (!tool_calls || tool_calls.length === 0) {
+      const hasText = (content || '').trim().length > 0 || streamedText.trim().length > 0;
+      // If we just ran tools but the LLM produced no text → nudge it to summarize
+      if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
+        const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
+        apiMessages.push(nudge);
+        continue; // retry — don't count as a new step
+      }
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
