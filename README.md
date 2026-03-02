@@ -201,7 +201,14 @@ The system prompt enforces substantive responses: the model always presents find
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Paste Detection
-Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input instead of firing line-by-line. A `[pasted X lines]` indicator is shown.
+Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input instead of firing line-by-line. A `[pasted X lines]` indicator is shown. The paste handler stores the combined text and emits only a single-line trigger to readline, preventing line-by-line submit.
+
+### Ctrl+C Cancellation
+Pressing Ctrl+C during a running request immediately cancels the active HTTP stream and returns to the prompt:
+- An `AbortController` signal flows from the SIGINT handler through the agent loop to the provider's HTTP request
+- All providers (Ollama, OpenAI, Anthropic, Gemini, local) destroy the response stream on abort
+- No EPIPE errors after cancellation (stdout writes are EPIPE-guarded)
+- 3x rapid Ctrl+C force-exits the process
 
 ### Diff Preview
 Every file change is shown in Claude Code-style format before being applied:
@@ -487,8 +494,8 @@ Or place executable scripts in `.nex/hooks/`:
 ```
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
-├── index.js             # REPL + ~38 slash commands + history persistence
-├── agent.js             # Agentic loop + conversation state + compact output + résumé
+├── index.js             # REPL + ~38 slash commands + history persistence + AbortController
+├── agent.js             # Agentic loop + conversation state + compact output + résumé + abort handling
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
 │   ├── ollama.js        # Ollama Cloud provider
@@ -510,7 +517,7 @@ cli/
 ├── permissions.js       # Tool permission system
 ├── planner.js           # Plan mode + autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
-├── render.js            # Markdown + syntax highlighting + StreamRenderer
+├── render.js            # Markdown + syntax highlighting + StreamRenderer + EPIPE guard
 ├── diff.js              # LCS diff + colored output + side-by-side view
 ├── file-history.js      # In-session undo/redo for file changes
 ├── picker.js            # Interactive terminal picker (model selection)
@@ -525,13 +532,13 @@ cli/
 ### Agentic Loop
 
 ```
-User Input
+User Input --> [AbortController created]
     |
 [System Prompt + Context + Memory + Skills + Conversation]
     |
 [Filter tools by model tier (essential/standard/full)]
     |
-Provider API (streaming) --> Text tokens --> rendered to terminal
+Provider API (streaming + abort signal) --> Text tokens --> rendered to terminal
     |                   \--> Tool calls --> parse args (5 strategies)
     |                                       |
     |                              [Validate against schema + auto-correct]
@@ -542,7 +549,7 @@ Provider API (streaming) --> Text tokens --> rendered to terminal
     |
 [Tool results added to history]
     |
-Loop until: no more tool calls OR 30 iterations
+Loop until: no more tool calls OR 30 iterations OR Ctrl+C abort
 ```
 
 ---
@@ -570,7 +577,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-39 test suites, 1264 tests, 87% statement coverage.
+39 test suites, 1270 tests, 85% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
