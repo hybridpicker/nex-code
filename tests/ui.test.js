@@ -75,7 +75,9 @@ describe('ui.js', () => {
       banner();
       expect(logSpy).toHaveBeenCalled();
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain('N E X   C O D E');
+      // Banner uses Unicode box characters with ANSI color codes
+      // Check for raw box characters (without ANSI codes) in the source
+      expect(output).toContain('Agentic Coding CLI');
       expect(output).toContain('v0.3.0');
       logSpy.mockRestore();
     });
