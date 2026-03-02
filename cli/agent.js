@@ -503,7 +503,8 @@ async function processInput(userInput) {
   const filesRead = new Set();
   const startTime = Date.now();
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  let i;
+  for (i = 0; i < MAX_ITERATIONS; i++) {
     // Check if aborted (Ctrl+C) at start of each iteration
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
@@ -576,6 +577,8 @@ async function processInput(userInput) {
         userMessage = 'Authentication failed — please check your API key in the .env file';
       } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
         userMessage = 'Access denied — your API key may not have permission for this model';
+      } else if (err.message.includes('400')) {
+        userMessage = 'Bad request — the conversation may be too long or contain unsupported content. Try /clear and retry';
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
       } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
@@ -617,7 +620,7 @@ async function processInput(userInput) {
         const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
         console.log(`${C.yellow}  Network error — waiting ${Math.round(delay / 1000)}s (retry ${networkRetries}/${MAX_NETWORK_RETRIES})...${C.reset}`);
         await new Promise((r) => setTimeout(r, delay));
-        iteration--; // Don't count network errors as iterations
+        i--; // Don't count network errors as iterations
         continue;
       }
 
@@ -712,11 +715,14 @@ async function processInput(userInput) {
     }
   }
 
-  if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-  setOnChange(null);
-  _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-  autoSave(conversationMessages);
-  console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. The task may be too complex — try breaking it into smaller steps.${C.reset}`);
+  // Only print résumé + max-iterations warning if the loop actually exhausted (not on break)
+  if (i >= MAX_ITERATIONS) {
+    if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+    setOnChange(null);
+    _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+    autoSave(conversationMessages);
+    console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. The task may be too complex — try breaking it into smaller steps.${C.reset}`);
+  }
 }
 
 module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter };
