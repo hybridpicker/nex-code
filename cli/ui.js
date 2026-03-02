@@ -34,17 +34,25 @@ class Spinner {
   }
 
   _render() {
+    if (this._stopped) return;
     const f = SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length];
     let elapsed = '';
     if (this.startTime) {
-      const secs = Math.floor((Date.now() - this.startTime) / 1000);
-      if (secs >= 1) elapsed = ` ${C.dim}${secs}s${C.reset}`;
+      const totalSecs = Math.floor((Date.now() - this.startTime) / 1000);
+      if (totalSecs >= 60) {
+        const mins = Math.floor(totalSecs / 60);
+        const secs = totalSecs % 60;
+        elapsed = ` ${C.dim}${mins}m ${String(secs).padStart(2, '0')}s${C.reset}`;
+      } else if (totalSecs >= 1) {
+        elapsed = ` ${C.dim}${totalSecs}s${C.reset}`;
+      }
     }
     process.stderr.write(`\x1b[2K\r${C.cyan}${f}${C.reset} ${C.dim}${this.text}${C.reset}${elapsed}`);
     this.frame++;
   }
 
   start() {
+    this._stopped = false;
     this.startTime = Date.now();
     process.stderr.write('\x1b[?25l'); // hide cursor
     this._render(); // render first frame immediately
@@ -56,12 +64,13 @@ class Spinner {
   }
 
   stop() {
+    this._stopped = true;
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
-    process.stderr.write('\x1b[2K\r'); // clear line
-    process.stderr.write('\x1b[?25h'); // show cursor
+    // Single write: clear line + show cursor (avoids flicker)
+    process.stderr.write('\x1b[2K\r\x1b[?25h');
     this.startTime = null;
   }
 }
@@ -182,6 +191,7 @@ class MultiProgress {
   }
 
   _render() {
+    if (this._stopped) return;
     const f = MULTI_FRAMES[this.frame % MULTI_FRAMES.length];
     let buf = '';
 
@@ -213,14 +223,12 @@ class MultiProgress {
   }
 
   start() {
-    process.stderr.write('\x1b[?25l'); // hide cursor
-    // Write initial blank lines so we have room
-    for (let i = 0; i < this.lineCount; i++) {
-      process.stderr.write('\n');
-    }
-    if (this.lineCount > 0) {
-      process.stderr.write(`\x1b[${this.lineCount}A`);
-    }
+    this._stopped = false;
+    // Single buffered write: hide cursor + reserve lines + move back up
+    let buf = '\x1b[?25l';
+    for (let i = 0; i < this.lineCount; i++) buf += '\n';
+    if (this.lineCount > 0) buf += `\x1b[${this.lineCount}A`;
+    process.stderr.write(buf);
     this._render();
     this.interval = setInterval(() => this._render(), 80);
   }
@@ -236,6 +244,7 @@ class MultiProgress {
   }
 
   stop() {
+    this._stopped = true;
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
@@ -303,6 +312,7 @@ class TaskProgress {
   }
 
   _render() {
+    if (this._stopped) return;
     const f = TASK_FRAMES[this.frame % TASK_FRAMES.length];
     const elapsed = this._formatElapsed();
     const tokStr = this._formatTokens();
@@ -327,18 +337,21 @@ class TaskProgress {
   }
 
   start() {
+    this._stopped = false;
     this.startTime = Date.now();
     this._paused = false;
-    process.stderr.write('\x1b[?25l');
-    // Reserve lines
-    for (let i = 0; i < this.lineCount; i++) process.stderr.write('\n');
-    process.stderr.write(`\x1b[${this.lineCount}A`);
+    // Single buffered write: hide cursor + reserve lines + move back up
+    let buf = '\x1b[?25l';
+    for (let i = 0; i < this.lineCount; i++) buf += '\n';
+    buf += `\x1b[${this.lineCount}A`;
+    process.stderr.write(buf);
     this._render();
     this.interval = setInterval(() => this._render(), 120);
     _activeTaskProgress = this;
   }
 
   stop() {
+    this._stopped = true;
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
@@ -358,11 +371,11 @@ class TaskProgress {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // Clear the lines we occupied
-    for (let i = 0; i < this.lineCount; i++) {
-      process.stderr.write('\x1b[2K\n');
-    }
-    process.stderr.write(`\x1b[${this.lineCount}A`);
+    // Single buffered write: clear all occupied lines + move back up
+    let buf = '';
+    for (let i = 0; i < this.lineCount; i++) buf += '\x1b[2K\n';
+    buf += `\x1b[${this.lineCount}A`;
+    process.stderr.write(buf);
     this._paused = true;
   }
 
@@ -370,9 +383,11 @@ class TaskProgress {
   resume() {
     if (!this._paused) return;
     this._paused = false;
-    process.stderr.write('\x1b[?25l');
-    for (let i = 0; i < this.lineCount; i++) process.stderr.write('\n');
-    process.stderr.write(`\x1b[${this.lineCount}A`);
+    // Single buffered write: hide cursor + reserve lines + move back up
+    let buf = '\x1b[?25l';
+    for (let i = 0; i < this.lineCount; i++) buf += '\n';
+    buf += `\x1b[${this.lineCount}A`;
+    process.stderr.write(buf);
     this._render();
     this.interval = setInterval(() => this._render(), 120);
   }
@@ -431,8 +446,8 @@ function cleanupTerminal() {
     _activeTaskProgress.stop();
     _activeTaskProgress = null;
   }
-  process.stderr.write('\x1b[?25h');  // show cursor
-  process.stderr.write('\x1b[2K\r'); // clear line
+  // Single write: show cursor + clear line (avoids flicker)
+  process.stderr.write('\x1b[?25h\x1b[2K\r');
 }
 
 /**
