@@ -192,10 +192,12 @@ The agent loop uses a single spinner during tool execution, then prints compact 
 
 After multi-step tasks, a résumé and context-aware follow-up suggestions are shown:
 ```
-  ── 3 steps · 8 tools · 2 files modified ──
+  ── 3 steps · 8 tools · 2 files modified · 37s ──
   💡 /diff · /commit · /undo
 ```
-Read-heavy sessions (analysis, status checks) suggest `/save · /clear` instead.
+Step counts match between inline `── step N ──` markers and the résumé. Elapsed time is included. Read-heavy sessions (analysis, status checks) suggest `/save · /clear` instead.
+
+When the model runs tools but produces no visible text, an automatic nudge forces it to summarize findings — preventing silent completions where the user sees nothing.
 
 ### Response Quality
 The system prompt enforces substantive responses: the model always presents findings as formatted text after using tools (users only see 1-line tool summaries). Responses use markdown with headers, bullet lists, and code blocks. The model states its approach before non-trivial tasks and summarizes results after completing work.
@@ -204,7 +206,7 @@ The system prompt enforces substantive responses: the model always presents find
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Paste Detection
-Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input instead of firing line-by-line. A `[pasted X lines]` indicator is shown. The paste handler stores the combined text and emits only a single-line trigger to readline, preventing line-by-line submit.
+Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input. A `[Pasted content — N lines]` indicator is shown with a preview of the first line. The user must press Enter to send — pasted content never auto-fires. The paste handler stores the combined text and waits for explicit submission.
 
 ### Ctrl+C Cancellation
 Pressing Ctrl+C during a running request immediately cancels the active HTTP stream and returns to the prompt:
@@ -236,6 +238,7 @@ Automatic token management with compression when the context window gets full. T
 Three tiers of protection:
 - **Forbidden** (blocked): `rm -rf /`, `rm -rf .`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
 - **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
+- **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
 
 ### Sessions
@@ -521,14 +524,19 @@ cli/
 ├── planner.js           # Plan mode + autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
 ├── render.js            # Markdown + syntax highlighting + StreamRenderer + EPIPE guard
-├── diff.js              # LCS diff + colored output + side-by-side view
+├── format.js            # Tool call formatting, result formatting, compact summaries
+├── spinner.js           # Spinner, MultiProgress, TaskProgress display components
+├── diff.js              # LCS diff (Myers + Hirschberg) + colored output + side-by-side view
+├── fuzzy-match.js       # Fuzzy text matching for edit auto-fix (Levenshtein, whitespace normalization)
 ├── file-history.js      # In-session undo/redo for file changes
 ├── picker.js            # Interactive terminal picker (model selection)
 ├── costs.js             # Token cost tracking + per-provider budget limits
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
-├── ui.js                # ANSI colors, spinner, TaskProgress, formatting, compact summaries
+├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
+├── auto-fix.js          # Path resolution, edit matching, bash error hints
+├── tool-retry.js        # Malformed argument retry with schema hints
 └── ollama.js            # Backward-compatible wrapper
 ```
 
@@ -580,7 +588,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-39 test suites, 1270 tests, 85% statement coverage.
+40 test suites, 1334+ tests, 81% statement coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

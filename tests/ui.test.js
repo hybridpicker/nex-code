@@ -244,6 +244,205 @@ describe('ui.js', () => {
     });
   });
 
+  // ─── formatToolSummary ─────────────────────────────────────
+  describe('formatToolSummary()', () => {
+    // Import directly from format.js for full coverage
+    const { formatToolSummary } = require('../cli/format');
+
+    it('shows ✗ icon and error message for errors', () => {
+      const result = formatToolSummary('bash', { command: 'ls' }, 'ERROR: command not found', true);
+      expect(result).toContain('✗');
+      expect(result).toContain('command not found');
+    });
+
+    it('strips ERROR: prefix from error messages', () => {
+      const result = formatToolSummary('bash', {}, 'ERROR: No such file', true);
+      expect(result).toContain('No such file');
+      expect(result).not.toMatch(/ERROR:.*ERROR:/);
+    });
+
+    it('truncates long error messages to 60 chars', () => {
+      const longErr = 'ERROR: ' + 'x'.repeat(200);
+      const result = formatToolSummary('bash', {}, longErr, true);
+      expect(result.length).toBeLessThan(200);
+    });
+
+    it('shows ✓ icon for success', () => {
+      const result = formatToolSummary('bash', { command: 'ls' }, 'file1\nfile2', false);
+      expect(result).toContain('✓');
+    });
+
+    // read_file
+    it('shows file path and line count for read_file', () => {
+      const result = formatToolSummary('read_file', { path: 'src/app.js' }, '1:line1\n2:line2\n3:line3', false);
+      expect(result).toContain('src/app.js');
+      expect(result).toContain('3 lines');
+    });
+
+    it('shows line range for partial read_file', () => {
+      const result = formatToolSummary('read_file', { path: 'big.js', line_start: 10 }, '10:a\n11:b\n12:c\n50:d', false);
+      expect(result).toContain('big.js');
+      expect(result).toContain('lines');
+    });
+
+    // write_file
+    it('shows char count for write_file', () => {
+      const result = formatToolSummary('write_file', { path: 'out.js', content: 'hello world' }, 'ok', false);
+      expect(result).toContain('out.js');
+      expect(result).toContain('11 chars');
+    });
+
+    it('handles write_file with no content', () => {
+      const result = formatToolSummary('write_file', { path: 'empty.js' }, 'ok', false);
+      expect(result).toContain('0 chars');
+    });
+
+    // edit_file
+    it('shows edited for edit_file', () => {
+      const result = formatToolSummary('edit_file', { path: 'src/x.js' }, 'ok', false);
+      expect(result).toContain('src/x.js');
+      expect(result).toContain('edited');
+    });
+
+    // patch_file
+    it('shows patch count for patch_file', () => {
+      const result = formatToolSummary('patch_file', { path: 'a.js', patches: [{}, {}, {}] }, 'ok', false);
+      expect(result).toContain('a.js');
+      expect(result).toContain('3 patches');
+    });
+
+    // bash
+    it('shows ok for successful bash', () => {
+      const result = formatToolSummary('bash', { command: 'npm test' }, 'all tests passed', false);
+      expect(result).toContain('npm test');
+      expect(result).toContain('ok');
+    });
+
+    it('shows exit code for failed bash', () => {
+      const result = formatToolSummary('bash', { command: 'npm test' }, 'EXIT 1\nfailed', false);
+      expect(result).toContain('exit 1');
+    });
+
+    it('truncates long bash commands', () => {
+      const longCmd = 'a'.repeat(100);
+      const result = formatToolSummary('bash', { command: longCmd }, 'ok', false);
+      expect(result).toContain('...');
+    });
+
+    // grep / search_files
+    it('shows match count for grep', () => {
+      const result = formatToolSummary('grep', { pattern: 'TODO' }, 'file1:1:TODO\nfile2:5:TODO', false);
+      expect(result).toContain('TODO');
+      expect(result).toContain('2 matches');
+    });
+
+    it('shows no matches for grep with no results', () => {
+      const result = formatToolSummary('grep', { pattern: 'NOTFOUND' }, '(no matches)', false);
+      expect(result).toContain('no matches');
+    });
+
+    it('shows match count for search_files', () => {
+      const result = formatToolSummary('search_files', { pattern: 'import' }, 'a.js:1:import\nb.js:2:import', false);
+      expect(result).toContain('2 matches');
+    });
+
+    // glob
+    it('shows file count for glob', () => {
+      const result = formatToolSummary('glob', { pattern: '**/*.js' }, 'a.js\nb.js\nc.js', false);
+      expect(result).toContain('3 files');
+    });
+
+    it('shows no matches for empty glob', () => {
+      const result = formatToolSummary('glob', { pattern: '**/*.xyz' }, '(no matches)', false);
+      expect(result).toContain('no matches');
+    });
+
+    // list_directory
+    it('shows entry count for list_directory', () => {
+      const result = formatToolSummary('list_directory', { path: 'src' }, 'app.js\nindex.js\nutils/', false);
+      expect(result).toContain('src');
+      expect(result).toContain('3 entries');
+    });
+
+    it('shows 0 entries for empty directory', () => {
+      const result = formatToolSummary('list_directory', { path: '.' }, '(empty)', false);
+      expect(result).toContain('0 entries');
+    });
+
+    // git tools
+    it('shows branch and change count for git_status', () => {
+      const result = formatToolSummary('git_status', {}, 'Branch: main\n M src/app.js\n?? new.js', false);
+      expect(result).toContain('main');
+      expect(result).toContain('2 changes');
+    });
+
+    it('shows done for git_diff', () => {
+      const result = formatToolSummary('git_diff', {}, '+added\n-removed', false);
+      expect(result).toContain('done');
+    });
+
+    it('shows done for git_log', () => {
+      const result = formatToolSummary('git_log', {}, 'abc123 feat: stuff', false);
+      expect(result).toContain('done');
+    });
+
+    // web tools
+    it('shows URL for web_fetch', () => {
+      const result = formatToolSummary('web_fetch', { url: 'https://example.com/api' }, 'content...', false);
+      expect(result).toContain('example.com');
+      expect(result).toContain('fetched');
+    });
+
+    it('shows query and result count for web_search', () => {
+      const result = formatToolSummary('web_search', { query: 'node.js tutorial' }, 'Result 1\n\nResult 2\n\nResult 3', false);
+      expect(result).toContain('node.js tutorial');
+      expect(result).toContain('3 results');
+    });
+
+    // task_list
+    it('shows action for task_list', () => {
+      const result = formatToolSummary('task_list', { action: 'create' }, 'ok', false);
+      expect(result).toContain('create');
+      expect(result).toContain('done');
+    });
+
+    // spawn_agents
+    it('shows agent count for successful spawn_agents', () => {
+      const result = formatToolSummary('spawn_agents', { agents: [{}, {}, {}] }, '✓ Agent 1\n✓ Agent 2\n✓ Agent 3', false);
+      expect(result).toContain('3 agents');
+      expect(result).toContain('done');
+    });
+
+    it('shows success/fail counts when agents fail', () => {
+      const result = formatToolSummary('spawn_agents', { agents: [{}, {}, {}] }, '✓ Agent 1\n✗ Agent 2\n✓ Agent 3', false);
+      expect(result).toContain('2✓');
+      expect(result).toContain('1✗');
+    });
+
+    it('shows all failed when no agents succeed', () => {
+      const result = formatToolSummary('spawn_agents', { agents: [{}, {}] }, '✗ Agent 1\n✗ Agent 2', false);
+      expect(result).toContain('0✓');
+      expect(result).toContain('2✗');
+    });
+
+    // default
+    it('shows done for unknown tools', () => {
+      const result = formatToolSummary('custom_tool', {}, 'some result', false);
+      expect(result).toContain('done');
+    });
+
+    // edge cases
+    it('handles null/undefined result', () => {
+      const result = formatToolSummary('bash', { command: 'ls' }, null, false);
+      expect(result).toContain('✓');
+    });
+
+    it('handles missing args', () => {
+      const result = formatToolSummary('read_file', {}, '1:test', false);
+      expect(result).toContain('file');
+    });
+  });
+
   // ─── TaskProgress ──────────────────────────────────────────
   describe('TaskProgress', () => {
     let tp;
