@@ -41,7 +41,7 @@ cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 40 Suites, 1394 Tests, 87%+ Coverage
+tests/                   → Jest, 41 Suites, 1564 Tests, 88%+ Stmts / 81%+ Branch Coverage
 ```
 
 ## Commit Message Convention
