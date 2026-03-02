@@ -191,7 +191,14 @@ function formatToolSummary(name, args, result, isError) {
       break;
     case 'spawn_agents': {
       const n = (args.agents || []).length;
-      detail = `${n} agents → done`;
+      // Count successful vs failed agents from result
+      const doneCount = (r.match(/✓ Agent/g) || []).length;
+      const failCount = (r.match(/✗ Agent/g) || []).length;
+      if (failCount > 0) {
+        detail = `${n} agents → ${doneCount}✓ ${failCount}✗`;
+      } else {
+        detail = `${n} agents → done`;
+      }
       break;
     }
     default:
