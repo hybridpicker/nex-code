@@ -22,35 +22,52 @@ const C = {
   brightBlue: '\x1b[94m',
 };
 
+function colorLine(text, rgb) {
+  // Color all visible chars in a line with a single RGB color
+  return [...text].map(ch => {
+    if (ch === ' ') return ch;
+    return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m${ch}`;
+  }).join('') + C.reset;
+}
+
+function lerpColor(stops, t) {
+  const seg = (stops.length - 1) * t;
+  const i = Math.min(Math.floor(seg), stops.length - 2);
+  const f = seg - i;
+  return [
+    Math.round(stops[i][0] + (stops[i + 1][0] - stops[i][0]) * f),
+    Math.round(stops[i][1] + (stops[i + 1][1] - stops[i][1]) * f),
+    Math.round(stops[i][2] + (stops[i + 1][2] - stops[i][2]) * f),
+  ];
+}
+
 function banner(modelName, cwd, opts = {}) {
-  const bc = C.brightCyan;
-  const bm = C.brightMagenta;
-  const bb = C.brightBlue;
   const B = C.bold;
   const d = C.dim;
   const r = C.reset;
 
-  const logo = [
-    `${bb}                    ${bc}⬢${bb} ━━━━━ ${bc}⬢${bb} ━━━━━ ${bm}⬢`,
-    `${bb}              ⣀⠤⠒⠊⠁                     ⠈⠑⠒⠤⣀`,
-    `${bm}        ⬢${bb}⡠⠊         ${bc}╭────────────────╮${bb}         ⠑⢄${bc}⬢`,
-    `${bb}        ⡇           ${bc}│${bb} ───${B}${bc}≫${r}${bc}    ◉─┬─◉  │${bb}           ⢸`,
-    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ◉──┼──◉  │${bb}           ⢸`,
-    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ═══╪════  │${bb}           ⢸`,
-    `${bb}        ⡇           ${bc}│${bb} ──${B}${bc}≫≫${r}${bc}  ◉──┼──◉  │${bb}           ⢸`,
-    `${bb}        ⡇           ${bc}│${bb} ───${B}${bc}≫${r}${bc}    ◉─┴─◉  │${bb}           ⢸`,
-    `${bm}        ⬢${bb}⢄⡀         ${bc}╰────────────────╯${bb}         ⢀⡠${bc}⬢`,
-    `${bb}              ⠈⠑⠒⠤⣀                     ⣀⠤⠒⠑⠁`,
-    `${bb}                    ${bm}⬢${bb} ━━━━━ ${bc}⬢${bb} ━━━━━ ${bm}⬢${r}`,
-  ].join('\n');
+  const raw = [
+    '███╗   ██╗███████╗██╗  ██╗  ━   ██████╗ ██████╗ ██████╗ ███████╗',
+    '████╗  ██║██╔════╝╚██╗██╔╝  ━  ██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+    '██╔██╗ ██║█████╗   ╚███╔╝   ━  ██║     ██║   ██║██║  ██║█████╗',
+    '██║╚██╗██║██╔══╝   ██╔██╗   ━  ██║     ██║   ██║██║  ██║██╔══╝',
+    '██║ ╚████║███████╗██╔╝ ██╗  ━  ╚██████╗╚██████╔╝██████╔╝███████╗',
+    '╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ━   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+  ];
+
+  // Vertical gradient: Ice — White → Cyan → Deep Blue
+  const stops = [[220, 240, 255], [80, 200, 255], [40, 100, 220]];
+  const logo = raw.map((line, i) => {
+    const t = i / (raw.length - 1 || 1);
+    return colorLine(line, lerpColor(stops, t));
+  }).join('\n');
 
   const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
 
   console.log(`
 ${logo}
-                 ${B}${bc}N E X   C O D E${r}  ${d}v0.3.0${r}
-                 ${d}Agentic Coding CLI${r}
-                 ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
+              ${d}Agentic Coding CLI  v0.3.0${r}
+              ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
 `);
 }
 
