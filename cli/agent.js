@@ -311,16 +311,20 @@ ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillIn
 
 # Response Quality (Critical)
 
-The user sees your text AND 1-line tool summaries (e.g. "✓ read_file src/app.js (45 lines)"). They do NOT see raw tool output. This means:
-- After using tools to gather information, you MUST write a text response presenting your findings. Tool calls without a follow-up text response leave the user seeing only cryptic summaries.
+⚠ CRITICAL: The user CANNOT see tool output. They only see your text + 1-line summaries like "✓ bash ssh ... → ok".
+If you run tools but write NO text → the user sees NOTHING useful. This is the #1 quality failure.
+
+MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, grep, ssh commands, etc.), you MUST write a text response summarizing the findings. NEVER end your response with only tool calls and no text.
+
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
 
 Response patterns by request type:
-- **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. This is the most common mistake — gathering info but producing no text.
+- **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. NEVER just run tools and stop.
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: Briefly clarify your interpretation before acting, or ask the user with ask_user.
+- **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
 
