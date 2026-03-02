@@ -1,4 +1,4 @@
-const { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange, showSideBySideDiff } = require('../cli/diff');
+const { diffLines, showEditDiff, showWriteDiff, showNewFilePreview, confirmFileChange, showSideBySideDiff, showClaudeDiff, showClaudeNewFile } = require('../cli/diff');
 const { C } = require('../cli/ui');
 
 // Mock safety module for confirmFileChange
@@ -292,6 +292,281 @@ describe('diff.js', () => {
       // Top separator with ┬ and bottom with ┴
       expect(output).toContain('┬');
       expect(output).toContain('┴');
+    });
+  });
+
+  // ─── diffLines DIFF_LINE_LIMIT fallback (lines 26-28) ────
+  describe('diffLines() DIFF_LINE_LIMIT fallback', () => {
+    it('falls back to simplified diff when old text exceeds 2000 lines', () => {
+      const oldLines = Array.from({ length: 2001 }, (_, i) => `old${i}`);
+      const newLines = ['new1', 'new2'];
+      const ops = diffLines(oldLines.join('\n'), newLines.join('\n'));
+      const removes = ops.filter((op) => op.type === 'remove');
+      const adds = ops.filter((op) => op.type === 'add');
+      expect(removes).toHaveLength(2001);
+      expect(adds).toHaveLength(2);
+      // No 'same' entries in simplified diff
+      expect(ops.filter((op) => op.type === 'same')).toHaveLength(0);
+    });
+
+    it('falls back to simplified diff when new text exceeds 2000 lines', () => {
+      const oldLines = ['old1', 'old2'];
+      const newLines = Array.from({ length: 2001 }, (_, i) => `new${i}`);
+      const ops = diffLines(oldLines.join('\n'), newLines.join('\n'));
+      const removes = ops.filter((op) => op.type === 'remove');
+      const adds = ops.filter((op) => op.type === 'add');
+      expect(removes).toHaveLength(2);
+      expect(adds).toHaveLength(2001);
+    });
+
+    it('falls back to simplified diff when both texts exceed 2000 lines', () => {
+      const oldLines = Array.from({ length: 2500 }, (_, i) => `old${i}`);
+      const newLines = Array.from({ length: 2500 }, (_, i) => `new${i}`);
+      const ops = diffLines(oldLines.join('\n'), newLines.join('\n'));
+      expect(ops).toHaveLength(5000);
+      expect(ops.filter((op) => op.type === 'remove')).toHaveLength(2500);
+      expect(ops.filter((op) => op.type === 'add')).toHaveLength(2500);
+    });
+
+    it('does NOT fall back when texts are exactly at the limit (2000 lines)', () => {
+      const oldLines = Array.from({ length: 2000 }, (_, i) => `line${i}`);
+      // Same content should produce 'same' ops via normal LCS
+      const ops = diffLines(oldLines.join('\n'), oldLines.join('\n'));
+      expect(ops.every((op) => op.type === 'same')).toBe(true);
+      expect(ops).toHaveLength(2000);
+    });
+  });
+
+  // ─── showClaudeDiff (lines 258-342) ──────────────────────
+  describe('showClaudeDiff()', () => {
+    it('shows Update header with relative path', () => {
+      showClaudeDiff('test.js', 'old', 'new');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Update(test.js)');
+    });
+
+    it('shows custom label when provided', () => {
+      showClaudeDiff('test.js', 'old', 'new', { label: 'Replace' });
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Replace(test.js)');
+    });
+
+    it('shows "(no changes)" for identical content', () => {
+      showClaudeDiff('test.js', 'same', 'same');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('no changes');
+    });
+
+    it('shows summary with added and removed line counts', () => {
+      showClaudeDiff('test.js', 'old1\nold2', 'new1\nnew2\nnew3');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Added');
+      expect(output).toContain('removed');
+    });
+
+    it('shows only added count when no removals', () => {
+      showClaudeDiff('test.js', 'line1', 'line1\nline2');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Added 1 line');
+      expect(output).not.toContain('removed');
+    });
+
+    it('shows only removed count when no additions', () => {
+      showClaudeDiff('test.js', 'line1\nline2', 'line1');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('removed 1 line');
+      expect(output).not.toContain('Added');
+    });
+
+    it('uses singular "line" for exactly 1 addition', () => {
+      showClaudeDiff('test.js', 'a', 'a\nb');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Added 1 line');
+      expect(output).not.toContain('lines');
+    });
+
+    it('uses plural "lines" for multiple additions', () => {
+      showClaudeDiff('test.js', 'a', 'a\nb\nc');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Added 2 lines');
+    });
+
+    it('uses singular "line" for exactly 1 removal', () => {
+      showClaudeDiff('test.js', 'a\nb', 'a');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('removed 1 line');
+    });
+
+    it('uses plural "lines" for multiple removals', () => {
+      showClaudeDiff('test.js', 'a\nb\nc', 'a');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('removed 2 lines');
+    });
+
+    it('shows removed lines in red with line numbers', () => {
+      showClaudeDiff('test.js', 'line1\nremoved\nline3', 'line1\nline3');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.red);
+      expect(output).toContain('-');
+    });
+
+    it('shows added lines in green with line numbers', () => {
+      showClaudeDiff('test.js', 'line1\nline3', 'line1\nadded\nline3');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.green);
+      expect(output).toContain('+');
+    });
+
+    it('shows context lines with dim line numbers', () => {
+      const old = 'ctx1\nctx2\nold_line\nctx3\nctx4';
+      const nw = 'ctx1\nctx2\nnew_line\nctx3\nctx4';
+      showClaudeDiff('test.js', old, nw, { context: 2 });
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.dim);
+      expect(output).toContain('ctx2');
+      expect(output).toContain('ctx3');
+    });
+
+    it('shows hunk separators (···) between distant changes', () => {
+      // Create two changes separated by many context lines
+      const lines = Array.from({ length: 20 }, (_, i) => `same${i}`);
+      const old = ['change_old_1', ...lines, 'change_old_2'].join('\n');
+      const nw = ['change_new_1', ...lines, 'change_new_2'].join('\n');
+      showClaudeDiff('test.js', old, nw, { context: 2 });
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('···');
+    });
+
+    it('merges hunks when changes are close together', () => {
+      const old = 'a\nold1\nb\nc\nold2\nd';
+      const nw = 'a\nnew1\nb\nc\nnew2\nd';
+      showClaudeDiff('test.js', old, nw, { context: 3 });
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      // Changes are within context range so no separator
+      expect(output).not.toContain('···');
+    });
+
+    it('converts absolute path to relative path', () => {
+      const absPath = process.cwd() + '/src/test.js';
+      showClaudeDiff(absPath, 'old', 'new');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('src/test.js');
+      expect(output).not.toContain(process.cwd());
+    });
+
+    it('keeps relative paths as-is', () => {
+      showClaudeDiff('src/test.js', 'old', 'new');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('src/test.js');
+    });
+
+    it('assigns correct line numbers to ops', () => {
+      // old: line1, line2 (remove), line3
+      // new: line1, lineX (add), line3
+      showClaudeDiff('test.js', 'line1\nline2\nline3', 'line1\nlineX\nline3');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      // Line numbers should appear padded
+      expect(output).toContain('2');
+    });
+
+    it('uses default context of 3 when not specified', () => {
+      const lines = Array.from({ length: 15 }, (_, i) => `same${i}`);
+      const old = [...lines.slice(0, 7), 'old_line', ...lines.slice(7)].join('\n');
+      const nw = [...lines.slice(0, 7), 'new_line', ...lines.slice(7)].join('\n');
+      showClaudeDiff('test.js', old, nw);
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      // Should show 3 context lines around change
+      expect(output).toContain('same4');  // 3 lines before change at index 7
+      expect(output).toContain('same7');  // 3 lines after change
+    });
+
+    it('uses default label "Update" when not specified', () => {
+      showClaudeDiff('test.js', 'old', 'new', {});
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Update(test.js)');
+    });
+
+    it('shows the header icon', () => {
+      showClaudeDiff('test.js', 'old', 'new');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.cyan);
+    });
+  });
+
+  // ─── showClaudeNewFile (lines 347-364) ────────────────────
+  describe('showClaudeNewFile()', () => {
+    it('shows Create header with relative path', () => {
+      showClaudeNewFile('test.js', 'content');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Create(test.js)');
+    });
+
+    it('shows line count for single line', () => {
+      showClaudeNewFile('test.js', 'single line');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('1 line');
+      expect(output).not.toContain('1 lines');
+    });
+
+    it('shows line count for multiple lines', () => {
+      showClaudeNewFile('test.js', 'line1\nline2\nline3');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('3 lines');
+    });
+
+    it('shows first 20 lines with line numbers in green', () => {
+      const lines = Array.from({ length: 10 }, (_, i) => `line${i + 1}`);
+      showClaudeNewFile('test.js', lines.join('\n'));
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.green);
+      expect(output).toContain('line1');
+      expect(output).toContain('line10');
+    });
+
+    it('truncates content beyond 20 lines and shows count', () => {
+      const lines = Array.from({ length: 30 }, (_, i) => `line${i + 1}`);
+      showClaudeNewFile('test.js', lines.join('\n'));
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('+10 more lines');
+      // Lines 1-20 should be shown
+      expect(output).toContain('line1');
+      expect(output).toContain('line20');
+      // Line 21+ should not appear as content
+    });
+
+    it('does not show truncation message for exactly 20 lines', () => {
+      const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`);
+      showClaudeNewFile('test.js', lines.join('\n'));
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).not.toContain('more lines');
+    });
+
+    it('converts absolute path to relative path', () => {
+      const absPath = process.cwd() + '/src/new.js';
+      showClaudeNewFile(absPath, 'content');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Create(src/new.js)');
+      expect(output).not.toContain(process.cwd());
+    });
+
+    it('keeps relative paths as-is', () => {
+      showClaudeNewFile('src/new.js', 'content');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain('Create(src/new.js)');
+    });
+
+    it('shows line numbers padded to 4 characters', () => {
+      showClaudeNewFile('test.js', 'line1\nline2');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      // Line numbers should be padded: "   1" and "   2"
+      expect(output).toContain('   1');
+      expect(output).toContain('   2');
+    });
+
+    it('shows the header icon', () => {
+      showClaudeNewFile('test.js', 'content');
+      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+      expect(output).toContain(C.cyan);
     });
   });
 });
