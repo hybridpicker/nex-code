@@ -165,7 +165,8 @@ async function executeSingleTool(prep, quiet = false) {
   runHooks('post-tool', { tool_name: prep.fnName });
 
   const firstLine = truncated.split('\n')[0];
-  const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED');
+  const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED')
+    || (prep.fnName === 'spawn_agents' && !/✓ Agent/.test(truncated) && /✗ Agent/.test(truncated));
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
   const msg = { role: 'tool', content: truncated, tool_call_id: prep.callId };
   return { msg, summary };
@@ -698,8 +699,8 @@ async function processInput(userInput) {
     }
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
-    printStepIfNeeded();
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
+    if (!batchOpts.skipSummaries) printStepIfNeeded();
     const toolMessages = await executeBatch(prepared, true, batchOpts);
 
     // Track modified and read files
