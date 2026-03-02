@@ -51,9 +51,8 @@ describe('ui.js', () => {
       spinner.start();
       spinner.stop();
       expect(spinner.interval).toBeNull();
-      // Should write clear line + show cursor to stderr
-      expect(writeSpy).toHaveBeenCalledWith('\x1b[2K\r');
-      expect(writeSpy).toHaveBeenCalledWith('\x1b[?25h');
+      // Should write single combined clear line + show cursor to stderr
+      expect(writeSpy).toHaveBeenCalledWith('\x1b[2K\r\x1b[?25h');
       writeSpy.mockRestore();
     });
 

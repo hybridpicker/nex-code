@@ -221,12 +221,26 @@ function getFallbackChain() {
 // ─── Streaming Call (convenience) ──────────────────────────────
 
 /**
- * Check if an error is retryable (rate limit or server error).
+ * Check if an error is retryable (rate limit, server error, or network failure).
  */
 function isRetryableError(err) {
   const msg = err.message || '';
-  return msg.includes('429') || msg.includes('500') || msg.includes('502') ||
-         msg.includes('503') || msg.includes('504');
+  const code = err.code || '';
+
+  // HTTP status errors
+  if (msg.includes('429') || msg.includes('500') || msg.includes('502') ||
+      msg.includes('503') || msg.includes('504')) return true;
+
+  // Network/TLS/socket errors — transient, retryable
+  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' ||
+      code === 'ECONNRESET' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH' ||
+      code === 'EPIPE' || code === 'ERR_SOCKET_CONNECTION_TIMEOUT') return true;
+
+  if (msg.includes('socket disconnected') || msg.includes('TLS') ||
+      msg.includes('ECONNRESET') || msg.includes('ECONNABORTED') ||
+      msg.includes('network') || msg.includes('ETIMEDOUT')) return true;
+
+  return false;
 }
 
 /**
