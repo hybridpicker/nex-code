@@ -510,11 +510,11 @@ async function processInput(userInput) {
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
 
-    // Step indicator — deferred until actual output appears
-    let stepPrinted = (i === 0);
+    // Step indicator — deferred, only shown for tool iterations (matches résumé count)
+    let stepPrinted = true; // default: no marker (text-only iterations stay silent)
     function printStepIfNeeded() {
       if (!stepPrinted) {
-        console.log(`${C.dim}  ── step ${i + 1} ──${C.reset}`);
+        console.log(`${C.dim}  ── step ${totalSteps} ──${C.reset}`);
         stepPrinted = true;
       }
     }
@@ -524,7 +524,7 @@ async function processInput(userInput) {
       // Resume the live task display instead of a plain spinner
       if (taskProgress._paused) taskProgress.resume();
     } else if (!taskProgress) {
-      const spinnerText = i > 0 ? `Thinking... (step ${i + 1})` : 'Thinking...';
+      const spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
       spinner = new Spinner(spinnerText);
       spinner.start();
     }
@@ -687,6 +687,7 @@ async function processInput(userInput) {
 
     // ─── Update stats ───
     totalSteps++;
+    if (totalSteps > 1) stepPrinted = false; // enable deferred step marker for steps 2+
     for (const tc of tool_calls) {
       const name = tc.function.name;
       toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
