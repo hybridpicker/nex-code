@@ -87,12 +87,24 @@ class MultiProgress {
     this.statuses = labels.map(() => 'running'); // 'running' | 'done' | 'error'
     this.frame = 0;
     this.interval = null;
+    this.startTime = null;
     this.lineCount = labels.length;
+  }
+
+  _formatElapsed() {
+    if (!this.startTime) return '';
+    const totalSecs = Math.floor((Date.now() - this.startTime) / 1000);
+    if (totalSecs < 1) return '';
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return mins > 0 ? `${mins}m ${String(secs).padStart(2, '0')}s` : `${secs}s`;
   }
 
   _render() {
     if (this._stopped) return;
     const f = MULTI_FRAMES[this.frame % MULTI_FRAMES.length];
+    const elapsed = this._formatElapsed();
+    const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : '';
     let buf = '';
 
     for (let i = 0; i < this.labels.length; i++) {
@@ -110,7 +122,9 @@ class MultiProgress {
           icon = `${C.cyan}${f}${C.reset}`;
           color = '';
       }
-      buf += `\x1b[2K  ${icon} ${color}${this.labels[i]}${C.reset}\n`;
+      // Show elapsed on last line only
+      const suffix = (i === this.labels.length - 1) ? elapsedStr : '';
+      buf += `\x1b[2K  ${icon} ${color}${this.labels[i]}${C.reset}${suffix}\n`;
     }
 
     // Move cursor back up to start of our block
@@ -124,6 +138,7 @@ class MultiProgress {
 
   start() {
     this._stopped = false;
+    this.startTime = Date.now();
     // Single buffered write: hide cursor + reserve lines + move back up
     let buf = '\x1b[?25l';
     for (let i = 0; i < this.lineCount; i++) buf += '\n';
@@ -155,6 +170,8 @@ class MultiProgress {
   }
 
   _renderFinal() {
+    const elapsed = this._formatElapsed();
+    const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : '';
     let buf = '';
     for (let i = 0; i < this.labels.length; i++) {
       let icon;
@@ -168,7 +185,8 @@ class MultiProgress {
         default:
           icon = `${C.yellow}○${C.reset}`;
       }
-      buf += `\x1b[2K  ${icon} ${C.dim}${this.labels[i]}${C.reset}\n`;
+      const suffix = (i === this.labels.length - 1) ? elapsedStr : '';
+      buf += `\x1b[2K  ${icon} ${C.dim}${this.labels[i]}${C.reset}${suffix}\n`;
     }
     process.stderr.write(buf);
   }

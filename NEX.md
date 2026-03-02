@@ -41,7 +41,7 @@ cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 39 Suites, 1264 Tests, 87%+ Coverage
+tests/                   → Jest, 40 Suites, 1394 Tests, 87%+ Coverage
 ```
 
 ## Commit Message Convention
@@ -90,7 +90,8 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 
 - Provider-Abstraction: Jeder Provider implementiert `chat()`, `stream()`, `isConfigured()`
 - `registry.js` verwaltet aktiven Provider + Model, resolving von Model-Specs
-- `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming
+- `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming, Spinner bei Rate-Limit/Network-Retry-Waits
+- `callChat()` hat Stream-Fallback: bei chat-Fehler wird `provider.stream()` mit no-op onToken versucht
 - Streaming-Output wird durch `renderMarkdown()` gepiped (rich terminal rendering)
 - `ollama.js` ist Backward-compatible Wrapper (delegiert an Registry)
 - 17 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents
@@ -112,9 +113,11 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Auto-Fix: Path-Resolution (extension swap, basename glob, double-slash fix), Edit Auto-Fix (≤5% distance auto-apply), Bash Error Hints (command not found, MODULE_NOT_FOUND, port in use, etc.)
 - Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider, getModelTier() für beliebige Models, overrideTier in filterToolsForModel()
 - Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display, onChange-Callbacks für Live-Display-Integration
-- TaskProgress: Live animated multi-line display (✔/◼/◻/✗), Spinner-Header mit elapsed/tokens, pause/resume für sauberes Text-Streaming, koordiniert mit Spinner-System in agent.js
-- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, Multi-Model-Routing (classifyTask → pickModelForTier → resolveSubAgentModel)
-- Sub-Agent Routing: Keyword-basierte Task-Klassifizierung (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM kann mit `model: "provider:model"` überschreiben
+- TaskProgress: Live animated multi-line display (✔/◼/◻/✗), Spinner-Header mit elapsed/tokens, pause/resume für sauberes Text-Streaming, auto-resume vor Tool-Execution
+- MultiProgress: Elapsed-Timer auf letzter Zeile, Spinner pro Agent-Zeile, Batch-Spinner wird vor spawn_agents gestoppt
+- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, callStream-basiert (stream:true für Zuverlässigkeit), Retry mit Exponential Backoff (max 3 Retries)
+- Sub-Agent Routing: Immer aktives Model, Keyword-basierte Task-Klassifizierung nur für Tool-Tier-Filterung (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM-halluzinierte Model-Namen werden ignoriert
+- Sub-Agent Defensive: Argument-Normalisierung (task/prompt/description/name Fallback), Model-Stripping (verhindert 404 durch halluzinierte Modelle wie "llama3"), Null-Response-Guard, Skip 'local' Provider
 - Local Provider: Dynamische Context-Window-Erkennung via /api/show
 - File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
 - Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()

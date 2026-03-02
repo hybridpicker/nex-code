@@ -3,7 +3,7 @@
  * Spawns parallel sub-agents with their own conversation contexts.
  */
 
-const { callChat, getActiveProviderName, getActiveModelId, getConfiguredProviders, getProvider, getActiveProvider, parseModelSpec } = require('./providers/registry');
+const { callStream, getActiveProviderName, getActiveModelId, getConfiguredProviders, getProvider, getActiveProvider, parseModelSpec } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { filterToolsForModel, getModelTier } = require('./tool-tiers');
 const { trackUsage } = require('./costs');
@@ -11,6 +11,7 @@ const { MultiProgress, C } = require('./ui');
 
 const MAX_SUB_ITERATIONS = 15;
 const MAX_PARALLEL_AGENTS = 5;
+const MAX_CHAT_RETRIES = 3;
 
 // ─── File Locking ─────────────────────────────────────────────
 // Map<filePath, agentId> — allows same agent to re-lock its own files
@@ -29,6 +30,42 @@ function releaseLock(filePath) {
 
 function clearAllLocks() {
   lockedFiles.clear();
+}
+
+// ─── Retry Logic ─────────────────────────────────────────────
+
+function isRetryableError(err) {
+  const msg = err.message || '';
+  const code = err.code || '';
+  // Rate limit
+  if (msg.includes('429')) return true;
+  // Server errors
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return true;
+  // Network errors
+  if (code === 'ECONNRESET' || code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED') return true;
+  if (msg.includes('socket disconnected') || msg.includes('TLS') || msg.includes('ECONNRESET')) return true;
+  if (msg.includes('fetch failed') || msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND')) return true;
+  return false;
+}
+
+async function callWithRetry(messages, tools, options) {
+  let lastError;
+  for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
+    try {
+      // Use callStream (stream:true) — more reliable than callChat (stream:false)
+      // with Ollama Cloud. Silently collect the full response via no-op onToken.
+      return await callStream(messages, tools, { ...options, onToken: () => {} });
+    } catch (err) {
+      lastError = err;
+      if (attempt < MAX_CHAT_RETRIES && isRetryableError(err)) {
+        const delay = Math.min(2000 * Math.pow(2, attempt), 15000);
+        await new Promise(r => setTimeout(r, delay).unref());
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 // Tools that sub-agents should NOT have access to
@@ -55,7 +92,8 @@ function classifyTask(taskDesc) {
 
 /**
  * Pick the best available model at a target tier.
- * Prefers the active provider, then falls back to others.
+ * Strongly prefers the active provider — only uses others if active has no match.
+ * Skips the 'local' provider unless it is the active provider (local may not be running).
  * @param {string} targetTier
  * @returns {{ provider: string, model: string }|null}
  */
@@ -63,17 +101,26 @@ function pickModelForTier(targetTier) {
   const configured = getConfiguredProviders();
   const activeProv = getActiveProviderName();
 
-  const sorted = [...configured].sort((a, b) =>
-    (a.name === activeProv ? -1 : 1) - (b.name === activeProv ? -1 : 1)
-  );
+  // First pass: only the active provider
+  const activeEntry = configured.find(p => p.name === activeProv);
+  if (activeEntry) {
+    for (const m of activeEntry.models) {
+      if (getModelTier(m.id, activeEntry.name) === targetTier) {
+        return { provider: activeEntry.name, model: m.id };
+      }
+    }
+  }
 
-  for (const p of sorted) {
+  // Second pass: other providers (skip 'local' — it claims isConfigured but may not be running)
+  for (const p of configured) {
+    if (p.name === activeProv || p.name === 'local') continue;
     for (const m of p.models) {
       if (getModelTier(m.id, p.name) === targetTier) {
         return { provider: p.name, model: m.id };
       }
     }
   }
+
   return null;
 }
 
@@ -95,15 +142,17 @@ function resolveSubAgentModel(agentDef) {
     // Invalid spec → fall through to auto-routing
   }
 
-  // Auto-routing: classify task → pick model at matching tier
+  // Auto-routing: always use the active model (most reliable for tool calling)
+  // but apply the task's complexity tier for tool filtering (simpler tasks get fewer tools)
   const targetTier = classifyTask(agentDef.task);
-  const pick = pickModelForTier(targetTier);
-  if (pick) {
-    const tier = getModelTier(pick.model, pick.provider);
-    return { provider: pick.provider, model: pick.model, tier };
+  const activeProviderName = getActiveProviderName();
+  const activeModel = getActiveModelId();
+
+  if (activeProviderName && activeModel) {
+    return { provider: activeProviderName, model: activeModel, tier: targetTier };
   }
 
-  // Ultimate fallback: use global active model
+  // Ultimate fallback: use global defaults
   return { provider: null, model: null, tier: null };
 }
 
@@ -161,17 +210,21 @@ ERROR RECOVERY:
     agentTier
   );
 
-  // Build callChat options for provider/model routing
+  // Build options for streaming call (callStream uses active provider automatically)
   const chatOptions = {};
-  if (agentProvider) chatOptions.provider = agentProvider;
   if (agentModel) chatOptions.model = agentModel;
 
   try {
     for (let i = 0; i < maxIter; i++) {
-      const result = await callChat(messages, availableTools, chatOptions);
+      const result = await callWithRetry(messages, availableTools, chatOptions);
+
+      // Guard against null/undefined responses
+      if (!result || typeof result !== 'object') {
+        throw new Error('Empty or invalid response from provider');
+      }
 
       // Track tokens
-      if (result && result.usage) {
+      if (result.usage) {
         const inputT = result.usage.prompt_tokens || 0;
         const outputT = result.usage.completion_tokens || 0;
         tokensUsed.input += inputT;
@@ -181,7 +234,8 @@ ERROR RECOVERY:
         trackUsage(trackProvider, trackModel, inputT, outputT);
       }
 
-      const { content, tool_calls } = result;
+      const content = result.content || '';
+      const tool_calls = result.tool_calls;
 
       // Build assistant message
       const assistantMsg = { role: 'assistant', content: content || '' };
@@ -291,14 +345,27 @@ ERROR RECOVERY:
  * @returns {string} Formatted results for the parent LLM
  */
 async function executeSpawnAgents(args) {
-  const agents = args.agents || [];
+  // Normalize: LLMs may use "prompt"/"description"/"name" instead of "task"
+  // Strip "model" — LLMs hallucinate model names (e.g. "llama3") that cause 404s.
+  // Sub-agents always use the active model.
+  const agents = (args.agents || []).map(a => {
+    const agent = {
+      ...a,
+      task: a.task || a.prompt || a.description || a.name || '(no task)',
+    };
+    delete agent.model;
+    return agent;
+  });
 
   if (agents.length === 0) return 'ERROR: No agents specified';
   if (agents.length > MAX_PARALLEL_AGENTS) {
     return `ERROR: Max ${MAX_PARALLEL_AGENTS} parallel agents allowed, got ${agents.length}`;
   }
 
-  const labels = agents.map((a, i) => `Agent ${i + 1}: ${a.task.substring(0, 50)}${a.task.length > 50 ? '...' : ''}`);
+  const labels = agents.map((a, i) => {
+    const task = String(a.task || '');
+    return `Agent ${i + 1}: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`;
+  });
   const progress = new MultiProgress(labels);
   progress.start();
 
@@ -355,4 +422,4 @@ async function executeSpawnAgents(args) {
   }
 }
 
-module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel };
+module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry };
