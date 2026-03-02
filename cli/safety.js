@@ -46,6 +46,36 @@ const FORBIDDEN_PATTERNS = [
   /curl.*--data/,
 ];
 
+// Read-only SSH patterns that are safe (no confirmation needed)
+const SSH_SAFE_PATTERNS = [
+  /systemctl\s+(status|is-active|is-enabled|list-units|show)/,
+  /journalctl\b/,
+  /\btail\s/,
+  /\bcat\s/,
+  /\bhead\s/,
+  /\bls\b/,
+  /\bfind\s/,
+  /\bgrep\s/,
+  /\bwc\s/,
+  /\bdf\b/,
+  /\bfree\b/,
+  /\buptime\b/,
+  /\bwho\b/,
+  /\bps\s/,
+  /\bgit\s+(status|log|diff|branch)\b/,
+  /\bgit\s+pull\b/,
+];
+
+function isSSHReadOnly(command) {
+  // Extract the remote command from ssh ... "remote command"
+  const remoteCmd = command.match(/ssh\s+[^"]*"([^"]+)"/)?.[1] ||
+                    command.match(/ssh\s+[^']*'([^']+)'/)?.[1];
+  if (!remoteCmd) return false;
+  // Strip sudo prefix for safety check
+  const cleaned = remoteCmd.replace(/^sudo\s+/, '');
+  return SSH_SAFE_PATTERNS.some(pat => pat.test(cleaned));
+}
+
 const DANGEROUS_BASH = [
   /git\s+push/,
   /npm\s+publish/,
@@ -85,6 +115,8 @@ function isForbidden(command) {
 }
 
 function isDangerous(command) {
+  // SSH read-only commands are safe — skip confirmation
+  if (/ssh\s/.test(command) && isSSHReadOnly(command)) return false;
   for (const pat of DANGEROUS_BASH) {
     if (pat.test(command)) return true;
   }
@@ -128,6 +160,8 @@ function setAllowAlwaysHandler(fn) { _onAllowAlways = fn; }
 
 module.exports = {
   FORBIDDEN_PATTERNS,
+  SSH_SAFE_PATTERNS,
+  isSSHReadOnly,
   DANGEROUS_BASH,
   isForbidden,
   isDangerous,
