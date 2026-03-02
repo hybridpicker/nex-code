@@ -466,8 +466,17 @@ function formatToolSummary(name, args, result, isError) {
   let detail;
   switch (name) {
     case 'read_file': {
-      const lines = r.split('\n').filter(Boolean).length;
-      detail = `${args.path || 'file'} (${lines} lines)`;
+      const resultLines = r.split('\n').filter(Boolean);
+      const count = resultLines.length;
+      // Detect partial reads: last line number tells us total file size
+      const lastLine = resultLines[resultLines.length - 1];
+      const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
+      const isPartial = args.line_start || args.line_end;
+      if (isPartial && lastLineNum > count) {
+        detail = `${args.path || 'file'} (lines ${args.line_start || 1}-${lastLineNum})`;
+      } else {
+        detail = `${args.path || 'file'} (${count} lines)`;
+      }
       break;
     }
     case 'write_file': {
@@ -486,9 +495,10 @@ function formatToolSummary(name, args, result, isError) {
     case 'bash': {
       const cmd = (args.command || '').substring(0, 40);
       const suffix = (args.command || '').length > 40 ? '...' : '';
-      if (r.includes('EXIT')) {
-        const code = (r.match(/EXIT (\d+)/) || [])[1] || '?';
-        detail = `${cmd}${suffix} → exit ${code}`;
+      // Only match EXIT at the very start of the output (our error format)
+      const exitMatch = r.match(/^EXIT (\d+)/);
+      if (exitMatch) {
+        detail = `${cmd}${suffix} → exit ${exitMatch[1]}`;
       } else {
         detail = `${cmd}${suffix} → ok`;
       }
