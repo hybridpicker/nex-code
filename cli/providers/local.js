@@ -140,9 +140,11 @@ class LocalProvider extends BaseProvider {
         {
           timeout: options.timeout || this.timeout,
           responseType: 'stream',
+          signal: options.signal,
         }
       );
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
       const msg = err.response?.data?.error || err.message;
       throw new Error(`API Error: ${msg}`);
     }
@@ -164,6 +166,15 @@ class LocalProvider extends BaseProvider {
           reject(new Error('Stream stalled: no data received for 60s'));
         }, CHUNK_TIMEOUT);
       };
+
+      // Abort listener: destroy stream on signal
+      if (options.signal) {
+        options.signal.addEventListener('abort', () => {
+          clearTimeout(chunkTimer);
+          response.data.destroy();
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        }, { once: true });
+      }
 
       response.data.on('data', (chunk) => {
         resetChunkTimer();

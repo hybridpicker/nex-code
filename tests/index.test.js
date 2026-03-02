@@ -8,6 +8,7 @@ jest.mock('../cli/agent', () => ({
   getConversationLength: jest.fn().mockReturnValue(0),
   getConversationMessages: jest.fn().mockReturnValue([]),
   setConversationMessages: jest.fn(),
+  setAbortSignalGetter: jest.fn(),
 }));
 
 jest.mock('../cli/ollama', () => ({
@@ -350,6 +351,7 @@ describe('index.js (REPL commands)', () => {
         getConversationLength: jest.fn().mockReturnValue(0),
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
+        setAbortSignalGetter: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -455,6 +457,7 @@ describe('index.js (REPL commands)', () => {
         getConversationLength: jest.fn().mockReturnValue(0),
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
+        setAbortSignalGetter: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -588,6 +591,7 @@ describe('index.js (REPL commands)', () => {
           { role: 'assistant', content: 'reply' },
         ]),
         setConversationMessages: jest.fn(),
+        setAbortSignalGetter: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -1439,6 +1443,7 @@ describe('index.js (REPL commands)', () => {
         getConversationLength: jest.fn().mockReturnValue(0),
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
+        setAbortSignalGetter: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({ getUsage: jest.fn() }));
       jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));

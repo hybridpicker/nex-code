@@ -256,7 +256,7 @@ async function callStream(messages, tools, options = {}) {
     }
 
     try {
-      return await provider.stream(messages, tools, { model: activeModelId, ...options });
+      return await provider.stream(messages, tools, { model: activeModelId, signal: options.signal, ...options });
     } catch (err) {
       lastError = err;
       if (isRetryableError(err) && idx < providersToTry.length - 1) {
