@@ -35,6 +35,7 @@ const PARALLEL_SAFE = new Set([
   'web_fetch', 'web_search', 'git_status', 'git_diff', 'git_log',
 ]);
 const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_NETWORK_RETRIES = 3;
 const CWD = process.cwd();
 
 // Wire up "a" (always allow) from confirm dialog → permission system
@@ -483,6 +484,7 @@ async function processInput(userInput) {
   // Use fitted messages for the API call, but keep fullMessages reference for appending
   let apiMessages = fittedMessages;
   let rateLimitRetries = 0;
+  let networkRetries = 0;
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -563,6 +565,29 @@ async function processInput(userInput) {
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
+
+      // Network/TLS errors — retry with backoff (don't burn iterations)
+      const isNetworkError = err.message.includes('socket disconnected') ||
+        err.message.includes('TLS') || err.message.includes('ECONNRESET') ||
+        err.message.includes('ECONNABORTED') || err.message.includes('ETIMEDOUT') ||
+        err.code === 'ECONNRESET' || err.code === 'ECONNABORTED';
+      if (isNetworkError) {
+        networkRetries++;
+        if (networkRetries > MAX_NETWORK_RETRIES) {
+          console.log(`${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead);
+          autoSave(conversationMessages);
+          break;
+        }
+        const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
+        console.log(`${C.yellow}  Network error — waiting ${Math.round(delay / 1000)}s (retry ${networkRetries}/${MAX_NETWORK_RETRIES})...${C.reset}`);
+        await new Promise((r) => setTimeout(r, delay));
+        iteration--; // Don't count network errors as iterations
+        continue;
+      }
+
       // Auto-save on error so conversation isn't lost
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
@@ -575,6 +600,9 @@ async function processInput(userInput) {
       if (taskProgress && !taskProgress._paused) taskProgress.pause();
       if (spinner) spinner.stop();
     }
+
+    // Reset network retry counter on success
+    networkRetries = 0;
 
     // Flush remaining stream buffer
     if (streamedText) {
