@@ -25,6 +25,10 @@ const { getConfiguredProviders } = require('./providers/registry');
 
 const MAX_ITERATIONS = 30;
 
+// Abort signal getter — set by cli/index.js to avoid circular dependency
+let _getAbortSignal = () => null;
+function setAbortSignalGetter(fn) { _getAbortSignal = fn; }
+
 // Tools that can safely run in parallel (read-only, no side effects)
 const PARALLEL_SAFE = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
@@ -487,6 +491,10 @@ async function processInput(userInput) {
   const filesRead = new Set();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    // Check if aborted (Ctrl+C) at start of each iteration
+    const loopSignal = _getAbortSignal();
+    if (loopSignal?.aborted) break;
+
     // Step indicator for multi-step tasks
     if (i > 0) {
       console.log(`${C.dim}  ⟳ step ${i + 1}${C.reset}`);
@@ -508,7 +516,9 @@ async function processInput(userInput) {
     let result;
     try {
       const allTools = filterToolsForModel([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
+      const signal = _getAbortSignal();
       result = await callStream(apiMessages, allTools, {
+        signal,
         onToken: (text) => {
           if (firstToken) {
             if (taskProgress && !taskProgress._paused) {
@@ -525,6 +535,17 @@ async function processInput(userInput) {
     } catch (err) {
       if (taskProgress && !taskProgress._paused) taskProgress.pause();
       if (spinner) spinner.stop();
+
+      // Abort errors (Ctrl+C) — break silently
+      if (err.name === 'AbortError' || err.name === 'CanceledError' ||
+          err.message?.includes('canceled') || err.message?.includes('aborted')) {
+        if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+        setOnChange(null);
+        _printResume(totalSteps, toolCounts, filesModified, filesRead);
+        autoSave(conversationMessages);
+        break;
+      }
+
       console.log(`${C.red}${err.message}${C.reset}`);
 
       if (err.message.includes('429')) {
@@ -636,4 +657,4 @@ async function processInput(userInput) {
   console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached.${C.reset}`);
 }
 
-module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages };
+module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter };

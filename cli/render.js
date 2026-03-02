@@ -332,6 +332,11 @@ class StreamRenderer {
     this.lineCount = 0;
   }
 
+  /** Write to stdout, silently ignoring EPIPE errors after abort */
+  _safeWrite(data) {
+    try { process.stdout.write(data); } catch (e) { if (e.code !== 'EPIPE') throw e; }
+  }
+
   /**
    * Push a token chunk into the stream renderer.
    * Renders complete lines immediately; buffers partial lines.
@@ -359,7 +364,7 @@ class StreamRenderer {
     }
     // Reset state
     if (this.inCodeBlock) {
-      process.stdout.write(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
+      this._safeWrite(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
       this.inCodeBlock = false;
       this.codeBlockLang = '';
     }
@@ -369,34 +374,34 @@ class StreamRenderer {
     // Code block toggle
     if (line.trim().startsWith('```')) {
       if (this.inCodeBlock) {
-        process.stdout.write(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
+        this._safeWrite(`${C.dim}${'─'.repeat(40)}${C.reset}\n`);
         this.inCodeBlock = false;
         this.codeBlockLang = '';
       } else {
         this.inCodeBlock = true;
         this.codeBlockLang = line.trim().substring(3).trim();
         const label = this.codeBlockLang ? ` ${this.codeBlockLang} ` : '';
-        process.stdout.write(`${C.dim}${'─'.repeat(3)}${label}${'─'.repeat(Math.max(0, 37 - label.length))}${C.reset}\n`);
+        this._safeWrite(`${C.dim}${'─'.repeat(3)}${label}${'─'.repeat(Math.max(0, 37 - label.length))}${C.reset}\n`);
       }
       return;
     }
 
     if (this.inCodeBlock) {
-      process.stdout.write(`  ${highlightCode(line, this.codeBlockLang)}\n`);
+      this._safeWrite(`  ${highlightCode(line, this.codeBlockLang)}\n`);
       return;
     }
 
     // Headers
     if (line.startsWith('### ')) {
-      process.stdout.write(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}\n`);
       return;
     }
     if (line.startsWith('## ')) {
-      process.stdout.write(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}\n`);
       return;
     }
     if (line.startsWith('# ')) {
-      process.stdout.write(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}\n`);
       return;
     }
 
@@ -404,7 +409,7 @@ class StreamRenderer {
     if (/^\s*[-*]\s/.test(line)) {
       const indent = line.match(/^(\s*)/)[1];
       const content = line.replace(/^\s*[-*]\s/, '');
-      process.stdout.write(`${indent}${C.cyan}•${C.reset} ${renderInline(content)}\n`);
+      this._safeWrite(`${indent}${C.cyan}•${C.reset} ${renderInline(content)}\n`);
       return;
     }
 
@@ -412,13 +417,13 @@ class StreamRenderer {
     if (/^\s*\d+\.\s/.test(line)) {
       const match = line.match(/^(\s*)(\d+)\.\s(.*)/);
       if (match) {
-        process.stdout.write(`${match[1]}${C.cyan}${match[2]}.${C.reset} ${renderInline(match[3])}\n`);
+        this._safeWrite(`${match[1]}${C.cyan}${match[2]}.${C.reset} ${renderInline(match[3])}\n`);
         return;
       }
     }
 
     // Regular line
-    process.stdout.write(`${renderInline(line)}\n`);
+    this._safeWrite(`${renderInline(line)}\n`);
   }
 }
 

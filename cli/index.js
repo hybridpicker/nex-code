@@ -6,7 +6,7 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { C, banner, cleanupTerminal } = require('./ui');
-const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages } = require('./agent');
+const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter } = require('./agent');
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
 const { printContext } = require('./context');
@@ -30,6 +30,13 @@ const { loadAllSkills, listSkills, enableSkill, disableSkill, getSkillCommands, 
 const { showModelPicker } = require('./picker');
 
 const CWD = process.cwd();
+
+// ─── Abort Controller (for Ctrl+C cancellation) ─────────────
+let _abortController = null;
+
+function getAbortSignal() {
+  return _abortController?.signal ?? null;
+}
 
 // ─── Slash Command Registry ──────────────────────────────────
 const SLASH_COMMANDS = [
@@ -891,6 +898,9 @@ function stripPasteSequences(data) {
 }
 
 function startREPL() {
+  // Wire abort signal into agent.js (avoids circular dependency)
+  setAbortSignalGetter(getAbortSignal);
+
   // Check that at least one provider is configured
   const providerList = listProviders();
   const hasConfigured = providerList.some((p) => p.configured);
@@ -954,9 +964,11 @@ function startREPL() {
         console.log(`\n${C.gray}Bye!${C.reset}`);
         process.exit(0);
       }
+      // Abort the running HTTP stream
+      if (_abortController) {
+        _abortController.abort();
+      }
       console.log(`\n${C.yellow}  Cancelled${C.reset}`);
-      // Return to prompt — the await in processInput will reject
-      // but we still need to re-show the prompt
       _processing = false;
       rl.setPrompt(getPrompt());
       rl.prompt();
@@ -971,6 +983,7 @@ function startREPL() {
   // ─── Bracketed Paste Mode ──────────────────────────────────
   let _pasteActive = false;
   let _pasteLines = [];
+  let _pendingPaste = null;
 
   if (process.stdin.isTTY) {
     process.stdout.write('\x1b[?2004h'); // enable bracketed paste
@@ -995,12 +1008,13 @@ function startREPL() {
             const lines = data.split('\n');
             _pasteLines.push(...lines);
           }
-          // Emit the combined paste as a single input
+          // Store combined paste and emit only the first line to readline
           const combined = _pasteLines.join('\n').trim();
           _pasteLines = [];
           if (combined) {
+            _pendingPaste = combined;
             console.log(`${C.dim}[pasted ${combined.split('\n').length} lines]${C.reset}`);
-            return origEmit.call(process.stdin, event, combined + '\n');
+            return origEmit.call(process.stdin, event, combined.split('\n')[0] + '\n');
           }
           return true;
         }
@@ -1078,6 +1092,12 @@ function startREPL() {
   rl.on('line', async (line) => {
     _clearSug();
 
+    // Intercept pasted multi-line content (stored by paste handler)
+    if (_pendingPaste !== null) {
+      line = _pendingPaste;
+      _pendingPaste = null;
+    }
+
     // Multi-line mode handling
     if (multiLineBuffer !== null) {
       // """ mode: wait for closing """
@@ -1089,10 +1109,13 @@ function startREPL() {
             appendHistory(input.replace(/\n/g, '\\n'));
             _processing = true;
             _sigintCount = 0;
+            _abortController = new AbortController();
             try {
               await processInput(input);
             } catch (err) {
-              console.log(`${C.red}Error: ${err.message}${C.reset}`);
+              if (!_abortController?.signal?.aborted) {
+                console.log(`${C.red}Error: ${err.message}${C.reset}`);
+              }
             }
             _processing = false;
             const msgCount = getConversationLength();
@@ -1121,10 +1144,13 @@ function startREPL() {
           appendHistory(input.replace(/\n/g, '\\n'));
           _processing = true;
           _sigintCount = 0;
+          _abortController = new AbortController();
           try {
             await processInput(input);
           } catch (err) {
-            console.log(`${C.red}Error: ${err.message}${C.reset}`);
+            if (!_abortController?.signal?.aborted) {
+              console.log(`${C.red}Error: ${err.message}${C.reset}`);
+            }
           }
           _processing = false;
           const msgCount = getConversationLength();
@@ -1187,10 +1213,13 @@ function startREPL() {
     // Process through agent
     _processing = true;
     _sigintCount = 0;
+    _abortController = new AbortController();
     try {
       await processInput(input);
     } catch (err) {
-      console.log(`${C.red}Error: ${err.message}${C.reset}`);
+      if (!_abortController?.signal?.aborted) {
+        console.log(`${C.red}Error: ${err.message}${C.reset}`);
+      }
     }
     _processing = false;
 
@@ -1209,4 +1238,4 @@ function startREPL() {
   });
 }
 
-module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, completeFilePath, handleSlashCommand, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences };
+module.exports = { startREPL, getPrompt, loadHistory, appendHistory, getHistoryPath, HISTORY_MAX, showCommandList, completer, completeFilePath, handleSlashCommand, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences, getAbortSignal };

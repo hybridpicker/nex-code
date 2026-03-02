@@ -107,9 +107,11 @@ class OllamaProvider extends BaseProvider {
           timeout: options.timeout || this.timeout,
           headers: this._getHeaders(),
           responseType: 'stream',
+          signal: options.signal,
         }
       );
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
       const msg = err.response?.data?.error || err.message;
       throw new Error(`API Error: ${msg}`);
     }
@@ -118,6 +120,14 @@ class OllamaProvider extends BaseProvider {
       let content = '';
       let toolCalls = [];
       let buffer = '';
+
+      // Abort listener: destroy stream on signal
+      if (options.signal) {
+        options.signal.addEventListener('abort', () => {
+          response.data.destroy();
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        }, { once: true });
+      }
 
       response.data.on('data', (chunk) => {
         buffer += chunk.toString();
