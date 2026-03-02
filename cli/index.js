@@ -999,19 +999,16 @@ function startREPL() {
     const lineCount = lines.length;
 
     // Show paste indicator — user must press Enter to submit
-    const preview = lines[0].length > 60 ? lines[0].substring(0, 57) + '...' : lines[0];
+    const preview = lines[0].length > 80 ? lines[0].substring(0, 77) + '...' : lines[0];
+    const label = lineCount > 1 ? `[Pasted content — ${lineCount} lines]` : '[Pasted content]';
+    console.log(`\n${C.dim}  ${label}${C.reset}`);
+    console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
     if (lineCount > 1) {
-      console.log(`\n${C.dim}  [Pasted content — ${lineCount} lines]${C.reset}`);
-      console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
       console.log(`${C.dim}  ⎿  … +${lineCount - 1} more lines${C.reset}`);
-    } else {
-      console.log(`\n${C.dim}  [Pasted content]${C.reset}`);
-      console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
     }
-    console.log(`${C.dim}  Press Enter to send, or type to edit${C.reset}`);
+    console.log(`${C.dim}  Press Enter to send${C.reset}`);
 
-    // Write pasted text into readline input buffer so user can see/edit it
-    rl.write(lineCount === 1 ? combined : '');
+    // Don't write text into readline — just wait for Enter
     return true;
   }
 
@@ -1134,9 +1131,7 @@ function startREPL() {
 
     // Intercept pasted content (stored by paste handler, submitted with Enter)
     if (_pendingPaste !== null) {
-      // For single-line pastes, readline already has the text — use it as-is
-      // For multi-line pastes, readline line is empty — use stored paste
-      line = line.trim() || _pendingPaste;
+      line = _pendingPaste;
       _pendingPaste = null;
     }
 
