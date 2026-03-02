@@ -1151,7 +1151,8 @@ function startREPL() {
               await processInput(input);
             } catch (err) {
               if (!_abortController?.signal?.aborted) {
-                console.log(`${C.red}Error: ${err.message}${C.reset}`);
+                const userMessage = err.message?.split('\n')[0] || 'An unexpected error occurred';
+                console.log(`${C.red}Error: ${userMessage}${C.reset}`);
               }
             }
             _processing = false;
@@ -1186,7 +1187,8 @@ function startREPL() {
             await processInput(input);
           } catch (err) {
             if (!_abortController?.signal?.aborted) {
-              console.log(`${C.red}Error: ${err.message}${C.reset}`);
+              const userMessage = err.message?.split('\n')[0] || 'An unexpected error occurred';
+              console.log(`${C.red}Error: ${userMessage}${C.reset}`);
             }
           }
           _processing = false;
@@ -1255,7 +1257,8 @@ function startREPL() {
       await processInput(input);
     } catch (err) {
       if (!_abortController?.signal?.aborted) {
-        console.log(`${C.red}Error: ${err.message}${C.reset}`);
+        const userMessage = err.message?.split('\n')[0] || 'An unexpected error occurred';
+        console.log(`${C.red}Error: ${userMessage}${C.reset}`);
       }
     }
     _processing = false;

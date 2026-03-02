@@ -164,7 +164,8 @@ async function executeSingleTool(prep, quiet = false) {
 
   runHooks('post-tool', { tool_name: prep.fnName });
 
-  const isError = truncated.startsWith('ERROR') || truncated.includes('CANCELLED') || truncated.includes('BLOCKED');
+  const firstLine = truncated.split('\n')[0];
+  const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED');
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
   const msg = { role: 'tool', content: truncated, tool_call_id: prep.callId };
   return { msg, summary };
@@ -497,9 +498,9 @@ async function processInput(userInput) {
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
 
-    // Step indicator for multi-step tasks
+    // Step indicator (compact)
     if (i > 0) {
-      console.log(`${C.dim}  ⟳ step ${i + 1}${C.reset}`);
+      console.log(`${C.dim}  ── step ${i + 1} ──${C.reset}`);
     }
 
     let spinner = null;
@@ -570,7 +571,7 @@ async function processInput(userInput) {
       if (err.message.includes('429')) {
         rateLimitRetries++;
         if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
-          console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded${C.reset}`);
+          console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded. Try again later or use /budget to check your limits.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead);
@@ -591,7 +592,7 @@ async function processInput(userInput) {
       if (isNetworkError) {
         networkRetries++;
         if (networkRetries > MAX_NETWORK_RETRIES) {
-          console.log(`${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded${C.reset}`);
+          console.log(`${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead);
@@ -699,7 +700,7 @@ async function processInput(userInput) {
   setOnChange(null);
   _printResume(totalSteps, toolCounts, filesModified, filesRead);
   autoSave(conversationMessages);
-  console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached.${C.reset}`);
+  console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. The task may be too complex — try breaking it into smaller steps.${C.reset}`);
 }
 
 module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter };
