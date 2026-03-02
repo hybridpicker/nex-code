@@ -548,7 +548,24 @@ async function processInput(userInput) {
         break;
       }
 
-      console.log(`${C.red}${err.message}${C.reset}`);
+      // User-friendly error message (avoid raw stack traces/cryptic codes)
+      let userMessage = err.message;
+      if (err.code === 'ECONNREFUSED' || err.message.includes('ECONNREFUSED')) {
+        userMessage = 'Connection refused — please check your internet connection or API endpoint';
+      } else if (err.code === 'ENOTFOUND' || err.message.includes('ENOTFOUND')) {
+        userMessage = 'Network error — could not reach the API server. Please check your connection';
+      } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+        userMessage = 'Request timed out — the API server took too long to respond. Please try again';
+      } else if (err.message.includes('401') || err.message.includes('Unauthorized')) {
+        userMessage = 'Authentication failed — please check your API key in the .env file';
+      } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
+        userMessage = 'Access denied — your API key may not have permission for this model';
+      } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
+        userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
+      } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
+        userMessage = 'Network request failed — please check your internet connection';
+      }
+      console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
 
       if (err.message.includes('429')) {
         rateLimitRetries++;

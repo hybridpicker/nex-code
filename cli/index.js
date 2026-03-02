@@ -986,9 +986,9 @@ function startREPL() {
   let _pendingPaste = null;
 
   /**
-   * Complete a paste: store combined text, show preview, emit single line trigger.
+   * Complete a paste: store text, show [Pasted content] indicator, wait for Enter.
    */
-  function _completePaste(origEmit) {
+  function _completePaste() {
     const combined = _pasteLines.join('\n').trim();
     _pasteLines = [];
     _pasteActive = false;
@@ -997,14 +997,22 @@ function startREPL() {
     _pendingPaste = combined;
     const lines = combined.split('\n');
     const lineCount = lines.length;
-    // Show Claude Code-style paste indicator with preview
+
+    // Show paste indicator — user must press Enter to submit
     const preview = lines[0].length > 60 ? lines[0].substring(0, 57) + '...' : lines[0];
     if (lineCount > 1) {
-      console.log(`\n${C.dim}  ⎿  ${preview}${C.reset}`);
+      console.log(`\n${C.dim}  [Pasted content — ${lineCount} lines]${C.reset}`);
+      console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
       console.log(`${C.dim}  ⎿  … +${lineCount - 1} more lines${C.reset}`);
+    } else {
+      console.log(`\n${C.dim}  [Pasted content]${C.reset}`);
+      console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
     }
-    // Emit a single trigger line so readline fires exactly one 'line' event
-    return origEmit.call(process.stdin, 'data', '\n');
+    console.log(`${C.dim}  Press Enter to send, or type to edit${C.reset}`);
+
+    // Write pasted text into readline input buffer so user can see/edit it
+    rl.write(lineCount === 1 ? combined : '');
+    return true;
   }
 
   if (process.stdin.isTTY) {
@@ -1026,7 +1034,7 @@ function startREPL() {
       if (hasStart && hasEnd) {
         const clean = stripPasteSequences(data);
         if (clean) _pasteLines.push(...clean.split('\n'));
-        return _completePaste(origEmit);
+        return _completePaste();
       }
 
       // Case 2: Paste start (multi-chunk paste begins)
@@ -1042,7 +1050,7 @@ function startREPL() {
       if (hasEnd) {
         const clean = stripPasteSequences(data);
         if (clean) _pasteLines.push(...clean.split('\n'));
-        return _completePaste(origEmit);
+        return _completePaste();
       }
 
       // Case 4: Middle of multi-chunk paste
@@ -1124,9 +1132,11 @@ function startREPL() {
       return;
     }
 
-    // Intercept pasted multi-line content (stored by paste handler)
+    // Intercept pasted content (stored by paste handler, submitted with Enter)
     if (_pendingPaste !== null) {
-      line = _pendingPaste;
+      // For single-line pastes, readline already has the text — use it as-is
+      // For multi-line pastes, readline line is empty — use stored paste
+      line = line.trim() || _pendingPaste;
       _pendingPaste = null;
     }
 
