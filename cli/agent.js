@@ -416,13 +416,18 @@ function setConversationMessages(messages) {
  * Print résumé + follow-up suggestions after the agent loop.
  * Only shown for multi-step responses (totalSteps >= 1).
  */
-function _printResume(totalSteps, toolCounts, filesModified, filesRead) {
+function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
   let resume = `── ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} · ${totalTools} ${totalTools === 1 ? 'tool' : 'tools'}`;
   if (filesModified.size > 0) {
     resume += ` · ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified`;
+  }
+  if (startTime) {
+    const elapsed = Date.now() - startTime;
+    const secs = Math.round(elapsed / 1000);
+    resume += secs >= 60 ? ` · ${Math.floor(secs / 60)}m ${secs % 60}s` : ` · ${secs}s`;
   }
   resume += ' ──';
   console.log(`\n${C.dim}  ${resume}${C.reset}`);
@@ -492,6 +497,7 @@ async function processInput(userInput) {
   const toolCounts = new Map();
   const filesModified = new Set();
   const filesRead = new Set();
+  const startTime = Date.now();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     // Check if aborted (Ctrl+C) at start of each iteration
@@ -544,7 +550,7 @@ async function processInput(userInput) {
           err.message?.includes('canceled') || err.message?.includes('aborted')) {
         if (taskProgress) { taskProgress.stop(); taskProgress = null; }
         setOnChange(null);
-        _printResume(totalSteps, toolCounts, filesModified, filesRead);
+        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
         autoSave(conversationMessages);
         break;
       }
@@ -574,7 +580,7 @@ async function processInput(userInput) {
           console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded. Try again later or use /budget to check your limits.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
           autoSave(conversationMessages);
           break;
         }
@@ -595,7 +601,7 @@ async function processInput(userInput) {
           console.log(`${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
           autoSave(conversationMessages);
           break;
         }
@@ -609,7 +615,7 @@ async function processInput(userInput) {
       // Auto-save on error so conversation isn't lost
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
-      _printResume(totalSteps, toolCounts, filesModified, filesRead);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
       autoSave(conversationMessages);
       break;
     }
@@ -654,7 +660,7 @@ async function processInput(userInput) {
     if (!tool_calls || tool_calls.length === 0) {
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
-      _printResume(totalSteps, toolCounts, filesModified, filesRead);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
       autoSave(conversationMessages);
       return;
     }
@@ -698,7 +704,7 @@ async function processInput(userInput) {
 
   if (taskProgress) { taskProgress.stop(); taskProgress = null; }
   setOnChange(null);
-  _printResume(totalSteps, toolCounts, filesModified, filesRead);
+  _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
   autoSave(conversationMessages);
   console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. The task may be too complex — try breaking it into smaller steps.${C.reset}`);
 }
