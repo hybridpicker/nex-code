@@ -504,9 +504,13 @@ async function processInput(userInput) {
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
 
-    // Step indicator (compact)
-    if (i > 0) {
-      console.log(`${C.dim}  ── step ${i + 1} ──${C.reset}`);
+    // Step indicator — deferred until actual output appears
+    let stepPrinted = (i === 0);
+    function printStepIfNeeded() {
+      if (!stepPrinted) {
+        console.log(`${C.dim}  ── step ${i + 1} ──${C.reset}`);
+        stepPrinted = true;
+      }
     }
 
     let spinner = null;
@@ -535,6 +539,7 @@ async function processInput(userInput) {
             } else if (spinner) {
               spinner.stop();
             }
+            printStepIfNeeded();
             firstToken = false;
           }
           streamedText += text;
@@ -679,6 +684,7 @@ async function processInput(userInput) {
     }
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
+    printStepIfNeeded();
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
     const toolMessages = await executeBatch(prepared, true, batchOpts);
 
