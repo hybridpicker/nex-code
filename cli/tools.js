@@ -784,9 +784,10 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'grep': {
       const searchPath = args.path ? resolvePath(args.path) : CWD;
-      const grepArgs2 = ['-rn'];
+      const grepArgs2 = ['-rn', '-E']; // Extended regex (supports |, +, etc.)
       if (args.ignore_case) grepArgs2.push('-i');
       if (args.include) grepArgs2.push(`--include=${args.include}`);
+      grepArgs2.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=coverage');
       grepArgs2.push(args.pattern, searchPath);
       try {
         const out = execFileSync('grep', grepArgs2, {
@@ -794,7 +795,11 @@ async function _executeToolInner(name, args, options = {}) {
         });
         const lines = out.split('\n').slice(0, 100).join('\n');
         return lines.trim() || '(no matches)';
-      } catch {
+      } catch (e) {
+        // exit 1 = no matches (normal), exit 2 = regex error
+        if (e.status === 2) {
+          return `ERROR: Invalid regex pattern: ${args.pattern}`;
+        }
         return '(no matches)';
       }
     }
