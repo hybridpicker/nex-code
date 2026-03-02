@@ -985,48 +985,74 @@ function startREPL() {
   let _pasteLines = [];
   let _pendingPaste = null;
 
+  /**
+   * Complete a paste: store combined text, show preview, emit single line trigger.
+   */
+  function _completePaste(origEmit) {
+    const combined = _pasteLines.join('\n').trim();
+    _pasteLines = [];
+    _pasteActive = false;
+    if (!combined) return true;
+
+    _pendingPaste = combined;
+    const lines = combined.split('\n');
+    const lineCount = lines.length;
+    // Show Claude Code-style paste indicator with preview
+    const preview = lines[0].length > 60 ? lines[0].substring(0, 57) + '...' : lines[0];
+    if (lineCount > 1) {
+      console.log(`\n${C.dim}  ⎿  ${preview}${C.reset}`);
+      console.log(`${C.dim}  ⎿  … +${lineCount - 1} more lines${C.reset}`);
+    }
+    // Emit a single trigger line so readline fires exactly one 'line' event
+    return origEmit.call(process.stdin, 'data', '\n');
+  }
+
   if (process.stdin.isTTY) {
     process.stdout.write('\x1b[?2004h'); // enable bracketed paste
 
     const origEmit = process.stdin.emit.bind(process.stdin);
     process.stdin.emit = function (event, ...args) {
-      if (event === 'data' && typeof args[0] === 'string') {
-        let data = args[0];
-        if (hasPasteStart(data)) {
-          _pasteActive = true;
-          data = stripPasteSequences(data);
-          if (data) {
-            const lines = data.split('\n');
-            _pasteLines.push(...lines);
-          }
-          return true;
-        }
-        if (hasPasteEnd(data)) {
-          _pasteActive = false;
-          data = stripPasteSequences(data);
-          if (data) {
-            const lines = data.split('\n');
-            _pasteLines.push(...lines);
-          }
-          // Store combined paste and emit only the first line to readline
-          const combined = _pasteLines.join('\n').trim();
-          _pasteLines = [];
-          if (combined) {
-            _pendingPaste = combined;
-            console.log(`${C.dim}[pasted ${combined.split('\n').length} lines]${C.reset}`);
-            return origEmit.call(process.stdin, event, combined.split('\n')[0] + '\n');
-          }
-          return true;
-        }
-        if (_pasteActive) {
-          data = stripPasteSequences(data);
-          if (data) {
-            const lines = data.split('\n');
-            _pasteLines.push(...lines);
-          }
-          return true;
-        }
+      if (event !== 'data') return origEmit.call(process.stdin, event, ...args);
+
+      // Normalize: Buffer → string
+      let data = args[0];
+      if (Buffer.isBuffer(data)) data = data.toString('utf8');
+      if (typeof data !== 'string') return origEmit.call(process.stdin, event, ...args);
+
+      const hasStart = data.includes(PASTE_START);
+      const hasEnd = data.includes(PASTE_END);
+
+      // Case 1: Complete paste in single chunk (most common for small/medium pastes)
+      if (hasStart && hasEnd) {
+        const clean = stripPasteSequences(data);
+        if (clean) _pasteLines.push(...clean.split('\n'));
+        return _completePaste(origEmit);
       }
+
+      // Case 2: Paste start (multi-chunk paste begins)
+      if (hasStart) {
+        _pasteActive = true;
+        _pasteLines = [];
+        const clean = stripPasteSequences(data);
+        if (clean) _pasteLines.push(...clean.split('\n'));
+        return true;
+      }
+
+      // Case 3: Paste end (multi-chunk paste completes)
+      if (hasEnd) {
+        const clean = stripPasteSequences(data);
+        if (clean) _pasteLines.push(...clean.split('\n'));
+        return _completePaste(origEmit);
+      }
+
+      // Case 4: Middle of multi-chunk paste
+      if (_pasteActive) {
+        const clean = stripPasteSequences(data);
+        if (clean) _pasteLines.push(...clean.split('\n'));
+        return true;
+      }
+
+      // Normal data — pass through
       return origEmit.call(process.stdin, event, ...args);
     };
   }
@@ -1091,6 +1117,12 @@ function startREPL() {
 
   rl.on('line', async (line) => {
     _clearSug();
+
+    // Ignore input while already processing (prevents duplicate submissions)
+    if (_processing) {
+      _pendingPaste = null;
+      return;
+    }
 
     // Intercept pasted multi-line content (stored by paste handler)
     if (_pendingPaste !== null) {
