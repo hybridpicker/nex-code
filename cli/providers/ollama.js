@@ -160,6 +160,7 @@ class OllamaProvider extends BaseProvider {
       });
 
       response.data.on('error', (err) => {
+        if (options.signal?.aborted) return; // Ignore errors after abort
         reject(new Error(`Stream error: ${err.message}`));
       });
 

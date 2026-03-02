@@ -210,6 +210,7 @@ class LocalProvider extends BaseProvider {
 
       response.data.on('error', (err) => {
         clearTimeout(chunkTimer);
+        if (options.signal?.aborted) return; // Ignore errors after abort
         reject(new Error(`Stream error: ${err.message}`));
       });
 
