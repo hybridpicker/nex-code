@@ -1,4 +1,4 @@
-const { isForbidden, isDangerous, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
+const { isForbidden, isDangerous, isSSHReadOnly, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
 
 describe('safety.js', () => {
   afterEach(() => {
@@ -111,6 +111,84 @@ describe('safety.js', () => {
       expect(isDangerous('npm test')).toBe(false);
       expect(isDangerous('ls -la')).toBe(false);
       expect(isDangerous('node index.js')).toBe(false);
+    });
+  });
+
+  // ─── isSSHReadOnly ─────────────────────────────────────────
+  describe('isSSHReadOnly()', () => {
+    it('recognizes systemctl status as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "systemctl status nginx"')).toBe(true);
+    });
+
+    it('recognizes journalctl as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "journalctl -u nginx --no-pager"')).toBe(true);
+    });
+
+    it('recognizes tail as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "tail -f /var/log/syslog"')).toBe(true);
+    });
+
+    it('recognizes cat as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "cat /etc/hostname"')).toBe(true);
+    });
+
+    it('recognizes ls as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "ls -la /var/log"')).toBe(true);
+    });
+
+    it('recognizes git status as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "git status"')).toBe(true);
+    });
+
+    it('recognizes git pull as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "git pull"')).toBe(true);
+    });
+
+    it('recognizes df as read-only', () => {
+      expect(isSSHReadOnly('ssh user@host "df -h"')).toBe(true);
+    });
+
+    it('recognizes sudo + read-only as safe', () => {
+      expect(isSSHReadOnly('ssh user@host "sudo systemctl status nginx"')).toBe(true);
+    });
+
+    it('works with single quotes', () => {
+      expect(isSSHReadOnly("ssh user@host 'tail -100 /var/log/app.log'")).toBe(true);
+    });
+
+    it('returns false for non-read-only commands', () => {
+      expect(isSSHReadOnly('ssh user@host "systemctl restart nginx"')).toBe(false);
+    });
+
+    it('returns false for rm commands', () => {
+      expect(isSSHReadOnly('ssh user@host "rm -rf /tmp/test"')).toBe(false);
+    });
+
+    it('returns false for non-ssh commands', () => {
+      expect(isSSHReadOnly('git status')).toBe(false);
+    });
+
+    it('returns false for ssh without remote command', () => {
+      expect(isSSHReadOnly('ssh user@host')).toBe(false);
+    });
+  });
+
+  // ─── isDangerous + SSH integration ────────────────────────
+  describe('isDangerous() with SSH', () => {
+    it('skips confirmation for read-only SSH commands', () => {
+      expect(isDangerous('ssh user@host "systemctl status nginx"')).toBe(false);
+    });
+
+    it('skips confirmation for SSH tail', () => {
+      expect(isDangerous('ssh user@host "tail -100 /var/log/app.log"')).toBe(false);
+    });
+
+    it('still flags non-read-only SSH commands', () => {
+      expect(isDangerous('ssh user@host "systemctl restart nginx"')).toBe(true);
+    });
+
+    it('still flags plain ssh without command', () => {
+      expect(isDangerous('ssh user@host')).toBe(true);
     });
   });
 
