@@ -4,4 +4,5 @@ node_modules/
 coverage/
 *.log
 .DS_Store
+.nex/push-allowlist
 CLAUDE.md

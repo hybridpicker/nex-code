@@ -19,6 +19,7 @@
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "format": "prettier --write .",
+    "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && echo 'pre-push hook installed.'",
     "prepublishOnly": "npm test"
   },
   "keywords": [
