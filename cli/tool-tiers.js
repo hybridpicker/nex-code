@@ -23,12 +23,28 @@ const TIERS = {
  */
 const MODEL_TIERS = {
   // Ollama Cloud — tier by capability
+  'qwen3-coder:480b': 'full',
+  'qwen3-coder-next': 'full',
   'kimi-k2.5': 'full',
-  'qwen3-coder': 'full',
-  'devstral': 'standard',
-  'deepseek-r1': 'standard',
-  'llama4': 'standard',
-  'qwen3:30b-a3b': 'essential',
+  'kimi-k2:1t': 'full',
+  'kimi-k2-thinking': 'full',
+  'deepseek-v3.2': 'full',
+  'deepseek-v3.1:671b': 'full',
+  'devstral-2:123b': 'full',
+  'devstral-small-2:24b': 'standard',
+  'cogito-2.1:671b': 'full',
+  'qwen3-next:80b': 'full',
+  'qwen3.5:397b': 'full',
+  'mistral-large-3:675b': 'full',
+  'gpt-oss:120b': 'full',
+  'minimax-m2.5': 'full',
+  'glm-5': 'full',
+  'glm-4.7': 'standard',
+  'gemma3:27b': 'standard',
+  'gemma3:12b': 'essential',
+  'gemma3:4b': 'essential',
+  'ministral-3:14b': 'standard',
+  'ministral-3:8b': 'essential',
 
   // OpenAI — all full
   'gpt-4o': 'full',

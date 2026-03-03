@@ -9,7 +9,7 @@ const registry = require('./providers/registry');
 
 const MODELS = {
   'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', max_tokens: 16384 },
-  'qwen3-coder': { id: 'qwen3-coder', name: 'Qwen3 Coder', max_tokens: 16384 },
+  'qwen3-coder:480b': { id: 'qwen3-coder:480b', name: 'Qwen3 Coder 480B', max_tokens: 16384 },
 };
 
 function getActiveModel() {

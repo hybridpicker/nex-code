@@ -86,13 +86,13 @@ describe('getActiveTier()', () => {
   });
 
   it('returns standard for deepseek-r1', () => {
-    getActiveModel.mockReturnValue({ id: 'deepseek-r1' });
+    getActiveModel.mockReturnValue({ id: 'devstral-small-2:24b' });
     getActiveProviderName.mockReturnValue('ollama');
     expect(getActiveTier()).toBe('standard');
   });
 
   it('returns essential for qwen3:30b-a3b', () => {
-    getActiveModel.mockReturnValue({ id: 'qwen3:30b-a3b' });
+    getActiveModel.mockReturnValue({ id: 'gemma3:4b' });
     getActiveProviderName.mockReturnValue('ollama');
     expect(getActiveTier()).toBe('essential');
   });
@@ -136,11 +136,11 @@ describe('getActiveTier()', () => {
   it('respects config overrides for specific model', () => {
     mockFs.existsSync.mockReturnValue(true);
     mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      toolTiers: { 'deepseek-r1': 'essential' },
+      toolTiers: { 'devstral-small-2:24b': 'essential' },
     }));
     loadConfigOverrides();
 
-    getActiveModel.mockReturnValue({ id: 'deepseek-r1' });
+    getActiveModel.mockReturnValue({ id: 'devstral-small-2:24b' });
     getActiveProviderName.mockReturnValue('ollama');
     expect(getActiveTier()).toBe('essential');
   });
@@ -184,7 +184,7 @@ describe('filterToolsForModel()', () => {
   });
 
   it('returns 5 tools for essential tier', () => {
-    getActiveModel.mockReturnValue({ id: 'qwen3:30b-a3b' });
+    getActiveModel.mockReturnValue({ id: 'gemma3:4b' });
     getActiveProviderName.mockReturnValue('ollama');
 
     const filtered = filterToolsForModel(SAMPLE_TOOLS);
@@ -193,7 +193,7 @@ describe('filterToolsForModel()', () => {
   });
 
   it('returns 9 tools for standard tier', () => {
-    getActiveModel.mockReturnValue({ id: 'deepseek-r1' });
+    getActiveModel.mockReturnValue({ id: 'devstral-small-2:24b' });
     getActiveProviderName.mockReturnValue('ollama');
 
     const filtered = filterToolsForModel(SAMPLE_TOOLS);
@@ -209,7 +209,7 @@ describe('filterToolsForModel()', () => {
   });
 
   it('filters out non-essential tools correctly', () => {
-    getActiveModel.mockReturnValue({ id: 'qwen3:30b-a3b' });
+    getActiveModel.mockReturnValue({ id: 'gemma3:4b' });
     getActiveProviderName.mockReturnValue('ollama');
 
     const filtered = filterToolsForModel(SAMPLE_TOOLS);
@@ -229,7 +229,7 @@ describe('getTierInfo()', () => {
   });
 
   it('returns tier name and tool count', () => {
-    getActiveModel.mockReturnValue({ id: 'deepseek-r1' });
+    getActiveModel.mockReturnValue({ id: 'devstral-small-2:24b' });
     getActiveProviderName.mockReturnValue('ollama');
 
     const info = getTierInfo();
@@ -258,7 +258,7 @@ describe('getModelTier()', () => {
 
   it('returns tier for known models', () => {
     expect(getModelTier('kimi-k2.5', 'ollama')).toBe('full');
-    expect(getModelTier('qwen3:30b-a3b', 'ollama')).toBe('essential');
+    expect(getModelTier('gemma3:4b', 'ollama')).toBe('essential');
     expect(getModelTier('gpt-4o', 'openai')).toBe('full');
     expect(getModelTier('claude-haiku', 'anthropic')).toBe('standard');
   });
@@ -322,7 +322,7 @@ describe('filterToolsForModel() with overrideTier', () => {
   });
 
   it('returns all tools when overrideTier is full', () => {
-    getActiveModel.mockReturnValue({ id: 'qwen3:30b-a3b' });
+    getActiveModel.mockReturnValue({ id: 'gemma3:4b' });
     getActiveProviderName.mockReturnValue('ollama');
 
     const filtered = filterToolsForModel(SAMPLE_TOOLS, 'full');
@@ -337,7 +337,7 @@ describe('exported constants', () => {
     expect(MODEL_TIERS['kimi-k2.5']).toBe('full');
     expect(MODEL_TIERS['gpt-4o']).toBe('full');
     expect(MODEL_TIERS['claude-haiku']).toBe('standard');
-    expect(MODEL_TIERS['qwen3:30b-a3b']).toBe('essential');
+    expect(MODEL_TIERS['gemma3:4b']).toBe('essential');
   });
 
   it('PROVIDER_DEFAULT_TIER has defaults for all providers', () => {

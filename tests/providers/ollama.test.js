@@ -30,15 +30,15 @@ describe('providers/ollama.js', () => {
 
     it('has default models', () => {
       expect(provider.getModelNames()).toContain('kimi-k2.5');
-      expect(provider.getModelNames()).toContain('qwen3-coder');
-      expect(provider.getModelNames()).toContain('deepseek-r1');
-      expect(provider.getModelNames()).toContain('llama4');
-      expect(provider.getModelNames()).toContain('qwen3:30b-a3b');
-      expect(provider.getModelNames()).toContain('devstral');
+      expect(provider.getModelNames()).toContain('qwen3-coder:480b');
+      expect(provider.getModelNames()).toContain('deepseek-v3.2');
+      expect(provider.getModelNames()).toContain('devstral-2:123b');
+      expect(provider.getModelNames()).toContain('minimax-m2.5');
+      expect(provider.getModelNames()).toContain('glm-5');
     });
 
-    it('defaults to qwen3-coder', () => {
-      expect(provider.defaultModel).toBe('qwen3-coder');
+    it('defaults to qwen3-coder:480b', () => {
+      expect(provider.defaultModel).toBe('qwen3-coder:480b');
     });
 
     it('allows custom base URL', () => {
@@ -88,23 +88,23 @@ describe('providers/ollama.js', () => {
     });
 
     it('exports qwen3-coder model info', () => {
-      expect(OLLAMA_MODELS['qwen3-coder']).toMatchObject({
-        id: 'qwen3-coder',
-        name: 'Qwen3 Coder',
+      expect(OLLAMA_MODELS['qwen3-coder:480b']).toMatchObject({
+        id: 'qwen3-coder:480b',
+        name: 'Qwen3 Coder 480B',
       });
     });
 
-    it('exports deepseek-r1 model info', () => {
-      expect(OLLAMA_MODELS['deepseek-r1']).toMatchObject({
-        id: 'deepseek-r1',
-        name: 'DeepSeek R1',
+    it('exports deepseek-v3.2 model info', () => {
+      expect(OLLAMA_MODELS['deepseek-v3.2']).toMatchObject({
+        id: 'deepseek-v3.2',
+        name: 'DeepSeek V3.2',
       });
     });
 
-    it('exports llama4 model info', () => {
-      expect(OLLAMA_MODELS['llama4']).toMatchObject({
-        id: 'llama4',
-        name: 'Llama 4 Scout',
+    it('exports devstral-2:123b model info', () => {
+      expect(OLLAMA_MODELS['devstral-2:123b']).toMatchObject({
+        id: 'devstral-2:123b',
+        name: 'Devstral 2 123B',
       });
     });
   });
@@ -121,7 +121,7 @@ describe('providers/ollama.js', () => {
       expect(result.tool_calls).toEqual([]);
       expect(axios.post).toHaveBeenCalledWith(
         'https://ollama.com/api/chat',
-        expect.objectContaining({ stream: false, model: 'qwen3-coder' }),
+        expect.objectContaining({ stream: false, model: 'qwen3-coder:480b' }),
         expect.objectContaining({
           headers: { Authorization: 'Bearer test-key-123' },
         })
@@ -133,10 +133,10 @@ describe('providers/ollama.js', () => {
         data: { message: { content: 'Hi' } },
       });
 
-      await provider.chat([], [], { model: 'qwen3-coder' });
+      await provider.chat([], [], { model: 'qwen3-coder:480b' });
       expect(axios.post).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ model: 'qwen3-coder' }),
+        expect.objectContaining({ model: 'qwen3-coder:480b' }),
         expect.any(Object)
       );
     });
@@ -257,7 +257,7 @@ describe('providers/ollama.js', () => {
 
       expect(axios.post).toHaveBeenCalledWith(
         'https://ollama.com/api/chat',
-        expect.objectContaining({ model: 'qwen3-coder', messages, tools, stream: true }),
+        expect.objectContaining({ model: 'qwen3-coder:480b', messages, tools, stream: true }),
         expect.objectContaining({
           responseType: 'stream',
           headers: { Authorization: 'Bearer test-key-123' },
@@ -333,7 +333,7 @@ describe('providers/ollama.js', () => {
 
       // Hardcoded models should still exist
       expect(provider.getModel('kimi-k2.5')).toBeTruthy();
-      expect(provider.getModel('qwen3-coder')).toBeTruthy();
+      expect(provider.getModel('qwen3-coder:480b')).toBeTruthy();
 
       // New models should be added (without :latest suffix)
       expect(provider.getModel('new-model')).toBeTruthy();
