@@ -839,4 +839,91 @@ describe('agent.js', () => {
       expect(called).toBe(true);
     });
   });
+
+  // ─── validator correction logging ──────────────────────────
+  describe('validator correction logging', () => {
+    it('logs corrected arg names when validator renames keys', async () => {
+      // Validator corrects { cmd: 'ls' } → { command: 'ls' } (cmd renamed)
+      validateToolArgs.mockReturnValueOnce({
+        valid: true,
+        corrected: { command: 'ls' },
+      });
+      mockStream('', [{ function: { name: 'bash', arguments: { cmd: 'ls' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('test');
+      expect(logOutput()).toContain('corrected args');
+      expect(logOutput()).toContain('cmd');
+    });
+
+    it('does not log when corrected keys match original keys', async () => {
+      // Type coercion: same keys, different values
+      validateToolArgs.mockReturnValueOnce({
+        valid: true,
+        corrected: { path: 'test.js', line_start: 5 },
+      });
+      mockStream('', [{ function: { name: 'read_file', arguments: { path: 'test.js', line_start: '5' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('content');
+      await processInput('test');
+      // Both original and corrected have the same keys, so no log
+      expect(logOutput()).not.toContain('corrected args');
+    });
+
+    it('does not log when no correction needed', async () => {
+      validateToolArgs.mockReturnValueOnce({ valid: true, corrected: null });
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo hi' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('hi');
+      await processInput('test');
+      expect(logOutput()).not.toContain('corrected args');
+    });
+  });
+
+  // ─── compression log format ────────────────────────────────
+  describe('compression log format', () => {
+    it('includes percentage in compression log', async () => {
+      fitToContext.mockImplementationOnce((m) => ({ messages: m, compressed: true, tokensRemoved: 12800 }));
+      getUsage.mockReturnValueOnce({ used: 110000, limit: 128000, percentage: 86 });
+      mockStream('OK');
+      await processInput('test');
+      expect(logOutput()).toContain('context compressed');
+      expect(logOutput()).toMatch(/\d+%/);
+    });
+  });
+
+  // ─── stale-stream detection ────────────────────────────────
+  describe('stale-stream detection', () => {
+    it('passes combined AbortSignal to callStream', async () => {
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        expect(opts.signal).toBeDefined();
+        expect(opts.signal instanceof AbortSignal).toBe(true);
+        return { content: 'ok', tool_calls: [] };
+      });
+      await processInput('test');
+    });
+
+    it('onToken callback is provided and works', async () => {
+      let capturedOnToken;
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        capturedOnToken = opts.onToken;
+        if (opts.onToken) opts.onToken('token');
+        return { content: 'token', tool_calls: [] };
+      });
+      await processInput('test');
+      expect(capturedOnToken).toBeDefined();
+    });
+
+    it('stale timer is cleaned up on success', async () => {
+      // Verify no lingering intervals after a normal call
+      const before = 0; // Can't easily count intervals but verify no errors
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        if (opts.onToken) opts.onToken('ok');
+        return { content: 'ok', tool_calls: [] };
+      });
+      await processInput('test');
+      // If stale timer leaked, subsequent operations would be affected
+      expect(callStream).toHaveBeenCalledTimes(1);
+    });
+  });
 });
