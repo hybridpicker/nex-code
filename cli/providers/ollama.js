@@ -7,20 +7,34 @@ const axios = require('axios');
 const { BaseProvider } = require('./base');
 
 const OLLAMA_MODELS = {
-  // Primary: Best coding model for agentic workflows
-  'qwen3-coder': { id: 'qwen3-coder', name: 'Qwen3 Coder', maxTokens: 16384, contextWindow: 131072 },
+  // Primary: Best coding models for agentic workflows
+  'qwen3-coder:480b': { id: 'qwen3-coder:480b', name: 'Qwen3 Coder 480B', maxTokens: 16384, contextWindow: 131072 },
   'qwen3-coder-next': { id: 'qwen3-coder-next', name: 'Qwen3 Coder Next', maxTokens: 16384, contextWindow: 131072 },
-  // Reasoning specialists
-  'deepseek-r1': { id: 'deepseek-r1', name: 'DeepSeek R1', maxTokens: 16384, contextWindow: 131072 },
-  'deepseek-r1:14b': { id: 'deepseek-r1:14b', name: 'DeepSeek R1 14B', maxTokens: 8192, contextWindow: 128000 },
-  // Agent-focused models
-  'devstral': { id: 'devstral', name: 'Devstral', maxTokens: 16384, contextWindow: 131072 },
-  'minimax-m2.5': { id: 'minimax-m2.5', name: 'MiniMax M2.5', maxTokens: 16384, contextWindow: 131072 },
-  'glm-4.7': { id: 'glm-4.7', name: 'GLM 4.7', maxTokens: 16384, contextWindow: 128000 },
-  // General purpose / large context fallback
+  'devstral-2:123b': { id: 'devstral-2:123b', name: 'Devstral 2 123B', maxTokens: 16384, contextWindow: 131072 },
+  'devstral-small-2:24b': { id: 'devstral-small-2:24b', name: 'Devstral Small 2 24B', maxTokens: 16384, contextWindow: 131072 },
+  // Large general-purpose models
   'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', maxTokens: 16384, contextWindow: 256000 },
-  'llama4': { id: 'llama4', name: 'Llama 4 Scout', maxTokens: 16384, contextWindow: 131072 },
-  'qwen3:30b-a3b': { id: 'qwen3:30b-a3b', name: 'Qwen3 30B A3B', maxTokens: 16384, contextWindow: 131072 },
+  'kimi-k2:1t': { id: 'kimi-k2:1t', name: 'Kimi K2 1T', maxTokens: 16384, contextWindow: 256000 },
+  'kimi-k2-thinking': { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', maxTokens: 16384, contextWindow: 256000 },
+  'deepseek-v3.2': { id: 'deepseek-v3.2', name: 'DeepSeek V3.2', maxTokens: 16384, contextWindow: 131072 },
+  'deepseek-v3.1:671b': { id: 'deepseek-v3.1:671b', name: 'DeepSeek V3.1 671B', maxTokens: 16384, contextWindow: 131072 },
+  'cogito-2.1:671b': { id: 'cogito-2.1:671b', name: 'Cogito 2.1 671B', maxTokens: 16384, contextWindow: 131072 },
+  // Medium models
+  'qwen3-next:80b': { id: 'qwen3-next:80b', name: 'Qwen3 Next 80B', maxTokens: 16384, contextWindow: 131072 },
+  'qwen3.5:397b': { id: 'qwen3.5:397b', name: 'Qwen3.5 397B', maxTokens: 16384, contextWindow: 131072 },
+  'mistral-large-3:675b': { id: 'mistral-large-3:675b', name: 'Mistral Large 3 675B', maxTokens: 16384, contextWindow: 131072 },
+  'gpt-oss:120b': { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', maxTokens: 16384, contextWindow: 131072 },
+  'minimax-m2.5': { id: 'minimax-m2.5', name: 'MiniMax M2.5', maxTokens: 16384, contextWindow: 131072 },
+  'glm-5': { id: 'glm-5', name: 'GLM 5', maxTokens: 16384, contextWindow: 128000 },
+  'glm-4.7': { id: 'glm-4.7', name: 'GLM 4.7', maxTokens: 16384, contextWindow: 128000 },
+  // Small / fast models
+  'gemma3:27b': { id: 'gemma3:27b', name: 'Gemma 3 27B', maxTokens: 8192, contextWindow: 131072 },
+  'gemma3:12b': { id: 'gemma3:12b', name: 'Gemma 3 12B', maxTokens: 8192, contextWindow: 131072 },
+  'gemma3:4b': { id: 'gemma3:4b', name: 'Gemma 3 4B', maxTokens: 8192, contextWindow: 131072 },
+  'ministral-3:14b': { id: 'ministral-3:14b', name: 'Ministral 3 14B', maxTokens: 8192, contextWindow: 131072 },
+  'ministral-3:8b': { id: 'ministral-3:8b', name: 'Ministral 3 8B', maxTokens: 8192, contextWindow: 131072 },
+  // Special
+  'gemini-3-flash-preview': { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', maxTokens: 16384, contextWindow: 131072 },
 };
 
 class OllamaProvider extends BaseProvider {
@@ -29,7 +43,7 @@ class OllamaProvider extends BaseProvider {
       name: 'ollama',
       baseUrl: config.baseUrl || 'https://ollama.com',
       models: config.models || OLLAMA_MODELS,
-      defaultModel: config.defaultModel || 'qwen3-coder',
+      defaultModel: config.defaultModel || 'qwen3-coder:480b',
       ...config,
     });
     this.timeout = config.timeout || 180000;

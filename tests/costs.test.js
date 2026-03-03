@@ -61,10 +61,10 @@ describe('costs.js', () => {
     });
 
     it('has zero pricing for new ollama models', () => {
-      expect(PRICING.ollama['deepseek-r1'].input).toBe(0);
-      expect(PRICING.ollama['llama4'].input).toBe(0);
-      expect(PRICING.ollama['qwen3:30b-a3b'].input).toBe(0);
-      expect(PRICING.ollama['devstral'].input).toBe(0);
+      expect(PRICING.ollama['deepseek-v3.2'].input).toBe(0);
+      expect(PRICING.ollama['gpt-oss:120b'].input).toBe(0);
+      expect(PRICING.ollama['minimax-m2.5'].input).toBe(0);
+      expect(PRICING.ollama['devstral-2:123b'].input).toBe(0);
     });
 
     it('has empty pricing for local provider', () => {

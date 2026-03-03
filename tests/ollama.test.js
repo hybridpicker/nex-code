@@ -7,13 +7,13 @@ jest.mock('../cli/providers/registry', () => {
   const mockProvider = {
     name: 'ollama',
     getModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', maxTokens: 16384 }),
-    getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder']),
+    getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder:480b']),
   };
 
   return {
     getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
-    setActiveModel: jest.fn().mockImplementation((name) => name === 'qwen3-coder' || name === 'kimi-k2.5'),
-    getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder', 'gpt-4o', 'claude-sonnet']),
+    setActiveModel: jest.fn().mockImplementation((name) => name === 'qwen3-coder:480b' || name === 'kimi-k2.5'),
+    getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder:480b', 'gpt-4o', 'claude-sonnet']),
     callStream: jest.fn(),
     callChat: jest.fn(),
     getActiveProvider: jest.fn().mockReturnValue(mockProvider),
@@ -54,8 +54,8 @@ describe('ollama.js (wrapper)', () => {
     });
 
     it('has qwen3-coder model', () => {
-      expect(MODELS['qwen3-coder']).toBeDefined();
-      expect(MODELS['qwen3-coder'].name).toBe('Qwen3 Coder');
+      expect(MODELS['qwen3-coder:480b']).toBeDefined();
+      expect(MODELS['qwen3-coder:480b'].name).toBe('Qwen3 Coder 480B');
     });
   });
 
@@ -70,8 +70,8 @@ describe('ollama.js (wrapper)', () => {
 
   describe('setActiveModel()', () => {
     it('delegates to registry', () => {
-      const result = setActiveModel('qwen3-coder');
-      expect(registry.setActiveModel).toHaveBeenCalledWith('qwen3-coder');
+      const result = setActiveModel('qwen3-coder:480b');
+      expect(registry.setActiveModel).toHaveBeenCalledWith('qwen3-coder:480b');
       expect(result).toBe(true);
     });
 

@@ -33,7 +33,7 @@ describe('providers/registry.js', () => {
     });
 
     it('defaults to qwen3-coder model', () => {
-      expect(registry.getActiveModelId()).toBe('qwen3-coder');
+      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
     });
 
     it('uses DEFAULT_PROVIDER from env', () => {
@@ -47,9 +47,9 @@ describe('providers/registry.js', () => {
 
     it('uses DEFAULT_MODEL from env', () => {
       registry._reset();
-      process.env.DEFAULT_MODEL = 'qwen3-coder';
+      process.env.DEFAULT_MODEL = 'qwen3-coder:480b';
 
-      expect(registry.getActiveModelId()).toBe('qwen3-coder');
+      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
     });
 
     it('falls back to ollama when DEFAULT_PROVIDER is invalid', () => {
@@ -86,8 +86,8 @@ describe('providers/registry.js', () => {
   describe('getActiveModel()', () => {
     it('returns model with provider info', () => {
       const model = registry.getActiveModel();
-      expect(model.id).toBe('qwen3-coder');
-      expect(model.name).toBe('Qwen3 Coder');
+      expect(model.id).toBe('qwen3-coder:480b');
+      expect(model.name).toBe('Qwen3 Coder 480B');
       expect(model.provider).toBe('ollama');
     });
 
@@ -134,14 +134,14 @@ describe('providers/registry.js', () => {
   // ─── setActiveModel ─────────────────────────────────────────
   describe('setActiveModel()', () => {
     it('sets model with provider prefix', () => {
-      expect(registry.setActiveModel('ollama:qwen3-coder')).toBe(true);
+      expect(registry.setActiveModel('ollama:qwen3-coder:480b')).toBe(true);
       expect(registry.getActiveProviderName()).toBe('ollama');
-      expect(registry.getActiveModelId()).toBe('qwen3-coder');
+      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
     });
 
     it('sets model without prefix (searches active provider)', () => {
-      expect(registry.setActiveModel('qwen3-coder')).toBe(true);
-      expect(registry.getActiveModelId()).toBe('qwen3-coder');
+      expect(registry.setActiveModel('qwen3-coder:480b')).toBe(true);
+      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
     });
 
     it('sets model from different provider (auto-switch)', () => {
@@ -185,7 +185,7 @@ describe('providers/registry.js', () => {
     it('returns all model names across providers', () => {
       const names = registry.getModelNames();
       expect(names).toContain('kimi-k2.5');
-      expect(names).toContain('qwen3-coder');
+      expect(names).toContain('qwen3-coder:480b');
       expect(names).toContain('gpt-4o');
       expect(names).toContain('claude-sonnet');
     });
@@ -213,7 +213,7 @@ describe('providers/registry.js', () => {
       const ollama = list.find((p) => p.provider === 'ollama');
       const activeModels = ollama.models.filter((m) => m.active);
       expect(activeModels).toHaveLength(1);
-      expect(activeModels[0].id).toBe('qwen3-coder');
+      expect(activeModels[0].id).toBe('qwen3-coder:480b');
     });
 
     it('includes models per provider', () => {

@@ -14,7 +14,7 @@ jest.mock('../cli/agent', () => ({
 jest.mock('../cli/ollama', () => ({
   getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
   setActiveModel: jest.fn(),
-  getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder']),
+  getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder:480b']),
 }));
 
 jest.mock('../cli/picker', () => ({
@@ -28,7 +28,7 @@ jest.mock('../cli/providers/registry', () => ({
       configured: true,
       models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5', active: true },
-        { id: 'qwen3-coder', name: 'Qwen3 Coder', active: false },
+        { id: 'qwen3-coder:480b', name: 'Qwen3 Coder', active: false },
       ],
     },
     {
@@ -514,7 +514,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/ollama', () => ({
         getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
         setActiveModel: jest.fn(),
-        getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder']),
+        getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder:480b']),
       }));
       jest.mock('../cli/providers/registry', () => ({
         listProviders: jest.fn().mockReturnValue([
@@ -658,8 +658,8 @@ describe('index.js (REPL commands)', () => {
       }));
       jest.mock('../cli/ollama', () => ({
         getActiveModel: jest.fn().mockReturnValue({ id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'ollama' }),
-        setActiveModel: jest.fn().mockImplementation((name) => name === 'qwen3-coder' || name === 'openai:gpt-4o'),
-        getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder']),
+        setActiveModel: jest.fn().mockImplementation((name) => name === 'qwen3-coder:480b' || name === 'openai:gpt-4o'),
+        getModelNames: jest.fn().mockReturnValue(['kimi-k2.5', 'qwen3-coder:480b']),
       }));
       jest.mock('../cli/providers/registry', () => ({
         listProviders: jest.fn().mockReturnValue([
@@ -668,7 +668,7 @@ describe('index.js (REPL commands)', () => {
             configured: true,
             models: [
               { id: 'kimi-k2.5', name: 'Kimi K2.5', active: true },
-              { id: 'qwen3-coder', name: 'Qwen3 Coder', active: false },
+              { id: 'qwen3-coder:480b', name: 'Qwen3 Coder', active: false },
             ],
           },
           {
@@ -732,8 +732,8 @@ describe('index.js (REPL commands)', () => {
     it('handles /model with valid name', async () => {
       const { setActiveModel } = require('../cli/ollama');
       setActiveModel.mockReturnValueOnce(true);
-      await lineHandler('/model qwen3-coder');
-      expect(setActiveModel).toHaveBeenCalledWith('qwen3-coder');
+      await lineHandler('/model qwen3-coder:480b');
+      expect(setActiveModel).toHaveBeenCalledWith('qwen3-coder:480b');
     });
 
     it('handles /model with provider:model format', async () => {

@@ -24,8 +24,8 @@ jest.mock('../cli/tool-tiers', () => {
     getModelTier: jest.fn((modelId, providerName) => {
       const tiers = {
         'kimi-k2.5': 'full',
-        'qwen3:30b-a3b': 'essential',
-        'deepseek-r1': 'standard',
+        'gemma3:27b': 'essential',
+        'deepseek-v3.2': 'standard',
         'claude-haiku': 'standard',
         'gpt-4o': 'full',
       };
@@ -131,12 +131,12 @@ describe('pickModelForTier()', () => {
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5' },
-        { id: 'qwen3:30b-a3b', name: 'Qwen3 30B' },
+        { id: 'gemma3:27b', name: 'Gemma 3 27B' },
       ]},
     ]);
 
     const result = pickModelForTier('essential');
-    expect(result).toEqual({ provider: 'ollama', model: 'qwen3:30b-a3b' });
+    expect(result).toEqual({ provider: 'ollama', model: 'gemma3:27b' });
   });
 
   it('prefers the active provider', () => {
@@ -152,7 +152,7 @@ describe('pickModelForTier()', () => {
 
   it('returns null when no model at tier', () => {
     getConfiguredProviders.mockReturnValue([
-      { name: 'ollama', models: [{ id: 'deepseek-r1', name: 'DeepSeek R1' }] },
+      { name: 'ollama', models: [{ id: 'deepseek-v3.2', name: 'DeepSeek V3.2' }] },
     ]);
 
     const result = pickModelForTier('essential');
@@ -169,7 +169,7 @@ describe('resolveSubAgentModel()', () => {
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5' },
-        { id: 'qwen3:30b-a3b', name: 'Qwen3 30B' },
+        { id: 'gemma3:27b', name: 'Gemma 3 27B' },
       ]},
     ]);
   });
@@ -512,7 +512,7 @@ describe('pickModelForTier() second pass', () => {
   it('falls back to another provider when active has no match', () => {
     getActiveProviderName.mockReturnValue('ollama');
     getConfiguredProviders.mockReturnValue([
-      { name: 'ollama', models: [{ id: 'deepseek-r1', name: 'DeepSeek R1' }] }, // standard only
+      { name: 'ollama', models: [{ id: 'deepseek-v3.2', name: 'DeepSeek V3.2' }] }, // standard only
       { name: 'openai', models: [{ id: 'gpt-4o', name: 'GPT-4o' }] },           // full
     ]);
 
@@ -523,7 +523,7 @@ describe('pickModelForTier() second pass', () => {
   it('skips the local provider in second pass', () => {
     getActiveProviderName.mockReturnValue('ollama');
     getConfiguredProviders.mockReturnValue([
-      { name: 'ollama', models: [{ id: 'deepseek-r1', name: 'DeepSeek R1' }] },
+      { name: 'ollama', models: [{ id: 'deepseek-v3.2', name: 'DeepSeek V3.2' }] },
       { name: 'local', models: [{ id: 'gpt-4o', name: 'GPT-4o' }] },
     ]);
 
@@ -535,7 +535,7 @@ describe('pickModelForTier() second pass', () => {
   it('skips active provider in second pass (no double-check)', () => {
     getActiveProviderName.mockReturnValue('ollama');
     getConfiguredProviders.mockReturnValue([
-      { name: 'ollama', models: [{ id: 'deepseek-r1', name: 'DeepSeek R1' }] },
+      { name: 'ollama', models: [{ id: 'deepseek-v3.2', name: 'DeepSeek V3.2' }] },
       { name: 'anthropic', models: [{ id: 'claude-haiku', name: 'Claude Haiku' }] },
     ]);
 
@@ -548,17 +548,17 @@ describe('pickModelForTier() second pass', () => {
   it('returns match from second provider when first (active) has no tier match', () => {
     getActiveProviderName.mockReturnValue('ollama');
     getModelTier.mockImplementation((modelId) => {
-      if (modelId === 'qwen3:30b-a3b') return 'essential';
+      if (modelId === 'gemma3:27b') return 'essential';
       if (modelId === 'kimi-k2.5') return 'full';
       return 'standard';
     });
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5' }] },
-      { name: 'openai', models: [{ id: 'qwen3:30b-a3b', name: 'Qwen3 30B' }] },
+      { name: 'openai', models: [{ id: 'gemma3:27b', name: 'Gemma 3 27B' }] },
     ]);
 
     const result = pickModelForTier('essential');
-    expect(result).toEqual({ provider: 'openai', model: 'qwen3:30b-a3b' });
+    expect(result).toEqual({ provider: 'openai', model: 'gemma3:27b' });
   });
 });
 

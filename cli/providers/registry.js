@@ -18,9 +18,9 @@ const { checkBudget } = require('../costs');
 // Used during fallback to pick an equivalent model on a different provider.
 
 const MODEL_EQUIVALENTS = {
-  top:    { ollama: 'kimi-k2.5',   openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
-  strong: { ollama: 'qwen3-coder', openai: 'gpt-4o',        anthropic: 'claude-sonnet',     gemini: 'gemini-2.5-flash' },
-  fast:   { ollama: 'devstral',    openai: 'gpt-4.1-mini',  anthropic: 'claude-haiku',      gemini: 'gemini-2.0-flash' },
+  top:    { ollama: 'kimi-k2.5',        openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
+  strong: { ollama: 'qwen3-coder:480b', openai: 'gpt-4o',        anthropic: 'claude-sonnet',     gemini: 'gemini-2.5-flash' },
+  fast:   { ollama: 'devstral-small-2:24b', openai: 'gpt-4.1-mini', anthropic: 'claude-haiku',   gemini: 'gemini-2.0-flash' },
 };
 
 // Reverse lookup: model → tier
@@ -136,9 +136,13 @@ function getActiveModel() {
  */
 function parseModelSpec(spec) {
   if (!spec) return { provider: null, model: null };
-  const parts = spec.split(':');
-  if (parts.length >= 2) {
-    return { provider: parts[0], model: parts.slice(1).join(':') };
+  const colonIdx = spec.indexOf(':');
+  if (colonIdx > 0) {
+    const prefix = spec.slice(0, colonIdx);
+    // Only treat as provider:model if prefix is a known provider name
+    if (providers[prefix] || ['ollama', 'openai', 'anthropic', 'gemini', 'local'].includes(prefix)) {
+      return { provider: prefix, model: spec.slice(colonIdx + 1) };
+    }
   }
   return { provider: null, model: spec };
 }
