@@ -267,7 +267,7 @@ function compressMessage(msg, level = 'light') {
  * @param {object} [options] - { threshold, keepRecent }
  * @returns {{ messages: Array, compressed: boolean, tokensRemoved: number }}
  */
-function fitToContext(messages, tools, options = {}) {
+async function fitToContext(messages, tools, options = {}) {
   const threshold = options.threshold ?? COMPRESSION_THRESHOLD;
   const safetyMargin = options.safetyMargin ?? SAFETY_MARGIN;
   const keepRecent = options.keepRecent ?? KEEP_RECENT;
@@ -282,7 +282,7 @@ function fitToContext(messages, tools, options = {}) {
 
   // Under threshold → no compression needed
   if (totalUsed <= targetMax) {
-    return { messages, compressed: false, tokensRemoved: 0 };
+    return { messages, compressed: false, compacted: false, tokensRemoved: 0 };
   }
 
   const originalTokens = currentTokens;
@@ -296,8 +296,29 @@ function fitToContext(messages, tools, options = {}) {
   }
 
   const recentStart = Math.max(startIdx, messages.length - keepRecent);
-  const oldMessages = messages.slice(startIdx, recentStart);
+  let oldMessages = messages.slice(startIdx, recentStart);
   const recentMessages = messages.slice(recentStart);
+
+  // Phase 0: LLM Compacting
+  const nonCompacted = oldMessages.filter(m => !m._compacted);
+  if (nonCompacted.length >= 6) {
+    try {
+      const { compactMessages } = require('./compactor');
+      const compactResult = await compactMessages(nonCompacted);
+      if (compactResult) {
+        const kept = oldMessages.filter(m => m._compacted);
+        const compressedOld = [...kept, compactResult.message];
+        const r = buildResult(system, compressedOld, recentMessages);
+        const t = estimateMessagesTokens(r);
+        if (t + toolTokens <= targetMax) {
+          return { messages: r, compressed: true, compacted: true,
+                   tokensRemoved: originalTokens - t };
+        }
+        // Compacted but still too large → continue with compacted messages as base
+        oldMessages = compressedOld;
+      }
+    } catch { /* silent fallback */ }
+  }
 
   // Determine compression level based on how far over target we are
   const overageRatio = (totalUsed - targetMax) / targetMax;
@@ -311,6 +332,7 @@ function fitToContext(messages, tools, options = {}) {
     return {
       messages: result,
       compressed: true,
+      compacted: false,
       tokensRemoved: originalTokens - tokens,
     };
   }
@@ -324,6 +346,7 @@ function fitToContext(messages, tools, options = {}) {
     return {
       messages: result,
       compressed: true,
+      compacted: false,
       tokensRemoved: originalTokens - tokens,
     };
   }
@@ -337,6 +360,7 @@ function fitToContext(messages, tools, options = {}) {
     return {
       messages: result,
       compressed: true,
+      compacted: false,
       tokensRemoved: originalTokens - tokens,
     };
   }
@@ -353,6 +377,7 @@ function fitToContext(messages, tools, options = {}) {
   return {
     messages: result,
     compressed: true,
+    compacted: false,
     tokensRemoved: originalTokens - tokens,
   };
 }

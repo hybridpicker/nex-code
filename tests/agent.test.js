@@ -28,7 +28,7 @@ jest.mock('../cli/tools', () => ({
 
 jest.mock('../cli/context', () => ({ gatherProjectContext: jest.fn().mockReturnValue('PACKAGE: test-project') }));
 jest.mock('../cli/context-engine', () => ({
-  fitToContext: jest.fn().mockImplementation((messages) => ({ messages, compressed: false, tokensRemoved: 0 })),
+  fitToContext: jest.fn().mockImplementation(async (messages) => ({ messages, compressed: false, compacted: false, tokensRemoved: 0 })),
   getUsage: jest.fn().mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),
 }));
 jest.mock('../cli/session', () => ({ autoSave: jest.fn() }));

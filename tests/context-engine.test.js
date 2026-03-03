@@ -8,6 +8,10 @@ jest.mock('../cli/providers/registry', () => ({
   }),
 }));
 
+jest.mock('../cli/compactor', () => ({
+  compactMessages: jest.fn().mockResolvedValue(null),
+}));
+
 const {
   estimateTokens,
   estimateMessageTokens,
@@ -25,6 +29,7 @@ const {
 } = require('../cli/context-engine');
 
 const registry = require('../cli/providers/registry');
+const { compactMessages } = require('../cli/compactor');
 
 describe('context-engine.js', () => {
   beforeEach(() => {
@@ -34,6 +39,8 @@ describe('context-engine.js', () => {
       provider: 'openai',
       contextWindow: 128000,
     });
+    compactMessages.mockReset();
+    compactMessages.mockResolvedValue(null);
   });
 
   // ─── estimateTokens ────────────────────────────────────────
@@ -264,17 +271,18 @@ describe('context-engine.js', () => {
 
   // ─── fitToContext ──────────────────────────────────────────
   describe('fitToContext()', () => {
-    it('returns messages unchanged when under threshold', () => {
+    it('returns messages unchanged when under threshold', async () => {
       const messages = [
         { role: 'system', content: 'prompt' },
         { role: 'user', content: 'hello' },
       ];
-      const { messages: result, compressed } = fitToContext(messages, []);
+      const { messages: result, compressed, compacted } = await fitToContext(messages, []);
       expect(compressed).toBe(false);
+      expect(compacted).toBe(false);
       expect(result).toBe(messages);
     });
 
-    it('compresses when over threshold', () => {
+    it('compresses when over threshold', async () => {
       // Use a very small context window to force compression
       registry.getActiveModel.mockReturnValue({ id: 'small', contextWindow: 100 });
 
@@ -284,12 +292,12 @@ describe('context-engine.js', () => {
         ...Array.from({ length: 20 }, (_, i) => ({ role: 'assistant', content: `Response ${i}: ${'y'.repeat(50)}` })),
       ];
 
-      const { compressed, tokensRemoved } = fitToContext(messages, []);
+      const { compressed, tokensRemoved } = await fitToContext(messages, []);
       expect(compressed).toBe(true);
       expect(tokensRemoved).toBeGreaterThan(0);
     });
 
-    it('keeps system prompt intact', () => {
+    it('keeps system prompt intact', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'small', contextWindow: 200 });
 
       const messages = [
@@ -297,12 +305,12 @@ describe('context-engine.js', () => {
         ...Array.from({ length: 30 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(100)}` })),
       ];
 
-      const { messages: result } = fitToContext(messages, []);
+      const { messages: result } = await fitToContext(messages, []);
       expect(result[0].role).toBe('system');
       expect(result[0].content).toBe('Important system prompt');
     });
 
-    it('keeps recent messages intact', () => {
+    it('keeps recent messages intact', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'small', contextWindow: 500 });
 
       const messages = [
@@ -310,13 +318,13 @@ describe('context-engine.js', () => {
         ...Array.from({ length: 30 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(200)}` })),
       ];
 
-      const { messages: result } = fitToContext(messages, [], { keepRecent: 5 });
+      const { messages: result } = await fitToContext(messages, [], { keepRecent: 5 });
       // Last 5 messages should be intact
       const last5 = result.slice(-5);
       expect(last5[4].content).toContain('msg 29');
     });
 
-    it('handles messages without system prompt', () => {
+    it('handles messages without system prompt', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'small', contextWindow: 100 });
 
       const messages = Array.from({ length: 20 }, (_, i) => ({
@@ -324,11 +332,11 @@ describe('context-engine.js', () => {
         content: `Message ${i}: ${'x'.repeat(100)}`,
       }));
 
-      const { messages: result } = fitToContext(messages, []);
+      const { messages: result } = await fitToContext(messages, []);
       expect(result.length).toBeLessThan(messages.length);
     });
 
-    it('removes oldest messages in phase 3', () => {
+    it('removes oldest messages in phase 4', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'tiny', contextWindow: 50 });
 
       const messages = [
@@ -339,12 +347,12 @@ describe('context-engine.js', () => {
         })),
       ];
 
-      const { messages: result, compressed } = fitToContext(messages, []);
+      const { messages: result, compressed } = await fitToContext(messages, []);
       expect(compressed).toBe(true);
       expect(result.length).toBeLessThan(messages.length);
     });
 
-    it('respects custom threshold', () => {
+    it('respects custom threshold', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 200 });
 
       const messages = Array.from({ length: 10 }, () => ({
@@ -353,7 +361,7 @@ describe('context-engine.js', () => {
       }));
 
       // Very low threshold should compress
-      const { compressed } = fitToContext(messages, [], { threshold: 0.1 });
+      const { compressed } = await fitToContext(messages, [], { threshold: 0.1 });
       expect(compressed).toBe(true);
     });
 
@@ -366,7 +374,7 @@ describe('context-engine.js', () => {
       expect(SAFETY_MARGIN).toBe(0.10);
     });
 
-    it('effective target uses threshold minus safety margin', () => {
+    it('effective target uses threshold minus safety margin', async () => {
       // With 128k window, threshold 0.75, margin 0.10:
       // targetMax = 128000 * (0.75 - 0.10) = 83200
       // Messages below 83200 tokens should NOT be compressed
@@ -378,11 +386,11 @@ describe('context-engine.js', () => {
         content: 'x'.repeat(180), // ~45 tokens each → ~675 total
       }));
 
-      const { compressed } = fitToContext(messages, []);
+      const { compressed } = await fitToContext(messages, []);
       expect(compressed).toBe(true); // Should compress since > 65% effective target
     });
 
-    it('respects custom safetyMargin option', () => {
+    it('respects custom safetyMargin option', async () => {
       registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
 
       const messages = Array.from({ length: 10 }, () => ({
@@ -391,13 +399,111 @@ describe('context-engine.js', () => {
       }));
 
       // With threshold 0.75 and safetyMargin 0: effective = 75%
-      const r1 = fitToContext(messages, [], { safetyMargin: 0 });
+      const r1 = await fitToContext(messages, [], { safetyMargin: 0 });
       // With threshold 0.75 and safetyMargin 0.30: effective = 45%
-      const r2 = fitToContext(messages, [], { safetyMargin: 0.30 });
+      const r2 = await fitToContext(messages, [], { safetyMargin: 0.30 });
 
       // Higher margin → more aggressive compression → more tokens removed
       if (r2.compressed) {
         expect(r2.tokensRemoved).toBeGreaterThanOrEqual(r1.tokensRemoved);
+      }
+    });
+
+    // ─── Phase 0: LLM Compacting ────────────────────────────
+    it('uses LLM compacting when >= 6 non-compacted old messages', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 500 });
+
+      const summaryMsg = {
+        role: 'system',
+        content: '[Conversation Summary — 15 messages compacted]\n• stuff happened',
+        _compacted: true,
+        _originalCount: 15,
+      };
+      compactMessages.mockResolvedValueOnce({ message: summaryMsg, tokensRemoved: 200 });
+
+      const messages = [
+        { role: 'system', content: 'prompt' },
+        ...Array.from({ length: 15 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(100)}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `recent ${i}` })),
+      ];
+
+      const result = await fitToContext(messages, []);
+      expect(compactMessages).toHaveBeenCalled();
+      expect(result.compacted).toBe(true);
+      expect(result.compressed).toBe(true);
+      // Summary message should be in the result
+      expect(result.messages.some(m => m._compacted)).toBe(true);
+    });
+
+    it('skips compacting when < 6 old messages', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 200 });
+
+      const messages = [
+        { role: 'system', content: 'prompt' },
+        ...Array.from({ length: 3 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(200)}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `recent ${i}` })),
+      ];
+
+      await fitToContext(messages, []);
+      expect(compactMessages).not.toHaveBeenCalled();
+    });
+
+    it('falls back to truncating when compacting fails', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 200 });
+
+      compactMessages.mockRejectedValueOnce(new Error('LLM error'));
+
+      const messages = [
+        { role: 'system', content: 'prompt' },
+        ...Array.from({ length: 20 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(100)}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `recent ${i}` })),
+      ];
+
+      const result = await fitToContext(messages, []);
+      expect(result.compressed).toBe(true);
+      expect(result.compacted).toBe(false);
+    });
+
+    it('falls back to truncating when compacting returns null', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 200 });
+
+      compactMessages.mockResolvedValueOnce(null);
+
+      const messages = [
+        { role: 'system', content: 'prompt' },
+        ...Array.from({ length: 20 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(100)}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `recent ${i}` })),
+      ];
+
+      const result = await fitToContext(messages, []);
+      expect(result.compressed).toBe(true);
+      expect(result.compacted).toBe(false);
+    });
+
+    it('skips already-compacted messages for re-compacting', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 500 });
+
+      const summaryMsg = {
+        role: 'system',
+        content: '[Conversation Summary — 8 messages compacted]\n• new summary',
+        _compacted: true,
+        _originalCount: 8,
+      };
+      compactMessages.mockResolvedValueOnce({ message: summaryMsg, tokensRemoved: 100 });
+
+      const messages = [
+        { role: 'system', content: 'prompt' },
+        // An already-compacted message from a previous compaction
+        { role: 'system', content: '[Conversation Summary — 5 messages]', _compacted: true, _originalCount: 5 },
+        ...Array.from({ length: 8 }, (_, i) => ({ role: 'user', content: `msg ${i}: ${'x'.repeat(100)}` })),
+        ...Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `recent ${i}` })),
+      ];
+
+      const result = await fitToContext(messages, []);
+      // compactMessages should only receive the non-compacted messages
+      if (compactMessages.mock.calls.length > 0) {
+        const passedMsgs = compactMessages.mock.calls[0][0];
+        expect(passedMsgs.every(m => !m._compacted)).toBe(true);
       }
     });
   });

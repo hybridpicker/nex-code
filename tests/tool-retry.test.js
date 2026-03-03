@@ -46,9 +46,10 @@ jest.mock('../cli/context', () => ({
 }));
 
 jest.mock('../cli/context-engine', () => ({
-  fitToContext: jest.fn().mockImplementation((messages) => ({
+  fitToContext: jest.fn().mockImplementation(async (messages) => ({
     messages,
     compressed: false,
+    compacted: false,
     tokensRemoved: 0,
   })),
   getUsage: jest.fn().mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),

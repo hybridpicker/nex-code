@@ -494,7 +494,7 @@ async function processInput(userInput) {
   const fullMessages = [{ role: 'system', content: systemPrompt }, ...conversationMessages];
 
   // Context-aware compression: fit messages into context window
-  const { messages: fittedMessages, compressed, tokensRemoved } = fitToContext(
+  const { messages: fittedMessages, compressed, compacted, tokensRemoved } = await fitToContext(
     fullMessages,
     TOOL_DEFINITIONS
   );
@@ -502,7 +502,9 @@ async function processInput(userInput) {
   // Context budget warning
   const usage = getUsage(fullMessages, TOOL_DEFINITIONS);
 
-  if (compressed) {
+  if (compacted) {
+    console.log(`${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`);
+  } else if (compressed) {
     const pct = usage.limit > 0 ? Math.round((tokensRemoved / usage.limit) * 100) : 0;
     console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
   }
