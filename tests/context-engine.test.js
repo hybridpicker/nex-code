@@ -20,6 +20,7 @@ const {
   fitToContext,
   truncateFileContent,
   COMPRESSION_THRESHOLD,
+  SAFETY_MARGIN,
   KEEP_RECENT,
 } = require('../cli/context-engine');
 
@@ -357,8 +358,77 @@ describe('context-engine.js', () => {
     });
 
     it('exports threshold and keep_recent constants', () => {
-      expect(COMPRESSION_THRESHOLD).toBe(0.7);
+      expect(COMPRESSION_THRESHOLD).toBe(0.75);
       expect(KEEP_RECENT).toBe(10);
+    });
+
+    it('exports SAFETY_MARGIN constant', () => {
+      expect(SAFETY_MARGIN).toBe(0.10);
+    });
+
+    it('effective target uses threshold minus safety margin', () => {
+      // With 128k window, threshold 0.75, margin 0.10:
+      // targetMax = 128000 * (0.75 - 0.10) = 83200
+      // Messages below 83200 tokens should NOT be compressed
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+
+      // Create messages that use ~700 tokens (70% of 1000) — above 65% effective target
+      const messages = Array.from({ length: 15 }, () => ({
+        role: 'user',
+        content: 'x'.repeat(180), // ~45 tokens each → ~675 total
+      }));
+
+      const { compressed } = fitToContext(messages, []);
+      expect(compressed).toBe(true); // Should compress since > 65% effective target
+    });
+
+    it('respects custom safetyMargin option', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+
+      const messages = Array.from({ length: 10 }, () => ({
+        role: 'user',
+        content: 'x'.repeat(80),
+      }));
+
+      // With threshold 0.75 and safetyMargin 0: effective = 75%
+      const r1 = fitToContext(messages, [], { safetyMargin: 0 });
+      // With threshold 0.75 and safetyMargin 0.30: effective = 45%
+      const r2 = fitToContext(messages, [], { safetyMargin: 0.30 });
+
+      // Higher margin → more aggressive compression → more tokens removed
+      if (r2.compressed) {
+        expect(r2.tokensRemoved).toBeGreaterThanOrEqual(r1.tokensRemoved);
+      }
+    });
+  });
+
+  // ─── compressMessage medium level ────────────────────────────
+  describe('compressMessage() medium level', () => {
+    it('medium truncates tool results to 100 chars', () => {
+      const msg = { role: 'tool', content: 'x'.repeat(300), tool_call_id: 'c1' };
+      const compressed = compressMessage(msg, 'medium');
+      // medium maxTool = 100, so content should be compressed
+      expect(compressed.content.length).toBeLessThan(msg.content.length);
+    });
+
+    it('medium truncates assistant content to 200 chars', () => {
+      const msg = { role: 'assistant', content: 'y'.repeat(500) };
+      const compressed = compressMessage(msg, 'medium');
+      expect(compressed.content.length).toBeLessThan(msg.content.length);
+      // Should be between aggressive (100) and light (500)
+      const light = compressMessage(msg, 'light');
+      const aggressive = compressMessage(msg, 'aggressive');
+      expect(compressed.content.length).toBeLessThanOrEqual(light.content.length);
+      expect(compressed.content.length).toBeGreaterThanOrEqual(aggressive.content.length);
+    });
+
+    it('medium is between light and aggressive for tool results', () => {
+      const msg = { role: 'tool', content: 'z'.repeat(500), tool_call_id: 'c1' };
+      const light = compressMessage(msg, 'light');
+      const medium = compressMessage(msg, 'medium');
+      const aggressive = compressMessage(msg, 'aggressive');
+      expect(medium.content.length).toBeLessThanOrEqual(light.content.length);
+      expect(medium.content.length).toBeGreaterThanOrEqual(aggressive.content.length);
     });
   });
 

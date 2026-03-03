@@ -144,7 +144,8 @@ function getUsage(messages, tools) {
 
 // ─── Auto-Compression ──────────────────────────────────────────
 
-const COMPRESSION_THRESHOLD = 0.7; // Compress when >70% full
+const COMPRESSION_THRESHOLD = 0.75; // Compress when >75% full
+const SAFETY_MARGIN = 0.10;         // 10% reserve for token estimation errors
 const KEEP_RECENT = 10; // Always keep last N messages intact
 const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
 const TRUNCATE_ASSISTANT = 500; // Truncate old assistant content to N chars
@@ -204,12 +205,12 @@ function compressToolResult(content, maxChars) {
 /**
  * Compress a single message to reduce token usage.
  * @param {object} msg
- * @param {string} level - 'light' or 'aggressive'
+ * @param {string} level - 'light', 'medium', or 'aggressive'
  * @returns {object} compressed message
  */
 function compressMessage(msg, level = 'light') {
-  const maxContent = level === 'aggressive' ? 100 : TRUNCATE_ASSISTANT;
-  const maxTool = level === 'aggressive' ? 50 : TRUNCATE_TOOL_RESULT;
+  const maxContent = level === 'aggressive' ? 100 : level === 'medium' ? 200 : TRUNCATE_ASSISTANT;
+  const maxTool = level === 'aggressive' ? 50 : level === 'medium' ? 100 : TRUNCATE_TOOL_RESULT;
 
   if (msg.role === 'tool') {
     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
@@ -268,11 +269,12 @@ function compressMessage(msg, level = 'light') {
  */
 function fitToContext(messages, tools, options = {}) {
   const threshold = options.threshold ?? COMPRESSION_THRESHOLD;
+  const safetyMargin = options.safetyMargin ?? SAFETY_MARGIN;
   const keepRecent = options.keepRecent ?? KEEP_RECENT;
 
   const limit = getContextWindow();
   const toolTokens = estimateToolsTokens(tools);
-  const targetMax = Math.floor(limit * threshold);
+  const targetMax = Math.floor(limit * (threshold - safetyMargin));
   const available = targetMax - toolTokens;
 
   const currentTokens = estimateMessagesTokens(messages);
@@ -297,7 +299,10 @@ function fitToContext(messages, tools, options = {}) {
   const oldMessages = messages.slice(startIdx, recentStart);
   const recentMessages = messages.slice(recentStart);
 
-  // Phase 1: Light compression of old messages
+  // Determine compression level based on how far over target we are
+  const overageRatio = (totalUsed - targetMax) / targetMax;
+
+  // Phase 1: Light compression (≤15% over target)
   let compressed = oldMessages.map((msg) => compressMessage(msg, 'light'));
   let result = buildResult(system, compressed, recentMessages);
   let tokens = estimateMessagesTokens(result);
@@ -310,7 +315,20 @@ function fitToContext(messages, tools, options = {}) {
     };
   }
 
-  // Phase 2: Aggressive compression
+  // Phase 2: Medium compression (≤30% over target)
+  compressed = oldMessages.map((msg) => compressMessage(msg, 'medium'));
+  result = buildResult(system, compressed, recentMessages);
+  tokens = estimateMessagesTokens(result);
+
+  if (tokens + toolTokens <= targetMax) {
+    return {
+      messages: result,
+      compressed: true,
+      tokensRemoved: originalTokens - tokens,
+    };
+  }
+
+  // Phase 3: Aggressive compression (>30% over target)
   compressed = oldMessages.map((msg) => compressMessage(msg, 'aggressive'));
   result = buildResult(system, compressed, recentMessages);
   tokens = estimateMessagesTokens(result);
@@ -323,7 +341,7 @@ function fitToContext(messages, tools, options = {}) {
     };
   }
 
-  // Phase 3: Remove oldest messages until we fit
+  // Phase 4: Remove oldest messages until we fit
   while (compressed.length > 0 && tokens + toolTokens > available) {
     const removed = compressed.shift();
     tokens -= estimateMessageTokens(removed);
@@ -406,5 +424,6 @@ module.exports = {
   fitToContext,
   truncateFileContent,
   COMPRESSION_THRESHOLD,
+  SAFETY_MARGIN,
   KEEP_RECENT,
 };

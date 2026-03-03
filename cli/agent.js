@@ -36,6 +36,8 @@ const PARALLEL_SAFE = new Set([
 ]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
+const STALE_WARN_MS = 60000;   // Warn after 60s without tokens
+const STALE_ABORT_MS = 120000; // Abort after 120s without tokens
 const CWD = process.cwd();
 
 // Wire up "a" (always allow) from confirm dialog → permission system
@@ -86,6 +88,16 @@ async function prepareToolCall(tc) {
   }
 
   const finalArgs = validation.corrected || args;
+
+  // Log validator corrections so user/LLM can see auto-fixes
+  if (validation.corrected) {
+    const orig = Object.keys(args);
+    const fixed = Object.keys(validation.corrected);
+    const renamed = orig.filter(k => !fixed.includes(k));
+    if (renamed.length) {
+      console.log(`${C.dim}  ✓ ${fnName}: corrected args (${renamed.join(', ')})${C.reset}`);
+    }
+  }
 
   // Permission check
   const perm = checkPermission(fnName);
@@ -487,12 +499,13 @@ async function processInput(userInput) {
     TOOL_DEFINITIONS
   );
 
-  if (compressed) {
-    console.log(`${C.dim}  [context compressed, ~${tokensRemoved} tokens freed]${C.reset}`);
-  }
-
   // Context budget warning
   const usage = getUsage(fullMessages, TOOL_DEFINITIONS);
+
+  if (compressed) {
+    const pct = usage.limit > 0 ? Math.round((tokensRemoved / usage.limit) * 100) : 0;
+    console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
+  }
   if (usage.percentage > 85) {
     console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% full — consider /clear or /save + start fresh${C.reset}`);
   }
@@ -538,12 +551,33 @@ async function processInput(userInput) {
     const stream = new StreamRenderer();
 
     let result;
+    // Stale-stream detection: warn/abort if provider stops sending tokens
+    let lastTokenTime = Date.now();
+    let staleWarned = false;
+    const staleAbort = new AbortController();
+    const staleTimer = setInterval(() => {
+      const elapsed = Date.now() - lastTokenTime;
+      if (elapsed >= STALE_ABORT_MS) {
+        console.log(`${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`);
+        staleAbort.abort();
+      } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
+        staleWarned = true;
+        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
+      }
+    }, 5000);
     try {
       const allTools = filterToolsForModel([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
-      const signal = _getAbortSignal();
+      const userSignal = _getAbortSignal();
+      // Combine user abort (Ctrl+C) and stale abort into one signal
+      const combinedAbort = new AbortController();
+      if (userSignal) userSignal.addEventListener('abort', () => combinedAbort.abort(), { once: true });
+      staleAbort.signal.addEventListener('abort', () => combinedAbort.abort(), { once: true });
+
       result = await callStream(apiMessages, allTools, {
-        signal,
+        signal: combinedAbort.signal,
         onToken: (text) => {
+          lastTokenTime = Date.now();
+          staleWarned = false;
           if (firstToken) {
             if (taskProgress && !taskProgress._paused) {
               taskProgress.pause();
@@ -558,8 +592,15 @@ async function processInput(userInput) {
         },
       });
     } catch (err) {
+      clearInterval(staleTimer);
       if (taskProgress && !taskProgress._paused) taskProgress.pause();
       if (spinner) spinner.stop();
+
+      // Stale abort → retry this iteration
+      if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
+        i--; // Don't count stale timeouts as iterations
+        continue;
+      }
 
       // Abort errors (Ctrl+C) — break silently
       if (err.name === 'AbortError' || err.name === 'CanceledError' ||
@@ -641,6 +682,8 @@ async function processInput(userInput) {
       autoSave(conversationMessages);
       break;
     }
+
+    clearInterval(staleTimer);
 
     if (firstToken) {
       if (taskProgress && !taskProgress._paused) taskProgress.pause();

@@ -561,7 +561,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
-          // Log the auto-fix silently (result will show it)
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
@@ -625,6 +625,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
@@ -641,6 +642,7 @@ async function _executeToolInner(name, args, options = {}) {
         if (fuzzyResult) {
           matchText = fuzzyResult;
           fuzzyMatched = true;
+          console.log(`${C.dim}  ✓ fuzzy whitespace match applied${C.reset}`);
         } else {
           // Try auto-fix: apply close matches automatically (≤5% distance)
           const fix = autoFixEdit(content, args.old_text, args.new_text);
@@ -652,7 +654,11 @@ async function _executeToolInner(name, args, options = {}) {
             }
             fs.writeFileSync(fp, fix.content, 'utf-8');
             recordChange('edit_file', fp, content, fix.content);
-            return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance})`;
+            const matchPreview = fix.matchText.length > 80
+              ? fix.matchText.substring(0, 77) + '...'
+              : fix.matchText;
+            console.log(`${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`);
+            return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
           }
           // Provide helpful error with most similar text
           const similar = findMostSimilar(content, args.old_text);
@@ -813,6 +819,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }

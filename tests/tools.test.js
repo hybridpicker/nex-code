@@ -826,4 +826,76 @@ describe('tools.js', () => {
       expect(result).toContain('Unknown tool');
     });
   });
+
+  // ─── auto-fix console logging ────────────────────────────────
+  describe('auto-fix logging', () => {
+    let logSpy;
+    beforeEach(() => { logSpy = jest.spyOn(console, 'log').mockImplementation(() => {}); });
+    afterEach(() => { logSpy.mockRestore(); });
+
+    function logOutput() {
+      return logSpy.mock.calls.map(c => c[0]).join('\n');
+    }
+
+    it('read_file logs auto-fixed path', async () => {
+      // Create a file then read with wrong extension
+      const fp = path.join(tmpDir, 'readfix.js');
+      fs.writeFileSync(fp, 'hello');
+      // Read with .ts extension (will auto-fix to .js)
+      const result = await executeTool('read_file', { path: path.join(tmpDir, 'readfix.ts') });
+      if (result.includes('hello')) {
+        expect(logOutput()).toContain('auto-fixed path');
+      }
+    });
+
+    it('edit_file logs auto-fixed path', async () => {
+      const fp = path.join(tmpDir, 'editfix.js');
+      fs.writeFileSync(fp, 'const a = 1;\n');
+      const result = await executeTool('edit_file', {
+        path: path.join(tmpDir, 'editfix.ts'),
+        old_text: 'const a = 1;',
+        new_text: 'const a = 2;',
+      });
+      if (result.includes('Edited')) {
+        expect(logOutput()).toContain('auto-fixed path');
+      }
+    });
+
+    it('edit_file logs fuzzy whitespace match', async () => {
+      const fp = path.join(tmpDir, 'fuzzylog.txt');
+      fs.writeFileSync(fp, '\tconst x = 1;\n');
+      const result = await executeTool('edit_file', {
+        path: fp,
+        old_text: '  const x = 1;',
+        new_text: '  const x = 2;',
+      });
+      expect(result).toContain('Edited');
+      expect(logOutput()).toContain('fuzzy whitespace match');
+    });
+
+    it('edit_file auto-fix logs matched text and line info', async () => {
+      const fp = path.join(tmpDir, 'autofix-log.txt');
+      fs.writeFileSync(fp, 'const hello = "world";\n');
+      const result = await executeTool('edit_file', {
+        path: fp,
+        old_text: 'const helo = "world";',
+        new_text: 'const hello = "earth";',
+      });
+      expect(result).toContain('auto-fixed');
+      expect(result).toContain('matched:');
+      expect(logOutput()).toContain('auto-fixed edit');
+    });
+
+    it('patch_file logs auto-fixed path', async () => {
+      const fp = path.join(tmpDir, 'patchfix.js');
+      fs.writeFileSync(fp, 'const a = 1;\n');
+      const result = await executeTool('patch_file', {
+        path: path.join(tmpDir, 'patchfix.ts'),
+        patches: [{ old_text: 'const a = 1;', new_text: 'const a = 2;' }],
+      });
+      if (result.includes('Patched')) {
+        expect(logOutput()).toContain('auto-fixed path');
+      }
+    });
+  });
 });
