@@ -55,6 +55,13 @@ chore: <Maintenance>
 
 Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 
+## Sicherheit — Secrets & Credentials
+
+- **NIEMALS** Passwörter, Tokens, API-Keys oder andere Secrets im Chat-Output anzeigen
+- Secrets werden generiert und **direkt in eine lokale Datei** geschrieben (chmod 600)
+- Nachfolgende Befehle lesen Secrets **aus der Datei** — nie aus dem Chat-Verlauf
+- Credentials-Dateien IMMER in `.gitignore` eintragen
+
 ## Git Rules
 
 - **NIEMALS** `Co-Authored-By: Claude` oder andere Claude/Anthropic-Signaturen einfügen
