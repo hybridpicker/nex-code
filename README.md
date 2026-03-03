@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/nex-code"><img src="https://img.shields.io/npm/v/nex-code.svg" alt="npm version"></a>
   <a href="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml"><img src="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
@@ -25,10 +26,15 @@
 ## Quickstart
 
 ```bash
-git clone https://github.com/hybridpicker/nex-code.git
-cd nex-code && npm install
-cp .env.example .env       # add at least one API key
-npm start                   # or: npm link && nex-code
+npx nex-code
+```
+
+Or install globally:
+
+```bash
+npm install -g nex-code
+cd ~/your-project
+nex-code
 ```
 
 That's it. You'll see the banner, your project context, and the `>` prompt. Start typing.
