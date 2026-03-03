@@ -78,7 +78,7 @@ describe('ui.js', () => {
       // Banner uses Unicode box characters with ANSI color codes
       // Check for raw box characters (without ANSI codes) in the source
       expect(output).toContain('Agentic Coding CLI');
-      expect(output).toContain('v0.3.0');
+      expect(output).toContain(`v${require('../package.json').version}`);
       logSpy.mockRestore();
     });
   });
