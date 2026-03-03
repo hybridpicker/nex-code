@@ -163,15 +163,15 @@ describe('context.js', () => {
       logSpy.mockRestore();
     });
 
-    it('prints CWD even without package.json', () => {
+    it('prints only empty line without package.json or git', () => {
       execSync.mockImplementation(() => {
         throw new Error('no git');
       });
 
       const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
       printContext(tmpDir);
-      const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain(tmpDir);
+      // No project info, no branch — only the trailing empty line
+      expect(logSpy).toHaveBeenCalledTimes(1);
       logSpy.mockRestore();
     });
   });
