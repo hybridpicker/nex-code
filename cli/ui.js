@@ -66,7 +66,7 @@ function banner(modelName, cwd, opts = {}) {
 
   console.log(`
 ${logo}
-              ${d}Agentic Coding CLI  v0.3.0${r}
+              ${d}Agentic Coding CLI  v${require('../package.json').version}${r}
               ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
 `);
 }
