@@ -37,7 +37,7 @@ function createTasks(name, taskDefs) {
     const id = `t${taskIdCounter}`;
     tasks.push({
       id,
-      description: def.description,
+      description: def.description || def.title || def.name || def.task || `Task ${taskIdCounter}`,
       status: 'pending',
       dependsOn: def.depends_on || [],
       result: null,
