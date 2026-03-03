@@ -32,6 +32,7 @@ cd nex-code
 npm install
 cp .env.example .env
 npm link
+npm run install-hooks
 ```
 
 ### Configure a Provider
@@ -240,6 +241,7 @@ Three tiers of protection:
 - **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
 - **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
+- **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
 
 ### Sessions
 Save and restore conversations:
@@ -576,7 +578,8 @@ Project-local configuration and state (gitignored):
 ├── memory/            # Persistent project knowledge
 ├── plans/             # Saved plans
 ├── hooks/             # Custom hook scripts
-└── skills/            # Skill files (.md and .js)
+├── skills/            # Skill files (.md and .js)
+└── push-allowlist     # False-positive allowlist for pre-push secret detection
 ```
 
 ---
@@ -588,7 +591,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-41 test suites, 1642 tests, 90% statement / 83% branch coverage.
+42 test suites, 1721 tests, 90% statement / 83% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
