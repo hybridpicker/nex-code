@@ -665,34 +665,41 @@ npm install
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
-      // First render: frame 0 (dark gray tiny dot ∙)
+      // First render: frame 0 (dark gray ●)
       expect(writeSpy).toHaveBeenCalled();
       const firstWrite = writeSpy.mock.calls[0][0];
-      expect(firstWrite).toContain('∙');
+      expect(firstWrite).toContain('●');
+      expect(firstWrite).toContain('\x1b[90m'); // dark gray
       sr.stopCursor();
     });
 
-    it('cursor pulses through 8 breathing frames', () => {
+    it('cursor pulses through 8 breathing frames (all ● with color change)', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      // Frame 0: ∙ (dark gray tiny)
-      expect(writeSpy.mock.calls[0][0]).toContain('∙');
-      // Frame 1 (120ms): • (dark gray small)
+      // Frame 0: ● dark gray
+      expect(writeSpy.mock.calls[0][0]).toContain('\x1b[90m');
+      // Frame 1 (120ms): ● dark gray (hold)
       jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[1][0]).toContain('•');
-      // Frame 3 (360ms): ● (cyan big)
+      expect(writeSpy.mock.calls[1][0]).toContain('\x1b[90m');
+      // Frame 2 (240ms): ● cyan
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[2][0]).toContain('\x1b[36m');
+      // Frame 3 (360ms): ● bright cyan (peak)
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[3][0]).toContain('\x1b[96m');
+      // Frame 4 (480ms): ● bright cyan (hold peak)
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[4][0]).toContain('\x1b[96m');
+      // Frame 5 (600ms): ● cyan
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[5][0]).toContain('\x1b[36m');
+      // Frame 6+7: dark gray again
       jest.advanceTimersByTime(240);
-      expect(writeSpy.mock.calls[3][0]).toContain('●');
-      // Frame 4 (480ms): ● (bright cyan peak)
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[4][0]).toContain('●');
-      expect(writeSpy.mock.calls[4][0]).toContain('\x1b[96m'); // bright cyan
-      // Frame 7 (840ms): • (dark gray, back down)
-      jest.advanceTimersByTime(360);
-      expect(writeSpy.mock.calls[7][0]).toContain('•');
-      // Frame 8 (960ms): wraps to frame 0 → ∙ again
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[8][0]).toContain('∙');
+      expect(writeSpy.mock.calls[7][0]).toContain('\x1b[90m');
+      // All frames use ●
+      for (let i = 0; i < 8; i++) {
+        expect(writeSpy.mock.calls[i][0]).toContain('●');
+      }
       sr.stopCursor();
     });
 

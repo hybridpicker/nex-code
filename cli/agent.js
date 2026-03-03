@@ -566,10 +566,12 @@ async function processInput(userInput) {
     const staleTimer = setInterval(() => {
       const elapsed = Date.now() - lastTokenTime;
       if (elapsed >= STALE_ABORT_MS) {
+        stream._clearCursorLine();
         console.log(`${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`);
         staleAbort.abort();
       } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
         staleWarned = true;
+        stream._clearCursorLine();
         console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
       }
     }, 5000);
