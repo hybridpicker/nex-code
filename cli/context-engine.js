@@ -435,6 +435,58 @@ function truncateFileContent(content, maxTokens) {
   return headContent + separator + tailContent;
 }
 
+// ─── Force Compression (Context-Too-Long Recovery) ─────────────
+
+const FORCE_COMPRESS_KEEP_RECENT = 6;
+
+/**
+ * Emergency compression when the API rejects with "context too long".
+ * More aggressive than fitToContext: targets 50% of context window
+ * and keeps only 6 recent messages.
+ *
+ * @param {Array} messages - Full message array (including system prompt)
+ * @param {Array} tools - Tool definitions
+ * @returns {{ messages: Array, tokensRemoved: number }}
+ */
+function forceCompress(messages, tools) {
+  const limit = getContextWindow();
+  const toolTokens = estimateToolsTokens(tools);
+  const targetMax = Math.floor(limit * 0.5) - toolTokens; // 50% of context window
+  const originalTokens = estimateMessagesTokens(messages);
+
+  // Split: system + old + recent
+  let system = null;
+  let startIdx = 0;
+  if (messages.length > 0 && messages[0].role === 'system') {
+    system = messages[0];
+    startIdx = 1;
+  }
+
+  const recentStart = Math.max(startIdx, messages.length - FORCE_COMPRESS_KEEP_RECENT);
+  let oldMessages = messages.slice(startIdx, recentStart);
+  const recentMessages = messages.slice(recentStart);
+
+  // Aggressive compression on all old messages
+  let compressed = oldMessages.map((msg) => compressMessage(msg, 'aggressive'));
+
+  // Remove oldest messages until we fit
+  let result = buildResult(system, compressed, recentMessages);
+  let tokens = estimateMessagesTokens(result);
+
+  while (compressed.length > 0 && tokens > targetMax) {
+    const removed = compressed.shift();
+    tokens -= estimateMessageTokens(removed);
+  }
+
+  result = buildResult(system, compressed, recentMessages);
+  tokens = estimateMessagesTokens(result);
+
+  return {
+    messages: result,
+    tokensRemoved: originalTokens - tokens,
+  };
+}
+
 // ─── Exports ───────────────────────────────────────────────────
 
 module.exports = {
@@ -447,6 +499,7 @@ module.exports = {
   compressMessage,
   compressToolResult,
   fitToContext,
+  forceCompress,
   truncateFileContent,
   COMPRESSION_THRESHOLD,
   SAFETY_MARGIN,

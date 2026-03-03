@@ -13,6 +13,40 @@ const { GeminiProvider } = require('./gemini');
 const { LocalProvider } = require('./local');
 const { checkBudget } = require('../costs');
 
+// ─── Model Equivalence Map ─────────────────────────────────────
+// Maps models across providers by capability tier (top/strong/fast).
+// Used during fallback to pick an equivalent model on a different provider.
+
+const MODEL_EQUIVALENTS = {
+  top:    { ollama: 'kimi-k2.5',   openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
+  strong: { ollama: 'qwen3-coder', openai: 'gpt-4o',        anthropic: 'claude-sonnet',     gemini: 'gemini-2.5-flash' },
+  fast:   { ollama: 'devstral',    openai: 'gpt-4.1-mini',  anthropic: 'claude-haiku',      gemini: 'gemini-2.0-flash' },
+};
+
+// Reverse lookup: model → tier
+const _modelToTier = {};
+for (const [tier, mapping] of Object.entries(MODEL_EQUIVALENTS)) {
+  for (const model of Object.values(mapping)) {
+    _modelToTier[model] = tier;
+  }
+}
+
+/**
+ * Resolve the equivalent model for a target provider.
+ * If sourceModel exists in MODEL_EQUIVALENTS, returns the target provider's
+ * equivalent. Otherwise returns sourceModel unchanged.
+ *
+ * @param {string} sourceModel - The model ID to map (e.g. 'kimi-k2.5')
+ * @param {string} targetProviderName - Target provider (e.g. 'openai')
+ * @returns {string} resolved model ID
+ */
+function resolveModelForProvider(sourceModel, targetProviderName) {
+  const tier = _modelToTier[sourceModel];
+  if (!tier) return sourceModel; // Unknown model — pass through unchanged
+  const equivalent = MODEL_EQUIVALENTS[tier][targetProviderName];
+  return equivalent || sourceModel; // No mapping for this provider — pass through
+}
+
 // ─── Registry State ────────────────────────────────────────────
 
 const providers = {};
@@ -270,7 +304,12 @@ async function callStream(messages, tools, options = {}) {
     }
 
     try {
-      return await provider.stream(messages, tools, { model: activeModelId, signal: options.signal, ...options });
+      const isFallback = idx > 0;
+      const model = isFallback ? resolveModelForProvider(activeModelId, provName) : activeModelId;
+      if (isFallback && model !== activeModelId) {
+        process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
+      }
+      return await provider.stream(messages, tools, { model, signal: options.signal, ...options });
     } catch (err) {
       lastError = err;
       if (isRetryableError(err) && idx < providersToTry.length - 1) {
@@ -335,12 +374,18 @@ async function callChat(messages, tools, options = {}) {
     }
 
     try {
-      return await provider.chat(messages, tools, { model: activeModelId, ...options });
+      const isFallback = idx > 0;
+      const model = isFallback ? resolveModelForProvider(activeModelId, provName) : activeModelId;
+      if (isFallback && model !== activeModelId) {
+        process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
+      }
+      return await provider.chat(messages, tools, { model, ...options });
     } catch (err) {
       // Fallback: try streaming endpoint before giving up on this provider
+      const fallbackModel = idx > 0 ? resolveModelForProvider(activeModelId, provName) : activeModelId;
       if (typeof provider.stream === 'function') {
         try {
-          return await provider.stream(messages, tools, { model: activeModelId, ...options, onToken: () => {} });
+          return await provider.stream(messages, tools, { model: fallbackModel, ...options, onToken: () => {} });
         } catch { /* stream fallback also failed — continue with original error */ }
       }
       lastError = err;
@@ -400,5 +445,6 @@ module.exports = {
   getConfiguredProviders,
   setFallbackChain,
   getFallbackChain,
+  resolveModelForProvider,
   _reset,
 };
