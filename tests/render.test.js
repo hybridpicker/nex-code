@@ -660,47 +660,53 @@ npm install
       writeSpy.mockRestore();
     });
 
-    it('startCursor sets _cursorActive and starts timer', () => {
+    it('startCursor hides terminal cursor and renders first frame', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
-      // First render: frame 0 (dark gray ●)
-      expect(writeSpy).toHaveBeenCalled();
-      const firstWrite = writeSpy.mock.calls[0][0];
-      expect(firstWrite).toContain('●');
-      expect(firstWrite).toContain('\x1b[90m'); // dark gray
+      // First write: hide terminal cursor
+      expect(writeSpy.mock.calls[0][0]).toBe('\x1b[?25l');
+      // Second write: frame 0 (small cyan •)
+      expect(writeSpy.mock.calls[1][0]).toContain('•');
+      expect(writeSpy.mock.calls[1][0]).toContain('\x1b[36m');
       sr.stopCursor();
     });
 
-    it('cursor pulses through 8 breathing frames (all ● with color change)', () => {
+    it('cursor pulses size: small • → big ● → small • (always cyan)', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      // Frame 0: ● dark gray
-      expect(writeSpy.mock.calls[0][0]).toContain('\x1b[90m');
-      // Frame 1 (120ms): ● dark gray (hold)
+      // calls[0] = hide cursor, calls[1] = frame 0
+      // Frame 0+1: • small cyan
+      expect(writeSpy.mock.calls[1][0]).toContain('•');
       jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[1][0]).toContain('\x1b[90m');
-      // Frame 2 (240ms): ● cyan
+      expect(writeSpy.mock.calls[2][0]).toContain('•');
+      // Frame 2: ● big cyan
       jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[2][0]).toContain('\x1b[36m');
-      // Frame 3 (360ms): ● bright cyan (peak)
+      expect(writeSpy.mock.calls[3][0]).toContain('●');
+      expect(writeSpy.mock.calls[3][0]).toContain('\x1b[36m');
+      // Frame 3+4: ● big bright cyan (peak)
       jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[3][0]).toContain('\x1b[96m');
-      // Frame 4 (480ms): ● bright cyan (hold peak)
-      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[4][0]).toContain('●');
       expect(writeSpy.mock.calls[4][0]).toContain('\x1b[96m');
-      // Frame 5 (600ms): ● cyan
       jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[5][0]).toContain('\x1b[36m');
-      // Frame 6+7: dark gray again
+      expect(writeSpy.mock.calls[5][0]).toContain('\x1b[96m');
+      // Frame 5: ● big cyan
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[6][0]).toContain('●');
+      // Frame 6+7: • small cyan again
       jest.advanceTimersByTime(240);
-      expect(writeSpy.mock.calls[7][0]).toContain('\x1b[90m');
-      // All frames use ●
-      for (let i = 0; i < 8; i++) {
-        expect(writeSpy.mock.calls[i][0]).toContain('●');
-      }
+      expect(writeSpy.mock.calls[8][0]).toContain('•');
       sr.stopCursor();
+    });
+
+    it('stopCursor shows terminal cursor again', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      writeSpy.mockClear();
+      sr.stopCursor();
+      const all = writeSpy.mock.calls.map(c => c[0]).join('');
+      expect(all).toContain('\x1b[?25h'); // show cursor
     });
 
     it('push clears cursor line and reshows cursor after rendering', () => {
@@ -739,13 +745,14 @@ npm install
       expect(sr._cursorTimer).toBeNull();
     });
 
-    it('stopCursor clears cursor line', () => {
+    it('stopCursor clears cursor line and shows terminal cursor', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
       writeSpy.mockClear();
       sr.stopCursor();
-      const calls = writeSpy.mock.calls.map(c => c[0]);
-      expect(calls.some(c => c === '\x1b[2K\r')).toBe(true);
+      const all = writeSpy.mock.calls.map(c => c[0]).join('');
+      expect(all).toContain('\x1b[2K\r');
+      expect(all).toContain('\x1b[?25h');
     });
 
     it('push without active cursor does not write cursor escapes', () => {

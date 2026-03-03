@@ -344,21 +344,22 @@ class StreamRenderer {
   startCursor() {
     this._cursorActive = true;
     this._cursorFrame = 0;
+    this._safeWrite('\x1b[?25l');   // hide terminal cursor
     this._renderCursor();
     this._cursorTimer = setInterval(() => this._renderCursor(), 120);
   }
 
   _renderCursor() {
-    // Breathing pulse: dark gray ● → cyan ● → bright cyan ● (peak) → back
+    // Breathing size pulse: small cyan • → big bright cyan ● → back
     const frames = [
-      '\x1b[90m●\x1b[0m',
-      '\x1b[90m●\x1b[0m',
+      '\x1b[36m•\x1b[0m',
+      '\x1b[36m•\x1b[0m',
       '\x1b[36m●\x1b[0m',
       '\x1b[96m●\x1b[0m',
       '\x1b[96m●\x1b[0m',
       '\x1b[36m●\x1b[0m',
-      '\x1b[90m●\x1b[0m',
-      '\x1b[90m●\x1b[0m',
+      '\x1b[36m•\x1b[0m',
+      '\x1b[36m•\x1b[0m',
     ];
     this._safeWrite(`\x1b[2K\r${frames[this._cursorFrame % frames.length]}`);
     this._cursorFrame++;
@@ -376,7 +377,7 @@ class StreamRenderer {
       this._cursorTimer = null;
     }
     if (this._cursorActive) {
-      this._safeWrite('\x1b[2K\r');
+      this._safeWrite('\x1b[2K\r\x1b[?25h'); // clear line + show terminal cursor
       this._cursorActive = false;
     }
   }
