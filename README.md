@@ -8,13 +8,44 @@
 ```
 
 <p align="center">
-  Standalone agentic coding CLI with multi-provider support.<br>
-  Streaming output, persistent conversations, colored diff previews, automatic project context.
+  <b>Agentic coding CLI — like Claude Code, but open-source and multi-provider.</b><br>
+  Use OpenAI, Anthropic, Google Gemini, Ollama Cloud, or local models. Your choice.
 </p>
 
 <p align="center">
-  Supports <b>OpenAI</b>, <b>Anthropic</b>, <b>Google Gemini</b>, <b>Ollama Cloud</b>, and <b>local Ollama</b> servers.
+  <a href="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml"><img src="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
+  <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
+  <img src="https://img.shields.io/badge/tests-1780-blue.svg" alt="Tests: 1780">
 </p>
+
+---
+
+## Quickstart
+
+```bash
+git clone https://github.com/hybridpicker/nex-code.git
+cd nex-code && npm install
+cp .env.example .env       # add at least one API key
+npm start                   # or: npm link && nex-code
+```
+
+That's it. You'll see the banner, your project context, and the `>` prompt. Start typing.
+
+---
+
+## Why nex-code?
+
+| | nex-code | Claude Code | aider | Cursor |
+|---|---|---|---|---|
+| **Open-source** | MIT | Proprietary | Apache 2.0 | Proprietary |
+| **Multi-provider** | 5 providers, swap at runtime | Anthropic only | Multi-provider | Multi-provider |
+| **Free local models** | Ollama (no API key) | — | Ollama | — |
+| **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Heavy | Electron |
+| **Test coverage** | 1780 tests, 90% coverage | — | — | — |
+| **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed | Fixed |
+| **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Anthropic only | Config change | Config change |
 
 ---
 
