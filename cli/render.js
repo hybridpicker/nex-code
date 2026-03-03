@@ -346,22 +346,14 @@ class StreamRenderer {
     this._cursorFrame = 0;
     this._safeWrite('\x1b[?25l');   // hide terminal cursor
     this._renderCursor();
-    this._cursorTimer = setInterval(() => this._renderCursor(), 120);
+    this._cursorTimer = setInterval(() => this._renderCursor(), 80);
   }
 
   _renderCursor() {
-    // Breathing size pulse: small cyan • → big bright cyan ● → back
-    const frames = [
-      '\x1b[36m•\x1b[0m',
-      '\x1b[36m•\x1b[0m',
-      '\x1b[36m●\x1b[0m',
-      '\x1b[96m●\x1b[0m',
-      '\x1b[96m●\x1b[0m',
-      '\x1b[36m●\x1b[0m',
-      '\x1b[36m•\x1b[0m',
-      '\x1b[36m•\x1b[0m',
-    ];
-    this._safeWrite(`\x1b[2K\r${frames[this._cursorFrame % frames.length]}`);
+    // Same braille spinner as Thinking... — seamless continuation
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const f = frames[this._cursorFrame % frames.length];
+    this._safeWrite(`\x1b[2K\r\x1b[36m${f}\x1b[0m`);
     this._cursorFrame++;
   }
 
