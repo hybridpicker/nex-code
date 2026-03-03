@@ -660,43 +660,31 @@ npm install
       writeSpy.mockRestore();
     });
 
-    it('startCursor hides terminal cursor and renders first frame', () => {
+    it('startCursor hides terminal cursor and renders first braille frame', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
       // First write: hide terminal cursor
       expect(writeSpy.mock.calls[0][0]).toBe('\x1b[?25l');
-      // Second write: frame 0 (small cyan •)
-      expect(writeSpy.mock.calls[1][0]).toContain('•');
+      // Second write: frame 0 (⠋ in cyan)
+      expect(writeSpy.mock.calls[1][0]).toContain('⠋');
       expect(writeSpy.mock.calls[1][0]).toContain('\x1b[36m');
       sr.stopCursor();
     });
 
-    it('cursor pulses size: small • → big ● → small • (always cyan)', () => {
+    it('cursor cycles through braille spinner frames', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      // calls[0] = hide cursor, calls[1] = frame 0
-      // Frame 0+1: • small cyan
-      expect(writeSpy.mock.calls[1][0]).toContain('•');
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[2][0]).toContain('•');
-      // Frame 2: ● big cyan
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[3][0]).toContain('●');
-      expect(writeSpy.mock.calls[3][0]).toContain('\x1b[36m');
-      // Frame 3+4: ● big bright cyan (peak)
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[4][0]).toContain('●');
-      expect(writeSpy.mock.calls[4][0]).toContain('\x1b[96m');
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[5][0]).toContain('\x1b[96m');
-      // Frame 5: ● big cyan
-      jest.advanceTimersByTime(120);
-      expect(writeSpy.mock.calls[6][0]).toContain('●');
-      // Frame 6+7: • small cyan again
-      jest.advanceTimersByTime(240);
-      expect(writeSpy.mock.calls[8][0]).toContain('•');
+      const braille = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      // calls[0] = hide cursor, calls[1+] = frames
+      for (let i = 0; i < braille.length; i++) {
+        expect(writeSpy.mock.calls[1 + i][0]).toContain(braille[i]);
+        if (i < braille.length - 1) jest.advanceTimersByTime(80);
+      }
+      // Frame 10 wraps to frame 0
+      jest.advanceTimersByTime(80);
+      expect(writeSpy.mock.calls[11][0]).toContain('⠋');
       sr.stopCursor();
     });
 
@@ -721,9 +709,9 @@ npm install
       expect(calls[0]).toBe('\x1b[2K\r');
       // Middle: rendered line
       expect(calls.some(c => c.includes('hello'))).toBe(true);
-      // Last: cursor reappears (continues breathing, no frame reset)
+      // Last: cursor reappears (braille spinner continues)
       const lastCall = calls[calls.length - 1];
-      expect(lastCall).toMatch(/[∙•●]/);
+      expect(lastCall).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
       sr.stopCursor();
     });
 
