@@ -914,18 +914,26 @@ function startREPL() {
         const { execSync } = require('child_process');
         execSync('curl -s --max-time 2 http://localhost:11434/api/tags', { encoding: 'utf-8', stdio: 'pipe' });
         setActiveModel('local:llama3');
-        console.log(`${C.green}Local Ollama detected — using local models${C.reset}`);
-        console.log(`${C.dim}Set API keys for cloud providers: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY${C.reset}\n`);
+        console.log(`${C.green}✓ Local Ollama detected — using local models${C.reset}`);
+        console.log(`${C.dim}Tip: Set API keys for cloud providers for more model options (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`);
         localDetected = true;
       } catch {
         // Local Ollama not available
       }
     }
     if (!localDetected) {
-      console.error(`${C.red}No provider configured and no local Ollama running.${C.reset}`);
-      console.error(`${C.gray}Options:${C.reset}`);
-      console.error(`${C.gray}  1. Install Ollama: https://ollama.com/download${C.reset}`);
-      console.error(`${C.gray}  2. Set an API key: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or OLLAMA_API_KEY${C.reset}`);
+      console.error(`\n${C.red}✗ No provider configured and no local Ollama detected.${C.reset}\n`);
+      console.error(`${C.white}nex-code needs at least one LLM provider to work.${C.reset}\n`);
+      console.error(`${C.white}Option 1 — Free local models (no API key needed):${C.reset}`);
+      console.error(`${C.gray}  Install Ollama:  ${C.cyan}https://ollama.com/download${C.reset}`);
+      console.error(`${C.gray}  Pull a model:    ${C.cyan}ollama pull qwen3-coder${C.reset}`);
+      console.error(`${C.gray}  Then restart:    ${C.cyan}nex-code${C.reset}\n`);
+      console.error(`${C.white}Option 2 — Cloud providers (set one in .env or as env var):${C.reset}`);
+      console.error(`${C.gray}  OLLAMA_API_KEY=...     ${C.dim}# Ollama Cloud (free tier available)${C.reset}`);
+      console.error(`${C.gray}  OPENAI_API_KEY=...     ${C.dim}# OpenAI${C.reset}`);
+      console.error(`${C.gray}  ANTHROPIC_API_KEY=...  ${C.dim}# Anthropic${C.reset}`);
+      console.error(`${C.gray}  GEMINI_API_KEY=...     ${C.dim}# Google Gemini${C.reset}\n`);
+      console.error(`${C.dim}Create a .env file in your project directory or export the variable.${C.reset}`);
       process.exit(1);
     }
   }
