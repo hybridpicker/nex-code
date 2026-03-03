@@ -341,25 +341,30 @@ class StreamRenderer {
     try { process.stdout.write(data); } catch (e) { if (e.code !== 'EPIPE') throw e; }
   }
 
+  /** Write to stderr (same stream as Spinner) for cursor animation */
+  _cursorWrite(data) {
+    try { process.stderr.write(data); } catch (e) { if (e.code !== 'EPIPE') throw e; }
+  }
+
   startCursor() {
     this._cursorActive = true;
     this._cursorFrame = 0;
-    this._safeWrite('\x1b[?25l');   // hide terminal cursor
+    this._cursorWrite('\x1b[?25l');   // hide terminal cursor
     this._renderCursor();
     this._cursorTimer = setInterval(() => this._renderCursor(), 80);
   }
 
   _renderCursor() {
-    // Same braille spinner as Thinking... — seamless continuation
+    // Same braille spinner as Thinking... — seamless continuation on stderr
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     const f = frames[this._cursorFrame % frames.length];
-    this._safeWrite(`\x1b[2K\r\x1b[36m${f}\x1b[0m`);
+    this._cursorWrite(`\x1b[2K\r\x1b[36m${f}\x1b[0m`);
     this._cursorFrame++;
   }
 
   _clearCursorLine() {
     if (this._cursorActive) {
-      this._safeWrite('\x1b[2K\r');
+      this._cursorWrite('\x1b[2K\r');
     }
   }
 
@@ -369,7 +374,7 @@ class StreamRenderer {
       this._cursorTimer = null;
     }
     if (this._cursorActive) {
-      this._safeWrite('\x1b[2K\r\x1b[?25h'); // clear line + show terminal cursor
+      this._cursorWrite('\x1b[2K\r\x1b[?25h'); // clear line + show terminal cursor
       this._cursorActive = false;
     }
   }
