@@ -23,7 +23,7 @@ const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
 const { getConfiguredProviders } = require('./providers/registry');
 
-let MAX_ITERATIONS = 30;
+let MAX_ITERATIONS = 50;
 function setMaxIterations(n) { if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n; }
 
 // Abort signal getter — set by cli/index.js to avoid circular dependency
@@ -809,7 +809,7 @@ async function processInput(userInput) {
     setOnChange(null);
     _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
     autoSave(conversationMessages);
-    console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. The task may be too complex — try breaking it into smaller steps.${C.reset}`);
+    console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. Try ${C.bold}--max-turns ${MAX_ITERATIONS + 20}${C.reset}${C.yellow} or break into smaller steps.${C.reset}`);
   }
 }
 
