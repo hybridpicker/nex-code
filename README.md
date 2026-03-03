@@ -588,7 +588,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-40 test suites, 1334+ tests, 81% statement coverage.
+41 test suites, 1642 tests, 90% statement / 83% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
