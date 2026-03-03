@@ -36,6 +36,7 @@ const PARALLEL_SAFE = new Set([
 ]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
+const MAX_STALE_RETRIES = 2;
 const STALE_WARN_MS = 60000;   // Warn after 60s without tokens
 const STALE_ABORT_MS = 120000; // Abort after 120s without tokens
 const CWD = process.cwd();
@@ -522,6 +523,7 @@ async function processInput(userInput) {
   let apiMessages = fittedMessages;
   let rateLimitRetries = 0;
   let networkRetries = 0;
+  let staleRetries = 0;
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -608,8 +610,17 @@ async function processInput(userInput) {
       if (spinner) spinner.stop();
       stream.stopCursor();
 
-      // Stale abort → retry this iteration
+      // Stale abort → retry this iteration (with limit)
       if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
+        staleRetries++;
+        if (staleRetries > MAX_STALE_RETRIES) {
+          console.log(`${C.red}  ✗ Stream stale: max retries (${MAX_STALE_RETRIES}) exceeded. The model may be overloaded — try again or switch models.${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          autoSave(conversationMessages);
+          break;
+        }
         i--; // Don't count stale timeouts as iterations
         continue;
       }
@@ -702,8 +713,9 @@ async function processInput(userInput) {
       if (spinner) spinner.stop();
     }
 
-    // Reset network retry counter on success
+    // Reset retry counters on success
     networkRetries = 0;
+    staleRetries = 0;
 
     // Flush remaining stream buffer
     if (streamedText) {
