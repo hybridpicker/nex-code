@@ -648,16 +648,18 @@ npm install
 
   // ─── StreamCursor ─────────────────────────────────────────
   describe('StreamCursor', () => {
-    let writeSpy;
+    let writeSpy, stderrSpy;
 
     beforeEach(() => {
       jest.useFakeTimers();
       writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+      stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
     });
 
     afterEach(() => {
       jest.useRealTimers();
       writeSpy.mockRestore();
+      stderrSpy.mockRestore();
     });
 
     it('startCursor hides terminal cursor and renders first braille frame', () => {
@@ -665,11 +667,11 @@ npm install
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
-      // First write: hide terminal cursor
-      expect(writeSpy.mock.calls[0][0]).toBe('\x1b[?25l');
+      // First write: hide terminal cursor (on stderr)
+      expect(stderrSpy.mock.calls[0][0]).toBe('\x1b[?25l');
       // Second write: frame 0 (⠋ in cyan)
-      expect(writeSpy.mock.calls[1][0]).toContain('⠋');
-      expect(writeSpy.mock.calls[1][0]).toContain('\x1b[36m');
+      expect(stderrSpy.mock.calls[1][0]).toContain('⠋');
+      expect(stderrSpy.mock.calls[1][0]).toContain('\x1b[36m');
       sr.stopCursor();
     });
 
@@ -677,23 +679,23 @@ npm install
       const sr = new StreamRenderer();
       sr.startCursor();
       const braille = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-      // calls[0] = hide cursor, calls[1+] = frames
+      // calls[0] = hide cursor, calls[1+] = frames (on stderr)
       for (let i = 0; i < braille.length; i++) {
-        expect(writeSpy.mock.calls[1 + i][0]).toContain(braille[i]);
+        expect(stderrSpy.mock.calls[1 + i][0]).toContain(braille[i]);
         if (i < braille.length - 1) jest.advanceTimersByTime(80);
       }
       // Frame 10 wraps to frame 0
       jest.advanceTimersByTime(80);
-      expect(writeSpy.mock.calls[11][0]).toContain('⠋');
+      expect(stderrSpy.mock.calls[11][0]).toContain('⠋');
       sr.stopCursor();
     });
 
     it('stopCursor shows terminal cursor again', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      writeSpy.mockClear();
+      stderrSpy.mockClear();
       sr.stopCursor();
-      const all = writeSpy.mock.calls.map(c => c[0]).join('');
+      const all = stderrSpy.mock.calls.map(c => c[0]).join('');
       expect(all).toContain('\x1b[?25h'); // show cursor
     });
 
@@ -701,17 +703,19 @@ npm install
       const sr = new StreamRenderer();
       sr.startCursor();
       writeSpy.mockClear();
+      stderrSpy.mockClear();
 
       sr.push('hello\n');
-      // Should: clear cursor line, render "hello\n", then reshow cursor
-      const calls = writeSpy.mock.calls.map(c => c[0]);
-      // First call: clear cursor line (\x1b[2K\r)
-      expect(calls[0]).toBe('\x1b[2K\r');
-      // Middle: rendered line
-      expect(calls.some(c => c.includes('hello'))).toBe(true);
-      // Last: cursor reappears (braille spinner continues)
-      const lastCall = calls[calls.length - 1];
-      expect(lastCall).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+      // Cursor escapes go to stderr, content to stdout
+      const stderrCalls = stderrSpy.mock.calls.map(c => c[0]);
+      const stdoutCalls = writeSpy.mock.calls.map(c => c[0]);
+      // First stderr call: clear cursor line (\x1b[2K\r)
+      expect(stderrCalls[0]).toBe('\x1b[2K\r');
+      // Content rendered on stdout
+      expect(stdoutCalls.some(c => c.includes('hello'))).toBe(true);
+      // Last stderr: cursor reappears (braille spinner continues)
+      const lastStderr = stderrCalls[stderrCalls.length - 1];
+      expect(lastStderr).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
       sr.stopCursor();
     });
 
@@ -736,9 +740,9 @@ npm install
     it('stopCursor clears cursor line and shows terminal cursor', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      writeSpy.mockClear();
+      stderrSpy.mockClear();
       sr.stopCursor();
-      const all = writeSpy.mock.calls.map(c => c[0]).join('');
+      const all = stderrSpy.mock.calls.map(c => c[0]).join('');
       expect(all).toContain('\x1b[2K\r');
       expect(all).toContain('\x1b[?25h');
     });
