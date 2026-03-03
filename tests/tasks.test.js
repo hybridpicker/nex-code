@@ -25,6 +25,19 @@ describe('tasks.js', () => {
       ]);
       expect(tasks[1].dependsOn).toEqual(['t1']);
     });
+
+    it('falls back when description is missing', () => {
+      const tasks = createTasks('Plan', [
+        { title: 'From title' },
+        { name: 'From name' },
+        { task: 'From task' },
+        {},
+      ]);
+      expect(tasks[0].description).toBe('From title');
+      expect(tasks[1].description).toBe('From name');
+      expect(tasks[2].description).toBe('From task');
+      expect(tasks[3].description).toBe('Task 4');
+    });
   });
 
   describe('updateTask()', () => {
@@ -112,6 +125,36 @@ describe('tasks.js', () => {
     });
   });
 
+  describe('getTaskList()', () => {
+    it('returns name and task snapshots', () => {
+      createTasks('Build Plan', [
+        { description: 'Step A' },
+        { description: 'Step B' },
+      ]);
+      const list = getTaskList();
+      expect(list.name).toBe('Build Plan');
+      expect(list.tasks).toHaveLength(2);
+      expect(list.tasks[0].id).toBe('t1');
+      expect(list.tasks[0].status).toBe('pending');
+      expect(list.tasks[1].id).toBe('t2');
+    });
+
+    it('returns empty state when no tasks created', () => {
+      const list = getTaskList();
+      expect(list.name).toBe('');
+      expect(list.tasks).toHaveLength(0);
+    });
+
+    it('returns snapshot copies not references', () => {
+      createTasks('Plan', [{ description: 'A' }]);
+      const list1 = getTaskList();
+      updateTask('t1', 'done');
+      const list2 = getTaskList();
+      expect(list1.tasks[0].status).toBe('pending');
+      expect(list2.tasks[0].status).toBe('done');
+    });
+  });
+
   describe('getReadyTasks()', () => {
     it('returns pending tasks with no dependencies', () => {
       createTasks('Plan', [
@@ -132,6 +175,24 @@ describe('tasks.js', () => {
       const ready = getReadyTasks();
       expect(ready).toHaveLength(1);
       expect(ready[0].id).toBe('t2');
+    });
+
+    it('does not return task whose dependency is not done', () => {
+      createTasks('Plan', [
+        { description: 'A' },
+        { description: 'B', depends_on: ['t1'] },
+      ]);
+      updateTask('t1', 'in_progress');
+      const ready = getReadyTasks();
+      expect(ready).toHaveLength(0);
+    });
+
+    it('does not return task with a nonexistent dependency', () => {
+      createTasks('Plan', [
+        { description: 'A', depends_on: ['t999'] },
+      ]);
+      const ready = getReadyTasks();
+      expect(ready).toHaveLength(0);
     });
   });
 
