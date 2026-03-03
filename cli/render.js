@@ -345,13 +345,22 @@ class StreamRenderer {
     this._cursorActive = true;
     this._cursorFrame = 0;
     this._renderCursor();
-    this._cursorTimer = setInterval(() => this._renderCursor(), 530);
+    this._cursorTimer = setInterval(() => this._renderCursor(), 120);
   }
 
   _renderCursor() {
-    const frames = ['▍', ' '];
-    const f = frames[this._cursorFrame % frames.length];
-    this._safeWrite(`\x1b[2K\r\x1b[90m${f}\x1b[0m`);
+    // Breathing pulse: dark gray → cyan → bright cyan → cyan → dark gray
+    const frames = [
+      '\x1b[90m∙\x1b[0m',
+      '\x1b[90m•\x1b[0m',
+      '\x1b[36m•\x1b[0m',
+      '\x1b[36m●\x1b[0m',
+      '\x1b[96m●\x1b[0m',
+      '\x1b[36m●\x1b[0m',
+      '\x1b[36m•\x1b[0m',
+      '\x1b[90m•\x1b[0m',
+    ];
+    this._safeWrite(`\x1b[2K\r${frames[this._cursorFrame % frames.length]}`);
     this._cursorFrame++;
   }
 
@@ -390,10 +399,9 @@ class StreamRenderer {
     }
 
     if (this._cursorActive) {
-      this._cursorFrame = 0;
       this._renderCursor();
       if (this._cursorTimer) clearInterval(this._cursorTimer);
-      this._cursorTimer = setInterval(() => this._renderCursor(), 530);
+      this._cursorTimer = setInterval(() => this._renderCursor(), 120);
     }
   }
 

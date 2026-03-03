@@ -665,24 +665,34 @@ npm install
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
-      // First render should show ▍
+      // First render: frame 0 (dark gray tiny dot ∙)
       expect(writeSpy).toHaveBeenCalled();
       const firstWrite = writeSpy.mock.calls[0][0];
-      expect(firstWrite).toContain('▍');
+      expect(firstWrite).toContain('∙');
       sr.stopCursor();
     });
 
-    it('cursor blinks between ▍ and space', () => {
+    it('cursor pulses through 8 breathing frames', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      // Frame 0: ▍
-      expect(writeSpy.mock.calls[0][0]).toContain('▍');
-      // Advance 530ms → frame 1: space
-      jest.advanceTimersByTime(530);
-      expect(writeSpy.mock.calls[1][0]).toContain(' ');
-      // Advance 530ms → frame 2: ▍ again
-      jest.advanceTimersByTime(530);
-      expect(writeSpy.mock.calls[2][0]).toContain('▍');
+      // Frame 0: ∙ (dark gray tiny)
+      expect(writeSpy.mock.calls[0][0]).toContain('∙');
+      // Frame 1 (120ms): • (dark gray small)
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[1][0]).toContain('•');
+      // Frame 3 (360ms): ● (cyan big)
+      jest.advanceTimersByTime(240);
+      expect(writeSpy.mock.calls[3][0]).toContain('●');
+      // Frame 4 (480ms): ● (bright cyan peak)
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[4][0]).toContain('●');
+      expect(writeSpy.mock.calls[4][0]).toContain('\x1b[96m'); // bright cyan
+      // Frame 7 (840ms): • (dark gray, back down)
+      jest.advanceTimersByTime(360);
+      expect(writeSpy.mock.calls[7][0]).toContain('•');
+      // Frame 8 (960ms): wraps to frame 0 → ∙ again
+      jest.advanceTimersByTime(120);
+      expect(writeSpy.mock.calls[8][0]).toContain('∙');
       sr.stopCursor();
     });
 
@@ -698,9 +708,9 @@ npm install
       expect(calls[0]).toBe('\x1b[2K\r');
       // Middle: rendered line
       expect(calls.some(c => c.includes('hello'))).toBe(true);
-      // Last: cursor reappears with ▍ (frame reset to 0)
+      // Last: cursor reappears (continues breathing, no frame reset)
       const lastCall = calls[calls.length - 1];
-      expect(lastCall).toContain('▍');
+      expect(lastCall).toMatch(/[∙•●]/);
       sr.stopCursor();
     });
 
