@@ -645,4 +645,98 @@ npm install
       expect(writeSpy).not.toHaveBeenCalled();
     });
   });
+
+  // ─── StreamCursor ─────────────────────────────────────────
+  describe('StreamCursor', () => {
+    let writeSpy;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+      writeSpy.mockRestore();
+    });
+
+    it('startCursor sets _cursorActive and starts timer', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      expect(sr._cursorActive).toBe(true);
+      expect(sr._cursorTimer).not.toBeNull();
+      // First render should show ▍
+      expect(writeSpy).toHaveBeenCalled();
+      const firstWrite = writeSpy.mock.calls[0][0];
+      expect(firstWrite).toContain('▍');
+      sr.stopCursor();
+    });
+
+    it('cursor blinks between ▍ and space', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      // Frame 0: ▍
+      expect(writeSpy.mock.calls[0][0]).toContain('▍');
+      // Advance 530ms → frame 1: space
+      jest.advanceTimersByTime(530);
+      expect(writeSpy.mock.calls[1][0]).toContain(' ');
+      // Advance 530ms → frame 2: ▍ again
+      jest.advanceTimersByTime(530);
+      expect(writeSpy.mock.calls[2][0]).toContain('▍');
+      sr.stopCursor();
+    });
+
+    it('push clears cursor line and reshows cursor after rendering', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      writeSpy.mockClear();
+
+      sr.push('hello\n');
+      // Should: clear cursor line, render "hello\n", then reshow cursor
+      const calls = writeSpy.mock.calls.map(c => c[0]);
+      // First call: clear cursor line (\x1b[2K\r)
+      expect(calls[0]).toBe('\x1b[2K\r');
+      // Middle: rendered line
+      expect(calls.some(c => c.includes('hello'))).toBe(true);
+      // Last: cursor reappears with ▍ (frame reset to 0)
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toContain('▍');
+      sr.stopCursor();
+    });
+
+    it('flush stops cursor', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      sr.push('partial');
+      sr.flush();
+      expect(sr._cursorActive).toBe(false);
+      expect(sr._cursorTimer).toBeNull();
+    });
+
+    it('stopCursor is idempotent', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      sr.stopCursor();
+      sr.stopCursor(); // second call should not throw
+      expect(sr._cursorActive).toBe(false);
+      expect(sr._cursorTimer).toBeNull();
+    });
+
+    it('stopCursor clears cursor line', () => {
+      const sr = new StreamRenderer();
+      sr.startCursor();
+      writeSpy.mockClear();
+      sr.stopCursor();
+      const calls = writeSpy.mock.calls.map(c => c[0]);
+      expect(calls.some(c => c === '\x1b[2K\r')).toBe(true);
+    });
+
+    it('push without active cursor does not write cursor escapes', () => {
+      const sr = new StreamRenderer();
+      sr.push('hello\n');
+      const calls = writeSpy.mock.calls.map(c => c[0]);
+      // Should only have the rendered line, no cursor escape sequences
+      expect(calls).toEqual(['hello\n']);
+    });
+  });
 });

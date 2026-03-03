@@ -493,6 +493,10 @@ async function processInput(userInput) {
   const systemPrompt = buildSystemPrompt();
   const fullMessages = [{ role: 'system', content: systemPrompt }, ...conversationMessages];
 
+  // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
+  const preSpinner = new Spinner('Thinking...');
+  preSpinner.start();
+
   // Context-aware compression: fit messages into context window
   const { messages: fittedMessages, compressed, compacted, tokensRemoved } = await fitToContext(
     fullMessages,
@@ -501,6 +505,8 @@ async function processInput(userInput) {
 
   // Context budget warning
   const usage = getUsage(fullMessages, TOOL_DEFINITIONS);
+
+  preSpinner.stop();
 
   if (compacted) {
     console.log(`${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`);
@@ -587,6 +593,7 @@ async function processInput(userInput) {
               spinner.stop();
             }
             printStepIfNeeded();
+            stream.startCursor();
             firstToken = false;
           }
           streamedText += text;
@@ -597,6 +604,7 @@ async function processInput(userInput) {
       clearInterval(staleTimer);
       if (taskProgress && !taskProgress._paused) taskProgress.pause();
       if (spinner) spinner.stop();
+      stream.stopCursor();
 
       // Stale abort → retry this iteration
       if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {

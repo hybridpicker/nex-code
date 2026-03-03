@@ -61,7 +61,7 @@ jest.mock('../cli/permissions', () => ({ checkPermission: jest.fn().mockReturnVa
 jest.mock('../cli/planner', () => ({ isPlanMode: jest.fn().mockReturnValue(false), getPlanModePrompt: jest.fn().mockReturnValue('') }));
 jest.mock('../cli/render', () => ({
   renderMarkdown: jest.fn().mockImplementation((text) => text || ''),
-  StreamRenderer: jest.fn().mockImplementation(() => ({ push: jest.fn(), flush: jest.fn() })),
+  StreamRenderer: jest.fn().mockImplementation(() => ({ push: jest.fn(), flush: jest.fn(), startCursor: jest.fn(), stopCursor: jest.fn() })),
 }));
 jest.mock('../cli/hooks', () => ({ runHooks: jest.fn().mockReturnValue([]) }));
 jest.mock('../cli/mcp', () => ({ routeMCPCall: jest.fn().mockResolvedValue(null), getMCPToolDefinitions: jest.fn().mockReturnValue([]) }));

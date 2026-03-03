@@ -37,7 +37,7 @@ jest.mock('../cli/permissions', () => ({ checkPermission: jest.fn().mockReturnVa
 jest.mock('../cli/planner', () => ({ isPlanMode: jest.fn().mockReturnValue(false), getPlanModePrompt: jest.fn().mockReturnValue('') }));
 jest.mock('../cli/render', () => ({
   renderMarkdown: jest.fn().mockImplementation((t) => t || ''),
-  StreamRenderer: jest.fn().mockImplementation(() => ({ push: jest.fn(), flush: jest.fn() })),
+  StreamRenderer: jest.fn().mockImplementation(() => ({ push: jest.fn(), flush: jest.fn(), startCursor: jest.fn(), stopCursor: jest.fn() })),
 }));
 jest.mock('../cli/hooks', () => ({ runHooks: jest.fn().mockReturnValue([]) }));
 jest.mock('../cli/mcp', () => ({ routeMCPCall: jest.fn().mockResolvedValue(null), getMCPToolDefinitions: jest.fn().mockReturnValue([]) }));
@@ -826,6 +826,44 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('content');
       await processInput('test');
       expect(spinnerLabels().some(l => l.includes('7 tools') && l.includes('...'))).toBe(true);
+    });
+  });
+
+  // ─── pre-spinner + stream cursor ────────────────────────────
+  describe('pre-spinner and stream cursor', () => {
+    it('starts a pre-spinner before fitToContext and stops it after', async () => {
+      mockStream('Hello');
+      await processInput('test');
+      // Pre-spinner should be the first Spinner created with 'Thinking...'
+      expect(Spinner.mock.calls[0][0]).toBe('Thinking...');
+      // Pre-spinner should be started and stopped
+      const preSpinner = Spinner.mock.results[0].value;
+      expect(preSpinner.start).toHaveBeenCalled();
+      expect(preSpinner.stop).toHaveBeenCalled();
+    });
+
+    it('stream.startCursor() called on first token', async () => {
+      const { StreamRenderer } = require('../cli/render');
+      mockStream('Hello');
+      await processInput('test');
+      const streamInstance = StreamRenderer.mock.results[0].value;
+      expect(streamInstance.startCursor).toHaveBeenCalled();
+    });
+
+    it('stream.stopCursor() called on error', async () => {
+      const { StreamRenderer } = require('../cli/render');
+      callStream.mockRejectedValueOnce(new Error('API crash'));
+      await processInput('test');
+      const streamInstance = StreamRenderer.mock.results[0].value;
+      expect(streamInstance.stopCursor).toHaveBeenCalled();
+    });
+
+    it('flush() implicitly stops cursor via stream', async () => {
+      const { StreamRenderer } = require('../cli/render');
+      mockStream('Hello');
+      await processInput('test');
+      const streamInstance = StreamRenderer.mock.results[0].value;
+      expect(streamInstance.flush).toHaveBeenCalled();
     });
   });
 
