@@ -68,17 +68,58 @@ You should see the banner, your project context, and the `>` prompt.
 > refactor this to use async/await instead of callbacks
 ```
 
-### YOLO Mode
+### Try These Scenarios
 
-Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved:
+**Understand an unfamiliar codebase:**
+```
+> give me an overview of this project — architecture, key files, tech stack
+> how does authentication work here? trace the flow from login to session
+> find all API endpoints and list them with their HTTP methods
+```
 
+**Fix bugs with context:**
+```
+> the /users endpoint returns 500 — find the bug and fix it
+> tests are failing in auth.test.js — figure out why and fix it
+> there's a memory leak somewhere — profile the app and find it
+```
+
+**Add features end-to-end:**
+```
+> add rate limiting to all API routes (100 req/min per IP)
+> add a /health endpoint that checks DB connectivity
+> implement pagination for the GET /products endpoint
+```
+
+**Refactor and improve:**
+```
+> refactor the database queries to use a connection pool
+> this function is 200 lines — break it into smaller functions
+> migrate these callbacks to async/await
+```
+
+**DevOps and CI:**
+```
+> write a Dockerfile for this project
+> set up GitHub Actions CI that runs tests on push
+> add a pre-commit hook that runs linting
+```
+
+**Multi-step autonomous work (YOLO mode):**
 ```bash
 nex-code -yolo
 ```
-
-The banner shows a `⚡ YOLO` indicator. You can also toggle auto-confirm at runtime with `/autoconfirm`.
+```
+> read the entire src/ directory, run the tests, fix all failures, then commit
+> add input validation to every POST endpoint, add tests, run them
+> upgrade all dependencies to latest, fix any breaking changes, run tests
+```
 
 The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
+
+### YOLO Mode
+
+Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved. The banner shows a `⚡ YOLO` indicator. Toggle at runtime with `/autoconfirm`.
 
 ---
 
