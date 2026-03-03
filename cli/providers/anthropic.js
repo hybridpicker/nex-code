@@ -8,33 +8,33 @@ const { BaseProvider } = require('./base');
 
 const ANTHROPIC_MODELS = {
   'claude-sonnet': {
-    id: 'claude-sonnet-4-20250514',
-    name: 'Claude Sonnet',
-    maxTokens: 8192,
-    contextWindow: 200000,
-  },
-  'claude-sonnet-4-5': {
-    id: 'claude-sonnet-4-5-20250514',
-    name: 'Claude 4.5 Sonnet',
-    maxTokens: 8192,
+    id: 'claude-sonnet-4-6',
+    name: 'Claude Sonnet 4.6',
+    maxTokens: 64000,
     contextWindow: 200000,
   },
   'claude-opus': {
-    id: 'claude-opus-4-20250514',
-    name: 'Claude Opus',
-    maxTokens: 8192,
+    id: 'claude-opus-4-6',
+    name: 'Claude Opus 4.6',
+    maxTokens: 128000,
     contextWindow: 200000,
   },
   'claude-haiku': {
     id: 'claude-haiku-4-5-20251001',
-    name: 'Claude Haiku',
-    maxTokens: 8192,
+    name: 'Claude Haiku 4.5',
+    maxTokens: 64000,
     contextWindow: 200000,
   },
-  'claude-3-5-sonnet': {
-    id: 'claude-3-5-sonnet-20241022',
-    name: 'Claude 3.5 Sonnet',
-    maxTokens: 8192,
+  'claude-sonnet-4-5': {
+    id: 'claude-sonnet-4-5-20250929',
+    name: 'Claude Sonnet 4.5',
+    maxTokens: 64000,
+    contextWindow: 200000,
+  },
+  'claude-sonnet-4': {
+    id: 'claude-sonnet-4-20250514',
+    name: 'Claude Sonnet 4',
+    maxTokens: 64000,
     contextWindow: 200000,
   },
 };

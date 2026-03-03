@@ -27,8 +27,8 @@ const MODEL_TIERS = {
   'qwen3-coder': 'full',
   'devstral': 'standard',
   'deepseek-r1': 'standard',
-  'llama-4-scout': 'standard',
-  'qwen3-30b-a3b': 'essential',
+  'llama4': 'standard',
+  'qwen3:30b-a3b': 'essential',
 
   // OpenAI — all full
   'gpt-4o': 'full',
@@ -42,7 +42,7 @@ const MODEL_TIERS = {
   'claude-sonnet-4-5': 'full',
   'claude-opus': 'full',
   'claude-haiku': 'standard',
-  'claude-3-5-sonnet': 'full',
+  'claude-sonnet-4': 'full',
 
   // Gemini — all full
   'gemini-2.5-pro': 'full',

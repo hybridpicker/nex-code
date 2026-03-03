@@ -24,7 +24,7 @@ jest.mock('../cli/tool-tiers', () => {
     getModelTier: jest.fn((modelId, providerName) => {
       const tiers = {
         'kimi-k2.5': 'full',
-        'qwen3-30b-a3b': 'essential',
+        'qwen3:30b-a3b': 'essential',
         'deepseek-r1': 'standard',
         'claude-haiku': 'standard',
         'gpt-4o': 'full',
@@ -131,12 +131,12 @@ describe('pickModelForTier()', () => {
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5' },
-        { id: 'qwen3-30b-a3b', name: 'Qwen3 30B' },
+        { id: 'qwen3:30b-a3b', name: 'Qwen3 30B' },
       ]},
     ]);
 
     const result = pickModelForTier('essential');
-    expect(result).toEqual({ provider: 'ollama', model: 'qwen3-30b-a3b' });
+    expect(result).toEqual({ provider: 'ollama', model: 'qwen3:30b-a3b' });
   });
 
   it('prefers the active provider', () => {
@@ -169,7 +169,7 @@ describe('resolveSubAgentModel()', () => {
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5' },
-        { id: 'qwen3-30b-a3b', name: 'Qwen3 30B' },
+        { id: 'qwen3:30b-a3b', name: 'Qwen3 30B' },
       ]},
     ]);
   });
@@ -548,17 +548,17 @@ describe('pickModelForTier() second pass', () => {
   it('returns match from second provider when first (active) has no tier match', () => {
     getActiveProviderName.mockReturnValue('ollama');
     getModelTier.mockImplementation((modelId) => {
-      if (modelId === 'qwen3-30b-a3b') return 'essential';
+      if (modelId === 'qwen3:30b-a3b') return 'essential';
       if (modelId === 'kimi-k2.5') return 'full';
       return 'standard';
     });
     getConfiguredProviders.mockReturnValue([
       { name: 'ollama', models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5' }] },
-      { name: 'openai', models: [{ id: 'qwen3-30b-a3b', name: 'Qwen3 30B' }] },
+      { name: 'openai', models: [{ id: 'qwen3:30b-a3b', name: 'Qwen3 30B' }] },
     ]);
 
     const result = pickModelForTier('essential');
-    expect(result).toEqual({ provider: 'openai', model: 'qwen3-30b-a3b' });
+    expect(result).toEqual({ provider: 'openai', model: 'qwen3:30b-a3b' });
   });
 });
 

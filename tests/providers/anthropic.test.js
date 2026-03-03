@@ -33,7 +33,7 @@ describe('providers/anthropic.js', () => {
       expect(provider.getModelNames()).toContain('claude-sonnet-4-5');
       expect(provider.getModelNames()).toContain('claude-opus');
       expect(provider.getModelNames()).toContain('claude-haiku');
-      expect(provider.getModelNames()).toContain('claude-3-5-sonnet');
+      expect(provider.getModelNames()).toContain('claude-sonnet-4');
     });
 
     it('defaults to claude-sonnet', () => {
@@ -57,37 +57,37 @@ describe('providers/anthropic.js', () => {
   describe('ANTHROPIC_MODELS', () => {
     it('exports claude-sonnet model', () => {
       expect(ANTHROPIC_MODELS['claude-sonnet']).toMatchObject({
-        id: 'claude-sonnet-4-20250514',
-        name: 'Claude Sonnet',
+        id: 'claude-sonnet-4-6',
+        name: 'Claude Sonnet 4.6',
         contextWindow: 200000,
       });
     });
 
     it('exports claude-opus model', () => {
       expect(ANTHROPIC_MODELS['claude-opus']).toMatchObject({
-        id: 'claude-opus-4-20250514',
-        name: 'Claude Opus',
+        id: 'claude-opus-4-6',
+        name: 'Claude Opus 4.6',
       });
     });
 
     it('exports claude-haiku model', () => {
       expect(ANTHROPIC_MODELS['claude-haiku']).toMatchObject({
         id: 'claude-haiku-4-5-20251001',
-        name: 'Claude Haiku',
+        name: 'Claude Haiku 4.5',
       });
     });
 
     it('exports claude-sonnet-4-5 model', () => {
       expect(ANTHROPIC_MODELS['claude-sonnet-4-5']).toMatchObject({
-        id: 'claude-sonnet-4-5-20250514',
-        name: 'Claude 4.5 Sonnet',
+        id: 'claude-sonnet-4-5-20250929',
+        name: 'Claude Sonnet 4.5',
       });
     });
 
-    it('exports claude-3-5-sonnet model', () => {
-      expect(ANTHROPIC_MODELS['claude-3-5-sonnet']).toMatchObject({
-        id: 'claude-3-5-sonnet-20241022',
-        name: 'Claude 3.5 Sonnet',
+    it('exports claude-sonnet-4 model', () => {
+      expect(ANTHROPIC_MODELS['claude-sonnet-4']).toMatchObject({
+        id: 'claude-sonnet-4-20250514',
+        name: 'Claude Sonnet 4',
       });
     });
   });
@@ -235,7 +235,7 @@ describe('providers/anthropic.js', () => {
       expect(axios.post).toHaveBeenCalledWith(
         'https://api.anthropic.com/v1/messages',
         expect.objectContaining({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           system: 'Be helpful',
           messages: [{ role: 'user', content: 'Hi' }],
         }),
@@ -273,7 +273,7 @@ describe('providers/anthropic.js', () => {
       });
 
       await provider.chat([{ role: 'user', content: 'test' }], [], { model: 'claude-opus' });
-      expect(axios.post.mock.calls[0][1].model).toBe('claude-opus-4-20250514');
+      expect(axios.post.mock.calls[0][1].model).toBe('claude-opus-4-6');
     });
   });
 

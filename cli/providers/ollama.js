@@ -7,12 +7,20 @@ const axios = require('axios');
 const { BaseProvider } = require('./base');
 
 const OLLAMA_MODELS = {
-  'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', maxTokens: 16384, contextWindow: 131072 },
+  // Primary: Best coding model for agentic workflows
   'qwen3-coder': { id: 'qwen3-coder', name: 'Qwen3 Coder', maxTokens: 16384, contextWindow: 131072 },
+  'qwen3-coder-next': { id: 'qwen3-coder-next', name: 'Qwen3 Coder Next', maxTokens: 16384, contextWindow: 131072 },
+  // Reasoning specialists
   'deepseek-r1': { id: 'deepseek-r1', name: 'DeepSeek R1', maxTokens: 16384, contextWindow: 131072 },
-  'llama-4-scout': { id: 'llama-4-scout', name: 'Llama 4 Scout', maxTokens: 16384, contextWindow: 131072 },
-  'qwen3-30b-a3b': { id: 'qwen3-30b-a3b', name: 'Qwen3 30B A3B', maxTokens: 16384, contextWindow: 131072 },
+  'deepseek-r1:14b': { id: 'deepseek-r1:14b', name: 'DeepSeek R1 14B', maxTokens: 8192, contextWindow: 128000 },
+  // Agent-focused models
   'devstral': { id: 'devstral', name: 'Devstral', maxTokens: 16384, contextWindow: 131072 },
+  'minimax-m2.5': { id: 'minimax-m2.5', name: 'MiniMax M2.5', maxTokens: 16384, contextWindow: 131072 },
+  'glm-4.7': { id: 'glm-4.7', name: 'GLM 4.7', maxTokens: 16384, contextWindow: 128000 },
+  // General purpose / large context fallback
+  'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', maxTokens: 16384, contextWindow: 256000 },
+  'llama4': { id: 'llama4', name: 'Llama 4 Scout', maxTokens: 16384, contextWindow: 131072 },
+  'qwen3:30b-a3b': { id: 'qwen3:30b-a3b', name: 'Qwen3 30B A3B', maxTokens: 16384, contextWindow: 131072 },
 };
 
 class OllamaProvider extends BaseProvider {
@@ -21,7 +29,7 @@ class OllamaProvider extends BaseProvider {
       name: 'ollama',
       baseUrl: config.baseUrl || 'https://ollama.com',
       models: config.models || OLLAMA_MODELS,
-      defaultModel: config.defaultModel || 'kimi-k2.5',
+      defaultModel: config.defaultModel || 'qwen3-coder',
       ...config,
     });
     this.timeout = config.timeout || 180000;

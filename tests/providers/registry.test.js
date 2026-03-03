@@ -32,8 +32,8 @@ describe('providers/registry.js', () => {
       expect(registry.getActiveProviderName()).toBe('ollama');
     });
 
-    it('defaults to kimi-k2.5 model', () => {
-      expect(registry.getActiveModelId()).toBe('kimi-k2.5');
+    it('defaults to qwen3-coder model', () => {
+      expect(registry.getActiveModelId()).toBe('qwen3-coder');
     });
 
     it('uses DEFAULT_PROVIDER from env', () => {
@@ -86,8 +86,8 @@ describe('providers/registry.js', () => {
   describe('getActiveModel()', () => {
     it('returns model with provider info', () => {
       const model = registry.getActiveModel();
-      expect(model.id).toBe('kimi-k2.5');
-      expect(model.name).toBe('Kimi K2.5');
+      expect(model.id).toBe('qwen3-coder');
+      expect(model.name).toBe('Qwen3 Coder');
       expect(model.provider).toBe('ollama');
     });
 
@@ -213,7 +213,7 @@ describe('providers/registry.js', () => {
       const ollama = list.find((p) => p.provider === 'ollama');
       const activeModels = ollama.models.filter((m) => m.active);
       expect(activeModels).toHaveLength(1);
-      expect(activeModels[0].id).toBe('kimi-k2.5');
+      expect(activeModels[0].id).toBe('qwen3-coder');
     });
 
     it('includes models per provider', () => {
