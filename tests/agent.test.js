@@ -761,13 +761,12 @@ describe('agent.js', () => {
   // ─── max iterations ───────────────────────────────────────
   describe('max iterations', () => {
     it('warns when max iterations reached', async () => {
-      for (let i = 0; i < 31; i++) {
-        callStream.mockImplementationOnce(async () => ({
-          content: '',
-          tool_calls: [{ function: { name: 'bash', arguments: { command: 'echo' } }, id: `c${i}` }],
-        }));
-        executeTool.mockResolvedValueOnce('ok');
-      }
+      let i = 0;
+      callStream.mockImplementation(async () => ({
+        content: '',
+        tool_calls: [{ function: { name: 'bash', arguments: { command: 'echo' } }, id: `c${i++}` }],
+      }));
+      executeTool.mockResolvedValue('ok');
       await processInput('loop');
       expect(logOutput()).toContain('Max iterations');
     });

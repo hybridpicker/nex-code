@@ -21,7 +21,7 @@ Options:
   --auto              Skip all confirmations (implies --task)
   --yolo, -yolo       Skip all confirmations (interactive YOLO mode)
   --model <spec>      Set model (e.g. openai:gpt-4o)
-  --max-turns <n>     Max agentic loop iterations (default: 30)
+  --max-turns <n>     Max agentic loop iterations (default: 50)
   --json              Output result as JSON (for CI parsing)
   -h, --help          Show this help
   -v, --version       Show version

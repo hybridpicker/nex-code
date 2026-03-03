@@ -1,6 +1,6 @@
 /**
  * cli/providers/gemini.js — Google Gemini Provider
- * Supports Gemini 2.5 Pro, 2.5 Flash, 2.0 Flash, 2.0 Flash Lite via
+ * Supports Gemini 3.x Preview, 2.5 Pro/Flash/Lite, 2.0 Flash (deprecated) via
  * Google's OpenAI-compatible endpoint with SSE streaming.
  */
 
@@ -8,8 +8,14 @@ const axios = require('axios');
 const { BaseProvider } = require('./base');
 
 const GEMINI_MODELS = {
+  // Preview — Gemini 3.x (latest)
+  'gemini-3.1-pro-preview': { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', maxTokens: 65536, contextWindow: 1048576 },
+  'gemini-3-flash-preview': { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', maxTokens: 65536, contextWindow: 1048576 },
+  // Stable — Gemini 2.5 (GA)
   'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', maxTokens: 65536, contextWindow: 1048576 },
   'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', maxTokens: 65536, contextWindow: 1048576 },
+  'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', maxTokens: 65536, contextWindow: 1048576 },
+  // Deprecated — retiring June 1, 2026
   'gemini-2.0-flash': { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', maxTokens: 8192, contextWindow: 1048576 },
   'gemini-2.0-flash-lite': { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', maxTokens: 8192, contextWindow: 1048576 },
 };

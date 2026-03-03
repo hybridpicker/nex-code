@@ -30,7 +30,7 @@ describe('costs.js', () => {
 
     it('has pricing for anthropic models', () => {
       expect(PRICING.anthropic['claude-sonnet']).toBeDefined();
-      expect(PRICING.anthropic['claude-opus'].input).toBe(15.0);
+      expect(PRICING.anthropic['claude-opus'].input).toBe(5.0);
     });
 
     it('has zero pricing for ollama models', () => {
@@ -57,13 +57,13 @@ describe('costs.js', () => {
 
     it('has pricing for new anthropic models', () => {
       expect(PRICING.anthropic['claude-sonnet-4-5'].input).toBe(3.0);
-      expect(PRICING.anthropic['claude-3-5-sonnet'].input).toBe(3.0);
+      expect(PRICING.anthropic['claude-sonnet-4'].input).toBe(3.0);
     });
 
     it('has zero pricing for new ollama models', () => {
       expect(PRICING.ollama['deepseek-r1'].input).toBe(0);
-      expect(PRICING.ollama['llama-4-scout'].input).toBe(0);
-      expect(PRICING.ollama['qwen3-30b-a3b'].input).toBe(0);
+      expect(PRICING.ollama['llama4'].input).toBe(0);
+      expect(PRICING.ollama['qwen3:30b-a3b'].input).toBe(0);
       expect(PRICING.ollama['devstral'].input).toBe(0);
     });
 
@@ -141,8 +141,8 @@ describe('costs.js', () => {
     it('calculates cost correctly for anthropic', () => {
       trackUsage('anthropic', 'claude-opus', 100_000, 50_000);
       const costs = getSessionCosts();
-      // 100k * $15/1M + 50k * $75/1M = $1.50 + $3.75 = $5.25
-      expect(costs.totalCost).toBeCloseTo(5.25, 2);
+      // 100k * $5/1M + 50k * $25/1M = $0.50 + $1.25 = $1.75
+      expect(costs.totalCost).toBeCloseTo(1.75, 2);
     });
 
     it('returns zero cost for free providers', () => {
@@ -314,9 +314,9 @@ describe('costs.js', () => {
       setCostLimit('anthropic', 10.00);
       trackUsage('anthropic', 'claude-opus', 100_000, 50_000);
       const budget = checkBudget('anthropic');
-      // Spent: $1.50 + $3.75 = $5.25
-      expect(budget.spent).toBeCloseTo(5.25, 2);
-      expect(budget.remaining).toBeCloseTo(4.75, 2);
+      // Spent: $0.50 + $1.25 = $1.75
+      expect(budget.spent).toBeCloseTo(1.75, 2);
+      expect(budget.remaining).toBeCloseTo(8.25, 2);
     });
   });
 

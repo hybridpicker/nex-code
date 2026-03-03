@@ -32,13 +32,13 @@ describe('providers/ollama.js', () => {
       expect(provider.getModelNames()).toContain('kimi-k2.5');
       expect(provider.getModelNames()).toContain('qwen3-coder');
       expect(provider.getModelNames()).toContain('deepseek-r1');
-      expect(provider.getModelNames()).toContain('llama-4-scout');
-      expect(provider.getModelNames()).toContain('qwen3-30b-a3b');
+      expect(provider.getModelNames()).toContain('llama4');
+      expect(provider.getModelNames()).toContain('qwen3:30b-a3b');
       expect(provider.getModelNames()).toContain('devstral');
     });
 
-    it('defaults to kimi-k2.5', () => {
-      expect(provider.defaultModel).toBe('kimi-k2.5');
+    it('defaults to qwen3-coder', () => {
+      expect(provider.defaultModel).toBe('qwen3-coder');
     });
 
     it('allows custom base URL', () => {
@@ -101,9 +101,9 @@ describe('providers/ollama.js', () => {
       });
     });
 
-    it('exports llama-4-scout model info', () => {
-      expect(OLLAMA_MODELS['llama-4-scout']).toMatchObject({
-        id: 'llama-4-scout',
+    it('exports llama4 model info', () => {
+      expect(OLLAMA_MODELS['llama4']).toMatchObject({
+        id: 'llama4',
         name: 'Llama 4 Scout',
       });
     });
@@ -121,7 +121,7 @@ describe('providers/ollama.js', () => {
       expect(result.tool_calls).toEqual([]);
       expect(axios.post).toHaveBeenCalledWith(
         'https://ollama.com/api/chat',
-        expect.objectContaining({ stream: false, model: 'kimi-k2.5' }),
+        expect.objectContaining({ stream: false, model: 'qwen3-coder' }),
         expect.objectContaining({
           headers: { Authorization: 'Bearer test-key-123' },
         })
@@ -257,7 +257,7 @@ describe('providers/ollama.js', () => {
 
       expect(axios.post).toHaveBeenCalledWith(
         'https://ollama.com/api/chat',
-        expect.objectContaining({ model: 'kimi-k2.5', messages, tools, stream: true }),
+        expect.objectContaining({ model: 'qwen3-coder', messages, tools, stream: true }),
         expect.objectContaining({
           responseType: 'stream',
           headers: { Authorization: 'Bearer test-key-123' },

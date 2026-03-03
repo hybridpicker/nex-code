@@ -41,10 +41,10 @@ Add one or more API keys to `.env`:
 
 ```bash
 # Pick any — only one is required
-OLLAMA_API_KEY=your-key       # Ollama Cloud (Kimi K2.5, Qwen3, DeepSeek R1, Llama 4, Devstral)
+OLLAMA_API_KEY=your-key       # Ollama Cloud (Qwen3 Coder, DeepSeek R1, Devstral, Kimi K2.5, Llama 4, MiniMax M2.5, GLM 4.7)
 OPENAI_API_KEY=your-key       # OpenAI (GPT-4o, GPT-4.1, o1, o3, o4-mini)
-ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet, Opus, Haiku)
-GEMINI_API_KEY=your-key       # Google Gemini (2.5 Pro/Flash, 2.0 Flash)
+ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet 4.6, Opus 4.6, Haiku 4.5)
+GEMINI_API_KEY=your-key       # Google Gemini (3.1 Pro Preview, 2.5 Pro/Flash, 2.0 Flash)
 # No key needed for local Ollama — just have it running
 ```
 
@@ -97,10 +97,10 @@ Switch providers and models at runtime:
 
 | Provider | Models | Env Variable |
 |----------|--------|-------------|
-| **ollama** | Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral | `OLLAMA_API_KEY` |
+| **ollama** | Qwen3 Coder, DeepSeek R1, Devstral, Kimi K2.5, MiniMax M2.5, GLM 4.7, Llama 4 | `OLLAMA_API_KEY` |
 | **openai** | GPT-4o, GPT-4.1, o1, o3, o4-mini | `OPENAI_API_KEY` |
-| **anthropic** | Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet | `ANTHROPIC_API_KEY` |
-| **gemini** | Gemini 2.5 Pro/Flash, 2.0 Flash/Lite | `GEMINI_API_KEY` |
+| **anthropic** | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5, Sonnet 4.5, Sonnet 4 | `ANTHROPIC_API_KEY` |
+| **gemini** | Gemini 3.1 Pro Preview, 2.5 Pro/Flash/Lite, 2.0 Flash/Lite | `GEMINI_API_KEY` |
 | **local** | Any model on your local Ollama server | (none) |
 
 Fallback chains let you auto-switch when a provider fails:
@@ -562,7 +562,7 @@ Provider API (streaming + abort signal) --> Text tokens --> rendered to terminal
     |
 [Tool results added to history]
     |
-Loop until: no more tool calls OR 30 iterations OR Ctrl+C abort
+Loop until: no more tool calls OR 50 iterations OR Ctrl+C abort
 ```
 
 ---
@@ -591,7 +591,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-43 test suites, 1778 tests, 90% statement / 83% branch coverage.
+43 test suites, 1780 tests, 90% statement / 83% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
