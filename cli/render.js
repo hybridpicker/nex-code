@@ -330,11 +330,46 @@ class StreamRenderer {
     this.inCodeBlock = false;
     this.codeBlockLang = '';
     this.lineCount = 0;
+    // Streaming cursor state
+    this._cursorTimer = null;
+    this._cursorFrame = 0;
+    this._cursorActive = false;
   }
 
   /** Write to stdout, silently ignoring EPIPE errors after abort */
   _safeWrite(data) {
     try { process.stdout.write(data); } catch (e) { if (e.code !== 'EPIPE') throw e; }
+  }
+
+  startCursor() {
+    this._cursorActive = true;
+    this._cursorFrame = 0;
+    this._renderCursor();
+    this._cursorTimer = setInterval(() => this._renderCursor(), 530);
+  }
+
+  _renderCursor() {
+    const frames = ['▍', ' '];
+    const f = frames[this._cursorFrame % frames.length];
+    this._safeWrite(`\x1b[2K\r\x1b[90m${f}\x1b[0m`);
+    this._cursorFrame++;
+  }
+
+  _clearCursorLine() {
+    if (this._cursorActive) {
+      this._safeWrite('\x1b[2K\r');
+    }
+  }
+
+  stopCursor() {
+    if (this._cursorTimer) {
+      clearInterval(this._cursorTimer);
+      this._cursorTimer = null;
+    }
+    if (this._cursorActive) {
+      this._safeWrite('\x1b[2K\r');
+      this._cursorActive = false;
+    }
   }
 
   /**
@@ -343,6 +378,7 @@ class StreamRenderer {
    */
   push(text) {
     if (!text) return;
+    this._clearCursorLine();
     this.buffer += text;
 
     // Process all complete lines
@@ -352,12 +388,20 @@ class StreamRenderer {
       this.buffer = this.buffer.substring(nlIdx + 1);
       this._renderLine(line);
     }
+
+    if (this._cursorActive) {
+      this._cursorFrame = 0;
+      this._renderCursor();
+      if (this._cursorTimer) clearInterval(this._cursorTimer);
+      this._cursorTimer = setInterval(() => this._renderCursor(), 530);
+    }
   }
 
   /**
    * Flush remaining buffer content (call at end of stream).
    */
   flush() {
+    this.stopCursor();
     if (this.buffer) {
       this._renderLine(this.buffer);
       this.buffer = '';
