@@ -39,8 +39,8 @@ const FORBIDDEN_PATTERNS = [
   /node\s+-e\s/,
   /perl\s+-e\s/,
   /ruby\s+-e\s/,
-  // History access
-  /\bhistory\b/,
+  // History access — only standalone `history` command (not `dnf history`, `git log --history`, etc.)
+  /(?:^|[;&|]\s*)history(?:\s|$)/,
   // Data exfiltration via POST
   /curl.*-X\s*POST/,
   /curl.*--data/,
@@ -62,8 +62,43 @@ const SSH_SAFE_PATTERNS = [
   /\buptime\b/,
   /\bwho\b/,
   /\bps\s/,
-  /\bgit\s+(status|log|diff|branch)\b/,
+  /\bgit\s+(status|log|diff|branch|fetch)\b/,
   /\bgit\s+pull\b/,
+  // Server diagnostics
+  /\bss\s+-[tlnp]/,
+  /\bnetstat\s/,
+  /\bdu\s/,
+  /\blscpu\b/,
+  /\bnproc\b/,
+  /\buname\b/,
+  /\bhostname\b/,
+  /\bgetent\b/,
+  /\bid\b/,
+  // Database read-only
+  /psql\s.*-c\s/,
+  /\bmysql\s.*-e\s/,
+  // Package manager read-only
+  /\bdnf\s+(check-update|list|info|history|repolist|updateinfo)\b/,
+  /\brpm\s+-q/,
+  /\bapt\s+list\b/,
+  // SSL / Certificates
+  /\bopenssl\s+s_client\b/,
+  /\bopenssl\s+x509\b/,
+  /\bcertbot\s+certificates\b/,
+  // Networking read-only
+  /\bcurl\s+-[sIkv]|curl\s+--head/,
+  /\bdig\s/,
+  /\bnslookup\s/,
+  /\bping\s/,
+  // System info
+  /\bgetenforce\b/,
+  /\bsesearch\b/,
+  /\bausearch\b/,
+  /\bsealert\b/,
+  /\bcrontab\s+-l\b/,
+  /\btimedatectl\b/,
+  /\bfirewall-cmd\s+--list/,
+  /\bfirewall-cmd\s+--state/,
 ];
 
 function isSSHReadOnly(command) {
@@ -71,9 +106,42 @@ function isSSHReadOnly(command) {
   const remoteCmd = command.match(/ssh\s+[^"]*"([^"]+)"/)?.[1] ||
                     command.match(/ssh\s+[^']*'([^']+)'/)?.[1];
   if (!remoteCmd) return false;
-  // Strip sudo prefix for safety check
-  const cleaned = remoteCmd.replace(/^sudo\s+/, '');
-  return SSH_SAFE_PATTERNS.some(pat => pat.test(cleaned));
+
+  // Collapse for/while loops into single tokens before splitting on && ;
+  // This prevents "for x in a; do cmd; done" from being split incorrectly
+  const collapsed = remoteCmd.replace(/\bfor\s[\s\S]*?\bdone\b/g, m => m.replace(/;/g, '\x00'))
+                             .replace(/\bwhile\s[\s\S]*?\bdone\b/g, m => m.replace(/;/g, '\x00'));
+
+  // Split compound commands on && ; and check each part
+  const parts = collapsed.split(/\s*(?:&&|;)\s*/)
+    .map(s => s.replace(/\x00/g, ';').trim())
+    .filter(Boolean);
+
+  // If there are no parts, not safe
+  if (parts.length === 0) return false;
+
+  const isSafePart = (part) => {
+    // Strip sudo prefix: -u/-g/-C/-D take an argument, other flags don't
+    const cleaned = part.replace(/^sudo\s+(?:-[ugCD]\s+\S+\s+|-[A-Za-z]+\s+)*/, '');
+    // Allow echo/printf (output helpers)
+    if (/^\s*(?:echo|printf)\s/.test(cleaned)) return true;
+    // Allow for/while loops — check the loop body
+    if (/^\s*for\s/.test(part) || /^\s*while\s/.test(part)) {
+      // Extract the do...done body and check inner commands
+      const body = part.match(/\bdo\s+([\s\S]*?)\s*(?:done|$)/)?.[1];
+      if (body) {
+        const innerParts = body.split(/\s*;\s*/).map(s => s.trim()).filter(Boolean);
+        return innerParts.every(ip => isSafePart(ip));
+      }
+      // If we can't parse the body, check if any safe pattern matches anywhere in the loop
+      return SSH_SAFE_PATTERNS.some(pat => pat.test(part));
+    }
+    // Allow variable assignments
+    if (/^\w+=\$?\(/.test(cleaned) || /^\w+=["']/.test(cleaned) || /^\w+=\S/.test(cleaned)) return true;
+    return SSH_SAFE_PATTERNS.some(pat => pat.test(cleaned));
+  };
+
+  return parts.every(isSafePart);
 }
 
 const DANGEROUS_BASH = [
