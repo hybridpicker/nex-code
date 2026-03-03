@@ -349,16 +349,16 @@ class StreamRenderer {
   }
 
   _renderCursor() {
-    // Breathing pulse: dark gray → cyan → bright cyan → cyan → dark gray
+    // Breathing pulse: dark gray ● → cyan ● → bright cyan ● (peak) → back
     const frames = [
-      '\x1b[90m∙\x1b[0m',
-      '\x1b[90m•\x1b[0m',
-      '\x1b[36m•\x1b[0m',
+      '\x1b[90m●\x1b[0m',
+      '\x1b[90m●\x1b[0m',
       '\x1b[36m●\x1b[0m',
       '\x1b[96m●\x1b[0m',
+      '\x1b[96m●\x1b[0m',
       '\x1b[36m●\x1b[0m',
-      '\x1b[36m•\x1b[0m',
-      '\x1b[90m•\x1b[0m',
+      '\x1b[90m●\x1b[0m',
+      '\x1b[90m●\x1b[0m',
     ];
     this._safeWrite(`\x1b[2K\r${frames[this._cursorFrame % frames.length]}`);
     this._cursorFrame++;
