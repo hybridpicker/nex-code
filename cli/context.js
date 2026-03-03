@@ -72,7 +72,6 @@ function printContext(cwd) {
 
   const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());
 
-  console.log(`${C.dim}  cwd: ${cwd}${C.reset}`);
   if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
   if (branch) console.log(`${C.dim}  branch: ${branch}${C.reset}`);
   console.log();
