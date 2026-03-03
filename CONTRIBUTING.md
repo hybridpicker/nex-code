@@ -12,6 +12,8 @@ cp .env.example .env
 npm run install-hooks
 ```
 
+> **Users** don't need to clone — just run `npx nex-code` or `npm install -g nex-code`.
+
 ## Development Workflow
 
 1. Create a feature branch: `git checkout -b feat/my-feature`

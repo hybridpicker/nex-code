@@ -61,10 +61,22 @@ That's it. You'll see the banner, your project context, and the `>` prompt. Star
 - Node.js 18+
 - At least one API key **or** a local [Ollama](https://ollama.com/download) server
 
-### Installation
+### Install from npm
 
 ```bash
-git clone git@github.com:hybridpicker/nex-code.git
+npm install -g nex-code
+```
+
+Or run directly without installing:
+
+```bash
+npx nex-code
+```
+
+### Install from source (for contributors)
+
+```bash
+git clone https://github.com/hybridpicker/nex-code.git
 cd nex-code
 npm install
 cp .env.example .env
@@ -74,7 +86,7 @@ npm run install-hooks
 
 ### Configure a Provider
 
-Add one or more API keys to `.env`:
+Create a `.env` file in your project directory (or set environment variables):
 
 ```bash
 # Pick any — only one is required
@@ -687,6 +699,13 @@ CI runs on GitHub Actions (Node 18/20/22).
 ```
 
 Everything else is Node.js built-in.
+
+## Installation
+
+```bash
+npm install -g nex-code    # global install
+npx nex-code               # or run without installing
+```
 
 ## License
 
