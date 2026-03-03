@@ -153,31 +153,16 @@ class LocalProvider extends BaseProvider {
       let content = '';
       let toolCalls = [];
       let buffer = '';
-      const CHUNK_TIMEOUT = 60000; // 60s without data → stall
-      let chunkTimer = setTimeout(() => {
-        response.data.destroy();
-        reject(new Error('Stream stalled: no data received for 60s'));
-      }, CHUNK_TIMEOUT);
-
-      const resetChunkTimer = () => {
-        clearTimeout(chunkTimer);
-        chunkTimer = setTimeout(() => {
-          response.data.destroy();
-          reject(new Error('Stream stalled: no data received for 60s'));
-        }, CHUNK_TIMEOUT);
-      };
 
       // Abort listener: destroy stream on signal
       if (options.signal) {
         options.signal.addEventListener('abort', () => {
-          clearTimeout(chunkTimer);
           response.data.destroy();
           reject(new DOMException('The operation was aborted', 'AbortError'));
         }, { once: true });
       }
 
       response.data.on('data', (chunk) => {
-        resetChunkTimer();
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -201,7 +186,6 @@ class LocalProvider extends BaseProvider {
           }
 
           if (parsed.done) {
-            clearTimeout(chunkTimer);
             resolve({ content, tool_calls: this._normalizeToolCalls(toolCalls) });
             return;
           }
@@ -209,13 +193,11 @@ class LocalProvider extends BaseProvider {
       });
 
       response.data.on('error', (err) => {
-        clearTimeout(chunkTimer);
         if (options.signal?.aborted) return; // Ignore errors after abort
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on('end', () => {
-        clearTimeout(chunkTimer);
         if (buffer.trim()) {
           try {
             const parsed = JSON.parse(buffer);

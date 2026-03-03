@@ -8,7 +8,7 @@ const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { TOOL_DEFINITIONS, executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
-const { fitToContext, getUsage } = require('./context-engine');
+const { fitToContext, forceCompress, getUsage } = require('./context-engine');
 const { autoSave } = require('./session');
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
@@ -525,6 +525,7 @@ async function processInput(userInput) {
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
+  let contextRetries = 0;
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -649,7 +650,25 @@ async function processInput(userInput) {
       } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
         userMessage = 'Access denied — your API key may not have permission for this model';
       } else if (err.message.includes('400')) {
-        userMessage = 'Bad request — the conversation may be too long or contain unsupported content. Try /clear and retry';
+        // Check if this is a context-too-long error before generic 400 handling
+        const errLower = (err.message || '').toLowerCase();
+        const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
+          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many');
+        if (isContextTooLong && contextRetries < 1) {
+          contextRetries++;
+          console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying...${C.reset}`);
+          const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+          apiMessages = compressedMsgs;
+          console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          i--;
+          continue;
+        }
+        if (isContextTooLong) {
+          userMessage = 'Context too long — force compression exhausted. Use /clear to start fresh';
+        } else {
+          userMessage = 'Bad request — the conversation may be too long or contain unsupported content. Try /clear and retry';
+        }
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
       } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
