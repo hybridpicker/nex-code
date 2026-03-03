@@ -23,7 +23,8 @@ const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
 const { getConfiguredProviders } = require('./providers/registry');
 
-const MAX_ITERATIONS = 30;
+let MAX_ITERATIONS = 30;
+function setMaxIterations(n) { if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n; }
 
 // Abort signal getter — set by cli/index.js to avoid circular dependency
 let _getAbortSignal = () => null;
@@ -812,4 +813,4 @@ async function processInput(userInput) {
   }
 }
 
-module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter };
+module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter, setMaxIterations };

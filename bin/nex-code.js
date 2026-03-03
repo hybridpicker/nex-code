@@ -50,6 +50,16 @@ if (modelIdx !== -1 && args[modelIdx + 1]) {
   setActiveModel(args[modelIdx + 1]);
 }
 
+// ─── --max-turns ─────────────────────────────────────────────
+const maxTurnsIdx = args.indexOf('--max-turns');
+if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
+  const n = parseInt(args[maxTurnsIdx + 1], 10);
+  if (n > 0) {
+    const { setMaxIterations } = require('../cli/agent');
+    setMaxIterations(n);
+  }
+}
+
 // ─── --task (headless mode) ──────────────────────────────────
 const taskIdx = args.indexOf('--task');
 if (taskIdx !== -1) {
