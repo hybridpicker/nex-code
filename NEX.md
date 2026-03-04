@@ -9,9 +9,10 @@ Repo: `github.com/hybridpicker/nex-code`
 
 ```
 bin/nex-code.js       → Entrypoint (shebang, .env, startREPL)
-cli/index.js             → REPL + ~38 Slash Commands
-cli/agent.js             → Agentic Loop + Conversation State + Compact Output + Résumé
+cli/index.js             → REPL + ~38 Slash Commands + AbortController
+cli/agent.js             → Agentic Loop + Conversation State + Compact Output + Résumé + Abort handling
 cli/providers/           → Multi-Provider Abstraction Layer
+cli/index-engine.js      → In-memory File Index (ripgrep/fallback)
   base.js                → Abstract Provider Interface
   ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral)
   openai.js              → OpenAI Provider (GPT-4o, GPT-4.1, o1, o3, o4-mini)
@@ -20,7 +21,7 @@ cli/providers/           → Multi-Provider Abstraction Layer
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution + Provider Routing (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
-cli/tools.js             → 17 Tool Definitions + Implementations + Auto-Fix (path, edit, bash hints)
+cli/tools.js             → 17 Tool Definitions + Implementations (Async I/O) + Auto-Fix (path, edit, bash hints)
 cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress, model routing)
 cli/tasks.js             → Task List Management (create, update, render, dependencies, onChange callbacks)
 cli/context-engine.js    → Token Management + Context Compression
@@ -28,7 +29,7 @@ cli/session.js           → Session Persistence (.nex/sessions/)
 cli/memory.js            → Project Memory (.nex/memory/ + NEX.md)
 cli/permissions.js       → Tool Permission System (allow/ask/deny)
 cli/planner.js           → Plan Mode + Autonomy Levels
-cli/git.js               → Git Intelligence (smart commit, diff, branch)
+cli/git.js               → Git Intelligence (Async) (smart commit, diff, branch)
 cli/render.js            → Rich Terminal Rendering (Markdown, Syntax Highlighting)
 cli/mcp.js               → MCP Client (JSON-RPC over stdio)
 cli/hooks.js             → Hook System (pre-tool, post-tool, etc.)
@@ -41,7 +42,8 @@ cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
 cli/skills.js            → Skills System (prompt + script skills)
-tests/                   → Jest, 41 Suites, 1642 Tests, 90%+ Stmts / 83%+ Branch Coverage
+dist/                    → Final Bundled CLI scripts (esbuild)
+tests/                   → Jest, 43 Suites, 1783 Tests, 90%+ Stmts / 83%+ Branch Coverage
 ```
 
 ## Commit Message Convention
@@ -136,6 +138,7 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
 - Interactive Picker: pickFromList() generic cursor-based list picker, showModelPicker() for `/model`
 - Cost Limits: setCostLimit/removeCostLimit/checkBudget pro Provider, Budget-Gate in callStream/callChat, Auto-Fallback bei Budget-Überschreitung, Persistenz in .nex/config.json
+- Performance: Non-blocking I/O für alle Datei- und Git-Operationen, <100ms Startup via Bundling, Instant-Suchergebnisse via In-Memory Index (rg-kompatibel).
 
 ## .nex/ Verzeichnis
 
