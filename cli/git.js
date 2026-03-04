@@ -169,6 +169,14 @@ function formatDiffSummary() {
 }
 
 /**
+ * Get files with unresolved merge conflicts (UU, AA, DD)
+ */
+function getMergeConflicts() {
+  const status = getStatus();
+  return status.filter(s => s.status === 'UU' || s.status === 'AA' || s.status === 'DD');
+}
+
+/**
  * Get diff-aware context (only changed files' content)
  * For use when the user is working on git-related tasks
  */
@@ -199,4 +207,5 @@ module.exports = {
   commit,
   formatDiffSummary,
   getDiffContext,
+  getMergeConflicts,
 };
