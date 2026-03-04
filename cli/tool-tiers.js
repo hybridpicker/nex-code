@@ -61,6 +61,8 @@ const MODEL_TIERS = {
   'claude-sonnet-4': 'full',
 
   // Gemini — all full
+  'gemini-3.1-pro-preview': 'full',
+  'gemini-3-flash-preview': 'full',
   'gemini-2.5-pro': 'full',
   'gemini-2.5-flash': 'full',
   'gemini-2.0-flash': 'standard',
@@ -71,10 +73,10 @@ const MODEL_TIERS = {
  * Default tier per provider (for unknown models).
  */
 const PROVIDER_DEFAULT_TIER = {
-  ollama: 'standard',
+  ollama: 'full',
   openai: 'full',
   anthropic: 'full',
-  gemini: 'standard',
+  gemini: 'full',
   local: 'essential',
 };
 
@@ -103,7 +105,7 @@ loadConfigOverrides();
 
 /**
  * Get the tool tier for the active model.
- * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'standard'
+ * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'full'
  */
 function getActiveTier() {
   const model = getActiveModel();
@@ -120,12 +122,12 @@ function getActiveTier() {
   // Provider default
   if (provider && PROVIDER_DEFAULT_TIER[provider]) return PROVIDER_DEFAULT_TIER[provider];
 
-  return 'standard';
+  return 'full';
 }
 
 /**
  * Get the tool tier for a specific model.
- * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'standard'
+ * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'full'
  * @param {string} modelId
  * @param {string} providerName
  * @returns {string} Tier name ('essential', 'standard', or 'full')
@@ -135,7 +137,7 @@ function getModelTier(modelId, providerName) {
   if (providerName && configOverrides[`${providerName}:*`]) return configOverrides[`${providerName}:*`];
   if (modelId && MODEL_TIERS[modelId]) return MODEL_TIERS[modelId];
   if (providerName && PROVIDER_DEFAULT_TIER[providerName]) return PROVIDER_DEFAULT_TIER[providerName];
-  return 'standard';
+  return 'full';
 }
 
 /**

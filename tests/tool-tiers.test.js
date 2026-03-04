@@ -115,6 +115,12 @@ describe('getActiveTier()', () => {
     expect(getActiveTier()).toBe('essential');
   });
 
+  it('returns full for Gemini 3.x preview', () => {
+    getActiveModel.mockReturnValue({ id: 'gemini-3.1-pro-preview' });
+    getActiveProviderName.mockReturnValue('gemini');
+    expect(getActiveTier()).toBe('full');
+  });
+
   it('falls back to provider default for unknown models', () => {
     getActiveModel.mockReturnValue({ id: 'some-unknown-model' });
     getActiveProviderName.mockReturnValue('local');
@@ -124,13 +130,13 @@ describe('getActiveTier()', () => {
   it('falls back to provider default for unknown ollama model', () => {
     getActiveModel.mockReturnValue({ id: 'custom-finetune' });
     getActiveProviderName.mockReturnValue('ollama');
-    expect(getActiveTier()).toBe('standard');
+    expect(getActiveTier()).toBe('full');
   });
 
-  it('returns standard as ultimate fallback', () => {
+  it('returns full as ultimate fallback', () => {
     getActiveModel.mockReturnValue({ id: 'unknown' });
     getActiveProviderName.mockReturnValue('unknown-provider');
-    expect(getActiveTier()).toBe('standard');
+    expect(getActiveTier()).toBe('full');
   });
 
   it('respects config overrides for specific model', () => {
@@ -266,11 +272,12 @@ describe('getModelTier()', () => {
   it('falls back to provider default for unknown models', () => {
     expect(getModelTier('unknown-model', 'local')).toBe('essential');
     expect(getModelTier('unknown-model', 'openai')).toBe('full');
-    expect(getModelTier('unknown-model', 'ollama')).toBe('standard');
+    expect(getModelTier('unknown-model', 'ollama')).toBe('full');
+    expect(getModelTier('unknown-model', 'gemini')).toBe('full');
   });
 
-  it('returns standard as ultimate fallback', () => {
-    expect(getModelTier('unknown', 'unknown-provider')).toBe('standard');
+  it('returns full as ultimate fallback', () => {
+    expect(getModelTier('unknown', 'unknown-provider')).toBe('full');
   });
 
   it('respects config overrides', () => {
@@ -341,10 +348,10 @@ describe('exported constants', () => {
   });
 
   it('PROVIDER_DEFAULT_TIER has defaults for all providers', () => {
-    expect(PROVIDER_DEFAULT_TIER.ollama).toBe('standard');
+    expect(PROVIDER_DEFAULT_TIER.ollama).toBe('full');
     expect(PROVIDER_DEFAULT_TIER.openai).toBe('full');
     expect(PROVIDER_DEFAULT_TIER.anthropic).toBe('full');
-    expect(PROVIDER_DEFAULT_TIER.gemini).toBe('standard');
+    expect(PROVIDER_DEFAULT_TIER.gemini).toBe('full');
     expect(PROVIDER_DEFAULT_TIER.local).toBe('essential');
   });
 });
