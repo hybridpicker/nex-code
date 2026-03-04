@@ -15,9 +15,9 @@ const GEMINI_MODELS = {
   'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', maxTokens: 65536, contextWindow: 1048576 },
   'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', maxTokens: 65536, contextWindow: 1048576 },
   'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', maxTokens: 65536, contextWindow: 1048576 },
-  // Deprecated — retiring June 1, 2026
-  'gemini-2.0-flash': { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', maxTokens: 8192, contextWindow: 1048576 },
-  'gemini-2.0-flash-lite': { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', maxTokens: 8192, contextWindow: 1048576 },
+  // Legacy/Flash-Lite
+  'gemini-1.5-pro': { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', maxTokens: 8192, contextWindow: 1048576 },
+  'gemini-1.5-flash': { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', maxTokens: 8192, contextWindow: 1048576 },
 };
 
 class GeminiProvider extends BaseProvider {
@@ -111,7 +111,7 @@ class GeminiProvider extends BaseProvider {
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
-    const onToken = options.onToken || (() => {});
+    const onToken = options.onToken || (() => { });
     const { messages: formatted } = this.formatMessages(messages);
 
     const body = {
