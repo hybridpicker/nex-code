@@ -23,11 +23,11 @@ describe('file-history.js', () => {
       expect(getUndoCount()).toBe(1);
     });
 
-    it('clears redo stack on new change', () => {
+    it('clears redo stack on new change', async () => {
       const fp = path.join(tmpDir, 'test.txt');
       fs.writeFileSync(fp, 'original');
       recordChange('edit_file', fp, 'original', 'edited');
-      undo();
+      await undo();
       expect(getRedoCount()).toBe(1);
       recordChange('write_file', fp, 'original', 'new content');
       expect(getRedoCount()).toBe(0);
@@ -43,85 +43,85 @@ describe('file-history.js', () => {
 
   // ─── undo ─────────────────────────────────────────────────
   describe('undo()', () => {
-    it('returns null when nothing to undo', () => {
-      expect(undo()).toBeNull();
+    it('returns null when nothing to undo', async () => {
+      expect(await undo()).toBeNull();
     });
 
-    it('restores previous content on undo', () => {
+    it('restores previous content on undo', async () => {
       const fp = path.join(tmpDir, 'undo.txt');
       fs.writeFileSync(fp, 'edited');
       recordChange('edit_file', fp, 'original', 'edited');
-      const result = undo();
+      const result = await undo();
       expect(result).not.toBeNull();
       expect(result.tool).toBe('edit_file');
       expect(result.filePath).toBe(fp);
       expect(fs.readFileSync(fp, 'utf-8')).toBe('original');
     });
 
-    it('deletes newly created file on undo', () => {
+    it('deletes newly created file on undo', async () => {
       const fp = path.join(tmpDir, 'new.txt');
       fs.writeFileSync(fp, 'new content');
       recordChange('write_file', fp, null, 'new content');
-      const result = undo();
+      const result = await undo();
       expect(result.wasCreated).toBe(true);
       expect(fs.existsSync(fp)).toBe(false);
     });
 
-    it('adds to redo stack', () => {
+    it('adds to redo stack', async () => {
       const fp = path.join(tmpDir, 'redo-test.txt');
       fs.writeFileSync(fp, 'edited');
       recordChange('edit_file', fp, 'original', 'edited');
-      undo();
+      await undo();
       expect(getRedoCount()).toBe(1);
     });
 
-    it('handles multiple undos', () => {
+    it('handles multiple undos', async () => {
       const fp = path.join(tmpDir, 'multi.txt');
       fs.writeFileSync(fp, 'v2');
       recordChange('edit_file', fp, 'v1', 'v2');
       recordChange('edit_file', fp, 'v2', 'v3');
       fs.writeFileSync(fp, 'v3');
 
-      undo();
+      await undo();
       expect(fs.readFileSync(fp, 'utf-8')).toBe('v2');
-      undo();
+      await undo();
       expect(fs.readFileSync(fp, 'utf-8')).toBe('v1');
     });
 
-    it('handles delete of already-deleted file gracefully', () => {
+    it('handles delete of already-deleted file gracefully', async () => {
       const fp = path.join(tmpDir, 'gone.txt');
       recordChange('write_file', fp, null, 'content');
       // File doesn't exist — unlinkSync should not throw
-      expect(() => undo()).not.toThrow();
+      await expect(undo()).resolves.not.toThrow();
     });
   });
 
   // ─── redo ─────────────────────────────────────────────────
   describe('redo()', () => {
-    it('returns null when nothing to redo', () => {
-      expect(redo()).toBeNull();
+    it('returns null when nothing to redo', async () => {
+      expect(await redo()).toBeNull();
     });
 
-    it('restores undone change', () => {
+    it('restores undone change', async () => {
       const fp = path.join(tmpDir, 'redo.txt');
       fs.writeFileSync(fp, 'edited');
       recordChange('edit_file', fp, 'original', 'edited');
-      undo();
+      await undo();
       expect(fs.readFileSync(fp, 'utf-8')).toBe('original');
 
-      const result = redo();
+      const result = await redo();
       expect(result).not.toBeNull();
       expect(result.tool).toBe('edit_file');
       expect(fs.readFileSync(fp, 'utf-8')).toBe('edited');
     });
 
-    it('moves entry back to undo stack', () => {
+    it('moves entry back to undo stack', async () => {
       const fp = path.join(tmpDir, 'redo2.txt');
       fs.writeFileSync(fp, 'edited');
       recordChange('edit_file', fp, 'original', 'edited');
-      undo();
+      await undo();
       expect(getUndoCount()).toBe(0);
-      redo();
+      await redo();
       expect(getUndoCount()).toBe(1);
       expect(getRedoCount()).toBe(0);
     });
@@ -161,11 +161,11 @@ describe('file-history.js', () => {
 
   // ─── clearHistory ──────────────────────────────────────────
   describe('clearHistory()', () => {
-    it('clears both stacks', () => {
+    it('clears both stacks', async () => {
       const fp = path.join(tmpDir, 'clear.txt');
       fs.writeFileSync(fp, 'content');
       recordChange('write_file', fp, null, 'content');
-      undo();
+      await undo();
       expect(getUndoCount()).toBe(0);
       expect(getRedoCount()).toBe(1);
 
@@ -186,12 +186,12 @@ describe('file-history.js', () => {
       expect(getUndoCount()).toBe(2);
     });
 
-    it('getRedoCount returns correct count', () => {
+    it('getRedoCount returns correct count', async () => {
       const fp = path.join(tmpDir, 'count.txt');
       fs.writeFileSync(fp, 'c');
       recordChange('write_file', fp, null, 'c');
       expect(getRedoCount()).toBe(0);
-      undo();
+      await undo();
       expect(getRedoCount()).toBe(1);
     });
   });
