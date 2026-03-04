@@ -52,7 +52,7 @@ That's it. You'll see the banner, your project context, and the `>` prompt. Star
 Nex Code automatically checks for new versions when you start it. If a newer version is available, you'll see a notification with instructions on how to update:
 
 ```
-💡 New version available! Run npm update -g nex-code to upgrade from 0.3.4 to 0.3.5
+💡 New version available! Run npm update -g nex-code to upgrade from x.x.x to x.x.x
 ```
 
 To update to the latest version:
