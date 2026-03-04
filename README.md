@@ -47,6 +47,21 @@ That's it. You'll see the banner, your project context, and the `>` prompt. Star
 
 ---
 
+## Automatic Updates
+
+Nex Code automatically checks for new versions when you start it. If a newer version is available, you'll see a notification with instructions on how to update:
+
+```
+💡 New version available! Run npm update -g nex-code to upgrade from 0.3.4 to 0.3.5
+```
+
+To update to the latest version:
+```bash
+npm update -g nex-code
+```
+
+---
+
 ## Why nex-code?
 
 | | nex-code | aider | Cursor |
