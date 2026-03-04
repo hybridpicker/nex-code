@@ -20,6 +20,11 @@ if echo "$MERGE_MSG" | grep -qi "devel"; then
   git add package.json package-lock.json 2>/dev/null || git add package.json
   git commit -m "chore: bump version to ${NEW_VERSION}"
   echo "[post-merge] Version bumped to ${NEW_VERSION}"
+  echo ""
+  echo "  ╔══════════════════════════════════════════════╗"
+  echo "  ║  → npm publish   (requires 2FA confirmation) ║"
+  echo "  ╚══════════════════════════════════════════════╝"
+  echo ""
 fi
 
 # Run npm install if package.json changed in the merge
