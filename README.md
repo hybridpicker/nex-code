@@ -8,7 +8,7 @@
 ```
 
 <p align="center">
-  <b>Agentic coding CLI — like Claude Code, but open-source and multi-provider.</b><br>
+  <b>Agentic coding CLI — open-source and multi-provider.</b><br>
   Use OpenAI, Anthropic, Google Gemini, Ollama Cloud, or local models. Your choice.
 </p>
 
@@ -49,15 +49,15 @@ That's it. You'll see the banner, your project context, and the `>` prompt. Star
 
 ## Why nex-code?
 
-| | nex-code | Claude Code | aider | Cursor |
-|---|---|---|---|---|
-| **Open-source** | MIT | Proprietary | Apache 2.0 | Proprietary |
-| **Multi-provider** | 5 providers, swap at runtime | Anthropic only | Multi-provider | Multi-provider |
-| **Free local models** | Ollama (no API key) | — | Ollama | — |
-| **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Heavy | Electron |
-| **Test coverage** | 1783 tests, 90% coverage | — | — | — |
-| **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed | Fixed |
-| **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Anthropic only | Config change | Config change |
+| | nex-code | aider | Cursor |
+|---|---|---|---|
+| **Open-source** | MIT | Apache 2.0 | Proprietary |
+| **Multi-provider** | 5 providers, swap at runtime | Multi-provider | Multi-provider |
+| **Free local models** | Ollama (no API key) | Ollama | — |
+| **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Electron |
+| **Test coverage** | 1783 tests, 90% coverage | — | — |
+| **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed |
+| **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Config change | Config change |
 
 ---
 
@@ -313,7 +313,7 @@ Pressing Ctrl+C during a running request immediately cancels the active HTTP str
 - 3x rapid Ctrl+C force-exits the process
 
 ### Diff Preview
-Every file change is shown in Claude Code-style format before being applied:
+Every file change is shown in a diff-style format before being applied:
 - **Header**: `⏺ Update(file)` or `⏺ Create(file)` with relative path
 - **Summary**: `⎿  Added N lines, removed M lines`
 - **Numbered lines**: right-justified line numbers with red `-` / green `+` markers
