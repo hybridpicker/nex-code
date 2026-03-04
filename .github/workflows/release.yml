@@ -1,0 +1,61 @@
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - run: npm ci
+      
+      - run: npm test
+      
+      - name: Get current version
+        id: current_version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      
+      - name: Check if version exists on npm
+        id: version_check
+        run: |
+          VERSION=${{ steps.current_version.outputs.VERSION }}
+          if npm view nex-code@$VERSION >/dev/null 2>&1; then
+            echo "VERSION_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Publish to npm
+        if: steps.version_check.outputs.VERSION_EXISTS == 'false'
+        run: |
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      
+      - name: Create GitHub Release
+        if: steps.version_check.outputs.VERSION_EXISTS == 'false'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.current_version.outputs.VERSION }}
+          name: Release v${{ steps.current_version.outputs.VERSION }}
+          body: |
+            ## Changes in v${{ steps.current_version.outputs.VERSION }}
+            
+            See commit history for detailed changes.
+          draft: false
+          prerelease: false
