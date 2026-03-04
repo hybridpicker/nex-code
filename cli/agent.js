@@ -306,8 +306,8 @@ function _buildModelRoutingGuide() {
   }
 }
 
-function buildSystemPrompt() {
-  const projectContext = gatherProjectContext(CWD);
+async function buildSystemPrompt() {
+  const projectContext = await gatherProjectContext(CWD);
 
   const memoryContext = getMemoryContext();
   const skillInstructions = getSkillInstructions();
@@ -492,7 +492,7 @@ async function processInput(userInput) {
     }
   });
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = await buildSystemPrompt();
   const fullMessages = [{ role: 'system', content: systemPrompt }, ...conversationMessages];
 
   // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
@@ -629,7 +629,7 @@ async function processInput(userInput) {
 
       // Abort errors (Ctrl+C) — break silently
       if (err.name === 'AbortError' || err.name === 'CanceledError' ||
-          err.message?.includes('canceled') || err.message?.includes('aborted')) {
+        err.message?.includes('canceled') || err.message?.includes('aborted')) {
         if (taskProgress) { taskProgress.stop(); taskProgress = null; }
         setOnChange(null);
         _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);

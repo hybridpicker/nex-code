@@ -2,7 +2,7 @@
  * cli/file-history.js — In-session undo/redo for file changes
  */
 
-const fs = require('fs');
+const fs = require('fs').promises;
 
 const MAX_HISTORY = 50;
 
@@ -32,17 +32,17 @@ function recordChange(tool, filePath, oldContent, newContent) {
 
 /**
  * Undo the last file change.
- * @returns {{ tool: string, filePath: string, diff: string }|null} Info about what was undone, or null if nothing to undo
+ * @returns {Promise<{ tool: string, filePath: string, wasCreated: boolean }|null>} Info about what was undone, or null if nothing to undo
  */
-function undo() {
+async function undo() {
   if (undoStack.length === 0) return null;
   const entry = undoStack.pop();
 
   if (entry.oldContent === null) {
     // File was newly created — delete it
-    try { fs.unlinkSync(entry.filePath); } catch { /* ignore */ }
+    try { await fs.unlink(entry.filePath); } catch { /* ignore */ }
   } else {
-    fs.writeFileSync(entry.filePath, entry.oldContent, 'utf-8');
+    await fs.writeFile(entry.filePath, entry.oldContent, 'utf-8');
   }
 
   redoStack.push(entry);
@@ -55,13 +55,13 @@ function undo() {
 
 /**
  * Redo the last undone change.
- * @returns {{ tool: string, filePath: string }|null} Info about what was redone, or null if nothing to redo
+ * @returns {Promise<{ tool: string, filePath: string }|null>} Info about what was redone, or null if nothing to redo
  */
-function redo() {
+async function redo() {
   if (redoStack.length === 0) return null;
   const entry = redoStack.pop();
 
-  fs.writeFileSync(entry.filePath, entry.newContent, 'utf-8');
+  await fs.writeFile(entry.filePath, entry.newContent, 'utf-8');
   undoStack.push(entry);
 
   return {

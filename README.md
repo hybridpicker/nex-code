@@ -85,6 +85,7 @@ npx nex-code
 git clone https://github.com/hybridpicker/nex-code.git
 cd nex-code
 npm install
+npm run build         # Build the high-performance bundle
 cp .env.example .env
 npm link
 npm run install-hooks
@@ -298,6 +299,11 @@ When the model runs tools but produces no visible text, an automatic nudge force
 
 ### Response Quality
 The system prompt enforces substantive responses: the model always presents findings as formatted text after using tools (users only see 1-line tool summaries). Responses use markdown with headers, bullet lists, and code blocks. The model states its approach before non-trivial tasks and summarizes results after completing work.
+
+### Performance
+- **Asynchronous I/O**: The entire CLI is built on non-blocking I/O. File reads, writes, and git operations never block the main thread, keeping the UI responsive even during heavy tasks.
+- **Fast Startup**: Pre-bundled with `esbuild` to minimize module loading overhead, achieving sub-100ms startup times.
+- **In-Memory Indexing**: A background indexing engine (using `ripgrep` or a fast fallback) keeps project file paths in RAM for instant file discovery, path auto-fixing, and glob searches.
 
 ### Streaming Output
 Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
@@ -635,6 +641,7 @@ cli/
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
 ├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
+├── index-engine.js      # In-memory file index (ripgrep/fallback)
 ├── auto-fix.js          # Path resolution, edit matching, bash error hints
 ├── tool-retry.js        # Malformed argument retry with schema hints
 └── ollama.js            # Backward-compatible wrapper
