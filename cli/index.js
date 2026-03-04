@@ -968,7 +968,23 @@ async function startREPL() {
     return true;
   })();
 
-  const [loadInfo, ollamaReady] = await Promise.all([loadPromise, ollamaPromise]);
+  // Check for new version (non-blocking)
+  const versionCheckPromise = (async () => {
+    // Skip version check if disabled by environment variable
+    if (process.env.NEX_DISABLE_UPDATE_CHECK === '1') {
+      return { hasNewVersion: false };
+    }
+    
+    try {
+      const { checkForNewVersion } = require('./version-check');
+      return await checkForNewVersion();
+    } catch (error) {
+      // Silently ignore version check errors
+      return { hasNewVersion: false };
+    }
+  })();
+
+  const [loadInfo, ollamaReady, versionInfo] = await Promise.all([loadPromise, ollamaPromise, versionCheckPromise]);
 
   if (!ollamaReady && !hasConfigured) {
     console.error(`\n${C.red}✗ No provider configured and no local Ollama detected.${C.reset}\n`);
@@ -977,6 +993,12 @@ async function startREPL() {
   }
 
   banner(`${loadInfo.providerName}:${loadInfo.model.id}`, CWD, { yolo: getAutoConfirm() });
+  
+  // Display version update notification if available
+  if (versionInfo.hasNewVersion) {
+    console.log(`${C.yellow}💡 New version available!${C.reset} Run ${C.cyan}npm update -g nex-code${C.reset} to upgrade from ${C.dim}${versionInfo.currentVersion}${C.reset} to ${C.green}${versionInfo.latestVersion}${C.reset}\n`);
+  }
+  
   await printContext(CWD);
 
   const history = loadHistory();
