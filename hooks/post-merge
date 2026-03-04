@@ -1,5 +1,5 @@
 #!/bin/bash
-# post-merge hook — auto version bump on devel→main merge + npm install
+# post-merge hook — auto version bump on devel→main merge + npm install + auto-publish
 # Install via: npm run install-hooks
 
 set -euo pipefail
@@ -20,10 +20,16 @@ if echo "$MERGE_MSG" | grep -qi "devel"; then
   git add package.json package-lock.json 2>/dev/null || git add package.json
   git commit -m "chore: bump version to ${NEW_VERSION}"
   echo "[post-merge] Version bumped to ${NEW_VERSION}"
-  echo ""
-  echo "  ╔══════════════════════════════════════════════╗"
-  echo "  ║  → npm publish   (requires 2FA confirmation) ║"
-  echo "  ╚══════════════════════════════════════════════╝"
+  
+  # Try to publish to npm automatically
+  echo "[post-merge] Attempting to publish version ${NEW_VERSION} to npm..."
+  if npm publish --access public; then
+    echo "[post-merge] Successfully published version ${NEW_VERSION} to npm!"
+    echo "[post-merge] GitHub Actions will create a release shortly."
+  else
+    echo "[post-merge] Failed to publish to npm. Please publish manually:"
+    echo "[post-merge]   npm publish"
+  fi
   echo ""
 fi
 

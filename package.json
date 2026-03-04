@@ -20,7 +20,8 @@
     "test:watch": "jest --watch",
     "format": "prettier --write .",
     "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && ln -sf ../../hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge && echo 'Hooks installed (pre-push, post-merge).'",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "release": "npm version patch && git push --follow-tags && npm publish"
   },
   "keywords": [
     "cli",
