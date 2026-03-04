@@ -17,7 +17,7 @@ cli/index-engine.js      → In-memory File Index (ripgrep/fallback)
   ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral)
   openai.js              → OpenAI Provider (GPT-4o, GPT-4.1, o1, o3, o4-mini)
   anthropic.js           → Anthropic Provider (Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet)
-  gemini.js              → Google Gemini Provider (Gemini 2.5 Pro/Flash, 2.0 Flash/Lite)
+  gemini.js              → Google Gemini Provider (Gemini 3.1 Pro, 2.5 Pro/Flash, 1.5 Pro/Flash)
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution + Provider Routing (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)

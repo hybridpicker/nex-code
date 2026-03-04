@@ -197,7 +197,7 @@ Switch providers and models at runtime:
 | **ollama** | Qwen3 Coder, DeepSeek R1, Devstral, Kimi K2.5, MiniMax M2.5, GLM 4.7, Llama 4 | `OLLAMA_API_KEY` |
 | **openai** | GPT-4o, GPT-4.1, o1, o3, o4-mini | `OPENAI_API_KEY` |
 | **anthropic** | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5, Sonnet 4.5, Sonnet 4 | `ANTHROPIC_API_KEY` |
-| **gemini** | Gemini 3.1 Pro Preview, 2.5 Pro/Flash/Lite, 2.0 Flash/Lite | `GEMINI_API_KEY` |
+| **gemini** | Gemini 3.1 Pro Preview, 2.5 Pro/Flash, 1.5 Pro/Flash | `GEMINI_API_KEY` |
 | **local** | Any model on your local Ollama server | (none) |
 
 Fallback chains let you auto-switch when a provider fails:
