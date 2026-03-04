@@ -6,11 +6,11 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { C, banner, cleanupTerminal } = require('./ui');
-const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter } = require('./agent');
+const { processInput, clearConversation, getConversationMessages, setConversationMessages, setAbortSignalGetter } = require('./agent');
 const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
 const { printContext } = require('./context');
-const { setAutoConfirm, getAutoConfirm, setReadlineInterface } = require('./safety');
+const { refreshIndex } = require('./index-engine');
 const { getUsage } = require('./context-engine');
 const { TOOL_DEFINITIONS } = require('./tools');
 const { saveSession, loadSession, listSessions, getLastSession } = require('./session');
@@ -40,40 +40,40 @@ function getAbortSignal() {
 
 // ─── Slash Command Registry ──────────────────────────────────
 const SLASH_COMMANDS = [
-  { cmd: '/help',        desc: 'Show full help' },
-  { cmd: '/model',       desc: 'Show/switch model' },
-  { cmd: '/providers',   desc: 'List providers and models' },
-  { cmd: '/fallback',    desc: 'Show/set fallback chain' },
-  { cmd: '/tokens',      desc: 'Token usage and context budget' },
-  { cmd: '/costs',       desc: 'Session token costs' },
-  { cmd: '/budget',      desc: 'Show/set cost limits per provider' },
-  { cmd: '/clear',       desc: 'Clear conversation' },
-  { cmd: '/context',     desc: 'Show project context' },
+  { cmd: '/help', desc: 'Show full help' },
+  { cmd: '/model', desc: 'Show/switch model' },
+  { cmd: '/providers', desc: 'List providers and models' },
+  { cmd: '/fallback', desc: 'Show/set fallback chain' },
+  { cmd: '/tokens', desc: 'Token usage and context budget' },
+  { cmd: '/costs', desc: 'Session token costs' },
+  { cmd: '/budget', desc: 'Show/set cost limits per provider' },
+  { cmd: '/clear', desc: 'Clear conversation' },
+  { cmd: '/context', desc: 'Show project context' },
   { cmd: '/autoconfirm', desc: 'Toggle auto-confirm' },
-  { cmd: '/save',        desc: 'Save session' },
-  { cmd: '/load',        desc: 'Load a saved session' },
-  { cmd: '/sessions',    desc: 'List saved sessions' },
-  { cmd: '/resume',      desc: 'Resume last session' },
-  { cmd: '/remember',    desc: 'Save a memory' },
-  { cmd: '/forget',      desc: 'Delete a memory' },
-  { cmd: '/memory',      desc: 'Show all memories' },
-  { cmd: '/permissions',  desc: 'Show tool permissions' },
-  { cmd: '/allow',       desc: 'Auto-allow a tool' },
-  { cmd: '/deny',        desc: 'Block a tool' },
-  { cmd: '/plan',        desc: 'Plan mode (analyze before executing)' },
-  { cmd: '/plans',       desc: 'List saved plans' },
-  { cmd: '/auto',        desc: 'Set autonomy level' },
-  { cmd: '/commit',      desc: 'Smart commit (diff + message)' },
-  { cmd: '/diff',        desc: 'Show current diff' },
-  { cmd: '/branch',      desc: 'Create feature branch' },
-  { cmd: '/mcp',         desc: 'MCP servers and tools' },
-  { cmd: '/hooks',       desc: 'Show configured hooks' },
-  { cmd: '/skills',      desc: 'List, enable, disable skills' },
-  { cmd: '/tasks',       desc: 'Show task list' },
-  { cmd: '/undo',        desc: 'Undo last file change' },
-  { cmd: '/redo',        desc: 'Redo last undone change' },
-  { cmd: '/history',     desc: 'Show file change history' },
-  { cmd: '/exit',        desc: 'Quit' },
+  { cmd: '/save', desc: 'Save session' },
+  { cmd: '/load', desc: 'Load a saved session' },
+  { cmd: '/sessions', desc: 'List saved sessions' },
+  { cmd: '/resume', desc: 'Resume last session' },
+  { cmd: '/remember', desc: 'Save a memory' },
+  { cmd: '/forget', desc: 'Delete a memory' },
+  { cmd: '/memory', desc: 'Show all memories' },
+  { cmd: '/permissions', desc: 'Show tool permissions' },
+  { cmd: '/allow', desc: 'Auto-allow a tool' },
+  { cmd: '/deny', desc: 'Block a tool' },
+  { cmd: '/plan', desc: 'Plan mode (analyze before executing)' },
+  { cmd: '/plans', desc: 'List saved plans' },
+  { cmd: '/auto', desc: 'Set autonomy level' },
+  { cmd: '/commit', desc: 'Smart commit (diff + message)' },
+  { cmd: '/diff', desc: 'Show current diff' },
+  { cmd: '/branch', desc: 'Create feature branch' },
+  { cmd: '/mcp', desc: 'MCP servers and tools' },
+  { cmd: '/hooks', desc: 'Show configured hooks' },
+  { cmd: '/skills', desc: 'List, enable, disable skills' },
+  { cmd: '/tasks', desc: 'Show task list' },
+  { cmd: '/undo', desc: 'Undo last file change' },
+  { cmd: '/redo', desc: 'Redo last undone change' },
+  { cmd: '/history', desc: 'Show file change history' },
+  { cmd: '/exit', desc: 'Quit' },
 ];
 
 function showCommandList() {
@@ -404,7 +404,7 @@ async function handleSlashCommand(input, rl) {
       return true;
 
     case '/context':
-      printContext(CWD);
+      await printContext(CWD);
       return true;
 
     case '/autoconfirm': {
@@ -621,7 +621,7 @@ async function handleSlashCommand(input, rl) {
       }
       const msg = rest.join(' ').trim();
       if (msg) {
-        const hash = commit(msg);
+        const hash = await commit(msg);
         if (hash) {
           console.log(`${C.green}Committed: ${hash} — ${msg}${C.reset}`);
         } else {
@@ -635,8 +635,12 @@ async function handleSlashCommand(input, rl) {
         console.log(`${C.yellow}No changes to commit${C.reset}`);
         return true;
       }
-      console.log(formatDiffSummary());
-      console.log(`${C.dim}Use /commit <message> to commit with a custom message${C.reset}`);
+      const summary = await formatDiffSummary();
+      console.log(summary);
+      const ok = await confirm('  Commit changes?');
+      if (!ok) return true;
+      const hash = await commit('nex-code update');
+      if (hash) console.log(`${C.green}  ✓ Committed: ${hash}${C.reset}`);
       return true;
     }
 

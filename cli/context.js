@@ -2,28 +2,31 @@
  * cli/context.js — Auto-Context: package.json, git, README
  */
 
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
-const { execSync } = require('child_process');
+const exec = require('util').promisify(require('child_process').exec);
 const { C } = require('./ui');
 const { getMergeConflicts } = require('./git');
 
-function safe(fn) {
+async function safe(fn) {
   try {
-    return fn();
+    return await fn();
   } catch {
     return null;
   }
 }
 
-function gatherProjectContext(cwd) {
+async function gatherProjectContext(cwd) {
   const parts = [];
 
   // package.json
   const pkgPath = path.join(cwd, 'package.json');
-  if (fs.existsSync(pkgPath)) {
+  const pkgExists = await safe(() => fs.access(pkgPath).then(() => true).catch(() => false));
+
+  if (pkgExists) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      const pkgContent = await fs.readFile(pkgPath, 'utf-8');
+      const pkg = JSON.parse(pkgContent);
       const info = { name: pkg.name, version: pkg.version };
       if (pkg.scripts) info.scripts = Object.keys(pkg.scripts).slice(0, 15);
       if (pkg.dependencies) info.deps = Object.keys(pkg.dependencies).length;
@@ -34,25 +37,35 @@ function gatherProjectContext(cwd) {
 
   // README (first 50 lines)
   const readmePath = path.join(cwd, 'README.md');
-  if (fs.existsSync(readmePath)) {
-    const lines = fs.readFileSync(readmePath, 'utf-8').split('\n').slice(0, 50);
+  const readmeExists = await safe(() => fs.access(readmePath).then(() => true).catch(() => false));
+
+  if (readmeExists) {
+    const readmeContent = await fs.readFile(readmePath, 'utf-8');
+    const lines = readmeContent.split('\n').slice(0, 50);
     parts.push(`README (first 50 lines):\n${lines.join('\n')}`);
   }
 
   // Git info
-  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());
+  const branch = await safe(async () => {
+    const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
+    return stdout.trim();
+  });
   if (branch) parts.push(`GIT BRANCH: ${branch}`);
 
-  const status = safe(() => execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim());
+  const status = await safe(async () => {
+    const { stdout } = await exec('git status --short', { cwd, timeout: 5000 });
+    return stdout.trim();
+  });
   if (status) parts.push(`GIT STATUS:\n${status}`);
 
-  const log = safe(() =>
-    execSync('git log --oneline -5', { cwd, encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim()
-  );
+  const log = await safe(async () => {
+    const { stdout } = await exec('git log --oneline -5', { cwd, timeout: 5000 });
+    return stdout.trim();
+  });
   if (log) parts.push(`RECENT COMMITS:\n${log}`);
 
-  // Merge conflicts
-  const conflicts = getMergeConflicts();
+  // Merge conflicts (git.js currently has getMergeConflicts as sync, we might leave it or update later)
+  const conflicts = await getMergeConflicts();
   if (conflicts.length > 0) {
     const conflictFiles = conflicts.map(c => `  ${c.file}`).join('\n');
     parts.push(`MERGE CONFLICTS (resolve before editing these files):\n${conflictFiles}`);
@@ -60,30 +73,38 @@ function gatherProjectContext(cwd) {
 
   // .gitignore
   const giPath = path.join(cwd, '.gitignore');
-  if (fs.existsSync(giPath)) {
-    const content = fs.readFileSync(giPath, 'utf-8').trim();
-    parts.push(`GITIGNORE:\n${content}`);
+  const giExists = await safe(() => fs.access(giPath).then(() => true).catch(() => false));
+
+  if (giExists) {
+    const content = await fs.readFile(giPath, 'utf-8');
+    parts.push(`GITIGNORE:\n${content.trim()}`);
   }
 
   return parts.join('\n\n');
 }
 
-function printContext(cwd) {
+async function printContext(cwd) {
   const pkgPath = path.join(cwd, 'package.json');
   let project = '';
-  if (fs.existsSync(pkgPath)) {
+  const pkgExists = await safe(() => fs.access(pkgPath).then(() => true).catch(() => false));
+
+  if (pkgExists) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      const pkgContent = await fs.readFile(pkgPath, 'utf-8');
+      const pkg = JSON.parse(pkgContent);
       project = `${pkg.name || '?'} v${pkg.version || '?'}`;
     } catch { /* ignore corrupt package.json */ }
   }
 
-  const branch = safe(() => execSync('git branch --show-current', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim());
+  const branch = await safe(async () => {
+    const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
+    return stdout.trim();
+  });
 
   if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
   if (branch) console.log(`${C.dim}  branch: ${branch}${C.reset}`);
 
-  const conflicts = getMergeConflicts();
+  const conflicts = await getMergeConflicts();
   if (conflicts.length > 0) {
     console.log(`${C.red}  ⚠ ${conflicts.length} unresolved merge conflict(s):${C.reset}`);
     for (const c of conflicts) {
