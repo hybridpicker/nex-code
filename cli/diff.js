@@ -258,6 +258,7 @@ function showSideBySideDiff(filePath, oldText, newText, width) {
 function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
   const label = options.label || 'Update';
   const contextSize = options.context || 3;
+  const annotations = options.annotations || []; // Array of { line, message, severity }
   const relPath = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
 
   const ops = diffLines(oldContent, newContent);
@@ -296,6 +297,19 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
   const parts = [];
   if (added > 0) parts.push(`Added ${added} line${added !== 1 ? 's' : ''}`);
   if (removed > 0) parts.push(`removed ${removed} line${removed !== 1 ? 's' : ''}`);
+
+  const issueCount = annotations.length;
+  if (issueCount > 0) {
+    const errors = annotations.filter(a => a.severity === 'error').length;
+    const warns = annotations.filter(a => a.severity === 'warn').length;
+    const info = annotations.filter(a => a.severity === 'info').length;
+    const issueParts = [];
+    if (errors > 0) issueParts.push(`${C.red}${errors} error${errors !== 1 ? 's' : ''}${C.dim}`);
+    if (warns > 0) issueParts.push(`${C.yellow}${warns} warning${warns !== 1 ? 's' : ''}${C.dim}`);
+    if (info > 0) issueParts.push(`${C.cyan}${info} info${info !== 1 ? 's' : ''}${C.dim}`);
+    parts.push(`found ${issueParts.join(', ')}`);
+  }
+
   console.log(`  ${C.dim}⎿  ${parts.join(', ')}${C.reset}`);
 
   // Build hunks: groups of changes with surrounding context
@@ -329,12 +343,26 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
       const op = ops[i];
       const lineNum = op.newLine != null ? op.newLine : op.oldLine;
       const numStr = String(lineNum).padStart(4);
+
+      // Check for annotations on this line (only for additions or unchanged context)
+      const lineAnnotations = op.type !== 'remove' ? annotations.filter(a => a.line === op.newLine) : [];
+
       if (op.type === 'remove') {
         console.log(`${PAD}${C.red}${numStr} -${op.line}${C.reset}`);
       } else if (op.type === 'add') {
         console.log(`${PAD}${C.green}${numStr} +${op.line}${C.reset}`);
       } else {
         console.log(`${PAD}${C.dim}${numStr}${C.reset} ${op.line}`);
+      }
+
+      // Render annotations
+      for (const ann of lineAnnotations) {
+        let color = C.cyan;
+        let prefix = 'ℹ';
+        if (ann.severity === 'error') { color = C.red; prefix = '✖'; }
+        else if (ann.severity === 'warn') { color = C.yellow; prefix = '⚠'; }
+
+        console.log(`${PAD}     ${color}${prefix} ${ann.message}${C.reset}`);
       }
     }
   }
@@ -344,18 +372,44 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
 /**
  * Claude Code-style new file display
  */
-function showClaudeNewFile(filePath, content) {
+function showClaudeNewFile(filePath, content, options = {}) {
   const relPath = path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath;
   const lines = content.split('\n');
+  const annotations = options.annotations || [];
 
   console.log(`\n${C.cyan}⏺${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
-  console.log(`  ${C.dim}⎿  ${lines.length} line${lines.length !== 1 ? 's' : ''}${C.reset}`);
+
+  const parts = [`${lines.length} line${lines.length !== 1 ? 's' : ''}`];
+  const issueCount = annotations.length;
+  if (issueCount > 0) {
+    const errors = annotations.filter(a => a.severity === 'error').length;
+    const warns = annotations.filter(a => a.severity === 'warn').length;
+    const info = annotations.filter(a => a.severity === 'info').length;
+    const issueParts = [];
+    if (errors > 0) issueParts.push(`${C.red}${errors} error${errors !== 1 ? 's' : ''}${C.dim}`);
+    if (warns > 0) issueParts.push(`${C.yellow}${warns} warning${warns !== 1 ? 's' : ''}${C.dim}`);
+    if (info > 0) issueParts.push(`${C.cyan}${info} info${info !== 1 ? 's' : ''}${C.dim}`);
+    parts.push(`found ${issueParts.join(', ')}`);
+  }
+  console.log(`  ${C.dim}⎿  ${parts.join(', ')}${C.reset}`);
 
   const PAD = '      ';
   const show = Math.min(lines.length, 20);
   for (let i = 0; i < show; i++) {
     const numStr = String(i + 1).padStart(4);
+    const lineNum = i + 1;
+    const lineAnnotations = annotations.filter(a => a.line === lineNum);
+
     console.log(`${PAD}${C.green}${numStr} +${lines[i]}${C.reset}`);
+
+    // Render annotations
+    for (const ann of lineAnnotations) {
+      let color = C.cyan;
+      let prefix = 'ℹ';
+      if (ann.severity === 'error') { color = C.red; prefix = '✖'; }
+      else if (ann.severity === 'warn') { color = C.yellow; prefix = '⚠'; }
+      console.log(`${PAD}     ${color}${prefix} ${ann.message}${C.reset}`);
+    }
   }
   if (lines.length > 20) {
     console.log(`${PAD}${C.dim}   ...+${lines.length - 20} more lines${C.reset}`);
