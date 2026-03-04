@@ -56,7 +56,7 @@ class GeminiProvider extends BaseProvider {
         if (msg.role === 'assistant' && msg.tool_calls) {
           return {
             role: 'assistant',
-            content: msg.content || null,
+            content: msg.content || '',
             tool_calls: msg.tool_calls.map((tc) => ({
               id: tc.id || `call-${Date.now()}`,
               type: 'function',
@@ -227,7 +227,7 @@ class GeminiProvider extends BaseProvider {
     return Object.values(toolCallsMap)
       .filter((tc) => tc.name)
       .map((tc) => ({
-        id: tc.id || `gemini-${Date.now()}`,
+        id: tc.id || `call-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         function: {
           name: tc.name,
           arguments: tc.arguments,

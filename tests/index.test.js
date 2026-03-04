@@ -55,6 +55,7 @@ jest.mock('../cli/context', () => ({
 }));
 
 jest.mock('../cli/safety', () => ({
+  confirm: jest.fn().mockResolvedValue(true),
   setAutoConfirm: jest.fn(),
   getAutoConfirm: jest.fn().mockReturnValue(false),
   setReadlineInterface: jest.fn(),
@@ -162,10 +163,10 @@ describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
 
   beforeEach(() => {
-    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    logSpy.errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
+    logSpy.errorSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
+    writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => { });
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { });
   });
 
   afterEach(() => {
@@ -342,7 +343,7 @@ describe('index.js (REPL commands)', () => {
   });
 
   describe('startREPL()', () => {
-    it('exits with error when no provider is configured', () => {
+    it('exits with error when no provider is configured', async () => {
       // Reset modules to get fresh instance with no configured providers
       jest.resetModules();
       jest.mock('../cli/agent', () => ({
@@ -427,6 +428,7 @@ describe('index.js (REPL commands)', () => {
         gatherProjectContext: jest.fn().mockReturnValue(''),
       }));
       jest.mock('../cli/safety', () => ({
+        confirm: jest.fn().mockResolvedValue(true),
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
@@ -445,7 +447,7 @@ describe('index.js (REPL commands)', () => {
       }));
 
       const { startREPL } = require('../cli/index');
-      startREPL();
+      await startREPL();
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
@@ -532,6 +534,7 @@ describe('index.js (REPL commands)', () => {
         gatherProjectContext: jest.fn().mockReturnValue(''),
       }));
       jest.mock('../cli/safety', () => ({
+        confirm: jest.fn().mockResolvedValue(true),
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
@@ -693,6 +696,7 @@ describe('index.js (REPL commands)', () => {
         gatherProjectContext: jest.fn().mockReturnValue(''),
       }));
       jest.mock('../cli/safety', () => ({
+        confirm: jest.fn().mockResolvedValue(true),
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
@@ -1463,7 +1467,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/hooks', () => ({ listHooks: jest.fn(), runHooks: jest.fn(), HOOK_EVENTS: [] }));
       jest.mock('../cli/costs', () => ({ formatCosts: jest.fn(), resetCosts: jest.fn() }));
       jest.mock('../cli/context', () => ({ printContext: jest.fn(), gatherProjectContext: jest.fn() }));
-      jest.mock('../cli/safety', () => ({ setAutoConfirm: jest.fn(), getAutoConfirm: jest.fn(), setReadlineInterface: jest.fn() }));
+      // safety mock removed - using top-level mock
       jest.mock('../cli/skills', () => ({
         loadAllSkills: jest.fn(), listSkills: jest.fn(), enableSkill: jest.fn(),
         disableSkill: jest.fn(), getSkillCommands: jest.fn().mockReturnValue([]),

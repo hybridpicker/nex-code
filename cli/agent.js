@@ -40,7 +40,7 @@ const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
 const STALE_WARN_MS = 60000;   // Warn after 60s without tokens
 const STALE_ABORT_MS = 120000; // Abort after 120s without tokens
-const CWD = process.cwd();
+// Use process.cwd() dynamically
 
 // Wire up "a" (always allow) from confirm dialog → permission system
 setAllowAlwaysHandler((toolName) => {
@@ -307,7 +307,7 @@ function _buildModelRoutingGuide() {
 }
 
 async function buildSystemPrompt() {
-  const projectContext = await gatherProjectContext(CWD);
+  const projectContext = await gatherProjectContext(process.cwd());
 
   const memoryContext = getMemoryContext();
   const skillInstructions = getSkillInstructions();
@@ -315,7 +315,7 @@ async function buildSystemPrompt() {
 
   return `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
-WORKING DIRECTORY: ${CWD}
+WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
 
 PROJECT CONTEXT:

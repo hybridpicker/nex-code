@@ -8,12 +8,14 @@ const path = require('path');
 const { exec } = require('util').promisify(require('child_process').exec);
 
 let _fileIndex = [];
+let _indexedCwd = null;
 let _isIndexing = false;
 let _lastIndexTime = 0;
 
 async function refreshIndex(cwd) {
     if (_isIndexing) return;
     _isIndexing = true;
+    _indexedCwd = cwd;
 
     try {
         // Strategy 1: Use ripgrep if available (very fast)
@@ -56,6 +58,10 @@ function getFileIndex() {
     return _fileIndex;
 }
 
+function getIndexedCwd() {
+    return _indexedCwd;
+}
+
 function findFileInIndex(basename) {
     return _fileIndex.filter(f => path.basename(f) === basename);
 }
@@ -65,4 +71,4 @@ function searchIndex(query) {
     return _fileIndex.filter(f => f.toLowerCase().includes(q)).slice(0, 20);
 }
 
-module.exports = { refreshIndex, getFileIndex, findFileInIndex, searchIndex };
+module.exports = { refreshIndex, getFileIndex, getIndexedCwd, findFileInIndex, searchIndex };

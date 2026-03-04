@@ -96,16 +96,18 @@ async function printContext(cwd) {
     } catch { /* ignore corrupt package.json */ }
   }
 
-  const branch = await safe(async () => {
-    const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
-    return stdout.trim();
-  });
+  const [branch, conflicts] = await Promise.all([
+    safe(async () => {
+      const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
+      return stdout.trim();
+    }),
+    getMergeConflicts(),
+  ]);
 
   if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
   if (branch) console.log(`${C.dim}  branch: ${branch}${C.reset}`);
 
-  const conflicts = await getMergeConflicts();
-  if (conflicts.length > 0) {
+  if (conflicts && conflicts.length > 0) {
     console.log(`${C.red}  ⚠ ${conflicts.length} unresolved merge conflict(s):${C.reset}`);
     for (const c of conflicts) {
       console.log(`${C.red}    ${c.file}${C.reset}`);

@@ -213,17 +213,3 @@ module.exports = {
   getDiffContext,
   getMergeConflicts,
 };
-
-module.exports = {
-  isGitRepo,
-  getCurrentBranch,
-  getStatus,
-  getDiff,
-  getChangedFiles,
-  analyzeDiff,
-  createBranch,
-  commit,
-  formatDiffSummary,
-  getDiffContext,
-  getMergeConflicts,
-};
