@@ -17,7 +17,7 @@ const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 const { runDiagnostics } = require('./diagnostics');
 const { findFileInIndex, getFileIndex } = require('./index-engine');
 
-const CWD = process.cwd();
+// Use process.cwd() dynamically to support tests mocking it
 
 // ─── Auto-Fix Helpers ─────────────────────────────────────────
 
@@ -71,10 +71,10 @@ async function autoFixPath(originalPath) {
     try {
       const found = findFileInIndex(basename).map(f => resolvePath(f));
       if (found.length === 1) {
-        return { fixedPath: found[0], message: `(auto-fixed: found ${basename} at ${path.relative(CWD, found[0])})` };
+        return { fixedPath: found[0], message: `(auto-fixed: found ${basename} at ${path.relative(process.cwd(), found[0])})` };
       }
       if (found.length > 1 && found.length <= 5) {
-        const relative = found.map(f => path.relative(CWD, f));
+        const relative = found.map(f => path.relative(process.cwd(), f));
         return { fixedPath: null, message: `File not found. Did you mean one of:\n${relative.map(r => `  - ${r}`).join('\n')}` };
       }
     } catch { /* index search failed, skip */ }
@@ -186,12 +186,12 @@ async function ensureCheckpoint() {
   _checkpointCreated = true;
   try {
     // Only in git repos with changes
-    const { stdout } = await exec('git rev-parse --is-inside-work-tree', { cwd: CWD, timeout: 5000 });
+    const { stdout } = await exec('git rev-parse --is-inside-work-tree', { cwd: process.cwd(), timeout: 5000 });
     const isGit = stdout.trim() === 'true';
     if (!isGit) return;
-    await exec('git stash push -m "nex-code-checkpoint" --include-untracked', { cwd: CWD, timeout: 10000 });
-    await exec('git stash pop', { cwd: CWD, timeout: 10000 });
-    await exec('git tag -f nex-checkpoint', { cwd: CWD, timeout: 5000 });
+    await exec('git stash push -m "nex-code-checkpoint" --include-untracked', { cwd: process.cwd(), timeout: 10000 });
+    await exec('git stash pop', { cwd: process.cwd(), timeout: 10000 });
+    await exec('git tag -f nex-checkpoint', { cwd: process.cwd(), timeout: 5000 });
   } catch { /* not critical */ }
 }
 
@@ -204,7 +204,7 @@ const SENSITIVE_PATHS = [
 ];
 
 function resolvePath(p) {
-  const resolved = path.isAbsolute(p) ? path.resolve(p) : path.resolve(CWD, p);
+  const resolved = path.isAbsolute(p) ? path.resolve(p) : path.resolve(process.cwd(), p);
   // Block access to sensitive paths
   for (const pat of SENSITIVE_PATHS) {
     if (pat.test(resolved)) return null;
@@ -527,7 +527,7 @@ async function _executeToolInner(name, args, options = {}) {
       if (bashSpinner) bashSpinner.start();
       try {
         const { stdout, stderr } = await exec(cmd, {
-          cwd: CWD,
+          cwd: process.cwd(),
           timeout: 90000,
           maxBuffer: 5 * 1024 * 1024,
         });
@@ -550,7 +550,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
-          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
@@ -618,7 +618,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
-          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
@@ -736,7 +736,7 @@ async function _executeToolInner(name, args, options = {}) {
       grepArgs.push(args.pattern, dp);
       try {
         const { stdout } = await execFile('grep', grepArgs, {
-          cwd: CWD, timeout: 30000, maxBuffer: 2 * 1024 * 1024,
+          cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
         const lines = stdout.split('\n').slice(0, 50).join('\n');
         return lines || '(no matches)';
@@ -747,7 +747,8 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'glob': {
       const GLOB_LIMIT = 200;
-      const basePath = args.path ? resolvePath(args.path) : CWD;
+      const currentCwd = process.cwd();
+      const basePath = args.path ? resolvePath(args.path) : currentCwd;
       const pattern = args.pattern;
 
       const globToRegex = (g) => {
@@ -764,10 +765,18 @@ async function _executeToolInner(name, args, options = {}) {
       const namePattern = pattern.split('/').pop();
       const nameRegex = globToRegex(namePattern);
 
-      const allFiles = getFileIndex();
+      let { getFileIndex: getIndex, getIndexedCwd, refreshIndex } = require('./index-engine');
+      let allFiles = getIndex();
+      let indexedCwd = getIndexedCwd();
+
+      // Refresh if index is empty OR the directory context changed
+      if (allFiles.length === 0 || indexedCwd !== basePath) {
+        await refreshIndex(basePath);
+        allFiles = getIndex();
+      }
+
       const matches = allFiles
         .filter(f => fullRegex.test(f) || nameRegex.test(path.basename(f)))
-        .slice(0, GLOB_LIMIT + 1)
         .map(f => path.join(basePath, f));
 
       if (matches.length === 0) return '(no matches)';
@@ -781,7 +790,7 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'grep': {
-      const searchPath = args.path ? resolvePath(args.path) : CWD;
+      const searchPath = args.path ? resolvePath(args.path) : process.cwd();
       const grepArgs2 = ['-rn', '-E']; // Extended regex (supports |, +, etc.)
       if (args.ignore_case) grepArgs2.push('-i');
       if (args.include) grepArgs2.push(`--include=${args.include}`);
@@ -789,7 +798,7 @@ async function _executeToolInner(name, args, options = {}) {
       grepArgs2.push(args.pattern, searchPath);
       try {
         const { stdout } = await execFile('grep', grepArgs2, {
-          cwd: CWD, timeout: 30000, maxBuffer: 2 * 1024 * 1024,
+          cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
         const lines = stdout.split('\n').slice(0, 100).join('\n');
         return lines.trim() || '(no matches)';
@@ -812,7 +821,7 @@ async function _executeToolInner(name, args, options = {}) {
         const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
-          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
+          console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`);
         } else {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
@@ -963,7 +972,7 @@ async function _executeToolInner(name, args, options = {}) {
         if (args.staged) gitArgs.push('--cached');
         gitArgs.push('--', args.file);
         try {
-          diff = execFileSync('git', gitArgs, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+          diff = execFileSync('git', gitArgs, { cwd: process.cwd(), encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
         } catch { diff = ''; }
       } else {
         diff = await getDiff(!!args.staged);
@@ -977,7 +986,7 @@ async function _executeToolInner(name, args, options = {}) {
       const gitLogArgs = ['log', '--oneline', `-${count}`];
       if (args.file) gitLogArgs.push('--', args.file);
       try {
-        const out = execFileSync('git', gitLogArgs, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
+        const out = execFileSync('git', gitLogArgs, { cwd: process.cwd(), encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
         return out || '(no commits)';
       } catch {
         return '(no commits)';
