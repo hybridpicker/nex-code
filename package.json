@@ -19,7 +19,7 @@
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "format": "prettier --write .",
-    "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && echo 'pre-push hook installed.'",
+    "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && ln -sf ../../hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge && echo 'Hooks installed (pre-push, post-merge).'",
     "prepublishOnly": "npm test"
   },
   "keywords": [

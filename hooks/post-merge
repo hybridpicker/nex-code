@@ -1,0 +1,33 @@
+#!/bin/bash
+# post-merge hook — auto version bump on devel→main merge + npm install
+# Install via: npm run install-hooks
+
+set -euo pipefail
+
+BRANCH=$(git branch --show-current 2>/dev/null || true)
+
+# Only act on main branch
+if [ "$BRANCH" != "main" ]; then
+  exit 0
+fi
+
+# Check if the merge came from devel
+MERGE_MSG=$(git log --merges -1 --format=%s 2>/dev/null || true)
+if echo "$MERGE_MSG" | grep -qi "devel"; then
+  echo "[post-merge] devel→main merge detected — bumping patch version..."
+  npm version patch --no-git-tag-version
+  NEW_VERSION=$(node -p "require('./package.json').version")
+  git add package.json package-lock.json 2>/dev/null || git add package.json
+  git commit -m "chore: bump version to ${NEW_VERSION}"
+  echo "[post-merge] Version bumped to ${NEW_VERSION}"
+fi
+
+# Run npm install if package.json changed in the merge
+CHANGED=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null || true)
+if echo "$CHANGED" | grep -q "package.json"; then
+  echo "[post-merge] package.json changed — running npm install..."
+  npm install
+  echo "[post-merge] npm install complete."
+fi
+
+exit 0

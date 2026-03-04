@@ -166,6 +166,39 @@ describe('git.js', () => {
     });
   });
 
+  describe('getMergeConflicts()', () => {
+    it('returns empty array when no conflicts', () => {
+      expect(git.getMergeConflicts()).toEqual([]);
+    });
+
+    it('detects merge conflicts (UU)', () => {
+      // Create a conflict: modify same file on two branches
+      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'line1\n', 'utf-8');
+      execSync('git add conflict.txt && git commit -m "add conflict.txt"', { cwd: tmpDir });
+
+      execSync('git checkout -b feature', { cwd: tmpDir });
+      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'feature-change\n', 'utf-8');
+      execSync('git add conflict.txt && git commit -m "feature change"', { cwd: tmpDir });
+
+      execSync('git checkout master', { cwd: tmpDir });
+      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'master-change\n', 'utf-8');
+      execSync('git add conflict.txt && git commit -m "master change"', { cwd: tmpDir });
+
+      // Merge will fail with conflict
+      try { execSync('git merge feature', { cwd: tmpDir, stdio: 'pipe' }); } catch {}
+
+      const conflicts = git.getMergeConflicts();
+      expect(conflicts.length).toBeGreaterThan(0);
+      expect(conflicts[0].status).toBe('UU');
+      expect(conflicts[0].file).toBe('conflict.txt');
+    });
+
+    it('returns empty when modified files exist but no conflicts', () => {
+      fs.writeFileSync(path.join(tmpDir, 'normal.txt'), 'changed', 'utf-8');
+      expect(git.getMergeConflicts()).toEqual([]);
+    });
+  });
+
   describe('getDiffContext()', () => {
     it('returns empty for clean repo', () => {
       expect(git.getDiffContext()).toBe('');

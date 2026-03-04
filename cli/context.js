@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { C } = require('./ui');
+const { getMergeConflicts } = require('./git');
 
 function safe(fn) {
   try {
@@ -50,6 +51,13 @@ function gatherProjectContext(cwd) {
   );
   if (log) parts.push(`RECENT COMMITS:\n${log}`);
 
+  // Merge conflicts
+  const conflicts = getMergeConflicts();
+  if (conflicts.length > 0) {
+    const conflictFiles = conflicts.map(c => `  ${c.file}`).join('\n');
+    parts.push(`MERGE CONFLICTS (resolve before editing these files):\n${conflictFiles}`);
+  }
+
   // .gitignore
   const giPath = path.join(cwd, '.gitignore');
   if (fs.existsSync(giPath)) {
@@ -74,6 +82,16 @@ function printContext(cwd) {
 
   if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
   if (branch) console.log(`${C.dim}  branch: ${branch}${C.reset}`);
+
+  const conflicts = getMergeConflicts();
+  if (conflicts.length > 0) {
+    console.log(`${C.red}  ⚠ ${conflicts.length} unresolved merge conflict(s):${C.reset}`);
+    for (const c of conflicts) {
+      console.log(`${C.red}    ${c.file}${C.reset}`);
+    }
+    console.log(`${C.yellow}  → Resolve conflicts before starting tasks${C.reset}`);
+  }
+
   console.log();
 }
 
