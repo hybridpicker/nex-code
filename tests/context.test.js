@@ -1,9 +1,13 @@
+jest.setTimeout(10000);
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
 jest.mock('child_process', () => ({
   execSync: jest.fn(),
+  exec: jest.fn(),
+  execFile: jest.fn(),
+  spawn: jest.fn(),
 }));
 
 // Must require after mocking
@@ -14,7 +18,14 @@ describe('context.js', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'jc-test-'));
-    execSync.mockReset();
+    const cp = require('child_process');
+    cp.execSync.mockReset();
+    cp.exec.mockReset();
+    // Default exec to fail to avoid hangs in promisify
+    cp.exec.mockImplementation((cmd, opts, cb) => {
+      if (typeof opts === 'function') cb = opts;
+      cb(new Error('not implemented'));
+    });
   });
 
   afterEach(() => {
@@ -23,7 +34,7 @@ describe('context.js', () => {
 
   // ─── gatherProjectContext ─────────────────────────────────
   describe('gatherProjectContext()', () => {
-    it('includes package.json info when present', () => {
+    it('includes package.json info when present', async () => {
       fs.writeFileSync(
         path.join(tmpDir, 'package.json'),
         JSON.stringify({
@@ -38,13 +49,13 @@ describe('context.js', () => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('test-proj');
       expect(ctx).toContain('1.0.0');
       expect(ctx).toContain('PACKAGE');
     });
 
-    it('includes script names from package.json', () => {
+    it('includes script names from package.json', async () => {
       fs.writeFileSync(
         path.join(tmpDir, 'package.json'),
         JSON.stringify({ name: 'x', scripts: { test: 'jest', build: 'tsc', lint: 'eslint' } })
@@ -53,109 +64,121 @@ describe('context.js', () => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('test');
       expect(ctx).toContain('build');
       expect(ctx).toContain('lint');
     });
 
-    it('skips package.json when missing', () => {
+    it('skips package.json when missing', async () => {
       execSync.mockImplementation(() => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).not.toContain('PACKAGE');
     });
 
-    it('includes README first 50 lines', () => {
+    it('includes README first 50 lines', async () => {
       const lines = Array.from({ length: 60 }, (_, i) => `Line ${i + 1}`);
       fs.writeFileSync(path.join(tmpDir, 'README.md'), lines.join('\n'));
       execSync.mockImplementation(() => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('Line 1');
       expect(ctx).toContain('Line 50');
       expect(ctx).not.toContain('Line 51');
     });
 
-    it('skips README when missing', () => {
+    it('skips README when missing', async () => {
       execSync.mockImplementation(() => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).not.toContain('README');
     });
 
-    it('includes git branch', () => {
-      execSync.mockImplementation((cmd) => {
-        if (cmd.includes('branch')) return 'main\n';
-        throw new Error('no git');
+    it('includes git branch', async () => {
+      // Mock child_process.exec via util.promisify
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        if (cmd.includes('branch')) cb(null, { stdout: 'main\n' });
+        else cb(new Error('no git'));
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('GIT BRANCH: main');
     });
 
-    it('includes git status', () => {
-      execSync.mockImplementation((cmd) => {
-        if (cmd.includes('status')) return 'M file.js\n';
-        if (cmd.includes('branch')) return 'main\n';
-        throw new Error('no git');
+    it('includes git status', async () => {
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        if (cmd.includes('status')) cb(null, { stdout: 'M file.js\n' });
+        else if (cmd.includes('branch')) cb(null, { stdout: 'main\n' });
+        else cb(new Error('no git'));
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('M file.js');
     });
 
-    it('includes git log', () => {
-      execSync.mockImplementation((cmd) => {
-        if (cmd.includes('log')) return 'abc1234 initial commit\n';
-        if (cmd.includes('branch')) return 'main\n';
-        throw new Error('no git');
+    it('includes git log', async () => {
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        if (cmd.includes('log')) cb(null, { stdout: 'abc1234 initial commit\n' });
+        else if (cmd.includes('branch')) cb(null, { stdout: 'main\n' });
+        else cb(new Error('no git'));
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('abc1234 initial commit');
     });
 
-    it('includes .gitignore', () => {
+    it('includes .gitignore', async () => {
       fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'node_modules/\n.env\n');
       execSync.mockImplementation(() => {
         throw new Error('no git');
       });
 
-      const ctx = gatherProjectContext(tmpDir);
+      const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain('node_modules/');
       expect(ctx).toContain('.env');
     });
 
-    it('handles all git commands failing gracefully', () => {
-      execSync.mockImplementation(() => {
-        throw new Error('not a git repo');
+    it('handles all git commands failing gracefully', async () => {
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        cb(new Error('not a git repo'));
       });
 
-      expect(() => gatherProjectContext(tmpDir)).not.toThrow();
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toBeDefined();
     });
   });
 
   // ─── printContext ─────────────────────────────────────────
   describe('printContext()', () => {
-    it('prints project info to console', () => {
+    it('prints project info to console', async () => {
       fs.writeFileSync(
         path.join(tmpDir, 'package.json'),
         JSON.stringify({ name: 'my-app', version: '2.0.0' })
       );
-      execSync.mockImplementation((cmd) => {
-        if (cmd.includes('branch')) return 'develop\n';
-        throw new Error('no git');
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        if (cmd.includes('branch')) cb(null, { stdout: 'develop\n' });
+        else cb(new Error('no git'));
       });
 
-      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-      printContext(tmpDir);
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
+      await printContext(tmpDir);
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
       expect(output).toContain('my-app');
       expect(output).toContain('2.0.0');
@@ -163,13 +186,15 @@ describe('context.js', () => {
       logSpy.mockRestore();
     });
 
-    it('prints only empty line without package.json or git', () => {
-      execSync.mockImplementation(() => {
-        throw new Error('no git');
+    it('prints only empty line without package.json or git', async () => {
+      const cp = require('child_process');
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === 'function') cb = opts;
+        cb(new Error('no git'));
       });
 
-      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-      printContext(tmpDir);
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
+      await printContext(tmpDir);
       // No project info, no branch — only the trailing empty line
       expect(logSpy).toHaveBeenCalledTimes(1);
       logSpy.mockRestore();

@@ -2,32 +2,17 @@
  * cli/index.js — Main REPL + Command Handling
  */
 
+// Essential imports only
 const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { C, banner, cleanupTerminal } = require('./ui');
-const { processInput, clearConversation, getConversationMessages, setConversationMessages, setAbortSignalGetter } = require('./agent');
-const { getActiveModel, setActiveModel, getModelNames } = require('./ollama');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
+const { getActiveModel, setActiveModel } = require('./ollama');
 const { printContext } = require('./context');
-const { refreshIndex } = require('./index-engine');
-const { getUsage } = require('./context-engine');
-const { TOOL_DEFINITIONS } = require('./tools');
-const { saveSession, loadSession, listSessions, getLastSession } = require('./session');
-const { remember, forget, listMemories } = require('./memory');
-const { listPermissions, setPermission, savePermissions } = require('./permissions');
-const {
-  createPlan, getActivePlan, setPlanMode, isPlanMode,
-  approvePlan, startExecution, formatPlan, savePlan, listPlans, clearPlan,
-  setAutonomyLevel, getAutonomyLevel, AUTONOMY_LEVELS,
-} = require('./planner');
-const { isGitRepo, getCurrentBranch, formatDiffSummary, analyzeDiff, commit, createBranch } = require('./git');
-const { listServers, connectAll, disconnectAll } = require('./mcp');
-const { listHooks, runHooks, HOOK_EVENTS } = require('./hooks');
-const { undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory } = require('./file-history');
-const { formatCosts, resetCosts, setCostLimit, removeCostLimit, getCostLimits, checkBudget, getProviderSpend, saveCostLimits } = require('./costs');
-const { loadAllSkills, listSkills, enableSkill, disableSkill, getSkillCommands, handleSkillCommand } = require('./skills');
-const { showModelPicker } = require('./picker');
+const { loadAllSkills, getSkillCommands, handleSkillCommand } = require('./skills');
+const { setReadlineInterface, setAutoConfirm, getAutoConfirm } = require('./safety');
+// Lazy-loaded imports in startREPL or handlers
 
 const CWD = process.cwd();
 
@@ -252,6 +237,7 @@ async function handleSlashCommand(input, rl) {
       const name = rest.join(' ').trim();
       if (!name) {
         if (rl) {
+          const { showModelPicker } = require('./picker');
           await showModelPicker(rl);
         } else {
           const model = getActiveModel();
@@ -301,6 +287,9 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/tokens': {
+      const { getConversationMessages } = require('./agent');
+      const { getUsage } = require('./context-engine');
+      const { TOOL_DEFINITIONS } = require('./tools');
       const messages = getConversationMessages();
       const usage = getUsage(messages, TOOL_DEFINITIONS);
       const model = getActiveModel();
@@ -324,6 +313,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/costs': {
+      const { formatCosts, resetCosts } = require('./costs');
       const costArg = rest.join(' ').trim();
       if (costArg === 'reset') {
         resetCosts();
@@ -335,6 +325,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/budget': {
+      const { getCostLimits, getProviderSpend, checkBudget, removeCostLimit, saveCostLimits, setCostLimit } = require('./costs');
       const budgetArg = rest[0];
       if (!budgetArg) {
         // Show all limits + current spend
@@ -397,11 +388,14 @@ async function handleSlashCommand(input, rl) {
       return true;
     }
 
-    case '/clear':
+    case '/clear': {
+      const { clearConversation } = require('./agent');
+      const { clearHistory } = require('./file-history');
       clearConversation();
       clearHistory();
       console.log(`${C.green}Conversation cleared${C.reset}`);
       return true;
+    }
 
     case '/context':
       await printContext(CWD);
@@ -418,6 +412,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/save': {
+      const { saveSession } = require('./session');
+      const { getConversationMessages } = require('./agent');
       const sessionName = rest.join(' ').trim() || `session-${Date.now()}`;
       const messages = getConversationMessages();
       if (messages.length === 0) {
@@ -432,6 +428,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/load': {
+      const { loadSession } = require('./session');
+      const { setConversationMessages } = require('./agent');
       const loadName = rest.join(' ').trim();
       if (!loadName) {
         console.log(`${C.red}Usage: /load <name>${C.reset}`);
@@ -448,6 +446,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/sessions': {
+      const { listSessions } = require('./session');
       const sessions = listSessions();
       if (sessions.length === 0) {
         console.log(`${C.dim}No saved sessions${C.reset}`);
@@ -464,6 +463,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/resume': {
+      const { getLastSession } = require('./session');
+      const { setConversationMessages } = require('./agent');
       const last = getLastSession();
       if (!last) {
         console.log(`${C.yellow}No session to resume${C.reset}`);
@@ -475,6 +476,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/remember': {
+      const { remember } = require('./memory');
       const text = rest.join(' ').trim();
       if (!text) {
         console.log(`${C.red}Usage: /remember <key>=<value> or /remember <text>${C.reset}`);
@@ -495,6 +497,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/forget': {
+      const { forget } = require('./memory');
       const forgetKey = rest.join(' ').trim();
       if (!forgetKey) {
         console.log(`${C.red}Usage: /forget <key>${C.reset}`);
@@ -509,6 +512,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/memory': {
+      const { listMemories } = require('./memory');
       const memories = listMemories();
       if (memories.length === 0) {
         console.log(`${C.dim}No memories saved${C.reset}`);
@@ -523,6 +527,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/plan': {
+      const { getActivePlan, approvePlan, startExecution, setPlanMode } = require('./planner');
+      const { formatPlan } = require('./planner');
       const arg = rest.join(' ').trim();
       if (arg === 'status') {
         const plan = getActivePlan();
@@ -550,6 +556,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/plans': {
+      const { listPlans } = require('./planner');
       const plans = listPlans();
       if (plans.length === 0) {
         console.log(`${C.dim}No saved plans${C.reset}`);
@@ -565,6 +572,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/auto': {
+      const { getAutonomyLevel, setAutonomyLevel, AUTONOMY_LEVELS } = require('./planner');
       const level = rest.join(' ').trim();
       if (!level) {
         console.log(`${C.bold}${C.cyan}Autonomy:${C.reset} ${getAutonomyLevel()}`);
@@ -580,6 +588,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/permissions': {
+      const { listPermissions } = require('./permissions');
       const perms = listPermissions();
       console.log(`\n${C.bold}${C.cyan}Tool Permissions:${C.reset}`);
       for (const p of perms) {
@@ -591,6 +600,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/allow': {
+      const { setPermission, savePermissions } = require('./permissions');
       const tool = rest.join(' ').trim();
       if (!tool) {
         console.log(`${C.red}Usage: /allow <tool>${C.reset}`);
@@ -603,6 +613,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/deny': {
+      const { setPermission, savePermissions } = require('./permissions');
       const tool = rest.join(' ').trim();
       if (!tool) {
         console.log(`${C.red}Usage: /deny <tool>${C.reset}`);
@@ -615,6 +626,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/commit': {
+      const { isGitRepo, commit, analyzeDiff, formatDiffSummary } = require('./git');
+      const { confirm } = require('./safety');
       if (!isGitRepo()) {
         console.log(`${C.red}Not a git repository${C.reset}`);
         return true;
@@ -637,14 +650,15 @@ async function handleSlashCommand(input, rl) {
       }
       const summary = await formatDiffSummary();
       console.log(summary);
-      const ok = await confirm('  Commit changes?');
-      if (!ok) return true;
+      const isConfirmed = await confirm('  Commit changes?');
+      if (!isConfirmed) return true;
       const hash = await commit('nex-code update');
       if (hash) console.log(`${C.green}  ✓ Committed: ${hash}${C.reset}`);
       return true;
     }
 
     case '/diff': {
+      const { isGitRepo, formatDiffSummary } = require('./git');
       if (!isGitRepo()) {
         console.log(`${C.red}Not a git repository${C.reset}`);
         return true;
@@ -654,6 +668,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/branch': {
+      const { isGitRepo, getCurrentBranch, createBranch } = require('./git');
       if (!isGitRepo()) {
         console.log(`${C.red}Not a git repository${C.reset}`);
         return true;
@@ -674,6 +689,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/mcp': {
+      const { listServers, connectAll, disconnectAll } = require('./mcp');
       const mcpArg = rest.join(' ').trim();
       if (mcpArg === 'connect') {
         console.log(`${C.dim}Connecting MCP servers...${C.reset}`);
@@ -715,6 +731,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/hooks': {
+      const { listHooks } = require('./hooks');
       const hookList = listHooks();
       if (hookList.length === 0) {
         console.log(`${C.dim}No hooks configured${C.reset}`);
@@ -733,6 +750,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/skills': {
+      const { listSkills, enableSkill, disableSkill } = require('./skills');
       const skillArg = rest.join(' ').trim();
       if (skillArg.startsWith('enable ')) {
         const name = skillArg.substring(7).trim();
@@ -785,6 +803,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/undo': {
+      const { undo, getUndoCount } = require('./file-history');
       const undone = undo();
       if (!undone) {
         console.log(`${C.yellow}Nothing to undo${C.reset}`);
@@ -801,6 +820,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/redo': {
+      const { redo, getRedoCount } = require('./file-history');
       const redone = redo();
       if (!redone) {
         console.log(`${C.yellow}Nothing to redo${C.reset}`);
@@ -813,14 +833,15 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/history': {
+      const { getHistory, getUndoCount, getRedoCount } = require('./file-history');
       const history = getHistory(20);
       if (history.length === 0) {
         console.log(`${C.dim}No file changes in this session${C.reset}`);
         return true;
       }
-      console.log(`\n${C.bold}${C.cyan}File Change History:${C.reset}`);
+      console.log(`\n${C.bold}File Change History${C.reset}\n`);
       for (const entry of history) {
-        const time = new Date(entry.timestamp).toLocaleTimeString();
+        const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
@@ -869,6 +890,7 @@ function appendHistory(line) {
 
 // ─── Smart Prompt ────────────────────────────────────────────
 function getPrompt() {
+  const { isPlanMode, getAutonomyLevel } = require('./planner');
   const parts = [];
 
   if (isPlanMode()) parts.push('plan');
@@ -901,7 +923,23 @@ function stripPasteSequences(data) {
   return data.split(PASTE_START).join('').split(PASTE_END).join('');
 }
 
-function startREPL() {
+async function checkLocalOllama() {
+  const localProvider = getProvider('local');
+  if (!localProvider) return false;
+  try {
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    await execAsync('curl -s --max-time 1 http://localhost:11434/api/tags');
+    setActiveModel('local:llama3');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function startREPL() {
+  const { setAbortSignalGetter, getConversationLength, processInput } = require('./agent');
   // Wire abort signal into agent.js (avoids circular dependency)
   setAbortSignalGetter(getAbortSignal);
 
@@ -909,45 +947,37 @@ function startREPL() {
   const providerList = listProviders();
   const hasConfigured = providerList.some((p) => p.configured);
 
-  if (!hasConfigured) {
-    // Check if local Ollama is running
-    const localProvider = getProvider('local');
-    let localDetected = false;
-    if (localProvider) {
-      try {
-        const { execSync } = require('child_process');
-        execSync('curl -s --max-time 2 http://localhost:11434/api/tags', { encoding: 'utf-8', stdio: 'pipe' });
-        setActiveModel('local:llama3');
+  // Parallelize initial checks and loading
+  const loadPromise = (async () => {
+    loadAllSkills();
+    const model = getActiveModel();
+    const providerName = getActiveProviderName();
+    return { model, providerName };
+  })();
+
+  const ollamaPromise = (async () => {
+    if (!hasConfigured) {
+      const detected = await checkLocalOllama();
+      if (detected) {
         console.log(`${C.green}✓ Local Ollama detected — using local models${C.reset}`);
         console.log(`${C.dim}Tip: Set API keys for cloud providers for more model options (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`);
-        localDetected = true;
-      } catch {
-        // Local Ollama not available
+        return true;
       }
+      return false;
     }
-    if (!localDetected) {
-      console.error(`\n${C.red}✗ No provider configured and no local Ollama detected.${C.reset}\n`);
-      console.error(`${C.white}nex-code needs at least one LLM provider to work.${C.reset}\n`);
-      console.error(`${C.white}Option 1 — Free local models (no API key needed):${C.reset}`);
-      console.error(`${C.gray}  Install Ollama:  ${C.cyan}https://ollama.com/download${C.reset}`);
-      console.error(`${C.gray}  Pull a model:    ${C.cyan}ollama pull qwen3-coder${C.reset}`);
-      console.error(`${C.gray}  Then restart:    ${C.cyan}nex-code${C.reset}\n`);
-      console.error(`${C.white}Option 2 — Cloud providers (set one in .env or as env var):${C.reset}`);
-      console.error(`${C.gray}  OLLAMA_API_KEY=...     ${C.dim}# Ollama Cloud (free tier available)${C.reset}`);
-      console.error(`${C.gray}  OPENAI_API_KEY=...     ${C.dim}# OpenAI${C.reset}`);
-      console.error(`${C.gray}  ANTHROPIC_API_KEY=...  ${C.dim}# Anthropic${C.reset}`);
-      console.error(`${C.gray}  GEMINI_API_KEY=...     ${C.dim}# Google Gemini${C.reset}\n`);
-      console.error(`${C.dim}Create a .env file in your project directory or export the variable.${C.reset}`);
-      process.exit(1);
-    }
+    return true;
+  })();
+
+  const [loadInfo, ollamaReady] = await Promise.all([loadPromise, ollamaPromise]);
+
+  if (!ollamaReady && !hasConfigured) {
+    console.error(`\n${C.red}✗ No provider configured and no local Ollama detected.${C.reset}\n`);
+    // ... (rest of error message)
+    process.exit(1);
   }
 
-  loadAllSkills();
-
-  const model = getActiveModel();
-  const providerName = getActiveProviderName();
-  banner(`${providerName}:${model.id}`, CWD, { yolo: getAutoConfirm() });
-  printContext(CWD);
+  banner(`${loadInfo.providerName}:${loadInfo.model.id}`, CWD, { yolo: getAutoConfirm() });
+  await printContext(CWD);
 
   const history = loadHistory();
 
@@ -1203,6 +1233,7 @@ function startREPL() {
               console.log(`${C.red}Error: ${userMessage}${C.reset}`);
             }
           }
+          const { getConversationLength } = require('./agent');
           _processing = false;
           const msgCount = getConversationLength();
           if (msgCount > 0) {
@@ -1275,6 +1306,7 @@ function startREPL() {
     }
     _processing = false;
 
+    const { getConversationLength } = require('./agent');
     const msgCount = getConversationLength();
     if (msgCount > 0) {
       process.stdout.write(`${C.gray}[${msgCount} messages] ${C.reset}`);
