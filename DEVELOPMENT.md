@@ -12,8 +12,9 @@
 2. Develop and test in feature branches or directly in `devel`
 3. Merge completed features into `devel`
 4. Thoroughly test in `devel` environment
-5. When ready for release, merge `devel` into `main`
-6. Tag releases and publish to npm from `main`
+5. Run the build process: `npm run build` to ensure the bundle is updated
+6. When ready for release, merge `devel` into `main`
+7. Tag releases and publish to npm from `main`
 
 ## Version Management
 
@@ -53,11 +54,22 @@ If merge conflicts occur during the merge from `devel` to `main`:
 
 **Startup detection**: nex-code detects unresolved merge conflicts at startup and displays a red warning listing affected files. The LLM context also includes conflict info so the agent won't attempt edits on conflicted files.
 
+**Project Structure & Indexing**
+- `bin/nex-code.js`: CLI entrypoint (wrapper)
+- `cli/`: All source code
+- `cli/index-engine.js`: Fast file indexing (ripgrep/fallback)
+- `cli/providers/`: Provider implementations
+- `dist/`: Final bundled CLI scripts
+- `tests/`: Jest test files
+
 ## Git Hooks
 
 Install all hooks with:
 ```bash
-npm run install-hooks
+10. npm install
+11. npm run build    # Build the high-performance bundle
+12. cp .env.example .env
+13. npm run install-hooks
 ```
 
 | Hook | Purpose |

@@ -5,11 +5,12 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 ```bash
-git clone https://github.com/hybridpicker/nex-code.git
-cd nex-code
-npm install
-cp .env.example .env
-npm run install-hooks
+1. git clone https://github.com/hybridpicker/nex-code.git
+2. cd nex-code
+3. npm install
+4. npm run build    # Build the high-performance bundle
+5. cp .env.example .env
+6. npm run install-hooks
 ```
 
 > **Users** don't need to clone — just run `npx nex-code` or `npm install -g nex-code`.
@@ -20,8 +21,9 @@ npm run install-hooks
 2. Make your changes
 3. Run the tests: `npm test`
 4. Ensure all 1780+ tests pass and coverage stays above 85%
-5. Commit with a descriptive message (e.g. `feat: add X`, `fix: resolve Y`)
-6. Push and open a Pull Request against `main`
+5. Build the bundle: `npm run build`
+6. Commit with a descriptive message (e.g. `feat: add X`, `fix: resolve Y`)
+7. Push and open a Pull Request against `main`
 
 ## Running Tests
 
@@ -40,10 +42,12 @@ npm run test:watch    # watch mode during development
 ## Project Structure
 
 ```
-bin/nex-code.js       # CLI entrypoint
+bin/nex-code.js       # CLI entrypoint (wrapper)
 cli/                  # All source code
-cli/providers/        # Provider implementations (ollama, openai, anthropic, gemini, local)
-tests/                # Jest test files (mirror cli/ structure)
+cli/index-engine.js   # Fast file indexing (ripgrep/fallback)
+cli/providers/        # Provider implementations
+dist/                 # Final bundled CLI scripts
+tests/                # Jest test files
 ```
 
 ## Adding a New Provider
