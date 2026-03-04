@@ -943,9 +943,9 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'git_status': {
-      if (!isGitRepo()) return 'ERROR: Not a git repository';
-      const branch = getCurrentBranch() || '(detached)';
-      const status = getStatus();
+      if (!(await isGitRepo())) return 'ERROR: Not a git repository';
+      const branch = (await getCurrentBranch()) || '(detached)';
+      const status = await getStatus();
       if (status.length === 0) return `Branch: ${branch}\nClean working tree (no changes)`;
       const lines = [`Branch: ${branch}`, `Changed files (${status.length}):`];
       for (const s of status) {
@@ -956,7 +956,7 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'git_diff': {
-      if (!isGitRepo()) return 'ERROR: Not a git repository';
+      if (!(await isGitRepo())) return 'ERROR: Not a git repository';
       let diff;
       if (args.file) {
         const gitArgs = ['diff'];
@@ -966,13 +966,13 @@ async function _executeToolInner(name, args, options = {}) {
           diff = execFileSync('git', gitArgs, { cwd: CWD, encoding: 'utf-8', timeout: 15000, stdio: 'pipe' }).trim();
         } catch { diff = ''; }
       } else {
-        diff = getDiff(!!args.staged);
+        diff = await getDiff(!!args.staged);
       }
       return diff || '(no diff)';
     }
 
     case 'git_log': {
-      if (!isGitRepo()) return 'ERROR: Not a git repository';
+      if (!(await isGitRepo())) return 'ERROR: Not a git repository';
       const count = Math.min(args.count || 10, 50);
       const gitLogArgs = ['log', '--oneline', `-${count}`];
       if (args.file) gitLogArgs.push('--', args.file);
