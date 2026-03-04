@@ -31,38 +31,38 @@ describe('autoFixPath()', () => {
     fs.writeFileSync(path.join(srcDir, 'utils.ts'), 'export const foo = 1;');
   });
 
-  it('returns null for empty path', () => {
-    const result = autoFixPath('');
+  it('returns null for empty path', async () => {
+    const result = await autoFixPath('');
     expect(result.fixedPath).toBeNull();
   });
 
-  it('returns null for unfixable path', () => {
-    const result = autoFixPath(path.join(tmpDir, 'totally', 'nonexistent', 'xyz123.abc'));
+  it('returns null for unfixable path', async () => {
+    const result = await autoFixPath(path.join(tmpDir, 'totally', 'nonexistent', 'xyz123.abc'));
     expect(result.fixedPath).toBeNull();
   });
 
-  it('fixes double slashes in path', () => {
+  it('fixes double slashes in path', async () => {
     // Use absolute path with double slash
-    const result = autoFixPath(srcDir + '//index.js');
+    const result = await autoFixPath(srcDir + '//index.js');
     expect(result.fixedPath).not.toBeNull();
     expect(result.message).toContain('auto-fixed');
   });
 
-  it('adds missing extension (.js)', () => {
-    const result = autoFixPath(path.join(srcDir, 'index'));
+  it('adds missing extension (.js)', async () => {
+    const result = await autoFixPath(path.join(srcDir, 'index'));
     expect(result.fixedPath).not.toBeNull();
     expect(result.fixedPath).toContain('index.js');
     expect(result.message).toContain('auto-fixed');
   });
 
-  it('tries alternative extensions (.ts when .js not found)', () => {
-    const result = autoFixPath(path.join(srcDir, 'utils'));
+  it('tries alternative extensions (.ts when .js not found)', async () => {
+    const result = await autoFixPath(path.join(srcDir, 'utils'));
     expect(result.fixedPath).not.toBeNull();
     expect(result.fixedPath).toContain('utils.ts');
   });
 
-  it('tries swapping extension (.js → .ts)', () => {
-    const result = autoFixPath(path.join(srcDir, 'utils.js'));
+  it('tries swapping extension (.js → .ts)', async () => {
+    const result = await autoFixPath(path.join(srcDir, 'utils.js'));
     expect(result.fixedPath).not.toBeNull();
     expect(result.fixedPath).toContain('utils.ts');
     expect(result.message).toContain('auto-fixed');
