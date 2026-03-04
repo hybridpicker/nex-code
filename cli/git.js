@@ -3,20 +3,23 @@
  * Smart commits, PR creation, branch management, diff-aware context
  */
 
-const { execSync, execFileSync } = require('child_process');
+const exec = require('util').promisify(require('child_process').exec);
+const execFile = require('util').promisify(require('child_process').execFile);
 const { C } = require('./ui');
 
-function exec(cmd) {
+async function safeExec(cmd) {
   try {
-    return execSync(cmd, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' }).trim();
+    const { stdout } = await exec(cmd, { cwd: process.cwd(), timeout: 30000 });
+    return stdout.trim();
   } catch (e) {
     return null;
   }
 }
 
-function execGit(...args) {
+async function safeExecGit(...args) {
   try {
-    return execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' }).trim();
+    const { stdout } = await execFile('git', args, { cwd: process.cwd(), timeout: 30000 });
+    return stdout.trim();
   } catch (e) {
     return null;
   }
@@ -25,25 +28,26 @@ function execGit(...args) {
 /**
  * Check if we're in a git repository
  */
-function isGitRepo() {
-  return exec('git rev-parse --is-inside-work-tree') === 'true';
+async function isGitRepo() {
+  const result = await safeExec('git rev-parse --is-inside-work-tree');
+  return result === 'true';
 }
 
 /**
  * Get current branch name
  */
-function getCurrentBranch() {
-  return exec('git branch --show-current');
+async function getCurrentBranch() {
+  return await safeExec('git branch --show-current');
 }
 
 /**
  * Get git status (short format)
  */
-function getStatus() {
+async function getStatus() {
   try {
-    const raw = execSync('git status --porcelain', { cwd: process.cwd(), encoding: 'utf-8', timeout: 30000, stdio: 'pipe' });
-    if (!raw || !raw.trim()) return [];
-    return raw.split('\n').filter(Boolean).map((line) => {
+    const { stdout } = await exec('git status --porcelain', { cwd: process.cwd(), timeout: 30000 });
+    if (!stdout || !stdout.trim()) return [];
+    return stdout.split('\n').filter(Boolean).map((line) => {
       const status = line.substring(0, 2).trim();
       const file = line.substring(3);
       return { status, file };
@@ -57,29 +61,29 @@ function getStatus() {
  * Get the diff for staged + unstaged changes
  * @param {boolean} staged — only staged changes
  */
-function getDiff(staged = false) {
+async function getDiff(staged = false) {
   const flag = staged ? '--cached' : '';
-  return exec(`git diff ${flag}`) || '';
+  return (await safeExec(`git diff ${flag}`)) || '';
 }
 
 /**
  * Get list of changed files (staged + unstaged)
  */
-function getChangedFiles() {
-  const status = getStatus();
+async function getChangedFiles() {
+  const status = await getStatus();
   return status.map((s) => s.file);
 }
 
 /**
  * Analyze diff and generate a commit message suggestion
- * @returns {{ summary: string, files: string[], stats: { additions: number, deletions: number } }}
+ * @returns {Promise<{ summary: string, files: string[], stats: { additions: number, deletions: number } }|null>}
  */
-function analyzeDiff() {
-  const files = getChangedFiles();
+async function analyzeDiff() {
+  const files = await getChangedFiles();
   if (files.length === 0) return null;
 
-  const diff = getDiff();
-  const stagedDiff = getDiff(true);
+  const diff = await getDiff();
+  const stagedDiff = await getDiff(true);
   const fullDiff = stagedDiff || diff;
 
   // Count additions/deletions from diff (if available)
@@ -120,9 +124,9 @@ function analyzeDiff() {
 /**
  * Create a branch from a task description
  * @param {string} description
- * @returns {string|null} branch name or null on error
+ * @returns {Promise<string|null>} branch name or null on error
  */
-function createBranch(description) {
+async function createBranch(description) {
   const name = description
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
@@ -130,27 +134,27 @@ function createBranch(description) {
     .substring(0, 50);
 
   const branchName = `feat/${name}`;
-  const result = execGit('checkout', '-b', branchName);
+  const result = await safeExecGit('checkout', '-b', branchName);
   return result !== null ? branchName : null;
 }
 
 /**
  * Stage all changes and commit
  * @param {string} message
- * @returns {string|null} commit hash or null
+ * @returns {Promise<string|null>} commit hash or null
  */
-function commit(message) {
-  execGit('add', '-A');
-  const result = execGit('commit', '-m', message);
+async function commit(message) {
+  await safeExecGit('add', '-A');
+  const result = await safeExecGit('commit', '-m', message);
   if (!result) return null;
-  return execGit('rev-parse', '--short', 'HEAD');
+  return await safeExecGit('rev-parse', '--short', 'HEAD');
 }
 
 /**
  * Show a formatted diff summary
  */
-function formatDiffSummary() {
-  const analysis = analyzeDiff();
+async function formatDiffSummary() {
+  const analysis = await analyzeDiff();
   if (!analysis) return `${C.dim}No changes${C.reset}`;
 
   const lines = [];
@@ -171,8 +175,8 @@ function formatDiffSummary() {
 /**
  * Get files with unresolved merge conflicts (UU, AA, DD)
  */
-function getMergeConflicts() {
-  const status = getStatus();
+async function getMergeConflicts() {
+  const status = await getStatus();
   return status.filter(s => s.status === 'UU' || s.status === 'AA' || s.status === 'DD');
 }
 
@@ -180,21 +184,35 @@ function getMergeConflicts() {
  * Get diff-aware context (only changed files' content)
  * For use when the user is working on git-related tasks
  */
-function getDiffContext() {
-  const files = getChangedFiles();
+async function getDiffContext() {
+  const files = await getChangedFiles();
   if (files.length === 0) return '';
 
   const parts = [`CHANGED FILES (${files.length}):`];
   for (const f of files.slice(0, 10)) {
     parts.push(`  ${f}`);
   }
-  const diff = getDiff();
+  const diff = await getDiff();
   if (diff) {
     const truncated = diff.length > 5000 ? diff.substring(0, 5000) + '\n...(truncated)' : diff;
     parts.push(`\nDIFF:\n${truncated}`);
   }
   return parts.join('\n');
 }
+
+module.exports = {
+  isGitRepo,
+  getCurrentBranch,
+  getStatus,
+  getDiff,
+  getChangedFiles,
+  analyzeDiff,
+  createBranch,
+  commit,
+  formatDiffSummary,
+  getDiffContext,
+  getMergeConflicts,
+};
 
 module.exports = {
   isGitRepo,

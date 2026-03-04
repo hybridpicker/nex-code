@@ -2,9 +2,11 @@
  * cli/tools.js — Tool Definitions + Implementations
  */
 
-const fs = require('fs');
+const fs = require('fs').promises;
+const fsSync = require('fs'); // Keep sync version for binary check and simple checks if needed
 const path = require('path');
-const { execSync, execFileSync } = require('child_process');
+const exec = require('util').promisify(require('child_process').exec);
+const execFile = require('util').promisify(require('child_process').execFile);
 const axios = require('axios');
 const { isForbidden, isDangerous, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
@@ -13,6 +15,7 @@ const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
 const { recordChange } = require('./file-history');
 const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 const { runDiagnostics } = require('./diagnostics');
+const { findFileInIndex, getFileIndex } = require('./index-engine');
 
 const CWD = process.cwd();
 
@@ -27,7 +30,7 @@ const CWD = process.cwd();
  * @param {string} originalPath - The path that wasn't found
  * @returns {{ fixedPath: string|null, message: string }}
  */
-function autoFixPath(originalPath) {
+async function autoFixPath(originalPath) {
   if (!originalPath) return { fixedPath: null, message: '' };
 
   // Strategy 1: normalize path issues
@@ -35,7 +38,7 @@ function autoFixPath(originalPath) {
     .replace(/\/+/g, '/')           // double slashes
     .replace(/^~\//, `${require('os').homedir()}/`); // expand ~
   const np = resolvePath(normalized);
-  if (np && fs.existsSync(np)) {
+  if (np && (await fs.access(np).then(() => true).catch(() => false))) {
     return { fixedPath: np, message: `(auto-fixed path: ${originalPath} → ${normalized})` };
   }
 
@@ -45,7 +48,7 @@ function autoFixPath(originalPath) {
   if (!hasExt) {
     for (const ext of extVariants) {
       const withExt = resolvePath(originalPath + ext);
-      if (withExt && fs.existsSync(withExt)) {
+      if (withExt && (await fs.access(withExt).then(() => true).catch(() => false))) {
         return { fixedPath: withExt, message: `(auto-fixed: added ${ext} extension)` };
       }
     }
@@ -56,33 +59,17 @@ function autoFixPath(originalPath) {
     for (const ext of extVariants) {
       if (ext === hasExt) continue;
       const alt = resolvePath(base + ext);
-      if (alt && fs.existsSync(alt)) {
+      if (alt && (await fs.access(alt).then(() => true).catch(() => false))) {
         return { fixedPath: alt, message: `(auto-fixed: ${hasExt} → ${ext})` };
       }
     }
   }
 
-  // Strategy 3: glob for basename in project directory
+  // Strategy 3: search for basename in index
   const basename = path.basename(originalPath);
   if (basename && basename.length > 2) {
     try {
-      const walkForFile = (dir, target, depth = 0) => {
-        if (depth > 5) return [];
-        const matches = [];
-        let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
-        for (const e of entries) {
-          if (e.name === 'node_modules' || e.name === '.git' || e.name.startsWith('.')) continue;
-          const full = path.join(dir, e.name);
-          if (e.isDirectory()) {
-            matches.push(...walkForFile(full, target, depth + 1));
-          } else if (e.name === target) {
-            matches.push(full);
-          }
-        }
-        return matches;
-      };
-      const found = walkForFile(CWD, basename);
+      const found = findFileInIndex(basename).map(f => resolvePath(f));
       if (found.length === 1) {
         return { fixedPath: found[0], message: `(auto-fixed: found ${basename} at ${path.relative(CWD, found[0])})` };
       }
@@ -90,7 +77,7 @@ function autoFixPath(originalPath) {
         const relative = found.map(f => path.relative(CWD, f));
         return { fixedPath: null, message: `File not found. Did you mean one of:\n${relative.map(r => `  - ${r}`).join('\n')}` };
       }
-    } catch { /* glob failed, skip */ }
+    } catch { /* index search failed, skip */ }
   }
 
   return { fixedPath: null, message: '' };
@@ -194,16 +181,17 @@ function autoFixEdit(content, oldText, newText) {
 
 // Auto-checkpoint: tag last known state before first agent edit
 let _checkpointCreated = false;
-function ensureCheckpoint() {
+async function ensureCheckpoint() {
   if (_checkpointCreated) return;
   _checkpointCreated = true;
   try {
     // Only in git repos with changes
-    const isGit = execSync('git rev-parse --is-inside-work-tree', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe' }).trim() === 'true';
+    const { stdout } = await exec('git rev-parse --is-inside-work-tree', { cwd: CWD, timeout: 5000 });
+    const isGit = stdout.trim() === 'true';
     if (!isGit) return;
-    execSync('git stash push -m "nex-code-checkpoint" --include-untracked', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 });
-    execSync('git stash pop', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 10000 });
-    execSync('git tag -f nex-checkpoint', { cwd: CWD, encoding: 'utf-8', stdio: 'pipe', timeout: 5000 });
+    await exec('git stash push -m "nex-code-checkpoint" --include-untracked', { cwd: CWD, timeout: 10000 });
+    await exec('git stash pop', { cwd: CWD, timeout: 10000 });
+    await exec('git tag -f nex-checkpoint', { cwd: CWD, timeout: 5000 });
   } catch { /* not critical */ }
 }
 
@@ -538,28 +526,28 @@ async function _executeToolInner(name, args, options = {}) {
       const bashSpinner = options.silent ? null : new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);
       if (bashSpinner) bashSpinner.start();
       try {
-        const out = execSync(cmd, {
+        const { stdout, stderr } = await exec(cmd, {
           cwd: CWD,
           timeout: 90000,
-          encoding: 'utf-8',
           maxBuffer: 5 * 1024 * 1024,
         });
         if (bashSpinner) bashSpinner.stop();
-        return out || '(no output)';
+        return stdout || stderr || '(no output)';
       } catch (e) {
         if (bashSpinner) bashSpinner.stop();
         const rawError = (e.stderr || e.stdout || e.message || '').toString().substring(0, 5000);
         const enriched = enrichBashError(rawError, cmd);
-        return `EXIT ${e.status || 1}\n${enriched}`;
+        return `EXIT ${e.code || 1}\n${enriched}`;
       }
     }
 
     case 'read_file': {
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) {
+      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      if (!exists) {
         // Auto-fix: try to find the file
-        const fix = autoFixPath(args.path);
+        const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
           console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
@@ -570,15 +558,15 @@ async function _executeToolInner(name, args, options = {}) {
 
       // Binary file detection: check first 8KB for null bytes
       const buf = Buffer.alloc(8192);
-      const fd = fs.openSync(fp, 'r');
-      const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
-      fs.closeSync(fd);
+      const fd = await fsSync.promises.open(fp, 'r');
+      const { bytesRead } = await fd.read(buf, 0, 8192, 0);
+      await fd.close();
       for (let b = 0; b < bytesRead; b++) {
         if (buf[b] === 0) return `ERROR: ${fp} is a binary file (not readable as text)`;
       }
 
-      const content = fs.readFileSync(fp, 'utf-8');
-      if (!content && fs.statSync(fp).size > 0) return `WARNING: ${fp} is empty or unreadable`;
+      const content = await fs.readFile(fp, 'utf-8');
+      if (!content && (await fs.stat(fp)).size > 0) return `WARNING: ${fp} is empty or unreadable`;
       const lines = content.split('\n');
       const start = (args.line_start || 1) - 1;
       const end = args.line_end || lines.length;
@@ -589,43 +577,45 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'write_file': {
-      ensureCheckpoint();
+      await ensureCheckpoint();
       const fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = fs.existsSync(fp);
+      const exists = await fs.access(fp).then(() => true).catch(() => false);
       let oldContent = null;
 
       if (!options.autoConfirm) {
         if (exists) {
-          oldContent = fs.readFileSync(fp, 'utf-8');
-          const annotations = runDiagnostics(fp, args.content);
+          oldContent = await fs.readFile(fp, 'utf-8');
+          const annotations = await runDiagnostics(fp, args.content);
           showClaudeDiff(fp, oldContent, args.content, { annotations });
           const ok = await confirmFileChange('Overwrite');
           if (!ok) return 'CANCELLED: User declined to overwrite file.';
         } else {
-          const annotations = runDiagnostics(fp, args.content);
+          const annotations = await runDiagnostics(fp, args.content);
           showClaudeNewFile(fp, args.content, { annotations });
           const ok = await confirmFileChange('Create');
           if (!ok) return 'CANCELLED: User declined to create file.';
         }
       } else if (exists) {
-        oldContent = fs.readFileSync(fp, 'utf-8');
+        oldContent = await fs.readFile(fp, 'utf-8');
       }
 
       const dir = path.dirname(fp);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(fp, args.content, 'utf-8');
+      const dirExists = await fs.access(dir).then(() => true).catch(() => false);
+      if (!dirExists) await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(fp, args.content, 'utf-8');
       recordChange('write_file', fp, oldContent, args.content);
       return `Written: ${fp} (${args.content.length} chars)`;
     }
 
     case 'edit_file': {
-      ensureCheckpoint();
+      await ensureCheckpoint();
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) {
+      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      if (!exists) {
         // Auto-fix: try to find the file
-        const fix = autoFixPath(args.path);
+        const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
           console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
@@ -633,7 +623,7 @@ async function _executeToolInner(name, args, options = {}) {
           return `ERROR: File not found: ${args.path}${fix.message ? '\n' + fix.message : ''}`;
         }
       }
-      const content = fs.readFileSync(fp, 'utf-8');
+      const content = await fs.readFile(fp, 'utf-8');
 
       let matchText = args.old_text;
       let fuzzyMatched = false;
@@ -651,12 +641,12 @@ async function _executeToolInner(name, args, options = {}) {
           const fix = autoFixEdit(content, args.old_text, args.new_text);
           if (fix) {
             if (!options.autoConfirm) {
-              const annotations = runDiagnostics(fp, fix.content);
+              const annotations = await runDiagnostics(fp, fix.content);
               showClaudeDiff(fp, content, fix.content, { annotations });
               const ok = await confirmFileChange(`Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`);
               if (!ok) return 'CANCELLED: User declined to apply edit.';
             }
-            fs.writeFileSync(fp, fix.content, 'utf-8');
+            await fs.writeFile(fp, fix.content, 'utf-8');
             recordChange('edit_file', fp, content, fix.content);
             const matchPreview = fix.matchText.length > 80
               ? fix.matchText.substring(0, 77) + '...'
@@ -675,7 +665,7 @@ async function _executeToolInner(name, args, options = {}) {
 
       if (!options.autoConfirm) {
         const preview = content.split(matchText).join(args.new_text);
-        const annotations = runDiagnostics(fp, preview);
+        const annotations = await runDiagnostics(fp, preview);
         showClaudeDiff(fp, content, preview, { annotations });
         const label = fuzzyMatched ? 'Apply (fuzzy match)' : 'Apply';
         const ok = await confirmFileChange(label);
@@ -684,7 +674,7 @@ async function _executeToolInner(name, args, options = {}) {
 
       // Use split/join for literal replacement (no regex interpretation)
       const updated = content.split(matchText).join(args.new_text);
-      fs.writeFileSync(fp, updated, 'utf-8');
+      await fs.writeFile(fp, updated, 'utf-8');
       recordChange('edit_file', fp, content, updated);
       return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
     }
@@ -692,11 +682,13 @@ async function _executeToolInner(name, args, options = {}) {
     case 'list_directory': {
       let dp = resolvePath(args.path);
       if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(dp)) {
+      const exists = await fs.access(dp).then(() => true).catch(() => false);
+      if (!exists) {
         // Auto-fix: normalize path
         const normalized = args.path.replace(/\/+/g, '/').replace(/^~\//, `${require('os').homedir()}/`);
         const np = resolvePath(normalized);
-        if (np && fs.existsSync(np)) {
+        const npExists = await fs.access(np).then(() => true).catch(() => false);
+        if (np && npExists) {
           dp = np;
         } else {
           return `ERROR: Directory not found: ${args.path}`;
@@ -715,11 +707,11 @@ async function _executeToolInner(name, args, options = {}) {
       }
       const result = [];
 
-      const walk = (dir, level, prefix) => {
+      const walk = async (dir, level, prefix) => {
         if (level > depth) return;
         let entries;
         try {
-          entries = fs.readdirSync(dir, { withFileTypes: true });
+          entries = await fs.readdir(dir, { withFileTypes: true });
         } catch {
           return;
         }
@@ -728,11 +720,11 @@ async function _executeToolInner(name, args, options = {}) {
           if (pattern && !entry.isDirectory() && !pattern.test(entry.name)) continue;
           const marker = entry.isDirectory() ? '/' : '';
           result.push(`${prefix}${entry.name}${marker}`);
-          if (entry.isDirectory()) walk(path.join(dir, entry.name), level + 1, prefix + '  ');
+          if (entry.isDirectory()) await walk(path.join(dir, entry.name), level + 1, prefix + '  ');
         }
       };
 
-      walk(dp, 1, '');
+      await walk(dp, 1, '');
       return result.join('\n') || '(empty)';
     }
 
@@ -743,10 +735,10 @@ async function _executeToolInner(name, args, options = {}) {
       if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
       grepArgs.push(args.pattern, dp);
       try {
-        const out = execFileSync('grep', grepArgs, {
-          cwd: CWD, timeout: 30000, encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024,
+        const { stdout } = await execFile('grep', grepArgs, {
+          cwd: CWD, timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
-        const lines = out.split('\n').slice(0, 50).join('\n');
+        const lines = stdout.split('\n').slice(0, 50).join('\n');
         return lines || '(no matches)';
       } catch {
         return '(no matches)';
@@ -757,40 +749,35 @@ async function _executeToolInner(name, args, options = {}) {
       const GLOB_LIMIT = 200;
       const basePath = args.path ? resolvePath(args.path) : CWD;
       const pattern = args.pattern;
-      // Pure Node.js glob: convert glob pattern to regex and walk directory
+
       const globToRegex = (g) => {
         const escaped = g
           .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replace(/\*\*/g, '__DOUBLESTAR__')
+          .replace(/\*\*\//g, '(.*\/)?')
+          .replace(/\*\*/g, '.*')
           .replace(/\*/g, '[^/]*')
-          .replace(/__DOUBLESTAR__/g, '.*')
           .replace(/\?/g, '.');
         return new RegExp(`^${escaped}$`);
       };
-      const namePattern = pattern.replace(/\*\*\//g, '').replace(/\//g, '');
-      const nameRegex = globToRegex(namePattern);
+
       const fullRegex = globToRegex(pattern);
-      const matches = [];
-      let truncated = false;
-      const walkGlob = (dir, rel) => {
-        if (matches.length >= GLOB_LIMIT) { truncated = true; return; }
-        let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        for (const e of entries) {
-          if (e.name === 'node_modules' || e.name === '.git') continue;
-          const relPath = rel ? `${rel}/${e.name}` : e.name;
-          if (e.isDirectory()) {
-            walkGlob(path.join(dir, e.name), relPath);
-          } else if (fullRegex.test(relPath) || nameRegex.test(e.name)) {
-            matches.push(path.join(basePath, relPath));
-          }
-          if (matches.length >= GLOB_LIMIT) { truncated = true; return; }
-        }
-      };
-      walkGlob(basePath, '');
+      const namePattern = pattern.split('/').pop();
+      const nameRegex = globToRegex(namePattern);
+
+      const allFiles = getFileIndex();
+      const matches = allFiles
+        .filter(f => fullRegex.test(f) || nameRegex.test(path.basename(f)))
+        .slice(0, GLOB_LIMIT + 1)
+        .map(f => path.join(basePath, f));
+
       if (matches.length === 0) return '(no matches)';
-      const result = matches.join('\n');
-      return truncated ? `${result}\n\n⚠ Results truncated at ${GLOB_LIMIT}. Use a more specific pattern to narrow results.` : result;
+
+      const truncated = matches.length > GLOB_LIMIT;
+      const result = matches.slice(0, GLOB_LIMIT).join('\n');
+
+      return truncated
+        ? `${result}\n\n⚠ Results truncated at ${GLOB_LIMIT}. Use a more specific pattern.`
+        : result;
     }
 
     case 'grep': {
@@ -801,14 +788,14 @@ async function _executeToolInner(name, args, options = {}) {
       grepArgs2.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=coverage');
       grepArgs2.push(args.pattern, searchPath);
       try {
-        const out = execFileSync('grep', grepArgs2, {
-          cwd: CWD, timeout: 30000, encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024,
+        const { stdout } = await execFile('grep', grepArgs2, {
+          cwd: CWD, timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
-        const lines = out.split('\n').slice(0, 100).join('\n');
+        const lines = stdout.split('\n').slice(0, 100).join('\n');
         return lines.trim() || '(no matches)';
       } catch (e) {
         // exit 1 = no matches (normal), exit 2 = regex error
-        if (e.status === 2) {
+        if (e.code === 2) {
           return `ERROR: Invalid regex pattern: ${args.pattern}`;
         }
         return '(no matches)';
@@ -816,12 +803,13 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'patch_file': {
-      ensureCheckpoint();
+      await ensureCheckpoint();
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      if (!fs.existsSync(fp)) {
+      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      if (!exists) {
         // Auto-fix: try to find the file
-        const fix = autoFixPath(args.path);
+        const fix = await autoFixPath(args.path);
         if (fix.fixedPath) {
           fp = fix.fixedPath;
           console.log(`${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(CWD, fp)}${C.reset}`);
@@ -833,7 +821,7 @@ async function _executeToolInner(name, args, options = {}) {
       const patches = args.patches;
       if (!Array.isArray(patches) || patches.length === 0) return 'ERROR: No patches provided';
 
-      let content = fs.readFileSync(fp, 'utf-8');
+      let content = await fs.readFile(fp, 'utf-8');
 
       // Validate all patches first (exact → fuzzy → auto-fix → error)
       const resolvedPatches = [];
@@ -872,7 +860,7 @@ async function _executeToolInner(name, args, options = {}) {
         preview = preview.split(old_text).join(new_text);
       }
       if (!options.autoConfirm) {
-        const annotations = runDiagnostics(fp, preview);
+        const annotations = await runDiagnostics(fp, preview);
         showClaudeDiff(fp, content, preview, { annotations });
         const label = anyFuzzy ? 'Apply patches (fuzzy match)' : 'Apply patches';
         const ok = await confirmFileChange(label);
@@ -880,7 +868,7 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       // Write the fully-validated preview (atomic — no partial application)
-      fs.writeFileSync(fp, preview, 'utf-8');
+      await fs.writeFile(fp, preview, 'utf-8');
       recordChange('patch_file', fp, content, preview);
       const suffix = anyAutoFixed ? ' (auto-fixed)' : anyFuzzy ? ' (fuzzy match)' : '';
       return `Patched: ${fp} (${patches.length} replacements)${suffix}`;
