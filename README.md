@@ -18,7 +18,7 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1780-blue.svg" alt="Tests: 1780">
+  <img src="https://img.shields.io/badge/tests-1783-blue.svg" alt="Tests: 1783">
 </p>
 
 ---
@@ -55,7 +55,7 @@ That's it. You'll see the banner, your project context, and the `>` prompt. Star
 | **Multi-provider** | 5 providers, swap at runtime | Anthropic only | Multi-provider | Multi-provider |
 | **Free local models** | Ollama (no API key) | — | Ollama | — |
 | **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Heavy | Electron |
-| **Test coverage** | 1780 tests, 90% coverage | — | — | — |
+| **Test coverage** | 1783 tests, 90% coverage | — | — | — |
 | **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed | Fixed |
 | **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Anthropic only | Config change | Config change |
 
@@ -327,6 +327,7 @@ On startup, the CLI reads your project and injects context into the system promp
 - `README.md` — first 50 lines
 - Git info — branch, status, recent commits
 - `.gitignore` content
+- **Merge conflicts** — detected and shown as a red warning; included in LLM context so the agent avoids editing conflicted files
 
 ### Context Engine
 Automatic token management with compression when the context window gets full. Tracks token usage across system prompt, conversation, tool results, and tool definitions.
@@ -338,6 +339,7 @@ Three tiers of protection:
 - **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
 - **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
+- **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
 
 ### Sessions
 Save and restore conversations:
@@ -687,7 +689,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-43 test suites, 1780 tests, 90% statement / 83% branch coverage.
+43 test suites, 1783 tests, 90% statement / 83% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
