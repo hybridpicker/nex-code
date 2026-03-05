@@ -11,9 +11,24 @@ let _fileIndex = [];
 let _indexedCwd = null;
 let _isIndexing = false;
 let _lastIndexTime = 0;
+const INDEX_TTL_MS = 60000; // Index valid for 60 seconds
+
+/**
+ * Check if index is still valid (not expired)
+ */
+function isIndexValid(cwd) {
+    if (_fileIndex.length === 0) return false;
+    if (_indexedCwd !== cwd) return false;
+    if (Date.now() - _lastIndexTime > INDEX_TTL_MS) return false;
+    return true;
+}
 
 async function refreshIndex(cwd) {
     if (_isIndexing) return;
+    
+    // Skip if index is still valid
+    if (isIndexValid(cwd)) return;
+    
     _isIndexing = true;
     _indexedCwd = cwd;
 
@@ -71,4 +86,4 @@ function searchIndex(query) {
     return _fileIndex.filter(f => f.toLowerCase().includes(q)).slice(0, 20);
 }
 
-module.exports = { refreshIndex, getFileIndex, getIndexedCwd, findFileInIndex, searchIndex };
+module.exports = { refreshIndex, getFileIndex, getIndexedCwd, findFileInIndex, searchIndex, isIndexValid };

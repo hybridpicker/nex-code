@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const { BaseProvider } = require('./base');
+const { serializeMessage } = require('../context-engine');
 
 const OPENAI_MODELS = {
   'gpt-4o': { id: 'gpt-4o', name: 'GPT-4o', maxTokens: 16384, contextWindow: 128000 },
@@ -48,36 +49,78 @@ class OpenAIProvider extends BaseProvider {
     };
   }
 
+  // Message format cache (per provider instance)
+  _messageFormatCache = new WeakMap();
+  _messageStringCache = new Map();
+  _maxCacheSize = 200;
+
   formatMessages(messages) {
-    return {
-      messages: messages.map((msg) => {
-        if (msg.role === 'assistant' && msg.tool_calls) {
-          return {
-            role: 'assistant',
-            content: msg.content || null,
-            tool_calls: msg.tool_calls.map((tc) => ({
-              id: tc.id || `call-${Date.now()}`,
-              type: 'function',
-              function: {
-                name: tc.function.name,
-                arguments:
-                  typeof tc.function.arguments === 'string'
-                    ? tc.function.arguments
-                    : JSON.stringify(tc.function.arguments),
-              },
-            })),
-          };
-        }
-        if (msg.role === 'tool') {
-          return {
-            role: 'tool',
-            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-            tool_call_id: msg.tool_call_id,
-          };
-        }
-        return { role: msg.role, content: msg.content };
-      }),
-    };
+    const formattedMessages = [];
+    
+    for (const msg of messages) {
+      // Check WeakMap cache first
+      if (this._messageFormatCache.has(msg)) {
+        formattedMessages.push(this._messageFormatCache.get(msg));
+        continue;
+      }
+      
+      // Check string cache
+      const cacheKey = this._getMessageCacheKey(msg);
+      if (this._messageStringCache.has(cacheKey)) {
+        const cached = this._messageStringCache.get(cacheKey);
+        this._messageFormatCache.set(msg, cached);
+        formattedMessages.push(cached);
+        continue;
+      }
+      
+      // Format message
+      const formatted = this._formatSingleMessage(msg);
+      
+      // Cache (limit size)
+      if (this._messageStringCache.size < this._maxCacheSize) {
+        this._messageStringCache.set(cacheKey, formatted);
+      }
+      this._messageFormatCache.set(msg, formatted);
+      
+      formattedMessages.push(formatted);
+    }
+    
+    return { messages: formattedMessages };
+  }
+
+  _getMessageCacheKey(msg) {
+    const role = msg.role || '';
+    const content = typeof msg.content === 'string' ? msg.content.substring(0, 100) : '';
+    const toolCalls = msg.tool_calls ? msg.tool_calls.length : 0;
+    return `${role}:${content.length}:${toolCalls}`;
+  }
+
+  _formatSingleMessage(msg) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      return {
+        role: 'assistant',
+        content: msg.content || null,
+        tool_calls: msg.tool_calls.map((tc) => ({
+          id: tc.id || `call-${Date.now()}`,
+          type: 'function',
+          function: {
+            name: tc.function.name,
+            arguments:
+              typeof tc.function.arguments === 'string'
+                ? tc.function.arguments
+                : JSON.stringify(tc.function.arguments),
+          },
+        })),
+      };
+    }
+    if (msg.role === 'tool') {
+      return {
+        role: 'tool',
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        tool_call_id: msg.tool_call_id,
+      };
+    }
+    return { role: msg.role, content: msg.content };
   }
 
   async chat(messages, tools, options = {}) {

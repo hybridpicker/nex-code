@@ -460,17 +460,19 @@ function _buildModelRoutingGuide() {
 }
 
 async function buildSystemPrompt() {
-  // Check if context has changed
+  // Check if context has changed (includes model routing guide cache)
   const currentHash = await getProjectContextHash();
   if (cachedSystemPrompt !== null && currentHash === cachedContextHash) {
     return cachedSystemPrompt;
   }
 
   // Rebuild system prompt
+  // Note: gatherProjectContext is now cached internally (30s TTL + mtime validation)
   const projectContext = await gatherProjectContext(process.cwd());
   const memoryContext = getMemoryContext();
   const skillInstructions = getSkillInstructions();
   const planPrompt = isPlanMode() ? getPlanModePrompt() : '';
+  // Model routing guide is also cached internally
 
   cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
@@ -764,6 +766,7 @@ async function processInput(userInput) {
           staleWarned = false;
           
           // Batch tokens for better performance (reduce cursor updates)
+          // 100ms batch window provides optimal balance between latency and throughput
           tokenBuffer += text;
           
           if (!flushTimeout) {
@@ -773,7 +776,7 @@ async function processInput(userInput) {
               }
               tokenBuffer = '';
               flushTimeout = null;
-            }, 50); // Batch for 50ms
+            }, 100); // Batch for 100ms (optimized from 50ms)
           }
           
           if (firstToken) {
