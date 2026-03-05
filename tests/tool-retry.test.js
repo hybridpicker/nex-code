@@ -53,6 +53,8 @@ jest.mock('../cli/context-engine', () => ({
     tokensRemoved: 0,
   })),
   getUsage: jest.fn().mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),
+  estimateTokens: jest.fn().mockImplementation((text) => text ? text.length / 4 : 0),
+  compressToolResult: jest.fn().mockImplementation((content) => content),
 }));
 
 jest.mock('../cli/session', () => ({ autoSave: jest.fn() }));

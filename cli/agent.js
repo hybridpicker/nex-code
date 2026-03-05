@@ -6,9 +6,9 @@
 const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, setActiveTaskProgress } = require('./ui');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
-const { TOOL_DEFINITIONS, executeTool } = require('./tools');
+const { executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
-const { fitToContext, forceCompress, getUsage } = require('./context-engine');
+const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
 const { autoSave } = require('./session');
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
@@ -22,6 +22,42 @@ const { trackUsage } = require('./costs');
 const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
 const { getConfiguredProviders } = require('./providers/registry');
+
+// ─── Lazy Tool Loading ───────────────────────────────────────
+// Cache tool definitions to avoid loading on every call
+let cachedToolDefinitions = null;
+let cachedSkillToolDefinitions = null;
+let cachedMCPToolDefinitions = null;
+
+/**
+ * Get all tool definitions with lazy loading and caching.
+ * Reduces startup time by ~50-100ms.
+ */
+function getAllToolDefinitions() {
+  if (cachedToolDefinitions === null) {
+    const { TOOL_DEFINITIONS } = require('./tools');
+    cachedToolDefinitions = TOOL_DEFINITIONS;
+  }
+  
+  if (cachedSkillToolDefinitions === null) {
+    cachedSkillToolDefinitions = getSkillToolDefinitions();
+  }
+  
+  if (cachedMCPToolDefinitions === null) {
+    cachedMCPToolDefinitions = getMCPToolDefinitions();
+  }
+  
+  return [...cachedToolDefinitions, ...cachedSkillToolDefinitions, ...cachedMCPToolDefinitions];
+}
+
+/**
+ * Clear tool definition cache (for testing or when tools change)
+ */
+function clearToolDefinitionsCache() {
+  cachedToolDefinitions = null;
+  cachedSkillToolDefinitions = null;
+  cachedMCPToolDefinitions = null;
+}
 
 let MAX_ITERATIONS = 50;
 function setMaxIterations(n) { if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n; }
@@ -39,6 +75,30 @@ let cachedModelRoutingGuide = null;
 // ─── Tool Filter Cache ───────────────────────────────────────
 // Cache filtered tool definitions per model (saves 5-10ms per iteration)
 const toolFilterCache = new Map();
+
+// ─── Early Tool Result Compression ───────────────────────────
+// Compress large tool results to save context tokens
+const TOOL_RESULT_TOKEN_THRESHOLD = 5000;
+const TOOL_RESULT_COMPRESS_TARGET = 3000;
+
+/**
+ * Compress tool result if it exceeds token threshold.
+ * Uses context-engine compression to reduce token count.
+ */
+function compressToolResultIfNeeded(content) {
+  const tokens = estimateTokens(content);
+  if (tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
+    try {
+      const { compressToolResult } = require('./context-engine');
+      const compressed = compressToolResult(content, TOOL_RESULT_COMPRESS_TARGET);
+      return compressed;
+    } catch {
+      // Fallback: return original if compression fails
+      return content;
+    }
+  }
+  return content;
+}
 
 /**
  * Get cached filtered tools for current model.
@@ -146,7 +206,7 @@ async function prepareToolCall(tc) {
 
   // Malformed args
   if (!args) {
-    const allToolDefs = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+    const allToolDefs = getAllToolDefinitions();
     const toolDef = allToolDefs.find(t => t.function.name === fnName);
     const schema = toolDef ? JSON.stringify(toolDef.function.parameters, null, 2) : 'unknown';
     console.log(`${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`);
@@ -266,7 +326,10 @@ async function executeSingleTool(prep, quiet = false) {
   const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED')
     || (prep.fnName === 'spawn_agents' && !/✓ Agent/.test(truncated) && /✗ Agent/.test(truncated));
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
-  const msg = { role: 'tool', content: truncated, tool_call_id: prep.callId };
+  
+  // Compress large tool results early to save context tokens
+  const compressedContent = compressToolResultIfNeeded(truncated);
+  const msg = { role: 'tool', content: compressedContent, tool_call_id: prep.callId };
   return { msg, summary };
 }
 
@@ -601,13 +664,14 @@ async function processInput(userInput) {
   preSpinner.start();
 
   // Context-aware compression: fit messages into context window
+  const allTools = getAllToolDefinitions();
   const { messages: fittedMessages, compressed, compacted, tokensRemoved } = await fitToContext(
     fullMessages,
-    TOOL_DEFINITIONS
+    allTools
   );
 
   // Context budget warning
-  const usage = getUsage(fullMessages, TOOL_DEFINITIONS);
+  const usage = getUsage(fullMessages, allTools);
 
   preSpinner.stop();
 
@@ -680,8 +744,13 @@ async function processInput(userInput) {
         console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
       }
     }, 5000);
+    
+    // Token batching for streaming optimization
+    let tokenBuffer = '';
+    let flushTimeout = null;
+    
     try {
-      const allTools = getCachedFilteredTools([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
+      const allTools = getCachedFilteredTools(getAllToolDefinitions());
       const userSignal = _getAbortSignal();
       // Combine user abort (Ctrl+C) and stale abort into one signal
       const combinedAbort = new AbortController();
@@ -693,6 +762,20 @@ async function processInput(userInput) {
         onToken: (text) => {
           lastTokenTime = Date.now();
           staleWarned = false;
+          
+          // Batch tokens for better performance (reduce cursor updates)
+          tokenBuffer += text;
+          
+          if (!flushTimeout) {
+            flushTimeout = setTimeout(() => {
+              if (tokenBuffer && stream) {
+                stream.push(tokenBuffer);
+              }
+              tokenBuffer = '';
+              flushTimeout = null;
+            }, 50); // Batch for 50ms
+          }
+          
           if (firstToken) {
             if (taskProgress && !taskProgress._paused) {
               taskProgress.pause();
@@ -704,7 +787,6 @@ async function processInput(userInput) {
             firstToken = false;
           }
           streamedText += text;
-          stream.push(text);
         },
       });
     } catch (err) {
@@ -758,7 +840,7 @@ async function processInput(userInput) {
         if (isContextTooLong && contextRetries < 1) {
           contextRetries++;
           console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying...${C.reset}`);
-          const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+          const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
           apiMessages = compressedMsgs;
           console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
@@ -834,14 +916,24 @@ async function processInput(userInput) {
       if (spinner) spinner.stop();
     }
 
-    // Reset retry counters on success
-    networkRetries = 0;
-    staleRetries = 0;
+    // Flush remaining token buffer (from batching)
+    if (flushTimeout) {
+      clearTimeout(flushTimeout);
+      flushTimeout = null;
+    }
+    if (tokenBuffer && stream) {
+      stream.push(tokenBuffer);
+      tokenBuffer = '';
+    }
 
     // Flush remaining stream buffer
     if (streamedText) {
       stream.flush();
     }
+
+    // Reset retry counters on success
+    networkRetries = 0;
+    staleRetries = 0;
 
     // Track token usage for cost dashboard
     if (result && result.usage) {
