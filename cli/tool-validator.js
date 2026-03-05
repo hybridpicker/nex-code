@@ -7,6 +7,47 @@
 const { getSkillToolDefinitions } = require('./skills');
 const { getMCPToolDefinitions } = require('./mcp');
 
+// Schema cache to avoid repeated lookups (saves 5-20ms per tool call)
+const schemaCache = new Map();
+const toolDefsCache = { value: null };
+
+/**
+ * Get cached tool definitions (lazy-loaded)
+ */
+function getAllToolDefinitions() {
+  const { TOOL_DEFINITIONS } = require('./tools');
+  // Always get fresh skill and MCP definitions as they can change
+  return [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+}
+
+/**
+ * Get cached schema for a tool
+ */
+function getCachedSchema(toolName) {
+  if (schemaCache.has(toolName)) {
+    return schemaCache.get(toolName);
+  }
+  
+  const allTools = getAllToolDefinitions();
+  const toolDef = allTools.find(t => t.function.name === toolName);
+  
+  if (!toolDef) {
+    return null; // Tool not found
+  }
+  
+  // Tool exists - return schema (may be undefined if no parameters)
+  const schema = toolDef.function.parameters;
+  schemaCache.set(toolName, schema);
+  return schema;
+}
+
+/**
+ * Clear schema cache (e.g. when tools change)
+ */
+function clearSchemaCache() {
+  schemaCache.clear();
+}
+
 /**
  * Find the closest matching string from a list (Levenshtein distance).
  */
@@ -50,13 +91,12 @@ function levenshtein(a, b) {
  * @returns {{ valid: boolean, error?: string, corrected?: object }}
  */
 function validateToolArgs(toolName, args) {
-  // Lazy require to break circular dependency (tools.js → fuzzy-match.js → tool-validator.js → tools.js)
-  const { TOOL_DEFINITIONS } = require('./tools');
-  const allTools = [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
-  const toolDef = allTools.find(t => t.function.name === toolName);
+  // Use cached schema
+  const schema = getCachedSchema(toolName);
 
-  if (!toolDef) {
-    // Unknown tool — check for close matches
+  if (schema === null) {
+    // Tool not found — check for close matches
+    const allTools = getAllToolDefinitions();
     const allNames = allTools.map(t => t.function.name);
     const suggestion = closestMatch(toolName, allNames);
     return {
@@ -65,7 +105,7 @@ function validateToolArgs(toolName, args) {
     };
   }
 
-  const schema = toolDef.function.parameters;
+  // Tool exists but has no schema (or empty schema) - allow any arguments
   if (!schema || !schema.properties) return { valid: true };
 
   const required = schema.required || [];
@@ -135,4 +175,4 @@ function validateToolArgs(toolName, args) {
   return { valid: true, corrected: wasCorrected ? corrected : null };
 }
 
-module.exports = { validateToolArgs, closestMatch, levenshtein };
+module.exports = { validateToolArgs, closestMatch, levenshtein, getCachedSchema, clearSchemaCache };

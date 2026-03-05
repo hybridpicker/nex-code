@@ -148,15 +148,20 @@ describe('validateToolArgs()', () => {
     it('returns valid for tool without schema', () => {
       // Temporarily add a tool with no parameters schema (push/pop to keep same array ref)
       const tools = require('../cli/tools');
+      const validator = require('../cli/tool-validator');
+      
       tools.TOOL_DEFINITIONS.push({
         type: 'function',
         function: { name: 'no_schema', description: 'test' },
       });
+      // Clear schema cache so new tool is picked up
+      validator.clearSchemaCache();
 
-      const result = validateToolArgs('no_schema', { anything: true });
+      const result = validator.validateToolArgs('no_schema', { anything: true });
       expect(result.valid).toBe(true);
 
       tools.TOOL_DEFINITIONS.pop();
+      validator.clearSchemaCache();
     });
   });
 
