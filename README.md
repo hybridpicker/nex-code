@@ -112,7 +112,7 @@ Create a `.env` file in your project directory (or set environment variables):
 
 ```bash
 # Pick any — only one is required
-OLLAMA_API_KEY=your-key       # Ollama Cloud (Qwen3 Coder, DeepSeek R1, Devstral, Kimi K2.5, Llama 4, MiniMax M2.5, GLM 4.7)
+OLLAMA_API_KEY=your-key       # Ollama Cloud (Qwen3 Coder, Qwen3.5, DeepSeek R1, Devstral, Kimi K2.5, Llama 4, MiniMax M2.5, GLM 4.7)
 OPENAI_API_KEY=your-key       # OpenAI (GPT-4o, GPT-4.1, o1, o3, o4-mini)
 ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet 4.6, Opus 4.6, Haiku 4.5)
 GEMINI_API_KEY=your-key       # Google Gemini (3.1 Pro Preview, 2.5 Pro/Flash, 2.0 Flash)
@@ -209,7 +209,7 @@ Switch providers and models at runtime:
 
 | Provider | Models | Env Variable |
 |----------|--------|-------------|
-| **ollama** | Qwen3 Coder, DeepSeek R1, Devstral, Kimi K2.5, MiniMax M2.5, GLM 4.7, Llama 4 | `OLLAMA_API_KEY` |
+| **ollama** | Qwen3 Coder, Qwen3.5 (397B, 122B-A10B, 35B-A3B, 27B, 9B, 4B, 2B, 0.8B), DeepSeek R1, Devstral, Kimi K2.5, MiniMax M2.5, GLM 4.7, Llama 4 | `OLLAMA_API_KEY` |
 | **openai** | GPT-4o, GPT-4.1, o1, o3, o4-mini | `OPENAI_API_KEY` |
 | **anthropic** | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5, Sonnet 4.5, Sonnet 4 | `ANTHROPIC_API_KEY` |
 | **gemini** | Gemini 3.1 Pro Preview, 2.5 Pro/Flash, 1.5 Pro/Flash | `GEMINI_API_KEY` |
