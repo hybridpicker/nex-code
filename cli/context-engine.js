@@ -23,6 +23,11 @@ const tokenCache = new WeakMap();
 const stringTokenCache = new Map();
 const MAX_STRING_CACHE_SIZE = 1000;
 
+// Message serialization cache (for API calls)
+const messageSerializationCache = new WeakMap();
+const messageStringCache = new Map();
+const MAX_MESSAGE_CACHE_SIZE = 500;
+
 /**
  * Get chars-per-token ratio for current provider.
  */
@@ -58,6 +63,49 @@ function estimateTokens(text) {
   }
   
   return tokens;
+}
+
+/**
+ * Serialize a message for API calls (with caching).
+ * Avoids redundant JSON.stringify calls for unchanged messages.
+ * 
+ * @param {object} msg - Message object
+ * @returns {string} Serialized message
+ */
+function serializeMessage(msg) {
+  // Check WeakMap cache first (for object references)
+  if (messageSerializationCache.has(msg)) {
+    return messageSerializationCache.get(msg);
+  }
+  
+  // Check string cache (for content equality)
+  const cacheKey = getMessageCacheKey(msg);
+  if (messageStringCache.has(cacheKey)) {
+    const cached = messageStringCache.get(cacheKey);
+    messageSerializationCache.set(msg, cached);
+    return cached;
+  }
+  
+  // Serialize
+  const serialized = JSON.stringify(msg);
+  
+  // Cache (limit size to prevent memory bloat)
+  if (messageStringCache.size < MAX_MESSAGE_CACHE_SIZE) {
+    messageStringCache.set(cacheKey, serialized);
+  }
+  messageSerializationCache.set(msg, serialized);
+  
+  return serialized;
+}
+
+/**
+ * Generate a cache key for a message (shallow hash).
+ */
+function getMessageCacheKey(msg) {
+  const role = msg.role || '';
+  const content = typeof msg.content === 'string' ? msg.content.substring(0, 100) : '';
+  const toolCalls = msg.tool_calls ? msg.tool_calls.length : 0;
+  return `${role}:${content.length}:${toolCalls}`;
 }
 
 /**
@@ -544,6 +592,8 @@ module.exports = {
   estimateMessagesTokens,
   estimateDeltaTokens,
   estimateToolsTokens,
+  serializeMessage,
+  getMessageCacheKey,
   getContextWindow,
   getUsage,
   compressMessage,
