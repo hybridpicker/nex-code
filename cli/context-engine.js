@@ -18,6 +18,11 @@ const TOKEN_RATIOS = {
   local: 4.0,
 };
 
+// Token cache for strings (WeakMap prevents memory leaks)
+const tokenCache = new WeakMap();
+const stringTokenCache = new Map();
+const MAX_STRING_CACHE_SIZE = 1000;
+
 /**
  * Get chars-per-token ratio for current provider.
  */
@@ -34,11 +39,25 @@ function getTokenRatio() {
 /**
  * Estimate token count for a string.
  * Uses provider-specific chars/token ratio for better accuracy.
+ * Implements caching to avoid redundant calculations.
  */
 function estimateTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
-  return Math.ceil(text.length / getTokenRatio());
+  
+  // Check cache for string content
+  if (stringTokenCache.has(text)) {
+    return stringTokenCache.get(text);
+  }
+  
+  const tokens = Math.ceil(text.length / getTokenRatio());
+  
+  // Cache result (limit cache size to prevent memory bloat)
+  if (stringTokenCache.size < MAX_STRING_CACHE_SIZE) {
+    stringTokenCache.set(text, tokens);
+  }
+  
+  return tokens;
 }
 
 /**
@@ -78,6 +97,36 @@ function estimateMessagesTokens(messages) {
     total += estimateMessageTokens(msg);
   }
   return total;
+}
+
+/**
+ * Estimate token delta between old and new message arrays.
+ * Only calculates tokens for new/changed messages (optimization).
+ */
+function estimateDeltaTokens(oldMessages, newMessages) {
+  // If arrays are same length, check if content changed
+  if (oldMessages && oldMessages.length === newMessages.length) {
+    let hasChanges = false;
+    for (let i = 0; i < newMessages.length; i++) {
+      if (oldMessages[i] !== newMessages[i]) {
+        hasChanges = true;
+        break;
+      }
+    }
+    if (!hasChanges) return 0; // No changes, no delta
+  }
+  
+  // Calculate tokens for new messages only
+  const oldCount = oldMessages ? oldMessages.length : 0;
+  const newCount = newMessages.length;
+  let delta = 0;
+  
+  // Only count new messages (from oldCount to newCount)
+  for (let i = oldCount; i < newCount; i++) {
+    delta += estimateMessageTokens(newMessages[i]);
+  }
+  
+  return delta;
 }
 
 /**
@@ -493,6 +542,7 @@ module.exports = {
   estimateTokens,
   estimateMessageTokens,
   estimateMessagesTokens,
+  estimateDeltaTokens,
   estimateToolsTokens,
   getContextWindow,
   getUsage,

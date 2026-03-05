@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { C, banner, cleanupTerminal } = require('./ui');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
+const { flushAutoSave } = require('./session');
 const { getActiveModel, setActiveModel } = require('./ollama');
 const { printContext } = require('./context');
 const { loadAllSkills, getSkillCommands, handleSkillCommand } = require('./skills');
@@ -1018,12 +1019,32 @@ async function startREPL() {
   let _processing = false;
   let _sigintCount = 0;
 
+  // Graceful shutdown handler
+  function gracefulShutdown() {
+    // Flush any pending auto-save
+    flushAutoSave();
+    cleanupTerminal();
+    if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
+    console.log(`\n${C.gray}Bye!${C.reset}`);
+    process.exit(0);
+  }
+
+  // Register exit handlers
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
+  
+  // Also handle normal exit
+  process.on('exit', () => {
+    flushAutoSave();
+  });
+
   process.on('SIGINT', () => {
     cleanupTerminal();
     if (_processing) {
       _sigintCount++;
       if (_sigintCount >= 3) {
         // Force exit after 3 rapid Ctrl+C during processing
+        flushAutoSave();
         if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
         console.log(`\n${C.gray}Bye!${C.reset}`);
         process.exit(0);
@@ -1039,9 +1060,7 @@ async function startREPL() {
       return;
     }
     // At prompt — clean exit
-    if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-    console.log(`\n${C.gray}Bye!${C.reset}`);
-    process.exit(0);
+    gracefulShutdown();
   });
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
