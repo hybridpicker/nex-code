@@ -21,6 +21,11 @@ describe('context.js', () => {
     const cp = require('child_process');
     cp.execSync.mockReset();
     cp.exec.mockReset();
+    // Clear context cache before each test
+    const context = require('../cli/context');
+    if (context._clearContextCache) {
+      context._clearContextCache();
+    }
     // Default exec to fail to avoid hangs in promisify
     cp.exec.mockImplementation((cmd, opts, cb) => {
       if (typeof opts === 'function') cb = opts;

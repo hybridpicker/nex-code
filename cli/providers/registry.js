@@ -166,6 +166,8 @@ function setActiveModel(spec) {
       if (providerName === 'local') {
         activeProviderName = providerName;
         activeModelId = modelId;
+        // Invalidate caches on model change
+        invalidateCaches();
         return true;
       }
       return false;
@@ -173,6 +175,8 @@ function setActiveModel(spec) {
 
     activeProviderName = providerName;
     activeModelId = modelId;
+    // Invalidate caches on model change
+    invalidateCaches();
     return true;
   }
 
@@ -180,6 +184,8 @@ function setActiveModel(spec) {
   const active = getActiveProvider();
   if (active && active.getModel(modelId)) {
     activeModelId = modelId;
+    // Invalidate caches on model change
+    invalidateCaches();
     return true;
   }
 
@@ -187,11 +193,26 @@ function setActiveModel(spec) {
     if (provider.getModel(modelId)) {
       activeProviderName = name;
       activeModelId = modelId;
+      // Invalidate caches on model change
+      invalidateCaches();
       return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Invalidate all caches when model/provider changes
+ */
+function invalidateCaches() {
+  try {
+    const { invalidateSystemPromptCache, clearToolFilterCache } = require('../agent');
+    invalidateSystemPromptCache();
+    clearToolFilterCache();
+  } catch {
+    // Ignore if agent module not loaded yet
+  }
 }
 
 /**

@@ -164,19 +164,23 @@ describe('session.js', () => {
   describe('autoSave()', () => {
     it('does nothing for empty messages', () => {
       session.autoSave([]);
+      session.flushAutoSave();
       const list = session.listSessions();
       expect(list.length).toBe(0);
     });
 
     it('saves as _autosave', () => {
       session.autoSave(sampleMessages);
+      session.flushAutoSave();
       const list = session.listSessions();
       expect(list.some((s) => s.name === '_autosave')).toBe(true);
     });
 
     it('overwrites previous autosave', () => {
       session.autoSave([{ role: 'user', content: 'First' }]);
+      session.flushAutoSave();
       session.autoSave(sampleMessages);
+      session.flushAutoSave();
       const loaded = session.loadSession('_autosave');
       expect(loaded.messages).toEqual(sampleMessages);
       expect(loaded.messageCount).toBe(2);
@@ -184,6 +188,7 @@ describe('session.js', () => {
 
     it('accepts metadata', () => {
       session.autoSave(sampleMessages, { model: 'gpt-4o', provider: 'openai' });
+      session.flushAutoSave();
       const loaded = session.loadSession('_autosave');
       expect(loaded.model).toBe('gpt-4o');
     });

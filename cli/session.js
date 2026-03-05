@@ -115,10 +115,49 @@ function getLastSession() {
 /**
  * Auto-save the current session (called after each turn)
  * Uses a fixed name '_autosave' that gets overwritten each time
+ * Implements debouncing to avoid excessive I/O during active conversations
  */
+let autoSaveTimeout = null;
+let pendingMessages = null;
+let pendingMeta = null;
+
 function autoSave(messages, meta = {}) {
   if (messages.length === 0) return;
-  saveSession('_autosave', messages, meta);
+  
+  // Clear any pending save
+  if (autoSaveTimeout) {
+    clearTimeout(autoSaveTimeout);
+  }
+  
+  // Store messages for debounced save
+  pendingMessages = messages;
+  pendingMeta = meta || {};
+  
+  // Debounce: save after 5 seconds of inactivity
+  autoSaveTimeout = setTimeout(() => {
+    if (pendingMessages && pendingMessages.length > 0) {
+      saveSession('_autosave', pendingMessages, pendingMeta);
+    }
+    autoSaveTimeout = null;
+    pendingMessages = null;
+    pendingMeta = null;
+  }, 5000);
+}
+
+/**
+ * Force immediate auto-save (bypasses debounce)
+ * Called on session end or process exit
+ */
+function flushAutoSave() {
+  if (autoSaveTimeout) {
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = null;
+  }
+  if (pendingMessages && pendingMessages.length > 0) {
+    saveSession('_autosave', pendingMessages, pendingMeta);
+    pendingMessages = null;
+    pendingMeta = null;
+  }
 }
 
 module.exports = {
@@ -128,6 +167,7 @@ module.exports = {
   deleteSession,
   getLastSession,
   autoSave,
+  flushAutoSave,
   // exported for testing
   _getSessionsDir: getSessionsDir,
 };

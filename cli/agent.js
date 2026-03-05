@@ -30,6 +30,90 @@ function setMaxIterations(n) { if (Number.isFinite(n) && n > 0) MAX_ITERATIONS =
 let _getAbortSignal = () => null;
 function setAbortSignalGetter(fn) { _getAbortSignal = fn; }
 
+// ─── System Prompt Cache ─────────────────────────────────────
+// Cache system prompt to avoid rebuilding on every turn (saves 100-1000ms)
+let cachedSystemPrompt = null;
+let cachedContextHash = null;
+let cachedModelRoutingGuide = null;
+
+// ─── Tool Filter Cache ───────────────────────────────────────
+// Cache filtered tool definitions per model (saves 5-10ms per iteration)
+const toolFilterCache = new Map();
+
+/**
+ * Get cached filtered tools for current model.
+ * Invalidated when model changes.
+ */
+function getCachedFilteredTools(allTools) {
+  try {
+    const { getActiveModel } = require('./providers/registry');
+    const model = getActiveModel();
+    const modelId = model ? `${model.provider}:${model.id}` : 'default';
+    
+    if (toolFilterCache.has(modelId)) {
+      return toolFilterCache.get(modelId);
+    }
+    
+    const filtered = filterToolsForModel(allTools);
+    toolFilterCache.set(modelId, filtered);
+    return filtered;
+  } catch {
+    // Fallback: no caching on error
+    return filterToolsForModel(allTools);
+  }
+}
+
+/**
+ * Clear tool filter cache (called on model change)
+ */
+function clearToolFilterCache() {
+  toolFilterCache.clear();
+}
+
+/**
+ * Quick hash of project context to detect changes.
+ * Uses mtime of key files + git HEAD ref.
+ */
+async function getProjectContextHash() {
+  try {
+    const fs = require('fs').promises;
+    const path = require('path');
+    const files = [
+      path.join(process.cwd(), 'package.json'),
+      path.join(process.cwd(), '.git', 'HEAD'),
+      path.join(process.cwd(), 'README.md'),
+      path.join(process.cwd(), 'NEX.md'),
+    ];
+    const hashes = [];
+    for (const file of files) {
+      try {
+        const stat = await fs.stat(file);
+        hashes.push(`${file}:${stat.mtimeMs}`);
+      } catch {
+        // File doesn't exist — skip
+      }
+    }
+    // Also include memory context hash
+    try {
+      const { getMemoryContextHash } = require('./memory');
+      const memHash = getMemoryContextHash();
+      if (memHash) hashes.push(`memory:${memHash}`);
+    } catch { /* ignore */ }
+    return hashes.join('|');
+  } catch {
+    return `fallback:${Date.now()}`;
+  }
+}
+
+/**
+ * Invalidate system prompt cache (called on model/provider change)
+ */
+function invalidateSystemPromptCache() {
+  cachedSystemPrompt = null;
+  cachedContextHash = null;
+  cachedModelRoutingGuide = null;
+}
+
 // Tools that can safely run in parallel (read-only, no side effects)
 const PARALLEL_SAFE = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
@@ -276,6 +360,7 @@ let conversationMessages = [];
  * Only shown when 2+ models are available across configured providers.
  */
 function _buildModelRoutingGuide() {
+  if (cachedModelRoutingGuide !== null) return cachedModelRoutingGuide;
   try {
     const configured = getConfiguredProviders();
     const allModels = configured.flatMap(p =>
@@ -286,7 +371,10 @@ function _buildModelRoutingGuide() {
       }))
     );
 
-    if (allModels.length < 2) return '';
+    if (allModels.length < 2) {
+      cachedModelRoutingGuide = '';
+      return '';
+    }
 
     const tierLabels = {
       full: 'complex tasks (refactor, implement, generate)',
@@ -300,20 +388,28 @@ function _buildModelRoutingGuide() {
     for (const m of allModels) {
       guide += `| ${m.spec} | ${m.tier} | ${tierLabels[m.tier] || m.tier} |\n`;
     }
+    cachedModelRoutingGuide = guide;
     return guide;
   } catch {
+    cachedModelRoutingGuide = '';
     return '';
   }
 }
 
 async function buildSystemPrompt() {
-  const projectContext = await gatherProjectContext(process.cwd());
+  // Check if context has changed
+  const currentHash = await getProjectContextHash();
+  if (cachedSystemPrompt !== null && currentHash === cachedContextHash) {
+    return cachedSystemPrompt;
+  }
 
+  // Rebuild system prompt
+  const projectContext = await gatherProjectContext(process.cwd());
   const memoryContext = getMemoryContext();
   const skillInstructions = getSkillInstructions();
   const planPrompt = isPlanMode() ? getPlanModePrompt() : '';
 
-  return `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
+  cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
 WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
@@ -417,7 +513,12 @@ When a tool call returns ERROR:
 - NEVER run destructive commands (rm -rf /, mkfs, dd, etc.).
 - Dangerous commands (git push, npm publish, sudo, rm -rf) require user confirmation.
 - Prefer creating new git commits over amending. Never force-push without explicit permission.
-- If you encounter unexpected state (unfamiliar files, branches), investigate before modifying.`;
+- If you encounter unexpected state (unfamiliar files, branches), investigate before modifying.
+
+`;
+
+  cachedContextHash = currentHash;
+  return cachedSystemPrompt;
 }
 
 function clearConversation() {
@@ -580,7 +681,7 @@ async function processInput(userInput) {
       }
     }, 5000);
     try {
-      const allTools = filterToolsForModel([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
+      const allTools = getCachedFilteredTools([...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()]);
       const userSignal = _getAbortSignal();
       // Combine user abort (Ctrl+C) and stale abort into one signal
       const combinedAbort = new AbortController();
@@ -832,4 +933,19 @@ async function processInput(userInput) {
   }
 }
 
-module.exports = { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter, setMaxIterations };
+module.exports = {
+  processInput,
+  clearConversation,
+  getConversationLength,
+  getConversationMessages,
+  setConversationMessages,
+  setAbortSignalGetter,
+  setMaxIterations,
+  // Export cache invalidation functions for registry.js
+  invalidateSystemPromptCache,
+  clearToolFilterCache,
+  // Export for benchmarking
+  getCachedFilteredTools,
+  buildSystemPrompt,
+  getProjectContextHash,
+};

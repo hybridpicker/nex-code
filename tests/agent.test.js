@@ -99,6 +99,10 @@ describe('agent.js', () => {
     jest.clearAllMocks();
     setAbortSignalGetter(() => null);
     restoreTimeout(); // ensure clean timer state
+    // Clear system prompt and tool filter caches
+    const agent = require('../cli/agent');
+    if (agent.invalidateSystemPromptCache) agent.invalidateSystemPromptCache();
+    if (agent.clearToolFilterCache) agent.clearToolFilterCache();
   });
 
   afterEach(() => {
