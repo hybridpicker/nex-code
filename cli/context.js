@@ -144,30 +144,37 @@ async function gatherProjectContext(cwd) {
   }
   
   // Always fetch fresh git info (changes frequently)
+  // Run all git operations in parallel for maximum performance
   const gitParts = [fileContext];
   
-  // Git info
-  const branch = await safe(async () => {
-    const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
-    return stdout.trim();
-  });
+  const [branch, status, log, conflicts] = await Promise.all([
+    // Git branch
+    safe(async () => {
+      const { stdout } = await exec('git branch --show-current', { cwd, timeout: 5000 });
+      return stdout.trim();
+    }),
+    
+    // Git status
+    safe(async () => {
+      const { stdout } = await exec('git status --short', { cwd, timeout: 5000 });
+      return stdout.trim();
+    }),
+    
+    // Git log
+    safe(async () => {
+      const { stdout } = await exec('git log --oneline -5', { cwd, timeout: 5000 });
+      return stdout.trim();
+    }),
+    
+    // Merge conflicts
+    getMergeConflicts(),
+  ]);
+  
   if (branch) gitParts.push(`GIT BRANCH: ${branch}`);
-
-  const status = await safe(async () => {
-    const { stdout } = await exec('git status --short', { cwd, timeout: 5000 });
-    return stdout.trim();
-  });
   if (status) gitParts.push(`GIT STATUS:\n${status}`);
-
-  const log = await safe(async () => {
-    const { stdout } = await exec('git log --oneline -5', { cwd, timeout: 5000 });
-    return stdout.trim();
-  });
   if (log) gitParts.push(`RECENT COMMITS:\n${log}`);
-
-  // Merge conflicts
-  const conflicts = await getMergeConflicts();
-  if (conflicts.length > 0) {
+  
+  if (conflicts && conflicts.length > 0) {
     const conflictFiles = conflicts.map(c => `  ${c.file}`).join('\n');
     gitParts.push(`MERGE CONFLICTS (resolve before editing these files):\n${conflictFiles}`);
   }

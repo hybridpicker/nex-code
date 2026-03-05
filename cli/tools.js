@@ -765,12 +765,12 @@ async function _executeToolInner(name, args, options = {}) {
       const namePattern = pattern.split('/').pop();
       const nameRegex = globToRegex(namePattern);
 
-      let { getFileIndex: getIndex, getIndexedCwd, refreshIndex } = require('./index-engine');
+      let { getFileIndex: getIndex, getIndexedCwd, refreshIndex, isIndexValid } = require('./index-engine');
       let allFiles = getIndex();
       let indexedCwd = getIndexedCwd();
 
-      // Refresh if index is empty OR the directory context changed
-      if (allFiles.length === 0 || indexedCwd !== basePath) {
+      // Refresh if index is invalid (empty, wrong cwd, or expired)
+      if (!isIndexValid(basePath)) {
         await refreshIndex(basePath);
         allFiles = getIndex();
       }

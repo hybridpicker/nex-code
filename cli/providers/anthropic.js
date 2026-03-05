@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const { BaseProvider } = require('./base');
+const { serializeMessage } = require('../context-engine');
 
 const ANTHROPIC_MODELS = {
   'claude-sonnet': {
@@ -73,6 +74,11 @@ class AnthropicProvider extends BaseProvider {
     };
   }
 
+  // Message format cache (per provider instance)
+  _messageFormatCache = new WeakMap();
+  _messageStringCache = new Map();
+  _maxCacheSize = 200;
+
   /**
    * Convert normalized messages to Anthropic format.
    * Anthropic uses separate system parameter and different tool_use/tool_result blocks.
@@ -87,51 +93,78 @@ class AnthropicProvider extends BaseProvider {
         continue;
       }
 
-      if (msg.role === 'assistant') {
-        const content = [];
-        if (msg.content) {
-          content.push({ type: 'text', text: msg.content });
-        }
-        if (msg.tool_calls) {
-          for (const tc of msg.tool_calls) {
-            content.push({
-              type: 'tool_use',
-              id: tc.id || `toolu-${Date.now()}`,
-              name: tc.function.name,
-              input:
-                typeof tc.function.arguments === 'string'
-                  ? JSON.parse(tc.function.arguments || '{}')
-                  : tc.function.arguments || {},
-            });
-          }
-        }
-        formatted.push({ role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '' }] });
+      // Skip caching for tool messages (they need dynamic merging)
+      if (msg.role !== 'system' && msg.role !== 'tool' && this._messageFormatCache.has(msg)) {
+        formatted.push(this._messageFormatCache.get(msg));
         continue;
       }
 
-      if (msg.role === 'tool') {
-        // Anthropic tool results are sent as user messages with tool_result content blocks
-        // Merge consecutive tool results into one user message
-        const last = formatted[formatted.length - 1];
-        const toolResult = {
-          type: 'tool_result',
-          tool_use_id: msg.tool_call_id,
-          content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-        };
-
-        if (last && last.role === 'user' && Array.isArray(last.content) && last.content[0]?.type === 'tool_result') {
-          last.content.push(toolResult);
-        } else {
-          formatted.push({ role: 'user', content: [toolResult] });
-        }
-        continue;
+      const formattedMsg = this._formatSingleMessage(msg, formatted);
+      
+      // Skip if message was merged (null returned)
+      if (!formattedMsg) continue;
+      
+      // Cache (limit size) - skip tool messages
+      if (msg.role !== 'system' && msg.role !== 'tool' && this._messageStringCache.size < this._maxCacheSize) {
+        const cacheKey = this._getMessageCacheKey(msg);
+        this._messageStringCache.set(cacheKey, formattedMsg);
+        this._messageFormatCache.set(msg, formattedMsg);
       }
-
-      // user messages
-      formatted.push({ role: 'user', content: msg.content });
+      
+      formatted.push(formattedMsg);
     }
 
     return { messages: formatted, system };
+  }
+
+  _getMessageCacheKey(msg) {
+    const role = msg.role || '';
+    const content = typeof msg.content === 'string' ? msg.content.substring(0, 100) : '';
+    const toolCalls = msg.tool_calls ? msg.tool_calls.length : 0;
+    return `${role}:${content.length}:${toolCalls}`;
+  }
+
+  _formatSingleMessage(msg, formatted = []) {
+    if (msg.role === 'assistant') {
+      const content = [];
+      if (msg.content) {
+        content.push({ type: 'text', text: msg.content });
+      }
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          content.push({
+            type: 'tool_use',
+            id: tc.id || `toolu-${Date.now()}`,
+            name: tc.function.name,
+            input:
+              typeof tc.function.arguments === 'string'
+                ? JSON.parse(tc.function.arguments || '{}')
+                : tc.function.arguments || {},
+          });
+        }
+      }
+      return { role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '' }] };
+    }
+
+    if (msg.role === 'tool') {
+      // Anthropic tool results are sent as user messages with tool_result content blocks
+      // Merge consecutive tool results into one user message
+      const last = formatted[formatted.length - 1];
+      const toolResult = {
+        type: 'tool_result',
+        tool_use_id: msg.tool_call_id,
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+      };
+
+      if (last && last.role === 'user' && Array.isArray(last.content) && last.content[0]?.type === 'tool_result') {
+        last.content.push(toolResult);
+        return null; // Signal to skip pushing (already merged into last)
+      }
+      return { role: 'user', content: [toolResult] };
+    }
+
+    // user messages
+    return { role: 'user', content: msg.content };
   }
 
   /**
