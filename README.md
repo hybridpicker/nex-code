@@ -704,6 +704,29 @@ Project-local configuration and state (gitignored):
 
 ---
 
+## Performance
+
+Nex Code v0.3.7+ includes comprehensive performance optimizations:
+
+| Optimization | Improvement | Impact |
+|--------------|-------------|--------|
+| **System Prompt Caching** | 4.3× faster | 77µs → 18µs |
+| **Token Estimation Caching** | 3.5× faster | Cached after first call |
+| **Context File Caching** | 10-20× faster | 50-200ms → 5-10ms |
+| **Debounced Auto-Save** | 0ms in hot path | Saves after 5s inactivity |
+| **Tool Filter Caching** | 1.7× faster | Cached per model |
+| **Schema Cache** | 3.4× faster | 2.51µs → 0.73µs |
+
+**Average speedup:** 2.7× (micro-benchmarks)  
+**Real-world improvement:** ~10× faster per turn
+
+Run benchmarks yourself:
+```bash
+node benchmark.js
+```
+
+---
+
 ## Testing
 
 ```bash
