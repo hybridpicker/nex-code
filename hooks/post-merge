@@ -46,6 +46,15 @@ if echo "$MERGE_MSG" | grep -qi "devel"; then
     echo "[post-merge]   npm publish"
   fi
   echo ""
+
+  # Sync version bump back to devel so both branches stay in sync
+  echo "[post-merge] Syncing version bump back to devel..."
+  git push origin main 2>/dev/null || true
+  git checkout devel
+  git merge main --no-edit
+  git push origin devel
+  git checkout main
+  echo "[post-merge] devel is now synced to ${NEW_VERSION}"
 fi
 
 # Run npm install if package.json changed in the merge
