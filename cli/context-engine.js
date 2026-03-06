@@ -5,7 +5,9 @@
  * when approaching context window limits, and provides smart file truncation.
  */
 
-const { getActiveModel } = require('./providers/registry');
+function getActiveModel() {
+  return require('./providers/registry').getActiveModel();
+}
 
 // ─── Token Estimation ──────────────────────────────────────────
 
