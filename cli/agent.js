@@ -798,10 +798,22 @@ async function processInput(userInput) {
       if (spinner) spinner.stop();
       stream.stopCursor();
 
-      // Stale abort → retry this iteration (with limit)
+      // Stale abort → progressive retry: 1st=resend, 2nd=compress+resend, exhausted=last-resort compress
       if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
         staleRetries++;
         if (staleRetries > MAX_STALE_RETRIES) {
+          // Last-resort: force-compress once, then reset for fresh attempts
+          if (contextRetries < 1) {
+            contextRetries++;
+            console.log(`${C.yellow}  ⚠ Stale retries exhausted — last-resort force-compress...${C.reset}`);
+            const allTools = getAllToolDefinitions();
+            const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+            apiMessages = compressedMsgs;
+            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            staleRetries = 0; // Reset so compressed context gets full retry attempts
+            i--;
+            continue;
+          }
           console.log(`${C.red}  ✗ Stream stale: max retries (${MAX_STALE_RETRIES}) exceeded. The model may be overloaded — try again or switch models.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
@@ -809,6 +821,22 @@ async function processInput(userInput) {
           autoSave(conversationMessages);
           break;
         }
+        // Progressive delay + optional compress on 2nd retry
+        const delay = staleRetries === 1 ? 3000 : 5000;
+        if (staleRetries >= 2 && contextRetries < 1) {
+          contextRetries++;
+          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...${C.reset}`);
+          const allTools = getAllToolDefinitions();
+          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+          apiMessages = compressedMsgs;
+          console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+        } else {
+          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`);
+        }
+        const delaySpinner = new Spinner(`Waiting ${delay / 1000}s before retry...`);
+        delaySpinner.start();
+        await new Promise(r => setTimeout(r, delay));
+        delaySpinner.stop();
         i--; // Don't count stale timeouts as iterations
         continue;
       }
@@ -839,7 +867,9 @@ async function processInput(userInput) {
         // Check if this is a context-too-long error before generic 400 handling
         const errLower = (err.message || '').toLowerCase();
         const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
-          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many');
+          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
+          errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
+          errLower.includes('num_ctx') || errLower.includes('input');
         if (isContextTooLong && contextRetries < 1) {
           contextRetries++;
           console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying...${C.reset}`);
