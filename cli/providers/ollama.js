@@ -27,7 +27,6 @@ const OLLAMA_MODELS = {
   'qwen3.5:27b': { id: 'qwen3.5:27b', name: 'Qwen3.5 27B', maxTokens: 16384, contextWindow: 262144 },
   // Medium models
   'qwen3-next:80b': { id: 'qwen3-next:80b', name: 'Qwen3 Next 80B', maxTokens: 16384, contextWindow: 131072 },
-  'qwen3.5:397b': { id: 'qwen3.5:397b', name: 'Qwen3.5 397B', maxTokens: 16384, contextWindow: 131072 },
   'mistral-large-3:675b': { id: 'mistral-large-3:675b', name: 'Mistral Large 3 675B', maxTokens: 16384, contextWindow: 131072 },
   'gpt-oss:120b': { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', maxTokens: 16384, contextWindow: 131072 },
   'minimax-m2.5': { id: 'minimax-m2.5', name: 'MiniMax M2.5', maxTokens: 16384, contextWindow: 131072 },
