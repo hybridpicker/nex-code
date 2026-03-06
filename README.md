@@ -331,7 +331,8 @@ Pressing Ctrl+C during a running request immediately cancels the active HTTP str
 - An `AbortController` signal flows from the SIGINT handler through the agent loop to the provider's HTTP request
 - All providers (Ollama, OpenAI, Anthropic, Gemini, local) destroy the response stream on abort
 - No EPIPE errors after cancellation (stdout writes are EPIPE-guarded)
-- 3x rapid Ctrl+C force-exits the process
+- 2x Ctrl+C during processing force-exits the process
+- At the idle prompt: first Ctrl+C shows `(Press Ctrl+C again to exit)`, second Ctrl+C exits (hint resets after 2 s)
 
 ### Diff Preview
 Every file change is shown in a diff-style format before being applied:
