@@ -1,6 +1,6 @@
 {
   "name": "nex-code",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Nex Code — Agentic Coding CLI with Multi-Provider Support",
   "bin": {
     "nex-code": "./dist/nex-code.js"
