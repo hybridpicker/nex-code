@@ -1018,6 +1018,8 @@ async function startREPL() {
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
   let _sigintCount = 0;
+  let _exitPrompt = false;
+  let _exitPromptTimer = null;
 
   // Graceful shutdown handler
   function gracefulShutdown() {
@@ -1030,9 +1032,8 @@ async function startREPL() {
   }
 
   // Register exit handlers
-  process.on('SIGINT', gracefulShutdown);
   process.on('SIGTERM', gracefulShutdown);
-  
+
   // Also handle normal exit
   process.on('exit', () => {
     flushAutoSave();
@@ -1042,25 +1043,35 @@ async function startREPL() {
     cleanupTerminal();
     if (_processing) {
       _sigintCount++;
-      if (_sigintCount >= 3) {
-        // Force exit after 3 rapid Ctrl+C during processing
-        flushAutoSave();
-        if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-        console.log(`\n${C.gray}Bye!${C.reset}`);
-        process.exit(0);
+      if (_sigintCount >= 2) {
+        // Force exit after 2 Ctrl+C during processing
+        gracefulShutdown();
       }
       // Abort the running HTTP stream
       if (_abortController) {
         _abortController.abort();
       }
-      console.log(`\n${C.yellow}  Cancelled${C.reset}`);
+      console.log(`\n${C.yellow}  Cancelled — press Ctrl+C again to exit${C.reset}`);
       _processing = false;
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
-    // At prompt — clean exit
-    gracefulShutdown();
+    // At prompt — require second Ctrl+C to exit
+    if (_exitPrompt) {
+      gracefulShutdown();
+    } else {
+      _exitPrompt = true;
+      process.stdout.write(`\n${C.gray}  (Press Ctrl+C again to exit)${C.reset}\n`);
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      // Reset after 2 seconds if user doesn't press again
+      if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
+      _exitPromptTimer = setTimeout(() => {
+        _exitPrompt = false;
+        _exitPromptTimer = null;
+      }, 2000);
+    }
   });
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
@@ -1229,6 +1240,8 @@ async function startREPL() {
             appendHistory(input.replace(/\n/g, '\\n'));
             _processing = true;
             _sigintCount = 0;
+            _exitPrompt = false;
+            if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
             _abortController = new AbortController();
             try {
               await processInput(input);
@@ -1265,6 +1278,8 @@ async function startREPL() {
           appendHistory(input.replace(/\n/g, '\\n'));
           _processing = true;
           _sigintCount = 0;
+          _exitPrompt = false;
+          if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
           _abortController = new AbortController();
           try {
             await processInput(input);
@@ -1336,6 +1351,8 @@ async function startREPL() {
     // Process through agent
     _processing = true;
     _sigintCount = 0;
+    _exitPrompt = false;
+    if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
     _abortController = new AbortController();
     try {
       await processInput(input);
