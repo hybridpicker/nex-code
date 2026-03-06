@@ -21,8 +21,23 @@ if echo "$MERGE_MSG" | grep -qi "devel"; then
   git commit -m "chore: bump version to ${NEW_VERSION}"
   echo "[post-merge] Version bumped to ${NEW_VERSION}"
   
-  # Try to publish to npm automatically
-  echo "[post-merge] Attempting to publish version ${NEW_VERSION} to npm..."
+  # Check npm auth before publishing
+  echo "[post-merge] Checking npm authentication..."
+  if ! npm whoami &>/dev/null; then
+    echo "[post-merge] Not logged in to npm. Starting login (confirm in browser)..."
+    npm login
+    if ! npm whoami &>/dev/null; then
+      echo "[post-merge] npm login failed. Please login and publish manually:"
+      echo "[post-merge]   npm login && npm publish"
+      echo ""
+      exit 0
+    fi
+  fi
+  NPM_USER=$(npm whoami 2>/dev/null)
+  echo "[post-merge] Logged in as: ${NPM_USER}"
+
+  # Publish to npm
+  echo "[post-merge] Publishing version ${NEW_VERSION} to npm..."
   if npm publish --access public; then
     echo "[post-merge] Successfully published version ${NEW_VERSION} to npm!"
     echo "[post-merge] GitHub Actions will create a release shortly."
