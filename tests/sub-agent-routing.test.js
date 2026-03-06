@@ -6,7 +6,7 @@ jest.mock('../cli/providers/registry', () => {
   const actual = jest.requireActual('../cli/providers/registry');
   return {
     ...actual,
-    callChat: jest.fn(),
+    callStream: jest.fn(),
     getActiveProviderName: jest.fn().mockReturnValue('ollama'),
     getActiveModelId: jest.fn().mockReturnValue('kimi-k2.5'),
     getConfiguredProviders: jest.fn(),
@@ -54,7 +54,7 @@ const {
 } = require('../cli/sub-agent');
 
 const {
-  callChat,
+  callStream,
   getActiveProviderName,
   getConfiguredProviders,
   getProvider,
@@ -208,12 +208,12 @@ describe('runSubAgent()', () => {
     ]);
   });
 
-  it('passes provider+model to callChat when routing resolves', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+  it('passes provider+model to callStream when routing resolves', async () => {
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Refactor the module' });
 
-    expect(callChat).toHaveBeenCalledWith(
+    expect(callStream).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
       expect.objectContaining({ provider: 'ollama', model: 'kimi-k2.5' })
@@ -222,12 +222,12 @@ describe('runSubAgent()', () => {
 
   it('uses default when routing returns null', async () => {
     getConfiguredProviders.mockReturnValue([]);
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Fix bug' });
 
     // chatOptions should be empty (no provider/model override)
-    expect(callChat).toHaveBeenCalledWith(
+    expect(callStream).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Array),
       {}
@@ -235,14 +235,14 @@ describe('runSubAgent()', () => {
   });
 
   it('includes modelSpec in result when routing resolves', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.modelSpec).toBe('ollama:kimi-k2.5');
   });
 
   it('passes overrideTier to filterToolsForModel', async () => {
-    callChat.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     await runSubAgent({ task: 'Refactor the module' });
 
@@ -265,7 +265,7 @@ describe('executeSpawnAgents()', () => {
   });
 
   it('includes model label in output', async () => {
-    callChat.mockResolvedValue({ content: 'Done', tool_calls: [] });
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
 
     const result = await executeSpawnAgents({
       agents: [{ task: 'Refactor the module' }],
@@ -329,36 +329,36 @@ describe('runSubAgent() retry', () => {
   });
 
   it('retries on transient error then succeeds', async () => {
-    callChat
+    callStream
       .mockRejectedValueOnce(new Error('502 Bad Gateway'))
       .mockResolvedValueOnce({ content: 'Done', tool_calls: [] });
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.status).toBe('done');
     expect(result.result).toBe('Done');
-    expect(callChat).toHaveBeenCalledTimes(2);
+    expect(callStream).toHaveBeenCalledTimes(2);
   }, 15000);
 
   it('fails after exhausting retries on persistent error', async () => {
-    callChat.mockRejectedValue(new Error('502 Bad Gateway'));
+    callStream.mockRejectedValue(new Error('502 Bad Gateway'));
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.status).toBe('failed');
     expect(result.result).toContain('502');
     // 1 initial + 3 retries = 4 calls
-    expect(callChat).toHaveBeenCalledTimes(4);
+    expect(callStream).toHaveBeenCalledTimes(4);
   }, 30000);
 
   it('does NOT retry on auth errors (401)', async () => {
-    callChat.mockRejectedValue(new Error('401 Unauthorized'));
+    callStream.mockRejectedValue(new Error('401 Unauthorized'));
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.status).toBe('failed');
-    expect(callChat).toHaveBeenCalledTimes(1);
+    expect(callStream).toHaveBeenCalledTimes(1);
   });
 
   it('handles null response from provider', async () => {
-    callChat.mockResolvedValueOnce(null);
+    callStream.mockResolvedValueOnce(null);
 
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.status).toBe('failed');

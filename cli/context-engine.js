@@ -28,17 +28,30 @@ const messageSerializationCache = new WeakMap();
 const messageStringCache = new Map();
 const MAX_MESSAGE_CACHE_SIZE = 500;
 
+// Cached token ratio — invalidated on model change via invalidateTokenRatioCache()
+let _cachedTokenRatio = null;
+
 /**
  * Get chars-per-token ratio for current provider.
+ * Result is cached until model changes.
  */
 function getTokenRatio() {
+  if (_cachedTokenRatio !== null) return _cachedTokenRatio;
   try {
     const model = getActiveModel();
     const provider = model?.provider || 'ollama';
-    return TOKEN_RATIOS[provider] || 4.0;
+    _cachedTokenRatio = TOKEN_RATIOS[provider] || 4.0;
+    return _cachedTokenRatio;
   } catch {
     return 4.0;
   }
+}
+
+/**
+ * Invalidate cached token ratio (call when active model/provider changes).
+ */
+function invalidateTokenRatioCache() {
+  _cachedTokenRatio = null;
 }
 
 /**
@@ -49,19 +62,22 @@ function getTokenRatio() {
 function estimateTokens(text) {
   if (!text) return 0;
   if (typeof text !== 'string') text = JSON.stringify(text);
-  
-  // Check cache for string content
-  if (stringTokenCache.has(text)) {
-    return stringTokenCache.get(text);
-  }
-  
+
+  // Check cache — key: first 80 chars + length to avoid O(n) key comparison on large strings
+  const cacheKey = text.length <= 80 ? text : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length - 20)}`;
+  const cached = stringTokenCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const tokens = Math.ceil(text.length / getTokenRatio());
-  
-  // Cache result (limit cache size to prevent memory bloat)
-  if (stringTokenCache.size < MAX_STRING_CACHE_SIZE) {
-    stringTokenCache.set(text, tokens);
+
+  // Cache result — trim to half when full to prevent silent cache misses
+  if (stringTokenCache.size >= MAX_STRING_CACHE_SIZE) {
+    const trimCount = MAX_STRING_CACHE_SIZE >> 1;
+    const keys = stringTokenCache.keys();
+    for (let i = 0; i < trimCount; i++) stringTokenCache.delete(keys.next().value);
   }
-  
+  stringTokenCache.set(cacheKey, tokens);
+
   return tokens;
 }
 
@@ -89,10 +105,13 @@ function serializeMessage(msg) {
   // Serialize
   const serialized = JSON.stringify(msg);
   
-  // Cache (limit size to prevent memory bloat)
-  if (messageStringCache.size < MAX_MESSAGE_CACHE_SIZE) {
-    messageStringCache.set(cacheKey, serialized);
+  // Cache — trim to half when full
+  if (messageStringCache.size >= MAX_MESSAGE_CACHE_SIZE) {
+    const trimCount = MAX_MESSAGE_CACHE_SIZE >> 1;
+    const keys = messageStringCache.keys();
+    for (let i = 0; i < trimCount; i++) messageStringCache.delete(keys.next().value);
   }
+  messageStringCache.set(cacheKey, serialized);
   messageSerializationCache.set(msg, serialized);
   
   return serialized;
@@ -601,6 +620,7 @@ module.exports = {
   fitToContext,
   forceCompress,
   truncateFileContent,
+  invalidateTokenRatioCache,
   COMPRESSION_THRESHOLD,
   SAFETY_MARGIN,
   KEEP_RECENT,
