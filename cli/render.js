@@ -43,15 +43,15 @@ function renderMarkdown(text) {
 
     // Headers
     if (line.startsWith('### ')) {
-      rendered.push(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}   ${stripHeadingMarkers(line.substring(4))}${C.reset}`);
       continue;
     }
     if (line.startsWith('## ')) {
-      rendered.push(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}  ${stripHeadingMarkers(line.substring(3))}${C.reset}`);
       continue;
     }
     if (line.startsWith('# ')) {
-      rendered.push(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}`);
+      rendered.push(`${C.bold}${C.cyan}${stripHeadingMarkers(line.substring(2))}${C.reset}`);
       continue;
     }
 
@@ -77,6 +77,20 @@ function renderMarkdown(text) {
   }
 
   return rendered.join('\n');
+}
+
+/**
+ * Strip inline markdown markers from heading text.
+ * Headings are already bold+colored, so **bold** and *italic* markers
+ * are redundant and look like noise in the terminal.
+ */
+function stripHeadingMarkers(text) {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
 }
 
 /**
@@ -443,15 +457,15 @@ class StreamRenderer {
 
     // Headers
     if (line.startsWith('### ')) {
-      this._safeWrite(`${C.bold}${C.cyan}   ${line.substring(4)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}   ${stripHeadingMarkers(line.substring(4))}${C.reset}\n`);
       return;
     }
     if (line.startsWith('## ')) {
-      this._safeWrite(`${C.bold}${C.cyan}  ${line.substring(3)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}  ${stripHeadingMarkers(line.substring(3))}${C.reset}\n`);
       return;
     }
     if (line.startsWith('# ')) {
-      this._safeWrite(`${C.bold}${C.cyan}${line.substring(2)}${C.reset}\n`);
+      this._safeWrite(`${C.bold}${C.cyan}${stripHeadingMarkers(line.substring(2))}${C.reset}\n`);
       return;
     }
 
@@ -480,6 +494,7 @@ class StreamRenderer {
 module.exports = {
   renderMarkdown,
   renderInline,
+  stripHeadingMarkers,
   highlightCode,
   highlightJS,
   highlightBash,
