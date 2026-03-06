@@ -496,6 +496,12 @@ Four features that make Nex Code significantly more reliable with open-source mo
 - **Edit auto-fix**: Close match (≤5% Levenshtein distance) in `edit_file`/`patch_file` is auto-applied instead of erroring. Stacks with fuzzy whitespace matching.
 - **Bash error hints**: Enriches error output with actionable hints — "command not found" → install suggestion, `MODULE_NOT_FOUND` → `npm install <pkg>`, port in use, syntax errors, TypeScript errors, test failures, and more.
 
+**Stale Stream Recovery** — Progressive retry strategy when streams stall (common with large Ollama models after many agent steps):
+- 1st retry: 3s backoff delay, resend same context (handles transient stalls)
+- 2nd retry: force-compress conversation (~80k tokens freed), 5s delay, retry with smaller context
+- Last resort: if retries exhausted, one final force-compress + reset for fresh attempts
+- Broader context-too-long detection catches Ollama-specific error formats (`num_ctx`, `prompt`, `size`, `exceeds`)
+
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (13 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list
