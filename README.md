@@ -18,7 +18,7 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1783-blue.svg" alt="Tests: 1783">
+  <img src="https://img.shields.io/badge/tests-1752-blue.svg" alt="Tests: 1752">
 </p>
 
 ---
@@ -70,7 +70,7 @@ npm update -g nex-code
 | **Multi-provider** | 5 providers, swap at runtime | Multi-provider | Multi-provider |
 | **Free local models** | Ollama (no API key) | Ollama | — |
 | **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Electron |
-| **Test coverage** | 1783 tests, 90% coverage | — | — |
+| **Test coverage** | 1752 tests, 85% coverage | — | — |
 | **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed |
 | **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Config change | Config change |
 
@@ -741,7 +741,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-43 test suites, 1783 tests, 90% statement / 83% branch coverage.
+44 test suites, 1752 tests, 85% statement / 79% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

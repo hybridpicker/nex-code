@@ -144,15 +144,11 @@ async function getProjectContextHash() {
       path.join(process.cwd(), 'README.md'),
       path.join(process.cwd(), 'NEX.md'),
     ];
-    const hashes = [];
-    for (const file of files) {
-      try {
-        const stat = await fs.stat(file);
-        hashes.push(`${file}:${stat.mtimeMs}`);
-      } catch {
-        // File doesn't exist — skip
-      }
-    }
+    // Run all stat calls in parallel
+    const statResults = await Promise.allSettled(files.map(f => fs.stat(f).then(s => `${f}:${s.mtimeMs}`)));
+    const hashes = statResults
+      .filter(r => r.status === 'fulfilled')
+      .map(r => r.value);
     // Also include memory context hash
     try {
       const { getMemoryContextHash } = require('./memory');
