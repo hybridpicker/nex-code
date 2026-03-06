@@ -3,7 +3,7 @@
  * Spawns parallel sub-agents with their own conversation contexts.
  */
 
-const { callChat, getActiveProviderName, getActiveModelId, getConfiguredProviders, getProvider, getActiveProvider, parseModelSpec } = require('./providers/registry');
+const { callStream, getActiveProviderName, getActiveModelId, getConfiguredProviders, getProvider, getActiveProvider, parseModelSpec } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { filterToolsForModel, getModelTier } = require('./tool-tiers');
 const { trackUsage } = require('./costs');
@@ -48,11 +48,11 @@ function isRetryableError(err) {
   return false;
 }
 
-async function callChatWithRetry(messages, tools, options) {
+async function callWithRetry(messages, tools, options) {
   let lastError;
   for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
     try {
-      return await callChat(messages, tools, options);
+      return await callStream(messages, tools, options);
     } catch (err) {
       lastError = err;
       if (attempt < MAX_CHAT_RETRIES && isRetryableError(err)) {
@@ -203,7 +203,7 @@ ERROR RECOVERY:
 
   try {
     for (let i = 0; i < maxIter; i++) {
-      const result = await callChatWithRetry(messages, availableTools, chatOptions);
+      const result = await callWithRetry(messages, availableTools, chatOptions);
 
       // Guard against null/undefined responses
       if (!result || typeof result !== 'object') {
@@ -396,4 +396,4 @@ async function executeSpawnAgents(args) {
   }
 }
 
-module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callChatWithRetry };
+module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry };
