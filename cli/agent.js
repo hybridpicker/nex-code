@@ -339,16 +339,17 @@ async function executeSingleTool(prep, quiet = false) {
     ? safeResult.substring(0, 50000) + `\n...(truncated ${safeResult.length - 50000} chars)`
     : safeResult;
 
-  if (!quiet) {
-    console.log(formatResult(truncated));
-  }
-
-  runHooks('post-tool', { tool_name: prep.fnName });
-
   const firstLine = truncated.split('\n')[0];
   const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED')
     || (prep.fnName === 'spawn_agents' && !/✓ Agent/.test(truncated) && /✗ Agent/.test(truncated));
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
+
+  if (!quiet) {
+    console.log(formatResult(truncated));
+    console.log(summary);
+  }
+
+  runHooks('post-tool', { tool_name: prep.fnName });
   
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated);
@@ -374,10 +375,11 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       let label;
       if (execTools.length === 1) {
         const p = execTools[0];
-        label = `▸ ${p.fnName} ${_argPreview(p.fnName, p.args)}`;
+        const preview = _argPreview(p.fnName, p.args);
+        label = `⏺ ${p.fnName}${preview ? `(${preview})` : ''}`;
       } else {
         const names = execTools.map(p => p.fnName).join(', ');
-        label = `▸ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '...' : names}`;
+        label = `⏺ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '…' : names}`;
       }
       spinner = new Spinner(label);
       spinner.start();
