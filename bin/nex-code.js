@@ -50,7 +50,7 @@ if (modelIdx !== -1 && args[modelIdx + 1]) {
   setActiveModel(args[modelIdx + 1]);
 }
 
-// ─── --max-turns ─────────────────────────────────────────────
+// ─── --max-turns (flag or .nex/config.json) ──────────────────
 const maxTurnsIdx = args.indexOf('--max-turns');
 if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
   const n = parseInt(args[maxTurnsIdx + 1], 10);
@@ -58,6 +58,20 @@ if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
     const { setMaxIterations } = require('../cli/agent');
     setMaxIterations(n);
   }
+} else {
+  // Fall back to .nex/config.json { "maxIterations": N }
+  try {
+    const fs = require('fs');
+    const configPath = path.join(process.cwd(), '.nex', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const n = parseInt(cfg.maxIterations, 10);
+      if (n > 0) {
+        const { setMaxIterations } = require('../cli/agent');
+        setMaxIterations(n);
+      }
+    }
+  } catch { /* ignore malformed config */ }
 }
 
 // ─── --task (headless mode) ──────────────────────────────────
