@@ -727,7 +727,12 @@ async function processInput(userInput) {
   const startTime = Date.now();
 
   let i;
-  for (i = 0; i < MAX_ITERATIONS; i++) {
+  let iterLimit = MAX_ITERATIONS;
+  let autoExtensions = 0;
+  const MAX_AUTO_EXTENSIONS = 10; // hard cap: max 10×20 = 200 extra turns
+  // eslint-disable-next-line no-constant-condition
+  outer: while (true) {
+  for (i = 0; i < iterLimit; i++) {
     // Check if aborted (Ctrl+C) at start of each iteration
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
@@ -1084,13 +1089,34 @@ async function processInput(userInput) {
   }
 
   // Only print résumé + max-iterations warning if the loop actually exhausted (not on break)
-  if (i >= MAX_ITERATIONS) {
+  if (i >= iterLimit) {
     if (taskProgress) { taskProgress.stop(); taskProgress = null; }
     setOnChange(null);
     _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
     autoSave(conversationMessages);
-    console.log(`\n${C.yellow}⚠ Max iterations (${MAX_ITERATIONS}) reached. Try ${C.bold}--max-turns ${MAX_ITERATIONS + 20}${C.reset}${C.yellow} or break into smaller steps.${C.reset}`);
+
+    const { getActiveProviderName: _getProviderName } = require('./providers/registry');
+    const provider = _getProviderName();
+    if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
+      // Free provider — auto-extend silently
+      autoExtensions++;
+      iterLimit += 20;
+      console.log(`${C.dim}  ── auto-extending to ${iterLimit} turns ──${C.reset}`);
+      continue outer;
+    }
+
+    // Paid provider (or hard cap reached) — ask before spending more
+    console.log(`\n${C.yellow}⚠ Max iterations (${iterLimit}) reached.${C.reset}`);
+    const keepGoing = await confirm(`  Continue for 20 more turns?`);
+    if (keepGoing) {
+      iterLimit += 20;
+      continue outer;
+    }
+
+    console.log(`${C.dim}  Tip: set "maxIterations" in .nex/config.json or use --max-turns${C.reset}`);
   }
+  break outer;
+  } // end outer while
 }
 
 module.exports = {
