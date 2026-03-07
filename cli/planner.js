@@ -11,6 +11,15 @@ const { C } = require('./ui');
 // Plan state
 let activePlan = null;
 let planMode = false;
+let planContent = null;
+
+// Tools allowed in plan mode (read-only operations only)
+const PLAN_MODE_ALLOWED_TOOLS = new Set([
+  'read_file', 'list_directory', 'search_files', 'glob', 'grep',
+  'web_search', 'web_fetch',
+  'git_status', 'git_diff', 'git_log', 'git_show',
+  'ask_user',
+]);
 
 function getPlanDir() {
   return path.join(process.cwd(), '.nex', 'plans');
@@ -208,11 +217,18 @@ function listPlans() {
 }
 
 /**
+ * Store the LLM's plan text output
+ */
+function setPlanContent(text) { planContent = text; }
+function getPlanContent() { return planContent; }
+
+/**
  * Clear the active plan
  */
 function clearPlan() {
   activePlan = null;
   planMode = false;
+  planContent = null;
 }
 
 /**
@@ -220,32 +236,43 @@ function clearPlan() {
  * Instructs the LLM to only analyze and plan, not execute
  */
 function getPlanModePrompt() {
+  const allowedList = [...PLAN_MODE_ALLOWED_TOOLS].join(', ');
   return `
-PLAN MODE ACTIVE: You are in analysis-only mode.
+PLAN MODE ACTIVE: You are in analysis-only mode. You MUST NOT execute any changes.
 
-# Restrictions
-- Use ONLY read operations: read_file, list_directory, search_files, glob, grep
-- DO NOT modify any files (no write_file, edit_file, patch_file, bash with write ops)
+# Allowed Tools (read-only)
+You may ONLY use these tools: ${allowedList}
+Any other tool call will be blocked and returned with an error.
 
 # Analysis Phase
-Investigate before planning:
+Thoroughly investigate before writing a plan:
 - Scope: What files and modules are affected?
 - Architecture: How does the current code work? What patterns does it follow?
 - Dependencies: What depends on the code being changed? What might break?
 - Tests: What test coverage exists? What new tests are needed?
 
-# Plan Output Format
-For each step, provide:
-- **What**: Clear description of the change
-- **Where**: Specific files and line ranges
-- **How**: Implementation approach (edit, create, delete)
-- **Risk**: What could go wrong and how to mitigate
+# Required Plan Format
+After analysis, output a plan in this exact markdown format:
 
-# Rules
-- Order steps by dependency — later steps can depend on earlier ones, not vice versa.
-- Flag steps that need tests and specify what to test.
-- List any assumptions you're making about the codebase.
-- Present the plan to the user and wait for explicit "approve" before executing.`;
+## Summary
+One paragraph describing the overall goal.
+
+## Steps
+Numbered list. Each step:
+- **What**: Clear description of the change
+- **Where**: Specific file(s) and line ranges
+- **How**: Implementation approach (edit, create, delete)
+
+## Files Affected
+Bullet list of all files that will be modified or created.
+
+## Risks
+Bullet list of potential issues and mitigations.
+
+# Important
+- Order steps by dependency (later steps may depend on earlier ones).
+- After presenting the plan, tell the user to type \`/plan approve\` to proceed.
+- Do NOT make any file changes — your role is analysis and planning only.`;
 }
 
 // Autonomy levels
@@ -276,6 +303,9 @@ module.exports = {
   listPlans,
   clearPlan,
   getPlanModePrompt,
+  setPlanContent,
+  getPlanContent,
+  PLAN_MODE_ALLOWED_TOOLS,
   setAutonomyLevel,
   getAutonomyLevel,
   AUTONOMY_LEVELS,

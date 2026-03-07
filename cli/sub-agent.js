@@ -246,54 +246,56 @@ ERROR RECOVERY:
         };
       }
 
-      // Execute tool calls sequentially within sub-agent
-      for (const tc of tool_calls) {
+      // Execute tool calls in parallel — lock acquisition is synchronous so
+      // write-tool locking stays atomic even with concurrent execution.
+      const toolResultPromises = tool_calls.map(tc => {
         const fnName = tc.function.name;
         const args = parseToolArgs(tc.function.arguments);
         const callId = tc.id || `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
         if (!args) {
-          messages.push({
+          return Promise.resolve({
             role: 'tool',
             content: `ERROR: Malformed tool arguments for ${fnName}`,
             tool_call_id: callId,
           });
-          continue;
         }
 
-        // File locking for write tools
+        // File locking for write tools (synchronous — runs before any await)
         if (WRITE_TOOLS.has(fnName) && args.path) {
-          const path = require('path');
-          const fp = path.isAbsolute(args.path) ? args.path : path.resolve(process.cwd(), args.path);
+          const pathModule = require('path');
+          const fp = pathModule.isAbsolute(args.path)
+            ? args.path
+            : pathModule.resolve(process.cwd(), args.path);
           if (!acquireLock(fp, agentId)) {
-            messages.push({
+            return Promise.resolve({
               role: 'tool',
               content: `ERROR: File '${args.path}' is locked by another sub-agent. Try a different approach or skip this file.`,
               tool_call_id: callId,
             });
-            continue;
           }
           locksHeld.add(fp);
         }
 
         toolsUsed.push(fnName);
 
-        try {
-          const toolResult = await executeTool(fnName, args, { autoConfirm: true, silent: true });
-          const safeResult = String(toolResult ?? '');
-          const truncated = safeResult.length > 20000
-            ? safeResult.substring(0, 20000) + `\n...(truncated)`
-            : safeResult;
-
-          messages.push({ role: 'tool', content: truncated, tool_call_id: callId });
-        } catch (err) {
-          messages.push({
+        return executeTool(fnName, args, { autoConfirm: true, silent: true })
+          .then(toolResult => {
+            const safeResult = String(toolResult ?? '');
+            const truncated = safeResult.length > 20000
+              ? safeResult.substring(0, 20000) + `\n...(truncated)`
+              : safeResult;
+            return { role: 'tool', content: truncated, tool_call_id: callId };
+          })
+          .catch(err => ({
             role: 'tool',
             content: `ERROR: ${err.message}`,
             tool_call_id: callId,
-          });
-        }
-      }
+          }));
+      });
+
+      const toolMessages = await Promise.all(toolResultPromises);
+      messages.push(...toolMessages);
 
       if (callbacks.onUpdate) {
         callbacks.onUpdate(`step ${i + 1}/${maxIter}`);

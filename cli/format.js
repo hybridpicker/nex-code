@@ -23,29 +23,44 @@ const C = {
 };
 
 function formatToolCall(name, args) {
-  let preview;
+  let primary;
   switch (name) {
-    case 'write_file':
-      preview = `path=${args.path} (${(args.content || '').length} chars)`;
-      break;
-    case 'edit_file':
-      preview = `path=${args.path}`;
+    case 'write_file': case 'edit_file': case 'patch_file':
+    case 'read_file': case 'list_directory':
+      primary = args.path || '';
       break;
     case 'bash':
-      preview = args.command?.substring(0, 100) || '';
+      primary = (args.command || '').substring(0, 80);
+      break;
+    case 'grep': case 'search_files':
+      primary = args.pattern
+        ? `"${args.pattern}"${args.path ? ` in ${args.path}` : ''}`
+        : '';
+      break;
+    case 'glob':
+      primary = args.pattern || '';
+      break;
+    case 'web_fetch':
+      primary = (args.url || '').substring(0, 60);
+      break;
+    case 'web_search':
+      primary = (args.query || '').substring(0, 50);
       break;
     default:
-      preview = JSON.stringify(args).substring(0, 120);
+      primary = JSON.stringify(args).substring(0, 80);
   }
-  return `${C.yellow}  ▸ ${name}${C.reset} ${C.dim}${preview}${C.reset}`;
+  const argStr = primary ? `${C.dim}(${primary})${C.reset}` : '';
+  return `${C.cyan}⏺${C.reset} ${C.bold}${name}${C.reset}${argStr}`;
 }
 
 function formatResult(text, maxLines = 8) {
   const lines = text.split('\n');
   const shown = lines.slice(0, maxLines);
   const more = lines.length - maxLines;
-  let out = shown.map((l) => `${C.green}    ${l}${C.reset}`).join('\n');
-  if (more > 0) out += `\n${C.gray}    ...+${more} more lines${C.reset}`;
+  const prefix0 = `${C.dim}  ⎿  ${C.reset}`;
+  const prefixN = `     `;
+  let out = shown.map((l, i) => `${i === 0 ? prefix0 : prefixN}${C.green}${l}${C.reset}`).join('\n');
+  if (more > 0) out += `\n${C.gray}     …+${more} more lines${C.reset}`;
   return out;
 }
 
@@ -92,120 +107,123 @@ function getToolSpinnerText(name, args) {
 
 /**
  * Compact 1-line summary for a tool execution result.
- * Used by the agent loop in quiet mode.
+ * Displayed below the tool-call header as:  ⎿  Human-readable summary
  */
 function formatToolSummary(name, args, result, isError) {
   const r = String(result || '');
-  const icon = isError ? `${C.red}✗${C.reset}` : `${C.green}✓${C.reset}`;
 
   if (isError) {
-    const errMsg = r.split('\n')[0].replace(/^ERROR:\s*/i, '').substring(0, 60);
-    return `  ${icon} ${C.dim}${name}${C.reset} ${C.red}→ ${errMsg}${C.reset}`;
+    const errMsg = r.split('\n')[0].replace(/^ERROR:\s*/i, '').substring(0, 80);
+    return `  ${C.red}⎿  ${errMsg}${C.reset}`;
   }
 
-  let detail;
+  let summary;
   switch (name) {
     case 'read_file': {
       const resultLines = r.split('\n').filter(Boolean);
       const count = resultLines.length;
-      // Detect partial reads: last line number tells us total file size
       const lastLine = resultLines[resultLines.length - 1];
       const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
       const isPartial = args.line_start || args.line_end;
       if (isPartial && lastLineNum > count) {
-        detail = `${args.path || 'file'} (lines ${args.line_start || 1}-${lastLineNum})`;
+        summary = `Read lines ${args.line_start || 1}–${lastLineNum}`;
       } else {
-        detail = `${args.path || 'file'} (${count} lines)`;
+        summary = `Read ${count} line${count !== 1 ? 's' : ''}`;
       }
       break;
     }
     case 'write_file': {
-      const chars = (args.content || '').length;
-      detail = `${args.path || 'file'} (${chars} chars)`;
+      const lines = (args.content || '').split('\n').length;
+      summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
       break;
     }
     case 'edit_file':
-      detail = `${args.path || 'file'} → edited`;
+      summary = 'Edited successfully';
       break;
     case 'patch_file': {
       const n = (args.patches || []).length;
-      detail = `${args.path || 'file'} (${n} patches)`;
+      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}`;
       break;
     }
     case 'bash': {
-      const cmd = (args.command || '').substring(0, 40);
-      const suffix = (args.command || '').length > 40 ? '...' : '';
-      // Only match EXIT at the very start of the output (our error format)
       const exitMatch = r.match(/^EXIT (\d+)/);
       if (exitMatch) {
-        detail = `${cmd}${suffix} → exit ${exitMatch[1]}`;
+        summary = `Exit ${exitMatch[1]}`;
       } else {
-        detail = `${cmd}${suffix} → ok`;
+        const lines = r.split('\n').filter(Boolean);
+        summary = lines.length > 1
+          ? `${lines.length} lines output`
+          : (lines[0] || '').substring(0, 70) || 'Done';
       }
       break;
     }
     case 'grep':
     case 'search_files': {
       if (r.includes('(no matches)') || r === 'no matches') {
-        detail = `${args.pattern || '...'} → no matches`;
+        summary = 'No matches';
       } else {
-        const lines = r.split('\n').filter(Boolean).length;
-        detail = `${args.pattern || '...'} → ${lines} matches`;
+        const count = r.split('\n').filter(Boolean).length;
+        summary = `${count} match${count !== 1 ? 'es' : ''}`;
       }
       break;
     }
     case 'glob': {
       if (r === '(no matches)') {
-        detail = `${args.pattern || '...'} → no matches`;
+        summary = 'No files found';
       } else {
-        const files = r.split('\n').filter(Boolean).length;
-        detail = `${args.pattern || '...'} → ${files} files`;
+        const count = r.split('\n').filter(Boolean).length;
+        summary = `${count} file${count !== 1 ? 's' : ''} found`;
       }
       break;
     }
     case 'list_directory': {
-      const entries = r === '(empty)' ? 0 : r.split('\n').filter(Boolean).length;
-      detail = `${args.path || '.'} → ${entries} entries`;
+      const count = r === '(empty)' ? 0 : r.split('\n').filter(Boolean).length;
+      summary = `${count} entr${count !== 1 ? 'ies' : 'y'}`;
       break;
     }
     case 'git_status': {
       const branchMatch = r.match(/Branch:\s*(\S+)/);
-      const changeLines = r.split('\n').filter(l => /^\s*[MADRCU?!]/.test(l)).length;
-      detail = branchMatch ? `${branchMatch[1]}, ${changeLines} changes` : 'done';
+      const changes = r.split('\n').filter(l => /^\s*[MADRCU?!]/.test(l)).length;
+      summary = branchMatch
+        ? `${branchMatch[1]} · ${changes} change${changes !== 1 ? 's' : ''}`
+        : 'Done';
       break;
     }
-    case 'git_diff':
-    case 'git_log':
-      detail = 'done';
+    case 'git_diff': {
+      const addLines = (r.match(/^\+[^+]/gm) || []).length;
+      const delLines = (r.match(/^-[^-]/gm) || []).length;
+      summary = addLines || delLines ? `+${addLines} −${delLines} lines` : 'No diff';
       break;
+    }
+    case 'git_log': {
+      const commits = r.split('\n').filter(l => /^commit\s+[0-9a-f]{7}/.test(l)).length;
+      summary = commits > 0 ? `${commits} commit${commits !== 1 ? 's' : ''}` : 'Log retrieved';
+      break;
+    }
     case 'web_fetch':
-      detail = `${(args.url || '').substring(0, 50)} → fetched`;
+      summary = 'Fetched';
       break;
     case 'web_search': {
-      const blocks = r.split('\n\n').filter(Boolean).length;
-      detail = `${(args.query || '').substring(0, 40)} → ${blocks} results`;
+      const count = r.split('\n\n').filter(Boolean).length;
+      summary = `${count} result${count !== 1 ? 's' : ''}`;
       break;
     }
     case 'task_list':
-      detail = `${args.action || 'list'} → done`;
+      summary = 'Done';
       break;
     case 'spawn_agents': {
-      const n = (args.agents || []).length;
-      // Count successful vs failed agents from result
       const doneCount = (r.match(/✓ Agent/g) || []).length;
       const failCount = (r.match(/✗ Agent/g) || []).length;
-      if (failCount > 0) {
-        detail = `${n} agents → ${doneCount}✓ ${failCount}✗`;
-      } else {
-        detail = `${n} agents → done`;
-      }
+      summary = failCount > 0
+        ? `${doneCount} done, ${failCount} failed`
+        : `${doneCount} agent${doneCount !== 1 ? 's' : ''} done`;
       break;
     }
     default:
-      detail = 'done';
+      summary = 'Done';
   }
 
-  return `  ${icon} ${C.dim}${name} ${detail}${C.reset}`;
+  return `  ${C.dim}⎿  ${summary}${C.reset}`;
 }
 
 module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary };
