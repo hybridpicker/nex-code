@@ -9,6 +9,8 @@ jest.mock('../cli/agent', () => ({
   getConversationMessages: jest.fn().mockReturnValue([]),
   setConversationMessages: jest.fn(),
   setAbortSignalGetter: jest.fn(),
+  invalidateSystemPromptCache: jest.fn(),
+  setMaxIterations: jest.fn(),
 }));
 
 jest.mock('../cli/ollama', () => ({
@@ -111,6 +113,7 @@ jest.mock('../cli/planner', () => ({
   setAutonomyLevel: jest.fn().mockReturnValue(true),
   getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
   AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
+  getPlanContent: jest.fn().mockReturnValue(null),
 }));
 
 jest.mock('../cli/git', () => ({
@@ -353,6 +356,8 @@ describe('index.js (REPL commands)', () => {
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
         setAbortSignalGetter: jest.fn(),
+        invalidateSystemPromptCache: jest.fn(),
+        setMaxIterations: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -387,6 +392,7 @@ describe('index.js (REPL commands)', () => {
         setAutonomyLevel: jest.fn().mockReturnValue(true),
         getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
         AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
+        getPlanContent: jest.fn().mockReturnValue(null),
       }));
       jest.mock('../cli/git', () => ({
         isGitRepo: jest.fn().mockReturnValue(true),
@@ -460,6 +466,8 @@ describe('index.js (REPL commands)', () => {
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
         setAbortSignalGetter: jest.fn(),
+        invalidateSystemPromptCache: jest.fn(),
+        setMaxIterations: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -494,6 +502,7 @@ describe('index.js (REPL commands)', () => {
         setAutonomyLevel: jest.fn().mockReturnValue(true),
         getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
         AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
+        getPlanContent: jest.fn().mockReturnValue(null),
       }));
       jest.mock('../cli/git', () => ({
         isGitRepo: jest.fn().mockReturnValue(true),
@@ -595,6 +604,8 @@ describe('index.js (REPL commands)', () => {
         ]),
         setConversationMessages: jest.fn(),
         setAbortSignalGetter: jest.fn(),
+        invalidateSystemPromptCache: jest.fn(),
+        setMaxIterations: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({
         getUsage: jest.fn().mockReturnValue({
@@ -640,6 +651,7 @@ describe('index.js (REPL commands)', () => {
         setAutonomyLevel: jest.fn().mockReturnValue(true),
         getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
         AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
+        getPlanContent: jest.fn().mockReturnValue(null),
       }));
       jest.mock('../cli/git', () => ({
         isGitRepo: jest.fn().mockReturnValue(true),
@@ -1044,7 +1056,7 @@ describe('index.js (REPL commands)', () => {
       await lineHandler('/plan refactor auth module');
       expect(setPlanMode).toHaveBeenCalledWith(true);
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain('Plan mode activated');
+      expect(output).toContain('PLAN MODE');
     });
 
     it('handles /plan status', async () => {
@@ -1448,6 +1460,8 @@ describe('index.js (REPL commands)', () => {
         getConversationMessages: jest.fn().mockReturnValue([]),
         setConversationMessages: jest.fn(),
         setAbortSignalGetter: jest.fn(),
+        invalidateSystemPromptCache: jest.fn(),
+        setMaxIterations: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({ getUsage: jest.fn() }));
       jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
