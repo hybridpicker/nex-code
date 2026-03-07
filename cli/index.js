@@ -858,7 +858,7 @@ ${C.cyan}${C.bold}└───────────────────�
 
     case '/exit':
     case '/quit':
-      console.log(`\n${C.gray}Bye!${C.reset}`);
+      console.log(`\n${C.dim}Bye!${C.reset}`);
       process.exit(0);
 
     default:
@@ -1034,7 +1034,7 @@ async function startREPL() {
     flushAutoSave();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-    console.log(`\n${C.gray}Bye!${C.reset}`);
+    console.log(`\n${C.dim}Bye!${C.reset}`);
     process.exit(0);
   }
 
@@ -1067,7 +1067,7 @@ async function startREPL() {
       gracefulShutdown();
     } else {
       _exitPrompt = true;
-      process.stdout.write(`\n${C.gray}  (Press Ctrl+C again to exit)${C.reset}\n`);
+      process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
@@ -1385,7 +1385,7 @@ async function startREPL() {
 
   rl.on('close', () => {
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l'); // disable bracketed paste
-    console.log(`\n${C.gray}Bye!${C.reset}`);
+    console.log(`\n${C.dim}Bye!${C.reset}`);
     process.exit(0);
   });
 }
