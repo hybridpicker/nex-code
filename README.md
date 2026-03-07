@@ -517,9 +517,12 @@ Models are auto-classified, or override per-model in `.nex/config.json`:
     "deepseek-r1": "essential",
     "local:*": "essential",
     "qwen3-coder": "full"
-  }
+  },
+  "maxIterations": 100
 }
 ```
+
+`maxIterations` sets the agentic loop limit project-wide (default: 50). The `--max-turns <n>` CLI flag overrides it per run.
 
 Tiers are also used by sub-agent routing — when a sub-agent auto-selects a model, its tool set is filtered to match that model's tier.
 
