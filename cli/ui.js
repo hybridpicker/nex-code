@@ -47,9 +47,9 @@ function banner(modelName, cwd, opts = {}) {
   const r = C.reset;
 
   const raw = [
-    '╔╗╔ ╔═╗ ╗ ╔  ━  ╔═╗ ╔═╗ ╔═╦ ╔═╗',
-    '║║║ ╠═╣ ╠═╣  ━  ║   ║ ║ ║ ║ ╠═╣',
-    '╝╚╝ ╚═╝ ╝ ╚  ━  ╚═╝ ╚═╝ ╚═╩ ╚═╝',
+    '╔╗╔ ╔═╗ ╲ ╱ ━ ╔═╗ ╔═╗ ╔╦╗ ╔═╗',
+    '║║║ ╠═╣  ╳  ━ ║   ║ ║ ║ ║ ╠═╣',
+    '╝╚╝ ╚═╝ ╱ ╲ ━ ╚═╝ ╚═╝ ╚╩╝ ╚═╝',
   ];
 
   // Vertical gradient: Ice — White → Cyan → Deep Blue
