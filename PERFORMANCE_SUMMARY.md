@@ -164,6 +164,33 @@ rg --files          N/A*             10-50x (at 10k+ files)
 
 ---
 
+### 7. **Parallel Sub-Agent Tool Execution**
+**Problem:** Within a sub-agent iteration, multiple tool calls returned by the model in a single response were executed sequentially, blocking on each I/O operation before starting the next.
+
+**Solution:** Replace sequential `for` loop with `Promise.all`. Lock acquisition for write tools remains synchronous (before any `await`), so cross-agent file locking stays atomic.
+
+```javascript
+// Before: Sequential
+for (const tc of tool_calls) {
+  const result = await executeTool(fnName, args, { autoConfirm: true, silent: true });
+  messages.push({ role: 'tool', content: result, tool_call_id: callId });
+}
+
+// After: Parallel
+const toolResultPromises = tool_calls.map(tc => {
+  // lock acquisition is synchronous — happens before any await
+  if (WRITE_TOOLS.has(fnName) && args.path) acquireLock(fp, agentId);
+  return executeTool(fnName, args, { autoConfirm: true, silent: true })
+    .then(result => ({ role: 'tool', content: result, tool_call_id: callId }));
+});
+const toolMessages = await Promise.all(toolResultPromises);
+messages.push(...toolMessages);
+```
+
+**Result:** When a model returns N concurrent tool calls (e.g. read 3 files at once), latency drops from N×T to ~T.
+
+---
+
 ## 🎯 Remaining Optimizations (Low Priority)
 
 | Task | Expected Gain | Status |
