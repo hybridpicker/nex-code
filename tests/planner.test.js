@@ -234,7 +234,7 @@ describe('planner.js', () => {
       const prompt = planner.getPlanModePrompt();
       expect(prompt).toContain('PLAN MODE');
       expect(prompt).toContain('read');
-      expect(prompt).toContain('DO NOT modify');
+      expect(prompt).toContain('Do NOT make any file changes');
     });
   });
 
