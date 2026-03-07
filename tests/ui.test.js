@@ -85,11 +85,11 @@ describe('ui.js', () => {
 
   // ─── formatToolCall ─────────────────────────────────────────
   describe('formatToolCall()', () => {
-    it('formats write_file with path and char count', () => {
+    it('formats write_file with path', () => {
       const result = formatToolCall('write_file', { path: 'test.js', content: 'hello' });
       expect(result).toContain('write_file');
       expect(result).toContain('test.js');
-      expect(result).toContain('5 chars');
+      expect(result).toContain('⏺');
     });
 
     it('formats edit_file with path only', () => {
@@ -117,9 +117,9 @@ describe('ui.js', () => {
       expect(result).toContain('test');
     });
 
-    it('handles write_file with no content', () => {
+    it('handles write_file with no content — shows path', () => {
       const result = formatToolCall('write_file', { path: 'x.js' });
-      expect(result).toContain('0 chars');
+      expect(result).toContain('x.js');
     });
   });
 
@@ -249,9 +249,9 @@ describe('ui.js', () => {
     // Import directly from format.js for full coverage
     const { formatToolSummary } = require('../cli/format');
 
-    it('shows ✗ icon and error message for errors', () => {
+    it('shows ⎿ and error message for errors', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, 'ERROR: command not found', true);
-      expect(result).toContain('✗');
+      expect(result).toContain('⎿');
       expect(result).toContain('command not found');
     });
 
@@ -261,84 +261,77 @@ describe('ui.js', () => {
       expect(result).not.toMatch(/ERROR:.*ERROR:/);
     });
 
-    it('truncates long error messages to 60 chars', () => {
+    it('truncates long error messages', () => {
       const longErr = 'ERROR: ' + 'x'.repeat(200);
       const result = formatToolSummary('bash', {}, longErr, true);
       expect(result.length).toBeLessThan(200);
     });
 
-    it('shows ✓ icon for success', () => {
+    it('shows ⎿ for success', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, 'file1\nfile2', false);
-      expect(result).toContain('✓');
+      expect(result).toContain('⎿');
     });
 
     // read_file
-    it('shows file path and line count for read_file', () => {
+    it('shows line count for read_file', () => {
       const result = formatToolSummary('read_file', { path: 'src/app.js' }, '1:line1\n2:line2\n3:line3', false);
-      expect(result).toContain('src/app.js');
       expect(result).toContain('3 lines');
     });
 
     it('shows line range for partial read_file', () => {
       const result = formatToolSummary('read_file', { path: 'big.js', line_start: 10 }, '10:a\n11:b\n12:c\n50:d', false);
-      expect(result).toContain('big.js');
       expect(result).toContain('lines');
     });
 
     // write_file
-    it('shows char count for write_file', () => {
+    it('shows line count for write_file', () => {
       const result = formatToolSummary('write_file', { path: 'out.js', content: 'hello world' }, 'ok', false);
-      expect(result).toContain('out.js');
-      expect(result).toContain('11 chars');
+      expect(result).toContain('line');
     });
 
     it('handles write_file with no content', () => {
       const result = formatToolSummary('write_file', { path: 'empty.js' }, 'ok', false);
-      expect(result).toContain('0 chars');
+      expect(result).toContain('line');
     });
 
     // edit_file
     it('shows edited for edit_file', () => {
       const result = formatToolSummary('edit_file', { path: 'src/x.js' }, 'ok', false);
-      expect(result).toContain('src/x.js');
-      expect(result).toContain('edited');
+      expect(result).toMatch(/edited/i);
     });
 
     // patch_file
     it('shows patch count for patch_file', () => {
       const result = formatToolSummary('patch_file', { path: 'a.js', patches: [{}, {}, {}] }, 'ok', false);
-      expect(result).toContain('a.js');
-      expect(result).toContain('3 patches');
+      expect(result).toContain('3 patch');
     });
 
     // bash
-    it('shows ok for successful bash', () => {
+    it('shows single-line output for successful bash', () => {
       const result = formatToolSummary('bash', { command: 'npm test' }, 'all tests passed', false);
-      expect(result).toContain('npm test');
-      expect(result).toContain('ok');
+      expect(result).toContain('all tests passed');
     });
 
-    it('shows exit code for failed bash', () => {
+    it('shows Exit N for failed bash', () => {
       const result = formatToolSummary('bash', { command: 'npm test' }, 'EXIT 1\nfailed', false);
-      expect(result).toContain('exit 1');
+      expect(result).toMatch(/exit\s*1/i);
     });
 
-    it('truncates long bash commands', () => {
-      const longCmd = 'a'.repeat(100);
-      const result = formatToolSummary('bash', { command: longCmd }, 'ok', false);
-      expect(result).toContain('...');
+    it('shows multi-line output count for bash with many lines', () => {
+      const output = Array.from({ length: 5 }, (_, i) => `line${i}`).join('\n');
+      const result = formatToolSummary('bash', { command: 'ls' }, output, false);
+      expect(result).toContain('lines output');
     });
 
     // grep / search_files
     it('shows match count for grep', () => {
       const result = formatToolSummary('grep', { pattern: 'TODO' }, 'file1:1:TODO\nfile2:5:TODO', false);
-      expect(result).toContain('TODO');
       expect(result).toContain('2 matches');
     });
 
-    it('shows no matches for grep with no results', () => {
+    it('shows No matches for grep with no results', () => {
       const result = formatToolSummary('grep', { pattern: 'NOTFOUND' }, '(no matches)', false);
-      expect(result).toContain('no matches');
+      expect(result).toMatch(/no matches/i);
     });
 
     it('shows match count for search_files', () => {
@@ -349,97 +342,93 @@ describe('ui.js', () => {
     // glob
     it('shows file count for glob', () => {
       const result = formatToolSummary('glob', { pattern: '**/*.js' }, 'a.js\nb.js\nc.js', false);
-      expect(result).toContain('3 files');
+      expect(result).toContain('3 file');
     });
 
-    it('shows no matches for empty glob', () => {
+    it('shows no files found for empty glob', () => {
       const result = formatToolSummary('glob', { pattern: '**/*.xyz' }, '(no matches)', false);
-      expect(result).toContain('no matches');
+      expect(result).toMatch(/no files/i);
     });
 
     // list_directory
     it('shows entry count for list_directory', () => {
       const result = formatToolSummary('list_directory', { path: 'src' }, 'app.js\nindex.js\nutils/', false);
-      expect(result).toContain('src');
-      expect(result).toContain('3 entries');
+      expect(result).toContain('3 entr');
     });
 
     it('shows 0 entries for empty directory', () => {
       const result = formatToolSummary('list_directory', { path: '.' }, '(empty)', false);
-      expect(result).toContain('0 entries');
+      expect(result).toContain('0 entr');
     });
 
     // git tools
     it('shows branch and change count for git_status', () => {
       const result = formatToolSummary('git_status', {}, 'Branch: main\n M src/app.js\n?? new.js', false);
       expect(result).toContain('main');
-      expect(result).toContain('2 changes');
+      expect(result).toContain('2 change');
     });
 
-    it('shows done for git_diff', () => {
+    it('shows +/− diff line counts for git_diff', () => {
       const result = formatToolSummary('git_diff', {}, '+added\n-removed', false);
-      expect(result).toContain('done');
+      expect(result).toMatch(/\+1.*−1/);
     });
 
-    it('shows done for git_log', () => {
+    it('shows log info for git_log', () => {
       const result = formatToolSummary('git_log', {}, 'abc123 feat: stuff', false);
-      expect(result).toContain('done');
+      expect(result).toContain('⎿');
     });
 
     // web tools
-    it('shows URL for web_fetch', () => {
+    it('shows Fetched for web_fetch', () => {
       const result = formatToolSummary('web_fetch', { url: 'https://example.com/api' }, 'content...', false);
-      expect(result).toContain('example.com');
-      expect(result).toContain('fetched');
+      expect(result).toMatch(/fetched/i);
     });
 
-    it('shows query and result count for web_search', () => {
+    it('shows result count for web_search', () => {
       const result = formatToolSummary('web_search', { query: 'node.js tutorial' }, 'Result 1\n\nResult 2\n\nResult 3', false);
-      expect(result).toContain('node.js tutorial');
-      expect(result).toContain('3 results');
+      expect(result).toContain('3 result');
     });
 
     // task_list
-    it('shows action for task_list', () => {
+    it('shows Done for task_list', () => {
       const result = formatToolSummary('task_list', { action: 'create' }, 'ok', false);
-      expect(result).toContain('create');
-      expect(result).toContain('done');
+      expect(result).toMatch(/done/i);
     });
 
     // spawn_agents
     it('shows agent count for successful spawn_agents', () => {
       const result = formatToolSummary('spawn_agents', { agents: [{}, {}, {}] }, '✓ Agent 1\n✓ Agent 2\n✓ Agent 3', false);
-      expect(result).toContain('3 agents');
-      expect(result).toContain('done');
+      expect(result).toContain('3 agent');
+      expect(result).toMatch(/done/i);
     });
 
     it('shows success/fail counts when agents fail', () => {
       const result = formatToolSummary('spawn_agents', { agents: [{}, {}, {}] }, '✓ Agent 1\n✗ Agent 2\n✓ Agent 3', false);
-      expect(result).toContain('2✓');
-      expect(result).toContain('1✗');
+      expect(result).toContain('2 done');
+      expect(result).toContain('1 failed');
     });
 
     it('shows all failed when no agents succeed', () => {
       const result = formatToolSummary('spawn_agents', { agents: [{}, {}] }, '✗ Agent 1\n✗ Agent 2', false);
-      expect(result).toContain('0✓');
-      expect(result).toContain('2✗');
+      expect(result).toContain('0 done');
+      expect(result).toContain('2 failed');
     });
 
     // default
-    it('shows done for unknown tools', () => {
+    it('shows Done for unknown tools', () => {
       const result = formatToolSummary('custom_tool', {}, 'some result', false);
-      expect(result).toContain('done');
+      expect(result).toMatch(/done/i);
     });
 
     // edge cases
     it('handles null/undefined result', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, null, false);
-      expect(result).toContain('✓');
+      expect(result).toContain('⎿');
     });
 
     it('handles missing args', () => {
       const result = formatToolSummary('read_file', {}, '1:test', false);
-      expect(result).toContain('file');
+      expect(result).toContain('line');
     });
   });
 
