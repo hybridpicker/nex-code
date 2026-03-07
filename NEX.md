@@ -148,5 +148,5 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 ├── memory/            # Persistentes Projekt-Wissen
 ├── plans/             # Gespeicherte Plans
 ├── hooks/             # Custom Hook-Scripts
-└── config.json        # Permissions, MCP-Server, Hooks, Aliases
+└── config.json        # Permissions, MCP-Server, Hooks, Aliases, maxIterations
 ```
