@@ -328,11 +328,12 @@ Automatic bracketed paste mode: pasting multi-line text into the prompt is detec
 
 ### Ctrl+C Cancellation
 Pressing Ctrl+C during a running request immediately cancels the active HTTP stream and returns to the prompt:
-- An `AbortController` signal flows from the SIGINT handler through the agent loop to the provider's HTTP request
+- An `AbortController` signal flows from the readline SIGINT handler through the agent loop to the provider's HTTP request
 - All providers (Ollama, OpenAI, Anthropic, Gemini, local) destroy the response stream on abort
 - No EPIPE errors after cancellation (stdout writes are EPIPE-guarded)
-- 2x Ctrl+C during processing force-exits the process
+- During processing: first Ctrl+C aborts the task and returns to prompt; second Ctrl+C force-exits
 - At the idle prompt: first Ctrl+C shows `(Press Ctrl+C again to exit)`, second Ctrl+C exits (hint resets after 2 s)
+- readline intercepts Ctrl+C on TTY (`rl.on('SIGINT')`) to prevent readline close → `process.exit(0)` race
 
 ### Diff Preview
 Every file change is shown in a diff-style format before being applied:
@@ -384,13 +385,14 @@ Persistent project memory that survives across sessions:
 Also loads `NEX.md` from project root for project-level instructions.
 
 ### Plan Mode
-Analyze before executing — the agent creates a plan, you review and approve:
+Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made:
 ```
-/plan refactor the auth module
-/plan status
-/plan approve
-/auto semi-auto      # set autonomy level
+/plan refactor the auth module   # enter plan mode
+/plan status                     # show plan progress
+/plan approve                    # approve and exit plan mode (all tools re-enabled)
+/auto semi-auto                  # set autonomy level
 ```
+Plan mode is **hard-enforced**: only read-only tools (`read_file`, `list_directory`, `search_files`, `glob`, `grep`, `web_search`, `web_fetch`, `git_status`, `git_diff`, `git_log`, `git_show`, `ask_user`) are available. Any attempt to call a write tool is blocked at the API level — the LLM cannot make changes even if it tries. The plan text is saved to `.nex/plans/current-plan.md` for review.
 
 ### Undo / Redo
 In-session undo/redo for all file changes (write, edit, patch):
