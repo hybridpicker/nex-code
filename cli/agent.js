@@ -13,7 +13,7 @@ const { autoSave } = require('./session');
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
-const { isPlanMode, getPlanModePrompt } = require('./planner');
+const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent } = require('./planner');
 const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
@@ -182,6 +182,20 @@ const STALE_WARN_MS = 60000;   // Warn after 60s without tokens
 const STALE_ABORT_MS = 120000; // Abort after 120s without tokens
 // Use process.cwd() dynamically
 
+/**
+ * Save plan text to .nex/plans/current-plan.md
+ */
+function _savePlanToFile(text) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.join(process.cwd(), '.nex', 'plans');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, 'current-plan.md');
+    fs.writeFileSync(filePath, text, 'utf-8');
+  } catch { /* non-fatal */ }
+}
+
 // Wire up "a" (always allow) from confirm dialog → permission system
 setAllowAlwaysHandler((toolName) => {
   setPermission(toolName, 'allow');
@@ -239,6 +253,19 @@ async function prepareToolCall(tc) {
     if (renamed.length) {
       console.log(`${C.dim}  ✓ ${fnName}: corrected args (${renamed.join(', ')})${C.reset}`);
     }
+  }
+
+  // Plan mode hard enforcement — block all non-read-only tools
+  if (isPlanMode() && !PLAN_MODE_ALLOWED_TOOLS.has(fnName)) {
+    console.log(`${C.yellow}  ✗ ${fnName}: blocked in plan mode${C.reset}`);
+    return {
+      callId, fnName, args: finalArgs, canExecute: false,
+      errorResult: {
+        role: 'tool',
+        content: `PLAN MODE: '${fnName}' is blocked. Only read-only tools are allowed. Present your plan as text output instead of making changes.`,
+        tool_call_id: callId,
+      },
+    };
   }
 
   // Permission check
@@ -312,16 +339,17 @@ async function executeSingleTool(prep, quiet = false) {
     ? safeResult.substring(0, 50000) + `\n...(truncated ${safeResult.length - 50000} chars)`
     : safeResult;
 
-  if (!quiet) {
-    console.log(formatResult(truncated));
-  }
-
-  runHooks('post-tool', { tool_name: prep.fnName });
-
   const firstLine = truncated.split('\n')[0];
   const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED')
     || (prep.fnName === 'spawn_agents' && !/✓ Agent/.test(truncated) && /✗ Agent/.test(truncated));
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
+
+  if (!quiet) {
+    console.log(formatResult(truncated));
+    console.log(summary);
+  }
+
+  runHooks('post-tool', { tool_name: prep.fnName });
   
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated);
@@ -347,10 +375,11 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       let label;
       if (execTools.length === 1) {
         const p = execTools[0];
-        label = `▸ ${p.fnName} ${_argPreview(p.fnName, p.args)}`;
+        const preview = _argPreview(p.fnName, p.args);
+        label = `⏺ ${p.fnName}${preview ? `(${preview})` : ''}`;
       } else {
         const names = execTools.map(p => p.fnName).join(', ');
-        label = `▸ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '...' : names}`;
+        label = `⏺ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '…' : names}`;
       }
       spinner = new Spinner(label);
       spinner.start();
@@ -748,7 +777,10 @@ async function processInput(userInput) {
     let flushTimeout = null;
     
     try {
-      const allTools = getCachedFilteredTools(getAllToolDefinitions());
+      const baseTools = getCachedFilteredTools(getAllToolDefinitions());
+      const allTools = isPlanMode()
+        ? baseTools.filter(t => PLAN_MODE_ALLOWED_TOOLS.has(t.function.name))
+        : baseTools;
       const userSignal = _getAbortSignal();
       // Combine user abort (Ctrl+C) and stale abort into one signal
       const combinedAbort = new AbortController();
@@ -995,6 +1027,13 @@ async function processInput(userInput) {
         const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
         apiMessages.push(nudge);
         continue; // retry — don't count as a new step
+      }
+      // In plan mode: save the plan text output to disk
+      if (isPlanMode() && hasText) {
+        const planText = (content || streamedText || '').trim();
+        setPlanContent(planText);
+        _savePlanToFile(planText);
+        console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
       }
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);

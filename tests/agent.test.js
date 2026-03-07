@@ -830,7 +830,7 @@ describe('agent.js', () => {
       mockStream('Done');
       executeTool.mockResolvedValue('content');
       await processInput('test');
-      expect(spinnerLabels().some(l => l.includes('7 tools') && l.includes('...'))).toBe(true);
+      expect(spinnerLabels().some(l => l.includes('7 tools') && (l.includes('...') || l.includes('…')))).toBe(true);
     });
   });
 

@@ -528,8 +528,8 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/plan': {
-      const { getActivePlan, approvePlan, startExecution, setPlanMode } = require('./planner');
-      const { formatPlan } = require('./planner');
+      const { getActivePlan, approvePlan, startExecution, setPlanMode, getPlanContent, formatPlan } = require('./planner');
+      const { invalidateSystemPromptCache } = require('./agent');
       const arg = rest.join(' ').trim();
       if (arg === 'status') {
         const plan = getActivePlan();
@@ -538,18 +538,25 @@ async function handleSlashCommand(input, rl) {
       }
       if (arg === 'approve') {
         if (approvePlan()) {
-          console.log(`${C.green}Plan approved! Starting execution...${C.reset}`);
           startExecution();
           setPlanMode(false);
+          invalidateSystemPromptCache();
+          const hasContent = !!getPlanContent();
+          console.log(`${C.green}${C.bold}Plan approved!${C.reset} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
+          console.log(`${C.dim}Plan mode disabled — all tools now available.${C.reset}`);
         } else {
-          console.log(`${C.red}No plan to approve${C.reset}`);
+          console.log(`${C.red}No plan to approve. Enter plan mode first with /plan${C.reset}`);
         }
         return true;
       }
       // Enter plan mode
       setPlanMode(true);
-      console.log(`${C.cyan}${C.bold}Plan mode activated${C.reset}`);
-      console.log(`${C.dim}Analysis only — no file changes until approved${C.reset}`);
+      invalidateSystemPromptCache();
+      console.log(`
+${C.cyan}${C.bold}┌─ PLAN MODE ─────────────────────────────────────┐${C.reset}
+${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · /plan approve to execute${C.reset}  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}└─────────────────────────────────────────────────┘${C.reset}`);
       if (arg) {
         console.log(`${C.dim}Task: ${arg}${C.reset}`);
       }
@@ -851,7 +858,7 @@ async function handleSlashCommand(input, rl) {
 
     case '/exit':
     case '/quit':
-      console.log(`\n${C.gray}Bye!${C.reset}`);
+      console.log(`\n${C.dim}Bye!${C.reset}`);
       process.exit(0);
 
     default:
@@ -1027,7 +1034,7 @@ async function startREPL() {
     flushAutoSave();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-    console.log(`\n${C.gray}Bye!${C.reset}`);
+    console.log(`\n${C.dim}Bye!${C.reset}`);
     process.exit(0);
   }
 
@@ -1039,39 +1046,42 @@ async function startREPL() {
     flushAutoSave();
   });
 
-  process.on('SIGINT', () => {
+  // Handle Ctrl+C via readline (fires on TTY before process SIGINT)
+  rl.on('SIGINT', () => {
     cleanupTerminal();
     if (_processing) {
       _sigintCount++;
       if (_sigintCount >= 2) {
-        // Force exit after 2 Ctrl+C during processing
         gracefulShutdown();
+        return;
       }
-      // Abort the running HTTP stream
-      if (_abortController) {
-        _abortController.abort();
-      }
-      console.log(`\n${C.yellow}  Cancelled — press Ctrl+C again to exit${C.reset}`);
+      if (_abortController) _abortController.abort();
+      console.log(`\n${C.yellow}  Task cancelled. Press Ctrl+C again to exit.${C.reset}`);
       _processing = false;
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
-    // At prompt — require second Ctrl+C to exit
+    // At prompt — require a second Ctrl+C to exit
     if (_exitPrompt) {
       gracefulShutdown();
     } else {
       _exitPrompt = true;
-      process.stdout.write(`\n${C.gray}  (Press Ctrl+C again to exit)${C.reset}\n`);
+      process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
       rl.setPrompt(getPrompt());
       rl.prompt();
-      // Reset after 2 seconds if user doesn't press again
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
       _exitPromptTimer = setTimeout(() => {
         _exitPrompt = false;
         _exitPromptTimer = null;
       }, 2000);
     }
+  });
+
+  // Fallback SIGINT handler for non-TTY (e.g. piped input or external signals)
+  process.on('SIGINT', () => {
+    if (!process.stdin.isTTY) gracefulShutdown();
+    // else: rl.on('SIGINT') handles it
   });
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
@@ -1375,7 +1385,7 @@ async function startREPL() {
 
   rl.on('close', () => {
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l'); // disable bracketed paste
-    console.log(`\n${C.gray}Bye!${C.reset}`);
+    console.log(`\n${C.dim}Bye!${C.reset}`);
     process.exit(0);
   });
 }
