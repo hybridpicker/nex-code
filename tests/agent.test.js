@@ -64,8 +64,8 @@ jest.mock('../cli/spinner', () => {
 });
 
 // ─── Imports ──────────────────────────────────────────────
-const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter } = require('../cli/agent');
-const { callStream, getConfiguredProviders } = require('../cli/providers/registry');
+const { processInput, clearConversation, getConversationLength, getConversationMessages, setConversationMessages, setAbortSignalGetter, setMaxIterations } = require('../cli/agent');
+const { callStream, getConfiguredProviders, getActiveProviderName } = require('../cli/providers/registry');
 const { executeTool } = require('../cli/tools');
 const { validateToolArgs } = require('../cli/tool-validator');
 const { routeSkillCall } = require('../cli/skills');
@@ -767,6 +767,10 @@ describe('agent.js', () => {
   // ─── max iterations ───────────────────────────────────────
   describe('max iterations', () => {
     it('warns when max iterations reached', async () => {
+      // Use a very small limit and non-ollama provider so auto-extend is skipped
+      setMaxIterations(2);
+      getActiveProviderName.mockReturnValue('anthropic');
+      confirm.mockResolvedValueOnce(false); // decline to extend → exits
       let i = 0;
       callStream.mockImplementation(async () => ({
         content: '',
@@ -775,6 +779,9 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('ok');
       await processInput('loop');
       expect(logOutput()).toContain('Max iterations');
+      // restore defaults
+      setMaxIterations(50);
+      getActiveProviderName.mockReturnValue('ollama');
     });
   });
 
