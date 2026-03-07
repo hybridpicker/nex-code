@@ -47,9 +47,12 @@ function banner(modelName, cwd, opts = {}) {
   const r = C.reset;
 
   const raw = [
-    '╔╗╔ ╔═╗ ╲ ╱ ━ ╔═╗ ╔═╗ ╔╦╗ ╔═╗',
-    '║║║ ╠═╣  ╳  ━ ║   ║ ║ ║ ║ ╠═╣',
-    '╝╚╝ ╚═╝ ╱ ╲ ━ ╚═╝ ╚═╝ ╚╩╝ ╚═╝',
+    '███╗   ██╗███████╗██╗  ██╗  ━   ██████╗ ██████╗ ██████╗ ███████╗',
+    '████╗  ██║██╔════╝╚██╗██╔╝  ━  ██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+    '██╔██╗ ██║█████╗   ╚███╔╝   ━  ██║     ██║   ██║██║  ██║█████╗',
+    '██║╚██╗██║██╔══╝   ██╔██╗   ━  ██║     ██║   ██║██║  ██║██╔══╝',
+    '██║ ╚████║███████╗██╔╝ ██╗  ━  ╚██████╗╚██████╔╝██████╔╝███████╗',
+    '╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ━   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
   ];
 
   // Vertical gradient: Ice — White → Cyan → Deep Blue
@@ -63,8 +66,8 @@ function banner(modelName, cwd, opts = {}) {
 
   console.log(`
 ${logo}
-        ${d}Agentic Coding CLI  v${require('../package.json').version}${r}
-        ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
+              ${d}Agentic Coding CLI  v${require('../package.json').version}${r}
+              ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
 `);
 }
 
