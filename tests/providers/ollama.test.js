@@ -1,6 +1,6 @@
 const { EventEmitter } = require('events');
 
-jest.mock('axios', () => ({ post: jest.fn() }));
+jest.mock('axios', () => ({ post: jest.fn(), get: jest.fn().mockRejectedValue(new Error('mock: no ollama in CI')) }));
 const axios = require('axios');
 
 const { OllamaProvider, OLLAMA_MODELS } = require('../../cli/providers/ollama');
