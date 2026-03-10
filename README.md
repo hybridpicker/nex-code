@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1752-blue.svg" alt="Tests: 1752">
+  <img src="https://img.shields.io/badge/tests-1825-blue.svg" alt="Tests: 1825">
 </p>
 
 ---
@@ -84,7 +84,7 @@ npm update -g nex-code
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
-| **Test coverage** | 1752 tests, 85% | — | — | — |
+| **Test coverage** | 1825 tests, 84% | — | — | — |
 
 ---
 
@@ -825,7 +825,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-44 test suites, 1752 tests, 85% statement / 79% branch coverage.
+47 test suites, 1825 tests, 84% statement / 77% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
