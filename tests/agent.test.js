@@ -47,7 +47,7 @@ jest.mock('../cli/skills', () => ({ getSkillInstructions: jest.fn().mockReturnVa
 jest.mock('../cli/costs', () => ({ trackUsage: jest.fn() }));
 jest.mock('../cli/tool-validator', () => ({ validateToolArgs: jest.fn().mockReturnValue({ valid: true, args: {} }) }));
 jest.mock('../cli/tool-tiers', () => ({ filterToolsForModel: jest.fn().mockImplementation((t) => t), getModelTier: jest.fn().mockReturnValue('full'), PROVIDER_DEFAULT_TIER: { ollama: 'standard', openai: 'full', anthropic: 'full' } }));
-jest.mock('../cli/safety', () => ({ isForbidden: jest.fn().mockReturnValue(null), isDangerous: jest.fn().mockReturnValue(false), confirm: jest.fn().mockResolvedValue(true), setAutoConfirm: jest.fn(), getAutoConfirm: jest.fn().mockReturnValue(false), setAllowAlwaysHandler: jest.fn() }));
+jest.mock('../cli/safety', () => ({ isForbidden: jest.fn().mockReturnValue(null), isDangerous: jest.fn().mockReturnValue(false), isCritical: jest.fn().mockReturnValue(false), confirm: jest.fn().mockResolvedValue(true), setAutoConfirm: jest.fn(), getAutoConfirm: jest.fn().mockReturnValue(false), setAllowAlwaysHandler: jest.fn() }));
 
 // Mock spinner to avoid real timers in tests
 jest.mock('../cli/spinner', () => {
@@ -317,7 +317,7 @@ describe('agent.js', () => {
       mockStream('Done');
       executeTool.mockResolvedValueOnce('fixed');
       await processInput('test');
-      expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo fixed' }, { silent: true });
+      expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo fixed' }, { silent: true, autoConfirm: true });
     });
   });
 
