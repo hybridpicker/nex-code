@@ -78,6 +78,9 @@ npm update -g nex-code
 | **Undo / Redo** | ✅ | ❌ | ❌ | ❌ |
 | **Cost tracking + budgets** | ✅ | ❌ | ❌ | ❌ |
 | **Pre-push secret detection** | ✅ | ❌ | ❌ | ❌ |
+| **Browser agent (headless)** | ✅ Playwright-based | ❌ | ⚠️ Experimental | ❌ |
+| **Grounded web search** | ✅ Perplexity/DDG | ❌ | ✅ Google grounded | ❌ |
+| **GitHub Actions tools** | ✅ native | ❌ | ❌ | ❌ |
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
@@ -142,6 +145,7 @@ OLLAMA_API_KEY=your-key       # Ollama Cloud (Qwen3 Coder, Qwen3.5, DeepSeek R1,
 OPENAI_API_KEY=your-key       # OpenAI (GPT-4o, GPT-4.1, o1, o3, o4-mini)
 ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet 4.6, Opus 4.6, Haiku 4.5)
 GEMINI_API_KEY=your-key       # Google Gemini (3.1 Pro Preview, 2.5 Pro/Flash, 2.0 Flash)
+PERPLEXITY_API_KEY=your-key   # Perplexity (optional — enables grounded web search)
 # No key needed for local Ollama — just have it running
 ```
 
@@ -317,12 +321,21 @@ The agent has 17 built-in tools:
 | `git_diff` | Git diff with optional path filter |
 | `git_log` | Git commit history with configurable count |
 | `web_fetch` | Fetch content from a URL |
-| `web_search` | Search the web via DuckDuckGo |
+| `web_search` | Grounded search via Perplexity (if `PERPLEXITY_API_KEY` set) or DuckDuckGo |
 | `ask_user` | Ask the user a question and wait for input |
 | `task_list` | Create and manage task lists for multi-step operations |
 | `spawn_agents` | Run parallel sub-agents with auto model routing |
+| `browser_open` | Open URL in headless browser, return text + links (JS-heavy pages) |
+| `browser_screenshot` | Screenshot a URL → saved file + vision-ready path |
+| `browser_click` | Click element by CSS selector or visible text |
+| `browser_fill` | Fill form field and optionally submit |
+| `gh_run_list` | List GitHub Actions workflow runs |
+| `gh_run_view` | View run details and step logs |
+| `gh_workflow_trigger` | Trigger a workflow dispatch event |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
+
+**Browser tools** require Playwright (`npm install playwright && npx playwright install chromium`). nex-code works without it — browser tools return a helpful install message if missing.
 
 Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
