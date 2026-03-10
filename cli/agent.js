@@ -1180,4 +1180,6 @@ module.exports = {
   getCachedFilteredTools,
   buildSystemPrompt,
   getProjectContextHash,
+  // Export for testing
+  buildUserContent,
 };
