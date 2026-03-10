@@ -123,8 +123,9 @@ const toolFilterCache = new Map();
 
 // ─── Early Tool Result Compression ───────────────────────────
 // Compress large tool results to save context tokens
-const TOOL_RESULT_TOKEN_THRESHOLD = 5000;
-const TOOL_RESULT_COMPRESS_TARGET = 3000;
+// Threshold raised from 5000 to 10000 — avoids compression overhead on medium outputs
+const TOOL_RESULT_TOKEN_THRESHOLD = 10000;
+const TOOL_RESULT_COMPRESS_TARGET = 6000;
 
 /**
  * Compress tool result if it exceeds token threshold.
@@ -219,6 +220,7 @@ function invalidateSystemPromptCache() {
 const PARALLEL_SAFE = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
   'web_fetch', 'web_search', 'git_status', 'git_diff', 'git_log',
+  'task_list', 'gh_run_list', 'gh_run_view',
 ]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
@@ -865,7 +867,7 @@ async function processInput(userInput) {
                 }
                 tokenBuffer = '';
                 flushTimeout = null;
-              }, 100);
+              }, 50);
             }
           } else {
             stream.push(tokenBuffer);
@@ -1115,11 +1117,11 @@ async function processInput(userInput) {
       toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
     }
 
-    // ─── Prepare all tool calls (parse, validate, permissions — sequential) ───
-    const prepared = [];
-    for (const tc of tool_calls) {
-      prepared.push(await prepareToolCall(tc));
-    }
+    // ─── Prepare all tool calls (parse, validate, permissions) ───
+    // Run all preparations concurrently. Each call is independent: permission
+    // checks and validation are synchronous; only user-confirmation prompts
+    // are async, but readline serialises them through stdin automatically.
+    const prepared = await Promise.all(tool_calls.map(tc => prepareToolCall(tc)));
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
