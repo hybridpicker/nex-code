@@ -43,6 +43,8 @@ const SLASH_COMMANDS = [
   { cmd: '/remember', desc: 'Save a memory' },
   { cmd: '/forget', desc: 'Delete a memory' },
   { cmd: '/memory', desc: 'Show all memories' },
+  { cmd: '/learn', desc: 'Reflect on session and update memory' },
+  { cmd: '/optimize', desc: 'Show optimization opportunities' },
   { cmd: '/permissions', desc: 'Show tool permissions' },
   { cmd: '/allow', desc: 'Auto-allow a tool' },
   { cmd: '/deny', desc: 'Block a tool' },
@@ -160,6 +162,8 @@ ${C.bold}${C.cyan}Memory:${C.reset}
   ${C.cyan}/remember <text>${C.reset}  ${C.dim}Save a memory (key=value or freeform)${C.reset}
   ${C.cyan}/forget <key>${C.reset}     ${C.dim}Delete a memory${C.reset}
   ${C.cyan}/memory${C.reset}           ${C.dim}Show all memories${C.reset}
+  ${C.cyan}/learn${C.reset}            ${C.dim}Reflect on this session and auto-update memory + NEX.md${C.reset}
+  ${C.cyan}/optimize${C.reset}         ${C.dim}Show context, memory health, and optimization tips${C.reset}
 
 ${C.bold}${C.cyan}Permissions:${C.reset}
   ${C.cyan}/permissions${C.reset}      ${C.dim}Show tool permissions${C.reset}
@@ -391,8 +395,23 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/clear': {
-      const { clearConversation } = require('./agent');
+      const { clearConversation, getConversationMessages: _getMsgs } = require('./agent');
       const { clearHistory } = require('./file-history');
+      // Auto-learn from session before clearing if substantial
+      const _msgs = _getMsgs();
+      const _userCount = _msgs.filter(m => m.role === 'user').length;
+      if (_userCount >= 4) {
+        process.stdout.write(`${C.dim}Reflecting on session...${C.reset} `);
+        const { learnFromSession } = require('./learner');
+        learnFromSession(_msgs).then(lr => {
+          if (!lr.skipped && !lr.error && (lr.applied.length > 0 || lr.nexAdded.length > 0)) {
+            const total = lr.applied.length + lr.nexAdded.length;
+            process.stdout.write(`${C.green}${total} learning(s) saved${C.reset}\n`);
+          } else {
+            process.stdout.write(`${C.dim}nothing new${C.reset}\n`);
+          }
+        }).catch(() => process.stdout.write('\n'));
+      }
       clearConversation();
       clearHistory();
       console.log(`${C.green}Conversation cleared${C.reset}`);
@@ -525,6 +544,127 @@ async function handleSlashCommand(input, rl) {
         console.log(`  ${C.cyan}${m.key}${C.reset} = ${m.value}`);
       }
       console.log();
+      return true;
+    }
+
+    case '/learn': {
+      const { learnFromSession } = require('./learner');
+      const { getConversationMessages: _learnMsgs } = require('./agent');
+      const msgs = _learnMsgs();
+      const userCount = msgs.filter(m => m.role === 'user').length;
+      if (userCount < 4) {
+        console.log(`${C.yellow}Session too short to learn from (need 4+ user messages, have ${userCount})${C.reset}`);
+        return true;
+      }
+      console.log(`${C.dim}Analyzing session for learnings...${C.reset}`);
+      try {
+        const lr = await learnFromSession(msgs);
+        if (lr.skipped) {
+          console.log(`${C.dim}Session too short${C.reset}`);
+          return true;
+        }
+        if (lr.error) {
+          console.log(`${C.red}Reflection error: ${lr.error}${C.reset}`);
+          return true;
+        }
+        console.log('');
+        if (lr.summary) {
+          console.log(`${C.bold}Session:${C.reset} ${C.dim}${lr.summary}${C.reset}`);
+          console.log('');
+        }
+        if (lr.applied.length === 0 && lr.nexAdded.length === 0) {
+          console.log(`${C.dim}No new learnings extracted from this session${C.reset}`);
+        } else {
+          if (lr.applied.length > 0) {
+            console.log(`${C.bold}${C.cyan}Memory updates:${C.reset}`);
+            for (const { key, value, action } of lr.applied) {
+              const icon = action === 'updated' ? `${C.yellow}~${C.reset}` : `${C.green}+${C.reset}`;
+              console.log(`  ${icon} ${C.bold}${key}${C.reset} = ${value}`);
+            }
+          }
+          if (lr.nexAdded.length > 0) {
+            console.log(`${C.bold}${C.cyan}Added to NEX.md:${C.reset}`);
+            for (const line of lr.nexAdded) {
+              console.log(`  ${C.green}+${C.reset} ${line}`);
+            }
+          }
+        }
+        console.log('');
+      } catch (err) {
+        console.log(`${C.red}Learn failed: ${err.message}${C.reset}`);
+      }
+      return true;
+    }
+
+    case '/optimize': {
+      const { getConversationMessages: _optMsgs } = require('./agent');
+      const { getUsage } = require('./context-engine');
+      const { TOOL_DEFINITIONS } = require('./tools');
+      const { listMemories: _listMem } = require('./memory');
+      const optMsgs = _optMsgs();
+      const usage = getUsage(optMsgs, TOOL_DEFINITIONS);
+      const model = getActiveModel();
+      const providerName = getActiveProviderName();
+      const memories = _listMem();
+
+      console.log(`\n${C.bold}${C.cyan}Optimization Report${C.reset}\n`);
+
+      // Context window health
+      const ctxColor = usage.percentage > 80 ? C.red : usage.percentage > 50 ? C.yellow : C.green;
+      console.log(`${C.bold}Context Window:${C.reset} ${ctxColor}${usage.percentage}%${C.reset} used (${usage.used.toLocaleString()} / ${usage.limit.toLocaleString()} tokens)`);
+      if (usage.percentage > 75) {
+        console.log(`  ${C.yellow}→ Tip: Use /clear to free context (auto-learns first)${C.reset}`);
+      } else if (usage.percentage > 50) {
+        console.log(`  ${C.dim}→ Context is filling up, consider /clear soon${C.reset}`);
+      } else {
+        console.log(`  ${C.green}→ Context healthy${C.reset}`);
+      }
+
+      // Memory health
+      console.log(`\n${C.bold}Memory:${C.reset} ${memories.length} entries`);
+      if (memories.length === 0) {
+        console.log(`  ${C.yellow}→ No memories yet. Use /learn after sessions or /remember key=value${C.reset}`);
+      } else {
+        const sorted = [...memories].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        const latest = sorted[0];
+        const age = latest ? Math.round((Date.now() - new Date(latest.updatedAt)) / 60000) : null;
+        const ageStr = age !== null ? (age < 60 ? `${age}m ago` : `${Math.round(age/60)}h ago`) : '?';
+        console.log(`  ${C.dim}Latest update: ${ageStr}${C.reset}`);
+        if (memories.length > 30) {
+          console.log(`  ${C.yellow}→ Many memories (${memories.length}) — consider pruning with /forget${C.reset}`);
+        }
+      }
+
+      // Model suggestion
+      console.log(`\n${C.bold}Active Model:${C.reset} ${providerName}:${model.id}`);
+      const ctx = model.contextWindow || model.maxTokens || 0;
+      if (ctx > 0 && ctx < 32000 && optMsgs.length > 10) {
+        console.log(`  ${C.yellow}→ Small context window (${(ctx/1000).toFixed(0)}k). Consider /model for larger context${C.reset}`);
+      } else if (ctx >= 128000) {
+        console.log(`  ${C.green}→ Large context window (${(ctx/1000).toFixed(0)}k) — good for long sessions${C.reset}`);
+      }
+
+      // Session stats
+      const userTurns = optMsgs.filter(m => m.role === 'user').length;
+      console.log(`\n${C.bold}Session:${C.reset} ${userTurns} turns, ${optMsgs.length} messages total`);
+      if (userTurns >= 4 && userTurns % 10 === 0) {
+        console.log(`  ${C.cyan}→ Good time to /learn and capture session insights${C.reset}`);
+      }
+
+      // Quick wins
+      const tips = [];
+      const nexPath = require('path').join(process.cwd(), 'NEX.md');
+      if (!require('fs').existsSync(nexPath)) {
+        tips.push(`Create NEX.md in project root to give nex-code project-specific instructions`);
+      }
+      if (tips.length > 0) {
+        console.log(`\n${C.bold}Quick Wins:${C.reset}`);
+        for (const tip of tips) {
+          console.log(`  ${C.cyan}→${C.reset} ${tip}`);
+        }
+      }
+
+      console.log('');
       return true;
     }
 
