@@ -82,6 +82,13 @@ function runHeadlessTask(task) {
     const { setAutoConfirm } = require('../cli/safety');
     setAutoConfirm(true);
   }
+  // In headless mode, default to a fast model unless --model was explicitly set
+  const hasExplicitModel = args.includes('--model');
+  if (!hasExplicitModel) {
+    const { setActiveModel } = require('../cli/providers/registry');
+    const fastHeadlessModel = process.env.HEADLESS_MODEL || 'devstral-small-2:24b';
+    setActiveModel(fastHeadlessModel);
+  }
   const { processInput, getConversationMessages } = require('../cli/agent');
   processInput(task).then(() => {
     if (args.includes('--json')) {
