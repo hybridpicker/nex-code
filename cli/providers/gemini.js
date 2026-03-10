@@ -125,6 +125,21 @@ class GeminiProvider extends BaseProvider {
         tool_call_id: msg.tool_call_id,
       };
     }
+    // Handle multimodal content (text + images) for user messages
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      const blocks = [];
+      for (const block of msg.content) {
+        if (block.type === 'text') {
+          blocks.push({ type: 'text', text: block.text ?? '' });
+        } else if (block.type === 'image' && block.data) {
+          const url = block.data.startsWith('data:')
+            ? block.data
+            : `data:${block.media_type || 'image/png'};base64,${block.data}`;
+          blocks.push({ type: 'image_url', image_url: { url, detail: 'auto' } });
+        }
+      }
+      return { role: 'user', content: blocks };
+    }
     return { role: msg.role, content: msg.content };
   }
 
