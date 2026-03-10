@@ -229,6 +229,36 @@ Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemin
 
 Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved. The banner shows a `⚡ YOLO` indicator. Toggle at runtime with `/autoconfirm`.
 
+### Headless / Programmatic Mode
+
+Run nex-code non-interactively from scripts, CI pipelines, or other processes:
+
+```bash
+# Inline prompt
+nex-code --task "refactor src/index.js to use async/await" --yolo
+
+# Prompt from file (avoids shell-escaping issues with special characters)
+nex-code --prompt-file /tmp/task.txt --yolo
+
+# Delete the file after reading
+nex-code --prompt-file /tmp/task.txt --delete-prompt-file --yolo
+
+# JSON output for programmatic parsing
+nex-code --prompt-file /tmp/task.txt --yolo --json
+# → {"success":true,"response":"..."}
+```
+
+| Flag | Description |
+|------|-------------|
+| `--task <prompt>` | Run a single prompt and exit |
+| `--prompt-file <path>` | Read prompt from a UTF-8 file and run headless |
+| `--delete-prompt-file` | Delete the prompt file after reading (use with `--prompt-file`) |
+| `--auto` | Skip confirmations (non-interactive, no REPL banner) |
+| `--yolo` | Skip all confirmations including dangerous commands |
+| `--json` | Output `{"success":true,"response":"..."}` to stdout |
+| `--max-turns <n>` | Override the agentic loop iteration limit |
+| `--model <spec>` | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`) |
+
 ---
 
 ## Providers & Models
