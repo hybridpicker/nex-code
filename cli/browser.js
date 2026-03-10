@@ -16,7 +16,7 @@ const INSTALL_MSG = 'Playwright is not installed. Install with:\n  npm install p
 function isPlaywrightAvailable() {
   if (_isAvailable !== null) return _isAvailable;
   try {
-    require.resolve('playwright');
+    require('playwright');
     _isAvailable = true;
   } catch {
     _isAvailable = false;
