@@ -157,7 +157,7 @@ describe('web_search with Perplexity', () => {
   });
 
   it('uses Perplexity when PERPLEXITY_API_KEY is set', async () => {
-    process.env.PERPLEXITY_API_KEY = 'pplx-test-key';
+    process.env.PERPLEXITY_API_KEY = 'test-only-fake-key';
     const axios = require('axios');
     jest.spyOn(axios, 'post').mockResolvedValueOnce({
       data: {
@@ -172,12 +172,12 @@ describe('web_search with Perplexity', () => {
     expect(axios.post).toHaveBeenCalledWith(
       'https://api.perplexity.ai/chat/completions',
       expect.objectContaining({ model: 'sonar' }),
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer pplx-test-key' }) })
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer test-only-fake-key' }) })
     );
   });
 
   it('falls back to DuckDuckGo when Perplexity fails', async () => {
-    process.env.PERPLEXITY_API_KEY = 'pplx-test-key';
+    process.env.PERPLEXITY_API_KEY = 'test-only-fake-key';
     const axios = require('axios');
     jest.spyOn(axios, 'post').mockRejectedValueOnce(new Error('API error'));
     const mockHtml = '<a class="result__a" href="/l/?uddg=https%3A%2F%2Ffallback.com&rut=x">Fallback Result</a>';
@@ -187,7 +187,7 @@ describe('web_search with Perplexity', () => {
   });
 
   it('includes citations in Perplexity results', async () => {
-    process.env.PERPLEXITY_API_KEY = 'pplx-test-key';
+    process.env.PERPLEXITY_API_KEY = 'test-only-fake-key';
     const axios = require('axios');
     jest.spyOn(axios, 'post').mockResolvedValueOnce({
       data: {
@@ -333,7 +333,7 @@ describe('GeminiProvider._formatSingleMessage() with images', () => {
 
   beforeEach(() => {
     provider = new GeminiProvider();
-    process.env.GEMINI_API_KEY = 'gemini-test';
+    process.env.GEMINI_API_KEY = 'test-only-fake';
   });
 
   afterEach(() => {
