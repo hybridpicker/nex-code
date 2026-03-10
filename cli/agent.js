@@ -323,16 +323,22 @@ async function prepareToolCall(tc) {
     };
   }
   if (perm === 'ask') {
-    const ok = await confirm(`  Allow ${fnName}?`, { toolName: fnName });
+    let promptText = `  Allow ${fnName}?`;
+    if (fnName === 'bash' && finalArgs.command) {
+      const preview = finalArgs.command.substring(0, 80);
+      promptText = `  bash: \`${preview}${finalArgs.command.length > 80 ? '…' : ''}\`?`;
+    }
+    const ok = await confirm(promptText, { toolName: fnName });
     if (!ok) {
       return {
-        callId, fnName, args: finalArgs, canExecute: false,
+        callId, fnName, args: finalArgs, canExecute: false, confirmedByUser: false,
         errorResult: { role: 'tool', content: `CANCELLED: User declined ${fnName}`, tool_call_id: callId },
       };
     }
+    return { callId, fnName, args: finalArgs, canExecute: true, confirmedByUser: true, errorResult: null };
   }
 
-  return { callId, fnName, args: finalArgs, canExecute: true, errorResult: null };
+  return { callId, fnName, args: finalArgs, canExecute: true, confirmedByUser: true, errorResult: null };
 }
 
 /**
@@ -378,7 +384,10 @@ async function executeSingleTool(prep, quiet = false) {
 
   runHooks('pre-tool', { tool_name: prep.fnName });
 
-  const toolResult = await executeToolRouted(prep.fnName, prep.args, { silent: true });
+  const toolResult = await executeToolRouted(prep.fnName, prep.args, {
+    silent: true,
+    autoConfirm: prep.confirmedByUser === true,
+  });
   const safeResult = String(toolResult ?? '');
   const truncated = safeResult.length > 50000
     ? safeResult.substring(0, 50000) + `\n...(truncated ${safeResult.length - 50000} chars)`
@@ -844,18 +853,23 @@ async function processInput(userInput) {
           lastTokenTime = Date.now();
           staleWarned = false;
           
-          // Batch tokens for better performance (reduce cursor updates)
-          // 100ms batch window provides optimal balance between latency and throughput
+          // In non-TTY (headless) mode: flush immediately — no buffering needed
+          // In TTY mode: batch tokens for 100ms to reduce cursor flicker
           tokenBuffer += text;
-          
-          if (!flushTimeout) {
-            flushTimeout = setTimeout(() => {
-              if (tokenBuffer && stream) {
-                stream.push(tokenBuffer);
-              }
-              tokenBuffer = '';
-              flushTimeout = null;
-            }, 100); // Batch for 100ms (optimized from 50ms)
+
+          if (process.stdout.isTTY) {
+            if (!flushTimeout) {
+              flushTimeout = setTimeout(() => {
+                if (tokenBuffer && stream) {
+                  stream.push(tokenBuffer);
+                }
+                tokenBuffer = '';
+                flushTimeout = null;
+              }, 100);
+            }
+          } else {
+            stream.push(tokenBuffer);
+            tokenBuffer = '';
           }
           
           if (firstToken) {

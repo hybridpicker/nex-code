@@ -76,11 +76,36 @@ if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
   } catch { /* ignore malformed config */ }
 }
 
+// ─── macOS: prevent sleep while running ──────────────────────
+function preventSleep() {
+  if (process.platform !== 'darwin') return;
+  try {
+    const { spawn } = require('child_process');
+    // -i: prevent idle sleep, -m: prevent disk sleep
+    const child = spawn('caffeinate', ['-i', '-m'], {
+      stdio: 'ignore',
+      detached: false,
+    });
+    child.unref();
+    const kill = () => { try { child.kill(); } catch { /* already dead */ } };
+    process.on('exit', kill);
+    process.on('SIGINT', kill);
+    process.on('SIGTERM', kill);
+  } catch { /* caffeinate unavailable, no-op */ }
+}
+
 // ─── helper: run headless task ───────────────────────────────
 function runHeadlessTask(task) {
   if (args.includes('--auto')) {
     const { setAutoConfirm } = require('../cli/safety');
     setAutoConfirm(true);
+  }
+  // In headless mode, default to a fast model unless --model was explicitly set
+  const hasExplicitModel = args.includes('--model');
+  if (!hasExplicitModel) {
+    const { setActiveModel } = require('../cli/providers/registry');
+    const fastHeadlessModel = process.env.HEADLESS_MODEL || 'devstral-small-2:24b';
+    setActiveModel(fastHeadlessModel);
   }
   const { processInput, getConversationMessages } = require('../cli/agent');
   processInput(task).then(() => {
@@ -127,6 +152,7 @@ if (promptFileIdx !== -1) {
     try { fs.unlinkSync(filePath); } catch { /* ignore */ }
   }
 
+  preventSleep();
   runHeadlessTask(task);
 } else {
   // ─── --task (headless mode) ──────────────────────────────────
@@ -137,9 +163,11 @@ if (promptFileIdx !== -1) {
       console.error('--task requires a prompt');
       process.exit(1);
     }
+    preventSleep();
     runHeadlessTask(task);
   } else {
     // Normal REPL mode
+    preventSleep();
     const { startREPL } = require('../cli/index');
     startREPL();
   }
