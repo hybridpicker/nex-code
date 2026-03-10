@@ -1,7 +1,7 @@
 {
   "name": "nex-code",
   "version": "0.3.13",
-  "description": "Nex Code — Agentic Coding CLI with Multi-Provider Support",
+  "description": "The open-source agentic coding CLI. Free with Ollama Cloud — switch to OpenAI, Anthropic or Gemini anytime. Alternative to Claude Code & Gemini CLI.",
   "bin": {
     "nex-code": "./dist/nex-code.js"
   },
@@ -24,17 +24,33 @@
     "release": "npm version patch && git push --follow-tags && npm publish"
   },
   "keywords": [
+    "ai",
     "cli",
     "coding",
     "agent",
-    "ai",
-    "llm",
-    "multi-provider",
+    "ollama",
+    "ollama-cloud",
     "openai",
     "anthropic",
+    "claude",
     "gemini",
-    "google",
-    "ollama"
+    "llm",
+    "gpt",
+    "agentic",
+    "terminal",
+    "coding-assistant",
+    "claude-code-alternative",
+    "gemini-cli-alternative",
+    "open-source",
+    "free",
+    "qwen3",
+    "devstral",
+    "kimi-k2",
+    "deepseek",
+    "local-llm",
+    "mcp",
+    "model-context-protocol",
+    "multi-provider"
   ],
   "repository": {
     "type": "git",
