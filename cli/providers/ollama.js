@@ -95,6 +95,25 @@ class OllamaProvider extends BaseProvider {
     return { Authorization: `Bearer ${key}` };
   }
 
+  // Convert internal multimodal messages to Ollama /api/chat format.
+  // Ollama vision models use { content: string, images: ['base64...'] } at message level.
+  _formatMessages(messages) {
+    return messages.map((msg) => {
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        const textParts = [];
+        const images = [];
+        for (const block of msg.content) {
+          if (block.type === 'text') textParts.push(block.text ?? '');
+          else if (block.type === 'image' && block.data) images.push(block.data);
+        }
+        const formatted = { role: 'user', content: textParts.join('\n') };
+        if (images.length > 0) formatted.images = images;
+        return formatted;
+      }
+      return msg;
+    });
+  }
+
   async chat(messages, tools, options = {}) {
     await this.discoverModels();
     const model = options.model || this.defaultModel;
@@ -105,7 +124,7 @@ class OllamaProvider extends BaseProvider {
       `${this.baseUrl}/api/chat`,
       {
         model,
-        messages,
+        messages: this._formatMessages(messages),
         tools: tools && tools.length > 0 ? tools : undefined,
         stream: false,
         options: { temperature: options.temperature ?? this.temperature, num_predict: maxTokens },
@@ -129,7 +148,7 @@ class OllamaProvider extends BaseProvider {
         `${this.baseUrl}/api/chat`,
         {
           model,
-          messages,
+          messages: this._formatMessages(messages),
           tools: tools && tools.length > 0 ? tools : undefined,
           stream: true,
           options: { temperature: options.temperature ?? this.temperature, num_predict: maxTokens },

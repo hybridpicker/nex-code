@@ -163,7 +163,21 @@ class AnthropicProvider extends BaseProvider {
       return { role: 'user', content: [toolResult] };
     }
 
-    // user messages
+    // user messages — handle multimodal content (text + images)
+    if (Array.isArray(msg.content)) {
+      const blocks = [];
+      for (const block of msg.content) {
+        if (block.type === 'text') {
+          blocks.push({ type: 'text', text: block.text ?? '' });
+        } else if (block.type === 'image' && block.data) {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: block.media_type || 'image/png', data: block.data },
+          });
+        }
+      }
+      return { role: 'user', content: blocks };
+    }
     return { role: 'user', content: msg.content };
   }
 
