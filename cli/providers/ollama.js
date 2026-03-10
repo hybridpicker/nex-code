@@ -4,7 +4,14 @@
  */
 
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const { BaseProvider } = require('./base');
+
+// Persistent keep-alive agents — reuse TCP connections across all Ollama Cloud requests.
+// Eliminates 50-100ms TLS handshake overhead on every API call.
+const _keepAliveHttp = new http.Agent({ keepAlive: true, maxSockets: 6, timeout: 60000 });
+const _keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 6, timeout: 60000 });
 
 const OLLAMA_MODELS = {
   // Primary: Best coding models for agentic workflows
@@ -72,6 +79,7 @@ class OllamaProvider extends BaseProvider {
     if (!process.stdout.isTTY) {
       axios.get(`${this.baseUrl}/api/tags`, {
         timeout: 5000, headers: this._getHeaders(),
+        httpAgent: _keepAliveHttp, httpsAgent: _keepAliveHttps,
       }).then((resp) => {
         const tags = resp.data?.models || [];
         for (const m of tags) {
@@ -85,6 +93,7 @@ class OllamaProvider extends BaseProvider {
     try {
       const resp = await axios.get(`${this.baseUrl}/api/tags`, {
         timeout: 5000, headers: this._getHeaders(),
+        httpAgent: _keepAliveHttp, httpsAgent: _keepAliveHttps,
       });
       const tags = resp.data?.models || [];
       for (const m of tags) {
@@ -143,7 +152,12 @@ class OllamaProvider extends BaseProvider {
         stream: false,
         options: { temperature: options.temperature ?? this.temperature, num_predict: maxTokens },
       },
-      { timeout: options.timeout || this.timeout, headers: this._getHeaders() }
+      {
+        timeout: options.timeout || this.timeout,
+        headers: this._getHeaders(),
+        httpAgent: _keepAliveHttp,
+        httpsAgent: _keepAliveHttps,
+      }
     );
 
     return this.normalizeResponse(response.data);
@@ -172,6 +186,8 @@ class OllamaProvider extends BaseProvider {
           headers: this._getHeaders(),
           responseType: 'stream',
           signal: options.signal,
+          httpAgent: _keepAliveHttp,
+          httpsAgent: _keepAliveHttps,
         }
       );
     } catch (err) {
