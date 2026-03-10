@@ -844,18 +844,23 @@ async function processInput(userInput) {
           lastTokenTime = Date.now();
           staleWarned = false;
           
-          // Batch tokens for better performance (reduce cursor updates)
-          // 100ms batch window provides optimal balance between latency and throughput
+          // In non-TTY (headless) mode: flush immediately — no buffering needed
+          // In TTY mode: batch tokens for 100ms to reduce cursor flicker
           tokenBuffer += text;
-          
-          if (!flushTimeout) {
-            flushTimeout = setTimeout(() => {
-              if (tokenBuffer && stream) {
-                stream.push(tokenBuffer);
-              }
-              tokenBuffer = '';
-              flushTimeout = null;
-            }, 100); // Batch for 100ms (optimized from 50ms)
+
+          if (process.stdout.isTTY) {
+            if (!flushTimeout) {
+              flushTimeout = setTimeout(() => {
+                if (tokenBuffer && stream) {
+                  stream.push(tokenBuffer);
+                }
+                tokenBuffer = '';
+                flushTimeout = null;
+              }, 100);
+            }
+          } else {
+            stream.push(tokenBuffer);
+            tokenBuffer = '';
           }
           
           if (firstToken) {

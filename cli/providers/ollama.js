@@ -68,6 +68,20 @@ class OllamaProvider extends BaseProvider {
   async discoverModels() {
     if (this._discovered) return;
     this._discovered = true;
+    // In headless/non-TTY mode: fire-and-forget — don't block the first API call
+    if (!process.stdout.isTTY) {
+      axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000, headers: this._getHeaders(),
+      }).then((resp) => {
+        const tags = resp.data?.models || [];
+        for (const m of tags) {
+          const id = (m.name || m.model || '').replace(/:latest$/, '');
+          if (!id || this.models[id]) continue;
+          this.models[id] = { id, name: m.name || id, maxTokens: 16384, contextWindow: 131072 };
+        }
+      }).catch(() => { /* API unavailable — use hardcoded list */ });
+      return;
+    }
     try {
       const resp = await axios.get(`${this.baseUrl}/api/tags`, {
         timeout: 5000, headers: this._getHeaders(),
