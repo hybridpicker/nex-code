@@ -54,6 +54,8 @@ class Spinner {
   start() {
     this._stopped = false;
     this.startTime = Date.now();
+    // Skip animation in non-TTY (headless) mode — no visual benefit, just overhead
+    if (!process.stderr.isTTY) return;
     process.stderr.write('\x1b[?25l'); // hide cursor
     this._render(); // render first frame immediately
     this.interval = setInterval(() => this._render(), 80);
@@ -69,8 +71,10 @@ class Spinner {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // Single write: clear line + show cursor (avoids flicker)
-    process.stderr.write('\x1b[2K\r\x1b[?25h');
+    if (process.stderr.isTTY) {
+      // Single write: clear line + show cursor (avoids flicker)
+      process.stderr.write('\x1b[2K\r\x1b[?25h');
+    }
     this.startTime = null;
   }
 }

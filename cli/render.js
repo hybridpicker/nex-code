@@ -361,6 +361,8 @@ class StreamRenderer {
   }
 
   startCursor() {
+    // Skip cursor animation in non-TTY (headless) mode
+    if (!process.stderr.isTTY) return;
     this._cursorActive = true;
     this._cursorFrame = 0;
     this._cursorWrite('\x1b[?25l');   // hide terminal cursor
