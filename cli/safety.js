@@ -144,21 +144,28 @@ function isSSHReadOnly(command) {
   return parts.every(isSafePart);
 }
 
-const DANGEROUS_BASH = [
-  /git\s+push/,
-  /npm\s+publish/,
-  /npx\s+.*publish/,
+// Always re-prompt even after prior confirmation (bash='allow')
+const CRITICAL_BASH = [
   /rm\s+-rf\s/,
-  /docker\s+rm/,
   /docker\s+system\s+prune/,
   /kubectl\s+delete/,
   /sudo\s/,
+];
+
+// Show in first-confirmation preview only — no second blocking prompt
+const NOTABLE_BASH = [
+  /git\s+push/,
+  /npm\s+publish/,
+  /npx\s+.*publish/,
+  /docker\s+rm/,
   /ssh\s/,
   /wget\s/,
   /curl\s.*-o\s/,
   /pip\s+install/,
   /npm\s+install\s+-g/,
 ];
+
+const DANGEROUS_BASH = [...CRITICAL_BASH, ...NOTABLE_BASH];
 
 let autoConfirm = false;
 let _rl = null;
@@ -186,6 +193,13 @@ function isDangerous(command) {
   // SSH read-only commands are safe — skip confirmation
   if (/ssh\s/.test(command) && isSSHReadOnly(command)) return false;
   for (const pat of DANGEROUS_BASH) {
+    if (pat.test(command)) return true;
+  }
+  return false;
+}
+
+function isCritical(command) {
+  for (const pat of CRITICAL_BASH) {
     if (pat.test(command)) return true;
   }
   return false;
@@ -231,8 +245,11 @@ module.exports = {
   SSH_SAFE_PATTERNS,
   isSSHReadOnly,
   DANGEROUS_BASH,
+  CRITICAL_BASH,
+  NOTABLE_BASH,
   isForbidden,
   isDangerous,
+  isCritical,
   confirm,
   setAutoConfirm,
   getAutoConfirm,
