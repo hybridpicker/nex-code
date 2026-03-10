@@ -214,6 +214,13 @@ nex-code -yolo
 
 The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
 
+**Vision / Screenshot → Code** — drop an image path anywhere in your message and nex-code will send it to a vision-capable model automatically:
+```
+> /path/to/screenshot.png implement this UI in React
+> describe the layout in mockup.png and generate the CSS
+```
+Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemini, and Ollama vision models (llava, qwen2-vl, etc.).
+
 ### YOLO Mode
 
 Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved. The banner shows a `⚡ YOLO` indicator. Toggle at runtime with `/autoconfirm`.
@@ -286,6 +293,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/undo` | Undo last file change |
 | `/redo` | Redo last undone change |
 | `/history` | Show file change history |
+| `/review [file]` | Code review on current diff or a specific file |
 | `/exit` | Quit |
 
 ---
@@ -313,6 +321,8 @@ The agent has 17 built-in tools:
 | `ask_user` | Ask the user a question and wait for input |
 | `task_list` | Create and manage task lists for multi-step operations |
 | `spawn_agents` | Run parallel sub-agents with auto model routing |
+
+**Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
 Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
 
