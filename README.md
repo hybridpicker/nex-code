@@ -8,14 +8,18 @@
 ```
 
 <p align="center">
-  <b>Agentic coding CLI — open-source and multi-provider.</b><br>
-  Use OpenAI, Anthropic, Google Gemini, Ollama Cloud, or local models. Your choice.
+  <b>The open-source coding CLI for Ollama Cloud — and every other provider.</b><br>
+  Free by default with Ollama. Switch to OpenAI, Anthropic, or Gemini anytime.<br>
+  A lightweight, powerful alternative to Claude Code and Gemini CLI.
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/nex-code"><img src="https://img.shields.io/npm/v/nex-code.svg" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/nex-code"><img src="https://img.shields.io/npm/dm/nex-code.svg" alt="npm downloads"></a>
+  <a href="https://github.com/hybridpicker/nex-code/stargazers"><img src="https://img.shields.io/github/stars/hybridpicker/nex-code.svg" alt="GitHub Stars"></a>
   <a href="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml"><img src="https://github.com/hybridpicker/nex-code/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
   <img src="https://img.shields.io/badge/tests-1752-blue.svg" alt="Tests: 1752">
@@ -64,15 +68,37 @@ npm update -g nex-code
 
 ## Why nex-code?
 
-| | nex-code | aider | Cursor |
-|---|---|---|---|
-| **Open-source** | MIT | Apache 2.0 | Proprietary |
-| **Multi-provider** | 5 providers, swap at runtime | Multi-provider | Multi-provider |
-| **Free local models** | Ollama (no API key) | Ollama | — |
-| **Runtime dependencies** | 2 (axios, dotenv) | Heavy | Electron |
-| **Test coverage** | 1752 tests, 85% coverage | — | — |
-| **Tool tiers** | Auto-adapts tools per model | Fixed | Fixed |
-| **No lock-in** | `/model openai:gpt-4o` ↔ `/model local:llama3` | Config change | Config change |
+| | **nex-code** | Claude Code | Gemini CLI | Aider |
+|---|---|---|---|---|
+| **Free with Ollama** | ✅ Native, first-class | ⚠️ Workaround | ❌ | ✅ |
+| **Ollama Cloud support** | ✅ 47+ models, native | ⚠️ API-compat only | ❌ | ✅ |
+| **Multi-provider runtime swap** | ✅ 5 providers, no restart | ❌ Claude-only | ❌ Gemini-only | ✅ |
+| **Tool tiers (adapts to model)** | ✅ essential/standard/full | ❌ | ❌ | ❌ |
+| **5-layer open-model auto-fix** | ✅ | ❌ | ❌ | ⚠️ |
+| **Undo / Redo** | ✅ | ❌ | ❌ | ❌ |
+| **Cost tracking + budgets** | ✅ | ❌ | ❌ | ❌ |
+| **Pre-push secret detection** | ✅ | ❌ | ❌ | ❌ |
+| **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
+| **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
+| **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
+| **Test coverage** | 1752 tests, 85% | — | — | — |
+
+---
+
+## Ollama Cloud — The Free-by-Default Model Tier
+
+nex-code was built with Ollama Cloud as its primary provider. No subscription, no billing surprises.
+Use powerful open models like **Qwen3 Coder**, **Kimi K2.5**, **Devstral**, and **DeepSeek R1** for free.
+
+| Model | Context | Best For |
+|---|---|---|
+| `qwen3-coder:480b` | 131K | Code generation, tool calling |
+| `kimi-k2.5` | 256K | Large repos, reasoning |
+| `devstral-2:123b` | 131K | Reliable tool calling |
+| `devstral-small-2:24b` | 131K | Fast, efficient |
+| `qwen3.5:35b-a3b` | 256K | MoE, very fast |
+
+Switch anytime: `/model ollama:qwen3-coder:480b` or add your `OLLAMA_API_KEY` to `.env`.
 
 ---
 
@@ -775,3 +801,7 @@ npx nex-code               # or run without installing
 ## License
 
 MIT
+
+<!-- Keywords: ollama cli, ollama coding assistant, claude code alternative, gemini cli alternative,
+     agentic coding cli, open source ai terminal, free coding ai, qwen3 coder cli, devstral terminal,
+     kimi k2 cli, multi-provider ai cli, local llm coding tool -->
