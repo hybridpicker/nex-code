@@ -728,6 +728,10 @@ describe('tools.js', () => {
 
   // ─── spinner wrapper for non-interactive tools ─────────────
   describe('spinner wrapper', () => {
+    let origIsTTY;
+    beforeEach(() => { origIsTTY = process.stderr.isTTY; process.stderr.isTTY = true; });
+    afterEach(() => { process.stderr.isTTY = origIsTTY; });
+
     it('shows spinner for read_file', async () => {
       const fp = path.join(tmpDir, 'spinner-test.txt');
       fs.writeFileSync(fp, 'hello');
