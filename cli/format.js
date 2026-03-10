@@ -100,6 +100,20 @@ function getToolSpinnerText(name, args) {
       return `Git diff${args.file ? `: ${args.file}` : ''}...`;
     case 'git_log':
       return `Git log${args.file ? `: ${args.file}` : ''}...`;
+    case 'gh_run_list':
+      return `GitHub Actions: listing runs${args.workflow ? ` (${args.workflow})` : ''}...`;
+    case 'gh_run_view':
+      return `GitHub Actions: run ${args.run_id}...`;
+    case 'gh_workflow_trigger':
+      return `GitHub Actions: trigger ${args.workflow}...`;
+    case 'browser_open':
+      return `Browser: opening ${(args.url || '').substring(0, 60)}...`;
+    case 'browser_screenshot':
+      return `Browser: screenshot ${(args.url || '').substring(0, 60)}...`;
+    case 'browser_click':
+      return `Browser: clicking ${args.text || args.selector || 'element'}...`;
+    case 'browser_fill':
+      return `Browser: filling ${args.selector || 'field'}...`;
     default:
       return `Running: ${name}`;
   }
