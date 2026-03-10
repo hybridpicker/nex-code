@@ -9,7 +9,7 @@ const exec = require('util').promisify(require('child_process').exec);
 const execFile = require('util').promisify(require('child_process').execFile);
 const { spawnSync } = require('child_process');
 const axios = require('axios');
-const { isForbidden, isDangerous, confirm } = require('./safety');
+const { isForbidden, isDangerous, isCritical, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
@@ -635,8 +635,10 @@ async function _executeToolInner(name, args, options = {}) {
       const forbidden = isForbidden(cmd);
       if (forbidden) return `BLOCKED: Command matches forbidden pattern: ${forbidden}`;
 
-      if (isDangerous(cmd) && !options.autoConfirm) {
-        console.log(`\n${C.yellow}  ⚠ Dangerous command: ${cmd}${C.reset}`);
+      const needsPrompt = options.autoConfirm ? isCritical(cmd) : isDangerous(cmd);
+      if (needsPrompt) {
+        const label = isCritical(cmd) ? '  ⛔ Critical command' : '  ⚠ Dangerous command';
+        console.log(`\n${C.yellow}${label}: ${cmd}${C.reset}`);
         const ok = await confirm('  Execute?');
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }

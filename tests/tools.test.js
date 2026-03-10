@@ -6,6 +6,7 @@ const os = require('os');
 jest.mock('../cli/safety', () => ({
   isForbidden: jest.requireActual('../cli/safety').isForbidden,
   isDangerous: jest.requireActual('../cli/safety').isDangerous,
+  isCritical: jest.requireActual('../cli/safety').isCritical,
   confirm: jest.fn().mockResolvedValue(true),
   getAutoConfirm: jest.fn().mockReturnValue(true),
   setAutoConfirm: jest.fn(),
