@@ -76,6 +76,7 @@ jest.mock('../cli/costs', () => ({ trackUsage: jest.fn() }));
 jest.mock('../cli/safety', () => ({
   isForbidden: jest.fn().mockReturnValue(null),
   isDangerous: jest.fn().mockReturnValue(false),
+  isCritical: jest.fn().mockReturnValue(false),
   confirm: jest.fn().mockResolvedValue(true),
   setAutoConfirm: jest.fn(),
   getAutoConfirm: jest.fn().mockReturnValue(false),
@@ -188,7 +189,7 @@ describe('Tool Call Retry with Schema Hints', () => {
 
     await processInput('run echo hello');
 
-    expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo hello' }, { silent: true });
+    expect(executeTool).toHaveBeenCalledWith('bash', { command: 'echo hello' }, { silent: true, autoConfirm: true });
   });
 });
 

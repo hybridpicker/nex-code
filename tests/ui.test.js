@@ -20,9 +20,12 @@ describe('ui.js', () => {
   // ─── Spinner ────────────────────────────────────────────────
   describe('Spinner', () => {
     let spinner;
+    let origIsTTY;
 
+    beforeEach(() => { origIsTTY = process.stderr.isTTY; process.stderr.isTTY = true; });
     afterEach(() => {
       if (spinner) spinner.stop();
+      process.stderr.isTTY = origIsTTY;
     });
 
     it('creates with default text', () => {

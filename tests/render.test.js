@@ -648,9 +648,11 @@ npm install
 
   // ─── StreamCursor ─────────────────────────────────────────
   describe('StreamCursor', () => {
-    let writeSpy, stderrSpy;
+    let writeSpy, stderrSpy, origIsTTY;
 
     beforeEach(() => {
+      origIsTTY = process.stderr.isTTY;
+      process.stderr.isTTY = true;
       jest.useFakeTimers();
       writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
       stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
@@ -660,6 +662,7 @@ npm install
       jest.useRealTimers();
       writeSpy.mockRestore();
       stderrSpy.mockRestore();
+      process.stderr.isTTY = origIsTTY;
     });
 
     it('startCursor hides terminal cursor and renders first braille frame', () => {
