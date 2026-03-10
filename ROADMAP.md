@@ -21,9 +21,7 @@ A `browser_*` tool set (navigate, screenshot, click, extract) would unlock front
 
 ### PTY Support (interactive commands)
 `vim`, `top`, `htop`, `less`, `ssh` and other interactive commands need a PTY to work correctly inside the agent loop.
-Currently these commands run via plain `child_process`, which drops interactivity.
-- Status: **Planned**
-- Issue: open for contributors
+- Status: **Shipped** (v0.3.14) — interactive commands auto-detected and spawned with `stdio:inherit`
 
 ---
 
@@ -32,17 +30,6 @@ Currently these commands run via plain `child_process`, which drops interactivit
 ### Google Search / Perplexity Grounding
 Web search via DuckDuckGo is already built in. Adding grounded search (Google Search API or Perplexity) would improve
 accuracy for frontend design research and current events.
-- Status: **Considering**
-
-### Screenshot → Code (Vision Input)
-Accept image input (screenshot, mockup, design file) and generate code from it.
-Requires vision-capable model routing — providers with image input support (Anthropic, OpenAI, Gemini) would
-handle these requests automatically.
-- Status: **Considering**
-
-### `/review` — Code Review Command
-A `/review` slash command that runs a structured code review on the current diff or a given file range.
-Outputs findings as structured markdown with severity levels.
 - Status: **Considering**
 
 ### GitHub Actions Native Integration
