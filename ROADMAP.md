@@ -15,9 +15,7 @@ A VS Code extension that embeds the nex-code REPL or exposes it as a sidebar pan
 
 ### Browser Agent (Playwright / Puppeteer)
 Frontend workflows require browser automation — screenshot capture, DOM inspection, visual regression.
-A `browser_*` tool set (navigate, screenshot, click, extract) would unlock frontend design use cases currently blocked.
-- Status: **Planned**
-- Issue: open for contributors
+- Status: **Shipped** (v0.3.15) — `browser_open`, `browser_screenshot`, `browser_click`, `browser_fill` tools. Requires: `npm install playwright && npx playwright install chromium`. Gracefully degrades if not installed.
 
 ### PTY Support (interactive commands)
 `vim`, `top`, `htop`, `less`, `ssh` and other interactive commands need a PTY to work correctly inside the agent loop.
@@ -28,14 +26,12 @@ A `browser_*` tool set (navigate, screenshot, click, extract) would unlock front
 ## Priority 2 — Medium Impact
 
 ### Google Search / Perplexity Grounding
-Web search via DuckDuckGo is already built in. Adding grounded search (Google Search API or Perplexity) would improve
-accuracy for frontend design research and current events.
-- Status: **Considering**
+Web search via DuckDuckGo is already built in. Perplexity adds AI-summarized, cited results.
+- Status: **Shipped** (v0.3.15) — set `PERPLEXITY_API_KEY` in `.env` to enable. Falls back to DuckDuckGo automatically.
 
 ### GitHub Actions Native Integration
-Tools for interacting with GitHub Actions from within the agent: `gh_run_list`, `gh_run_view`, `gh_workflow_trigger`.
-Currently achievable via `bash` + `gh` CLI, but a first-class tool would be cleaner and safer.
-- Status: **Considering**
+Tools for interacting with GitHub Actions from within the agent.
+- Status: **Shipped** (v0.3.15) — `gh_run_list`, `gh_run_view`, `gh_workflow_trigger` tools. Requires `gh` CLI authenticated.
 
 ---
 

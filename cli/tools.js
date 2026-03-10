@@ -388,7 +388,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the web using DuckDuckGo. Returns titles and URLs. Use to find documentation, solutions, or current information beyond your knowledge cutoff.',
+      description: 'Search the web. Uses Perplexity (grounded, AI-summarized) if PERPLEXITY_API_KEY is set, otherwise DuckDuckGo. Returns titles, URLs, and summaries. Use to find documentation, solutions, or current information beyond your knowledge cutoff.',
       parameters: {
         type: 'object',
         properties: {
@@ -396,6 +396,71 @@ const TOOL_DEFINITIONS = [
           max_results: { type: 'number', description: 'Max results (default: 5)' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_open',
+      description: 'Open a URL in a headless browser and return the page title, text content, and links. More reliable than web_fetch for JavaScript-heavy pages. Requires playwright (npm install playwright && npx playwright install chromium).',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to open' },
+          wait_for: { type: 'string', enum: ['domcontentloaded', 'networkidle', 'load'], description: 'When to consider page loaded (default: domcontentloaded)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_screenshot',
+      description: 'Take a screenshot of a URL in a headless browser. Returns the screenshot file path. The path can be pasted into the next message for visual analysis. Requires playwright.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to screenshot' },
+          full_page: { type: 'boolean', description: 'Capture full page (default: false — viewport only)' },
+          width: { type: 'number', description: 'Viewport width in px (default: 1280)' },
+          height: { type: 'number', description: 'Viewport height in px (default: 800)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click',
+      description: 'Click an element on a web page (by CSS selector or visible text). Returns the new URL after navigation. Requires playwright.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to navigate to first' },
+          selector: { type: 'string', description: 'CSS selector of element to click (mutually exclusive with text)' },
+          text: { type: 'string', description: 'Visible text of element to click (mutually exclusive with selector)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_fill',
+      description: 'Fill a form field on a web page and optionally submit. Requires playwright.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to navigate to first' },
+          selector: { type: 'string', description: 'CSS selector of the input field' },
+          value: { type: 'string', description: 'Value to fill in' },
+          submit: { type: 'boolean', description: 'Press Enter to submit after filling (default: false)' },
+        },
+        required: ['url', 'selector', 'value'],
       },
     },
   },
@@ -482,6 +547,54 @@ const TOOL_DEFINITIONS = [
           result: { type: 'string', description: 'Result summary (for update, optional)' },
         },
         required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'gh_run_list',
+      description: 'List recent GitHub Actions workflow runs for this repository. Shows run status, conclusion, branch, and timing. Use to check CI/CD status or find a run ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: 'Number of runs to show (default: 10, max: 30)' },
+          workflow: { type: 'string', description: 'Filter by workflow name or filename (optional)' },
+          branch: { type: 'string', description: 'Filter by branch name (optional)' },
+          status: { type: 'string', enum: ['completed', 'in_progress', 'queued', 'failure', 'success'], description: 'Filter by status (optional)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'gh_run_view',
+      description: 'View details of a specific GitHub Actions workflow run: steps, logs, errors. Use gh_run_list first to get the run ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          run_id: { type: 'string', description: 'The run ID (from gh_run_list)' },
+          log: { type: 'boolean', description: 'Include full log output (default: false — shows step summary only)' },
+        },
+        required: ['run_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'gh_workflow_trigger',
+      description: 'Trigger a GitHub Actions workflow dispatch event. Only works for workflows with workflow_dispatch trigger. Requires user confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          workflow: { type: 'string', description: 'Workflow filename (e.g. ci.yml) or name' },
+          branch: { type: 'string', description: 'Branch to run on (default: current branch)' },
+          inputs: { type: 'object', description: 'Workflow input parameters as key-value pairs (optional)' },
+        },
+        required: ['workflow'],
       },
     },
   },
@@ -923,6 +1036,39 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'web_search': {
       const maxResults = args.max_results || 5;
+      // Perplexity grounded search (if API key available)
+      if (process.env.PERPLEXITY_API_KEY) {
+        try {
+          const resp = await axios.post(
+            'https://api.perplexity.ai/chat/completions',
+            {
+              model: 'sonar',
+              messages: [{ role: 'user', content: args.query }],
+              max_tokens: 1024,
+              search_recency_filter: 'month',
+              return_citations: true,
+            },
+            {
+              timeout: 20000,
+              headers: {
+                Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+          const answer = resp.data?.choices?.[0]?.message?.content || '';
+          const citations = resp.data?.citations || [];
+          let out = `[Perplexity grounded search]\n\n${answer}`;
+          if (citations.length > 0) {
+            out += '\n\nSources:\n' + citations.slice(0, maxResults).map((c, i) => `${i + 1}. ${c}`).join('\n');
+          }
+          return out;
+        } catch (e) {
+          // Fall through to DuckDuckGo on error
+          console.error(`${C.dim}  Perplexity search failed (${e.message}), falling back to DuckDuckGo${C.reset}`);
+        }
+      }
+      // DuckDuckGo fallback
       try {
         const resp = await axios.get('https://html.duckduckgo.com/html/', {
           params: { q: args.query },
@@ -948,6 +1094,51 @@ async function _executeToolInner(name, args, options = {}) {
         return results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}`).join('\n\n');
       } catch {
         return 'ERROR: Web search failed';
+      }
+    }
+
+    case 'browser_open': {
+      const { browserNavigate } = require('./browser');
+      try {
+        const result = await browserNavigate(args.url, { waitFor: args.wait_for });
+        const linkStr = result.links.length > 0
+          ? '\n\nLinks:\n' + result.links.map(l => `  ${l.text} → ${l.href}`).join('\n')
+          : '';
+        return `Title: ${result.title}\nURL: ${result.url}\n\n${result.text}${linkStr}`;
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case 'browser_screenshot': {
+      const { browserScreenshot } = require('./browser');
+      try {
+        const result = await browserScreenshot(args.url, {
+          width: args.width,
+          height: args.height,
+          fullPage: args.full_page,
+        });
+        return `Screenshot saved: ${result.path}\nTitle: ${result.title}\nURL: ${result.url}\n\nTo analyze visually, paste the path into your next message: ${result.path}`;
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case 'browser_click': {
+      const { browserClick } = require('./browser');
+      try {
+        return await browserClick(args.url, { selector: args.selector, text: args.text });
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case 'browser_fill': {
+      const { browserFill } = require('./browser');
+      try {
+        return await browserFill(args.url, { selector: args.selector, value: args.value, submit: args.submit });
+      } catch (e) {
+        return `ERROR: ${e.message}`;
       }
     }
 
@@ -1041,6 +1232,78 @@ async function _executeToolInner(name, args, options = {}) {
     case 'spawn_agents': {
       const { executeSpawnAgents } = require('./sub-agent');
       return executeSpawnAgents(args);
+    }
+
+    case 'gh_run_list': {
+      const limit = Math.min(args.limit || 10, 30);
+      const ghArgs = ['run', 'list', '--limit', String(limit), '--json', 'databaseId,status,conclusion,name,headBranch,createdAt,updatedAt,event'];
+      if (args.workflow) ghArgs.push('--workflow', args.workflow);
+      if (args.branch) ghArgs.push('--branch', args.branch);
+      if (args.status) ghArgs.push('--status', args.status);
+      try {
+        const { stdout } = await exec(`gh ${ghArgs.join(' ')}`, { cwd: process.cwd(), timeout: 30000 });
+        const runs = JSON.parse(stdout || '[]');
+        if (runs.length === 0) return 'No workflow runs found.';
+        const lines = runs.map((r) => {
+          const status = r.conclusion || r.status || 'unknown';
+          const icon = status === 'success' ? '✓' : status === 'failure' ? '✗' : status === 'in_progress' ? '⠿' : '○';
+          const age = r.updatedAt ? new Date(r.updatedAt).toISOString().slice(0, 16).replace('T', ' ') : '';
+          return `${icon} [${r.databaseId}] ${r.name} · ${r.headBranch} · ${status} · ${age}`;
+        });
+        return lines.join('\n');
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString();
+        if (msg.includes('not found') || msg.includes('not logged')) return 'ERROR: gh CLI not found or not authenticated. Run: gh auth login';
+        return `ERROR: ${msg.split('\n')[0]}`;
+      }
+    }
+
+    case 'gh_run_view': {
+      if (!args.run_id) return 'ERROR: run_id is required';
+      try {
+        if (args.log) {
+          const { stdout } = await exec(`gh run view ${args.run_id} --log`, { cwd: process.cwd(), timeout: 60000, maxBuffer: 5 * 1024 * 1024 });
+          return stdout.substring(0, 8000) + (stdout.length > 8000 ? '\n...(truncated)' : '');
+        }
+        const { stdout } = await exec(`gh run view ${args.run_id} --json status,conclusion,name,headBranch,createdAt,updatedAt,jobs`, { cwd: process.cwd(), timeout: 30000 });
+        const run = JSON.parse(stdout);
+        const lines = [
+          `Run: ${run.name} [${args.run_id}]`,
+          `Branch: ${run.headBranch}  Status: ${run.conclusion || run.status}`,
+          `Started: ${run.createdAt}  Finished: ${run.updatedAt || '—'}`,
+          '',
+          'Jobs:',
+        ];
+        for (const job of run.jobs || []) {
+          const icon = job.conclusion === 'success' ? '✓' : job.conclusion === 'failure' ? '✗' : '○';
+          lines.push(`  ${icon} ${job.name} (${job.conclusion || job.status})`);
+          for (const step of job.steps || []) {
+            if (step.conclusion === 'failure' || step.conclusion === 'skipped') continue;
+            const sIcon = step.conclusion === 'success' ? '  ✓' : step.conclusion === 'failure' ? '  ✗' : '  ○';
+            lines.push(`    ${sIcon} ${step.name}`);
+          }
+        }
+        return lines.join('\n');
+      } catch (e) {
+        return `ERROR: ${(e.stderr || e.message || '').toString().split('\n')[0]}`;
+      }
+    }
+
+    case 'gh_workflow_trigger': {
+      if (!args.workflow) return 'ERROR: workflow is required';
+      const { confirm: confirmTrigger } = require('./safety');
+      const branch = args.branch || (await getCurrentBranch()) || 'main';
+      const inputStr = args.inputs ? Object.entries(args.inputs).map(([k, v]) => `-f ${k}=${v}`).join(' ') : '';
+      const cmd = `gh workflow run ${args.workflow} --ref ${branch} ${inputStr}`.trim();
+      console.log(`\n${C.yellow}  ⚠ Trigger workflow: ${args.workflow} on ${branch}${C.reset}`);
+      const ok = await confirmTrigger('  Trigger?');
+      if (!ok) return 'CANCELLED: User declined to trigger workflow.';
+      try {
+        await exec(cmd, { cwd: process.cwd(), timeout: 30000 });
+        return `Workflow "${args.workflow}" triggered on branch "${branch}". Check status with gh_run_list.`;
+      } catch (e) {
+        return `ERROR: ${(e.stderr || e.message || '').toString().split('\n')[0]}`;
+      }
     }
 
     default:
