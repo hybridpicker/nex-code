@@ -798,6 +798,13 @@ npm install -g nex-code    # global install
 npx nex-code               # or run without installing
 ```
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned features — VS Code extension, browser agent, PTY support, and more.
+Community contributions are welcome on all roadmap items.
+
+---
+
 ## License
 
 MIT
