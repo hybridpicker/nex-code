@@ -22,6 +22,51 @@ const { trackUsage } = require('./costs');
 const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
 const { getConfiguredProviders } = require('./providers/registry');
+const fsSync = require('fs');
+const path = require('path');
+
+// ─── Vision / Image Helpers ──────────────────────────────────
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i;
+const IMAGE_PATH_RE = /(?:^|\s)((?:~|\.{1,2})?(?:\/[\w.\-@() ]+)+\.(?:png|jpe?g|gif|webp|bmp|tiff?))(?:\s|$)/gi;
+
+function _detectImagePaths(text) {
+  const paths = [];
+  let m;
+  IMAGE_PATH_RE.lastIndex = 0;
+  while ((m = IMAGE_PATH_RE.exec(text)) !== null) {
+    const raw = m[1].trim();
+    const abs = raw.startsWith('~') ? raw.replace('~', process.env.HOME || '') : path.resolve(raw);
+    if (fsSync.existsSync(abs)) paths.push({ raw, abs });
+  }
+  return paths;
+}
+
+function _imageToBase64(absPath) {
+  const buf = fsSync.readFileSync(absPath);
+  const ext = path.extname(absPath).toLowerCase().replace('.', '');
+  const mediaType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+    : ext === 'png' ? 'image/png'
+    : ext === 'gif' ? 'image/gif'
+    : ext === 'webp' ? 'image/webp'
+    : 'image/png';
+  return { data: buf.toString('base64'), media_type: mediaType };
+}
+
+function buildUserContent(text) {
+  const imagePaths = _detectImagePaths(text);
+  if (imagePaths.length === 0) return text; // No images → plain string (unchanged behaviour)
+
+  const blocks = [{ type: 'text', text }];
+  for (const img of imagePaths) {
+    try {
+      const { data, media_type } = _imageToBase64(img.abs);
+      blocks.push({ type: 'image', media_type, data });
+    } catch {
+      // File unreadable — skip silently
+    }
+  }
+  return blocks.length > 1 ? blocks : text;
+}
 
 // ─── Lazy Tool Loading ───────────────────────────────────────
 // Cache tool definitions to avoid loading on every call
@@ -660,7 +705,8 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
  * Maintains conversation state across calls.
  */
 async function processInput(userInput) {
-  conversationMessages.push({ role: 'user', content: userInput });
+  const userContent = buildUserContent(userInput);
+  conversationMessages.push({ role: 'user', content: userContent });
 
   const { setOnChange } = require('./tasks');
   let taskProgress = null;

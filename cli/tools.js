@@ -7,6 +7,7 @@ const fsSync = require('fs'); // Keep sync version for binary check and simple c
 const path = require('path');
 const exec = require('util').promisify(require('child_process').exec);
 const execFile = require('util').promisify(require('child_process').execFile);
+const { spawnSync } = require('child_process');
 const axios = require('axios');
 const { isForbidden, isDangerous, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
@@ -18,6 +19,10 @@ const { runDiagnostics } = require('./diagnostics');
 const { findFileInIndex, getFileIndex } = require('./index-engine');
 
 // Use process.cwd() dynamically to support tests mocking it
+
+// ─── Interactive Command Detection ────────────────────────────
+// Commands that require a PTY / raw terminal (spawned with stdio:inherit)
+const INTERACTIVE_CMDS = /^(vim?|nano|emacs|pico|less|more|top|htop|iftop|iotop|glances|ssh\s|telnet\s|screen|tmux|fzf|gum|dialog|whiptail|man\s|node\s*$|python3?\s*$|irb\s*$|rails\s*c|psql\s|mysql\s|redis-cli|mongosh?|sqlite3)\b/;
 
 // ─── Auto-Fix Helpers ─────────────────────────────────────────
 
@@ -521,6 +526,16 @@ async function _executeToolInner(name, args, options = {}) {
         console.log(`\n${C.yellow}  ⚠ Dangerous command: ${cmd}${C.reset}`);
         const ok = await confirm('  Execute?');
         if (!ok) return 'CANCELLED: User declined to execute this command.';
+      }
+
+      // Interactive commands (vim, top, ssh, etc.) need a real TTY — spawn with stdio:inherit
+      if (INTERACTIVE_CMDS.test(cmd.trim())) {
+        if (!options.silent) console.log(`${C.dim}  ▶ interactive: ${cmd}${C.reset}`);
+        const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', cwd: process.cwd() });
+        if (result.error) return `ERROR: ${result.error.message}`;
+        return result.status === 0
+          ? `(interactive command completed successfully)`
+          : `(interactive command exited with code ${result.status})`;
       }
 
       const bashSpinner = options.silent ? null : new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);

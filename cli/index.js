@@ -51,6 +51,7 @@ const SLASH_COMMANDS = [
   { cmd: '/auto', desc: 'Set autonomy level' },
   { cmd: '/commit', desc: 'Smart commit (diff + message)' },
   { cmd: '/diff', desc: 'Show current diff' },
+  { cmd: '/review', desc: 'Code review on current diff or file' },
   { cmd: '/branch', desc: 'Create feature branch' },
   { cmd: '/mcp', desc: 'MCP servers and tools' },
   { cmd: '/hooks', desc: 'Show configured hooks' },
@@ -672,6 +673,30 @@ ${C.cyan}${C.bold}└───────────────────�
         return true;
       }
       console.log(formatDiffSummary());
+      return true;
+    }
+
+    case '/review': {
+      const { isGitRepo: isGitRepo2, getDiff: getDiff2 } = require('./git');
+      const { processInput: processInputFn } = require('./agent');
+      const fileArg = rest.join(' ').trim();
+      let reviewPrompt;
+      if (fileArg) {
+        reviewPrompt = `Do a thorough code review of \`${fileArg}\`. Check for bugs, security issues, code quality, correctness, and suggest concrete improvements. Format findings by severity (critical, warning, suggestion).`;
+      } else {
+        if (!isGitRepo2()) {
+          console.log(`${C.red}Not a git repository — try /review <file>${C.reset}`);
+          return true;
+        }
+        const [diff, stagedDiff] = await Promise.all([getDiff2(false), getDiff2(true)]);
+        const fullDiff = stagedDiff || diff;
+        if (!fullDiff || !fullDiff.trim()) {
+          console.log(`${C.yellow}No changes to review — commit something or specify a file: /review <file>${C.reset}`);
+          return true;
+        }
+        reviewPrompt = `Review the following code diff for bugs, security issues, code quality, and improvements. Format findings by severity (critical, warning, suggestion):\n\n\`\`\`diff\n${fullDiff.substring(0, 20000)}\n\`\`\``;
+      }
+      await processInputFn(reviewPrompt);
       return true;
     }
 

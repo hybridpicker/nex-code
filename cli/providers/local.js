@@ -92,6 +92,24 @@ class LocalProvider extends BaseProvider {
     return Object.keys(this.models);
   }
 
+  // Convert internal multimodal messages to Ollama /api/chat format.
+  _formatMessages(messages) {
+    return messages.map((msg) => {
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        const textParts = [];
+        const images = [];
+        for (const block of msg.content) {
+          if (block.type === 'text') textParts.push(block.text ?? '');
+          else if (block.type === 'image' && block.data) images.push(block.data);
+        }
+        const formatted = { role: 'user', content: textParts.join('\n') };
+        if (images.length > 0) formatted.images = images;
+        return formatted;
+      }
+      return msg;
+    });
+  }
+
   async chat(messages, tools, options = {}) {
     if (!this._modelsLoaded) await this.loadModels();
 
@@ -102,7 +120,7 @@ class LocalProvider extends BaseProvider {
       `${this.baseUrl}/api/chat`,
       {
         model,
-        messages,
+        messages: this._formatMessages(messages),
         tools: tools && tools.length > 0 ? tools : undefined,
         stream: false,
         options: {
@@ -129,7 +147,7 @@ class LocalProvider extends BaseProvider {
         `${this.baseUrl}/api/chat`,
         {
           model,
-          messages,
+          messages: this._formatMessages(messages),
           tools: tools && tools.length > 0 ? tools : undefined,
           stream: true,
           options: {
