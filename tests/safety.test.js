@@ -1,4 +1,4 @@
-const { isForbidden, isDangerous, isSSHReadOnly, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
+const { isForbidden, isDangerous, isCritical, isSSHReadOnly, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
 
 describe('safety.js', () => {
   afterEach(() => {
@@ -336,6 +336,33 @@ describe('safety.js', () => {
 
     it('recognizes timedatectl as read-only', () => {
       expect(isSSHReadOnly('ssh user@host "timedatectl"')).toBe(true);
+    });
+  });
+
+  // ─── isCritical ─────────────────────────────────────────────
+  describe('isCritical()', () => {
+    it('flags rm -rf', () => {
+      expect(isCritical('rm -rf dist/')).toBe(true);
+    });
+
+    it('flags sudo', () => {
+      expect(isCritical('sudo apt update')).toBe(true);
+    });
+
+    it('flags kubectl delete', () => {
+      expect(isCritical('kubectl delete pod foo')).toBe(true);
+    });
+
+    it('flags docker system prune', () => {
+      expect(isCritical('docker system prune -a')).toBe(true);
+    });
+
+    it('does not flag git push', () => {
+      expect(isCritical('git push origin main')).toBe(false);
+    });
+
+    it('does not flag npm publish', () => {
+      expect(isCritical('npm publish')).toBe(false);
     });
   });
 
