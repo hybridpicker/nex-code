@@ -17,14 +17,16 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(`Usage: nex-code [options]
 
 Options:
-  --task <prompt>     Run a single task and exit (headless mode)
-  --auto              Skip all confirmations (implies --task)
-  --yolo, -yolo       Skip all confirmations (interactive YOLO mode)
-  --model <spec>      Set model (e.g. openai:gpt-4o)
-  --max-turns <n>     Max agentic loop iterations (default: 50)
-  --json              Output result as JSON (for CI parsing)
-  -h, --help          Show this help
-  -v, --version       Show version
+  --task <prompt>          Run a single task and exit (headless mode)
+  --prompt-file <path>     Read prompt from file and run headless (avoids shell escaping)
+  --delete-prompt-file     Delete the prompt file after reading (use with --prompt-file)
+  --auto                   Skip all confirmations (implies --task / --prompt-file)
+  --yolo, -yolo            Skip all confirmations (interactive YOLO mode)
+  --model <spec>           Set model (e.g. openai:gpt-4o)
+  --max-turns <n>          Max agentic loop iterations (default: 50)
+  --json                   Output result as JSON (for CI parsing)
+  -h, --help               Show this help
+  -v, --version            Show version
 `);
   process.exit(0);
 }
@@ -74,22 +76,12 @@ if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
   } catch { /* ignore malformed config */ }
 }
 
-// ─── --task (headless mode) ──────────────────────────────────
-const taskIdx = args.indexOf('--task');
-if (taskIdx !== -1) {
-  const task = args[taskIdx + 1];
-  if (!task || task.startsWith('--')) {
-    console.error('--task requires a prompt');
-    process.exit(1);
-  }
-
-  // Auto-confirm when --auto
+// ─── helper: run headless task ───────────────────────────────
+function runHeadlessTask(task) {
   if (args.includes('--auto')) {
     const { setAutoConfirm } = require('../cli/safety');
     setAutoConfirm(true);
   }
-
-  // Execute task
   const { processInput, getConversationMessages } = require('../cli/agent');
   processInput(task).then(() => {
     if (args.includes('--json')) {
@@ -106,8 +98,49 @@ if (taskIdx !== -1) {
     }
     process.exit(1);
   });
+}
+
+// ─── --prompt-file (headless mode from file) ─────────────────
+const promptFileIdx = args.indexOf('--prompt-file');
+if (promptFileIdx !== -1) {
+  const filePath = args[promptFileIdx + 1];
+  if (!filePath || filePath.startsWith('--')) {
+    console.error('--prompt-file requires a file path');
+    process.exit(1);
+  }
+
+  const fs = require('fs');
+  let task;
+  try {
+    task = fs.readFileSync(filePath, 'utf-8').trim();
+  } catch (err) {
+    console.error(`--prompt-file: cannot read file: ${err.message}`);
+    process.exit(1);
+  }
+
+  if (!task) {
+    console.error('--prompt-file: file is empty');
+    process.exit(1);
+  }
+
+  if (args.includes('--delete-prompt-file')) {
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+  }
+
+  runHeadlessTask(task);
 } else {
-  // Normal REPL mode
-  const { startREPL } = require('../cli/index');
-  startREPL();
+  // ─── --task (headless mode) ──────────────────────────────────
+  const taskIdx = args.indexOf('--task');
+  if (taskIdx !== -1) {
+    const task = args[taskIdx + 1];
+    if (!task || task.startsWith('--')) {
+      console.error('--task requires a prompt');
+      process.exit(1);
+    }
+    runHeadlessTask(task);
+  } else {
+    // Normal REPL mode
+    const { startREPL } = require('../cli/index');
+    startREPL();
+  }
 }
