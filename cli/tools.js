@@ -18,6 +18,7 @@ const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 const { runDiagnostics } = require('./diagnostics');
 const { findFileInIndex, getFileIndex } = require('./index-engine');
 const { resolveProfile, sshExec, scpUpload, scpDownload } = require('./ssh');
+const { resolveDeployConfig, loadDeployConfigs } = require('./deploy-config');
 
 // Use process.cwd() dynamically to support tests mocking it
 
@@ -879,18 +880,19 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'deploy',
-      description: 'Deploy files to a remote server via rsync + optional remote script. Syncs local_path to remote_path on the server, then runs deploy_script if provided. Requires confirmation before executing.',
+      description: 'Deploy files to a remote server via rsync + optional remote script. Can use a named config from .nex/deploy.json (e.g. deploy("prod")) or explicit params. Requires confirmation before executing.',
       parameters: {
         type: 'object',
         properties: {
-          server: { type: 'string', description: 'Profile name or "user@host".' },
-          local_path: { type: 'string', description: 'Local directory or file to sync (e.g. "dist/", "./build").' },
-          remote_path: { type: 'string', description: 'Remote destination path (e.g. "/var/www/app").' },
-          deploy_script: { type: 'string', description: 'Shell command to run on the remote after sync (e.g. "systemctl restart gunicorn"). Optional.' },
-          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from sync (e.g. ["node_modules", ".env"]). Optional.' },
+          config: { type: 'string', description: 'Named deploy config from .nex/deploy.json (e.g. "prod"). Overrides all other params if provided.' },
+          server: { type: 'string', description: 'Profile name or "user@host". Required if no config.' },
+          local_path: { type: 'string', description: 'Local directory or file to sync (e.g. "dist/", "./build"). Required if no config.' },
+          remote_path: { type: 'string', description: 'Remote destination path (e.g. "/var/www/app"). Required if no config.' },
+          deploy_script: { type: 'string', description: 'Shell command to run on the remote after sync. Optional.' },
+          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from sync. Optional.' },
           dry_run: { type: 'boolean', description: 'Show what would be synced without actually syncing. Default: false.' },
         },
-        required: ['server', 'local_path', 'remote_path'],
+        required: [],
       },
     },
   },
@@ -1886,7 +1888,20 @@ async function _executeToolInner(name, args, options = {}) {
     // ─── Deploy Tool ──────────────────────────────────────────
 
     case 'deploy': {
-      if (!args.server) return 'ERROR: server is required';
+      // Resolve named config from .nex/deploy.json if provided
+      if (args.config) {
+        try {
+          const cfg = resolveDeployConfig(args.config);
+          // Merge: explicit args override config values (except config itself)
+          args = { ...cfg, ...args };
+          delete args.config;
+          delete args._name;
+        } catch (e) {
+          return `ERROR: ${e.message}`;
+        }
+      }
+
+      if (!args.server) return 'ERROR: server is required (or use config: "<name>")';
       if (!args.local_path) return 'ERROR: local_path is required';
       if (!args.remote_path) return 'ERROR: remote_path is required';
 

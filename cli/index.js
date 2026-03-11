@@ -60,6 +60,9 @@ const SLASH_COMMANDS = [
   { cmd: '/skills', desc: 'List, enable, disable skills' },
   { cmd: '/tasks', desc: 'Show task list' },
   { cmd: '/servers', desc: 'List server profiles / ping' },
+  { cmd: '/docker', desc: 'List containers across all servers' },
+  { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
+  { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
@@ -1067,6 +1070,91 @@ ${C.cyan}${C.bold}└───────────────────�
       }
       console.log(`\n${C.dim}/servers ping          — check SSH connectivity for all servers${C.reset}`);
       console.log(`${C.dim}/servers ping <name>   — check a specific server${C.reset}\n`);
+      return true;
+    }
+
+    case '/docker': {
+      const { loadServerProfiles, sshExec: sshExecDocker } = require('./ssh');
+      const { exec: execDocker } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(execDocker);
+      const dockerCmd = rest[0] === '-a' || rest[0] === '--all'
+        ? 'docker ps -a --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"'
+        : 'docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"';
+
+      const profiles = loadServerProfiles();
+      const servers = [['local', null], ...Object.entries(profiles)];
+
+      console.log(`\n${C.bold}${C.cyan}Docker Containers:${C.reset}`);
+      for (const [name, profile] of servers) {
+        const label = name === 'local' ? `${C.dim}local${C.reset}` : `${C.cyan}${name}${C.reset}`;
+        try {
+          let out;
+          if (name === 'local') {
+            const { stdout } = await execAsync(dockerCmd, { timeout: 8000 });
+            out = (stdout || '').trim();
+          } else {
+            const r = await sshExecDocker(profile, dockerCmd, { timeout: 10000 });
+            out = [r.stdout, r.stderr].filter(Boolean).join('').trim();
+            if (r.exitCode !== 0) { console.log(`  ${label}: ${C.red}SSH error (${r.exitCode})${C.reset}`); continue; }
+          }
+          if (!out || out === 'NAMES\tIMAGE\tSTATUS\tPORTS') {
+            console.log(`  ${label}: ${C.dim}(no containers)${C.reset}`);
+          } else {
+            console.log(`  ${label}:`);
+            out.split('\n').forEach((line) => console.log(`    ${C.dim}${line}${C.reset}`));
+          }
+        } catch (e) {
+          console.log(`  ${label}: ${C.red}${e.message}${C.reset}`);
+        }
+      }
+      console.log('');
+      return true;
+    }
+
+    case '/deploy': {
+      const { loadDeployConfigs: ldc } = require('./deploy-config');
+      const configs = ldc();
+      const names = Object.keys(configs);
+      const subcmd = rest[0];
+
+      // /deploy <name> [--dry-run] — run a named deploy
+      if (subcmd && names.includes(subcmd)) {
+        const dryRun = rest.includes('--dry-run') || rest.includes('-n');
+        const cfg = configs[subcmd];
+        const { executeTool } = require('./tools');
+        console.log(`\n${C.bold}Running deploy: ${subcmd}${dryRun ? ' (dry run)' : ''}${C.reset}`);
+        const result = await executeTool('deploy', { ...cfg, dry_run: dryRun });
+        console.log(result);
+        return true;
+      }
+
+      // List all configs
+      if (names.length === 0) {
+        console.log(`\n${C.dim}No deploy configs. Run /init to create .nex/deploy.json${C.reset}\n`);
+        return true;
+      }
+      console.log(`\n${C.bold}${C.cyan}Deploy configs (${names.length}):${C.reset}`);
+      for (const [n, cfg] of Object.entries(configs)) {
+        const local = cfg.local_path || '';
+        const remote = `${cfg.server}:${cfg.remote_path}`;
+        const script = cfg.deploy_script ? `  ${C.dim}→ ${cfg.deploy_script}${C.reset}` : '';
+        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${local} → ${remote}${C.reset}${script}`);
+      }
+      console.log(`\n${C.dim}/deploy <name>          — run a named deploy${C.reset}`);
+      console.log(`${C.dim}/deploy <name> --dry-run — preview without syncing${C.reset}\n`);
+      return true;
+    }
+
+    case '/init': {
+      const { runServerWizard, runDeployWizard, setWizardRL } = require('./wizard');
+      setWizardRL(rl);
+      const subcmd = rest[0];
+      if (subcmd === 'deploy') {
+        await runDeployWizard();
+      } else {
+        await runServerWizard();
+      }
       return true;
     }
 
