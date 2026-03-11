@@ -1221,6 +1221,8 @@ async function startREPL() {
         return;
       }
       if (_abortController) _abortController.abort();
+      const { cancelPendingAskUser } = require('./tools');
+      cancelPendingAskUser();
       console.log(`\n${C.yellow}  Task cancelled. Press Ctrl+C again to exit.${C.reset}`);
       _processing = false;
       rl.setPrompt(getPrompt());
@@ -1392,9 +1394,15 @@ async function startREPL() {
   rl.on('line', async (line) => {
     _clearSug();
 
-    // Ignore input while already processing (prevents duplicate submissions)
+    // Mid-run input: buffer user notes instead of dropping them silently
     if (_processing) {
+      const note = (_pendingPaste !== null ? _pendingPaste : line).trim();
       _pendingPaste = null;
+      if (note) {
+        const { injectMidRunNote } = require('./agent');
+        injectMidRunNote(note);
+        process.stdout.write(`${C.cyan}  ✎ Wird im nächsten Schritt berücksichtigt${C.reset}\n`);
+      }
       return;
     }
 
