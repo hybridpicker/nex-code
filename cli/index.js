@@ -62,6 +62,7 @@ const SLASH_COMMANDS = [
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
+  { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
 ];
 
@@ -1018,6 +1019,49 @@ ${C.cyan}${C.bold}└───────────────────�
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
+      return true;
+    }
+
+    case '/k8s': {
+      const k8sArg = rest.join(' ').trim();
+      const { exec: k8sExec } = require('child_process');
+      const { promisify: k8sPromisify } = require('util');
+      const execAsync = k8sPromisify(k8sExec);
+      const server = k8sArg || null;
+      const sshPrefix = server ? `ssh -o ConnectTimeout=10 -o BatchMode=yes ${server.replace(/[^a-zA-Z0-9@._-]/g, '')} ` : '';
+      const wrapCmd = (cmd) => server ? `${sshPrefix}"${cmd.replace(/"/g, '\\"')}"` : cmd;
+      console.log(`\n${C.bold}${C.cyan}Kubernetes Overview${C.reset}${server ? C.dim + ' (remote: ' + server + ')' + C.reset : ''}\n`);
+      // List namespaces
+      try {
+        const { stdout: ns } = await execAsync(wrapCmd('kubectl get namespaces --no-headers -o custom-columns=NAME:.metadata.name'), { timeout: 15000 });
+        const namespaces = ns.trim().split('\n').filter(Boolean);
+        console.log(`${C.bold}Namespaces (${namespaces.length}):${C.reset}`);
+        for (const n of namespaces) console.log(`  ${C.cyan}${n}${C.reset}`);
+        console.log();
+      } catch {
+        console.log(`${C.dim}Could not reach cluster — is kubectl configured?${C.reset}\n`);
+        return true;
+      }
+      // List all pods
+      try {
+        const { stdout: pods } = await execAsync(wrapCmd('kubectl get pods -A --no-headers -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount'), { timeout: 20000 });
+        const podLines = pods.trim().split('\n').filter(Boolean);
+        const running = podLines.filter(l => l.includes('Running')).length;
+        const pending = podLines.filter(l => l.includes('Pending')).length;
+        const failed = podLines.filter(l => l.includes('Failed') || l.includes('Error') || l.includes('CrashLoop')).length;
+        console.log(`${C.bold}Pods: ${podLines.length} total  ${C.green}${running} running${C.reset}  ${C.yellow}${pending} pending${C.reset}  ${C.red}${failed} unhealthy${C.reset}\n`);
+        // Show unhealthy first
+        const unhealthy = podLines.filter(l => !l.includes('Running') && !l.includes('<none>'));
+        if (unhealthy.length > 0) {
+          console.log(`${C.bold}${C.red}Unhealthy Pods:${C.reset}`);
+          for (const l of unhealthy) console.log(`  ${C.red}${l}${C.reset}`);
+          console.log();
+        }
+        console.log(`${C.dim}Use k8s_pods / k8s_logs / k8s_exec tools for details${C.reset}`);
+        console.log(`${C.dim}Or: /k8s user@host to query a remote cluster${C.reset}\n`);
+      } catch (e) {
+        console.log(`${C.dim}Could not list pods: ${e.message}${C.reset}\n`);
+      }
       return true;
     }
 
