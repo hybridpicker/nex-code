@@ -198,15 +198,15 @@ function enrichBashError(errorOutput, command) {
     const exitMatch = errorOutput.match(/curl:\s*\((\d+)\)/);
     const curlCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
     if (curlCode === 6 || /Could not resolve host/i.test(errorOutput)) {
-      hints.push('HINT: curl exit 6 — hostname could not be resolved. Check DNS or use an IP address directly.');
+      hints.push('HINT: Hostname could not be resolved. Check DNS or use an IP address directly.');
     } else if (curlCode === 7 || /Failed to connect|Connection refused/i.test(errorOutput)) {
-      hints.push('HINT: curl exit 7 — service is not running or port is wrong. Check if the service is up and the port is correct.');
+      hints.push('HINT: Service not running or port wrong. Check if the service is up and the port is correct.');
     } else if (curlCode === 22 || /HTTP error/i.test(errorOutput)) {
-      hints.push('HINT: curl exit 22 — HTTP 4xx/5xx response. The endpoint exists but returned an error status.');
+      hints.push('HINT: HTTP 4xx/5xx response. The endpoint exists but returned an error status.');
     } else if (curlCode === 28 || /timed out/i.test(errorOutput)) {
-      hints.push('HINT: curl exit 28 — request timed out. The host may be unreachable or the service is slow.');
+      hints.push('HINT: Request timed out. The host may be unreachable or the service is slow.');
     } else if (curlCode === 35 || /SSL.*error/i.test(errorOutput)) {
-      hints.push('HINT: curl exit 35 — SSL/TLS handshake failed. Try with --insecure to bypass, or check the certificate.');
+      hints.push('HINT: SSL/TLS handshake failed. Try with --insecure to bypass, or check the certificate.');
     }
   }
 

@@ -236,6 +236,12 @@ function formatToolSummary(name, args, result, isError) {
         : `${doneCount} agent${doneCount !== 1 ? 's' : ''} done`;
       break;
     }
+    case 'switch_model': {
+      // Result is e.g. "Switched to ollama:devstral-small-2:24b"
+      const switchMatch = r.match(/Switched to (.+)/);
+      summary = switchMatch ? `→ ${switchMatch[1]}` : 'Done';
+      break;
+    }
     default:
       summary = 'Done';
   }
