@@ -128,7 +128,9 @@ function formatToolSummary(name, args, result, isError) {
 
   if (isError) {
     const errMsg = r.split('\n')[0].replace(/^ERROR:\s*/i, '').substring(0, 80);
-    return `  ${C.red}⎿  ${errMsg}${C.reset}`;
+    const hintMatch = r.match(/\nHINT: (.+)/);
+    const hintStr = hintMatch ? `\n     ${C.dim}${hintMatch[1].substring(0, 100)}${C.reset}` : '';
+    return `  ${C.red}⎿  ${errMsg}${C.reset}${hintStr}`;
   }
 
   let summary;
@@ -162,7 +164,8 @@ function formatToolSummary(name, args, result, isError) {
     case 'bash': {
       const exitMatch = r.match(/^EXIT (\d+)/);
       if (exitMatch) {
-        summary = `Exit ${exitMatch[1]}`;
+        const hintMatch = r.match(/\nHINT: (.+)/);
+        summary = `Exit ${exitMatch[1]}${hintMatch ? ` — ${hintMatch[1].substring(0, 60)}` : ''}`;
       } else {
         const lines = r.split('\n').filter(Boolean);
         summary = lines.length > 1
