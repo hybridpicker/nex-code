@@ -17,6 +17,7 @@ const { recordChange } = require('./file-history');
 const { fuzzyFindText, findMostSimilar } = require('./fuzzy-match');
 const { runDiagnostics } = require('./diagnostics');
 const { findFileInIndex, getFileIndex } = require('./index-engine');
+const { resolveProfile, sshExec, scpUpload, scpDownload } = require('./ssh');
 
 // Use process.cwd() dynamically to support tests mocking it
 
@@ -719,6 +720,93 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'ssh_exec',
+      description: 'Execute a command on a remote server via SSH. Server is a profile name from .nex/servers.json (e.g. "prod") or "user@host". Use for: checking status, reading logs, running deployments. Destructive commands (restart, delete, modify config) require confirmation. For service management prefer service_manage; for logs prefer service_logs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name (from .nex/servers.json) or "user@host"' },
+          command: { type: 'string', description: 'Shell command to run on the remote server' },
+          sudo: { type: 'boolean', description: 'Run command with sudo (only if profile has sudo:true). Default: false' },
+          timeout: { type: 'number', description: 'Timeout in seconds. Default: 30' },
+        },
+        required: ['server', 'command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ssh_upload',
+      description: 'Upload a local file or directory to a remote server via SCP. Recursive for directories. Requires confirmation before upload.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host"' },
+          local_path: { type: 'string', description: 'Local path to upload (file or directory)' },
+          remote_path: { type: 'string', description: 'Destination path on the remote server (absolute preferred)' },
+        },
+        required: ['server', 'local_path', 'remote_path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ssh_download',
+      description: 'Download a file or directory from a remote server via SCP. Recursive for directories.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host"' },
+          remote_path: { type: 'string', description: 'Path on the remote server to download' },
+          local_path: { type: 'string', description: 'Local destination path' },
+        },
+        required: ['server', 'remote_path', 'local_path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'service_manage',
+      description: 'Manage a systemd service on a remote (or local) server. Uses systemctl. Status is read-only; start/stop/restart/reload/enable/disable require confirmation. For AlmaLinux 9: runs via SSH with sudo if configured.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          service: { type: 'string', description: 'Service name (e.g. "nginx", "gunicorn", "postgresql")' },
+          action: {
+            type: 'string',
+            enum: ['status', 'start', 'stop', 'restart', 'reload', 'enable', 'disable'],
+            description: 'systemctl action to perform',
+          },
+        },
+        required: ['service', 'action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'service_logs',
+      description: 'Fetch systemd service logs via journalctl. Works on AlmaLinux 9 and any systemd Linux. Read-only, no confirmation needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          service: { type: 'string', description: 'Service name (e.g. "nginx", "gunicorn")' },
+          lines: { type: 'number', description: 'Number of recent log lines to fetch. Default: 50' },
+          since: { type: 'string', description: 'Time filter, e.g. "1 hour ago", "today", "2024-01-01 12:00". Optional.' },
+          follow: { type: 'boolean', description: 'Tail logs in real-time (follow mode). Default: false' },
+        },
+        required: ['service'],
+      },
+    },
+  },
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
@@ -1418,6 +1506,174 @@ async function _executeToolInner(name, args, options = {}) {
       } catch (e) {
         return `ERROR: ${(e.stderr || e.message || '').toString().split('\n')[0]}`;
       }
+    }
+
+    case 'ssh_exec': {
+      if (!args.server) return 'ERROR: server is required';
+      if (!args.command) return 'ERROR: command is required';
+
+      let profile;
+      try {
+        profile = resolveProfile(args.server);
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+
+      const cmd = args.command;
+      const useSudo = Boolean(args.sudo);
+      const timeoutMs = (args.timeout || 30) * 1000;
+
+      // Require confirmation for destructive/modifying remote commands
+      const isDestructive = /\b(rm|rmdir|mv|cp|chmod|chown|dd|mkfs|systemctl\s+(start|stop|restart|reload|enable|disable)|dnf\s+(install|remove|update|upgrade)|yum\s+(install|remove)|apt(-get)?\s+(install|remove|purge)|pip\s+install|pip3\s+install|firewall-cmd\s+--permanent|semanage|setsebool|passwd|userdel|useradd|nginx\s+-s\s+(reload|stop)|service\s+\w+\s+(start|stop|restart))\b/.test(cmd);
+
+      if (isDestructive) {
+        const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+        console.log(`\n${C.yellow}  ⚠ Remote command on ${target}: ${cmd}${C.reset}`);
+        const ok = await confirm('  Execute on remote server?');
+        if (!ok) return 'CANCELLED: User declined to execute remote command.';
+      }
+
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: timeoutMs, sudo: useSudo });
+
+      const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) {
+        return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
+      }
+      return output || '(command completed, no output)';
+    }
+
+    case 'ssh_upload': {
+      if (!args.server || !args.local_path || !args.remote_path) {
+        return 'ERROR: server, local_path, and remote_path are required';
+      }
+
+      let profile;
+      try {
+        profile = resolveProfile(args.server);
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+
+      const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+      console.log(`\n${C.yellow}  ⚠ Upload: ${args.local_path} → ${target}:${args.remote_path}${C.reset}`);
+      const ok = await confirm('  Upload to remote server?');
+      if (!ok) return 'CANCELLED: User declined upload.';
+
+      try {
+        const result = await scpUpload(profile, args.local_path, args.remote_path);
+        return result;
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case 'ssh_download': {
+      if (!args.server || !args.remote_path || !args.local_path) {
+        return 'ERROR: server, remote_path, and local_path are required';
+      }
+
+      let profile;
+      try {
+        profile = resolveProfile(args.server);
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+
+      try {
+        const result = await scpDownload(profile, args.remote_path, args.local_path);
+        return result;
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case 'service_manage': {
+      if (!args.service) return 'ERROR: service is required';
+      if (!args.action) return 'ERROR: action is required';
+
+      const validActions = ['status', 'start', 'stop', 'restart', 'reload', 'enable', 'disable'];
+      if (!validActions.includes(args.action)) {
+        return `ERROR: invalid action "${args.action}". Valid: ${validActions.join(', ')}`;
+      }
+
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      const isReadOnly = args.action === 'status';
+
+      let profile = null;
+      if (!isLocal) {
+        try {
+          profile = resolveProfile(args.server);
+        } catch (e) {
+          return `ERROR: ${e.message}`;
+        }
+      }
+
+      // Confirmation for non-status actions
+      if (!isReadOnly) {
+        const location = isLocal ? 'local machine' : (profile.user ? `${profile.user}@${profile.host}` : profile.host);
+        console.log(`\n${C.yellow}  ⚠ Service: systemctl ${args.action} ${args.service} on ${location}${C.reset}`);
+        const ok = await confirm('  Execute?');
+        if (!ok) return 'CANCELLED: User declined service action.';
+      }
+
+      const cmd = `systemctl ${args.action} ${args.service}`;
+
+      if (isLocal) {
+        // Local execution
+        const needsSudo = args.action !== 'status';
+        const localCmd = needsSudo ? `sudo ${cmd}` : cmd;
+        try {
+          const { stdout, stderr } = await exec(localCmd, { timeout: 15000 });
+          return (stdout || stderr || `systemctl ${args.action} ${args.service}: OK`).trim();
+        } catch (e) {
+          const errMsg = (e.stderr || e.message || '').toString().trim();
+          if (/not found|loaded.*not-found/i.test(errMsg)) {
+            return `ERROR: Service "${args.service}" not found. Check: systemctl list-units --type=service`;
+          }
+          return `EXIT ${e.code || 1}\n${errMsg}`;
+        }
+      } else {
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 15000, sudo: true });
+        const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          if (/not found|loaded.*not-found/i.test(output)) {
+            return `ERROR: Service "${args.service}" not found on ${profile.host}. Check: ssh_exec to run "systemctl list-units --type=service"`;
+          }
+          return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
+        }
+        return output || `systemctl ${args.action} ${args.service}: OK`;
+      }
+    }
+
+    case 'service_logs': {
+      if (!args.service) return 'ERROR: service is required';
+
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      const lines = args.lines || 50;
+      const sinceFlag = args.since ? `--since "${args.since}"` : '';
+      const followFlag = args.follow ? '-f' : '';
+      const cmd = `journalctl -u ${args.service} -n ${lines} ${sinceFlag} ${followFlag} --no-pager`.trim().replace(/\s+/g, ' ');
+
+      if (isLocal) {
+        try {
+          const { stdout, stderr } = await exec(cmd, { timeout: 15000 });
+          return (stdout || stderr || '(no log output)').trim();
+        } catch (e) {
+          return `EXIT ${e.code || 1}\n${(e.stderr || e.message || '').toString().trim()}`;
+        }
+      }
+
+      let profile;
+      try {
+        profile = resolveProfile(args.server);
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 20000 });
+      const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
+      return output || '(no log output)';
     }
 
     default:
