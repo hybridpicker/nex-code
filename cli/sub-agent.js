@@ -112,8 +112,17 @@ function pickModelForTier(targetTier) {
   return null;
 }
 
+// ENV-based model overrides per task tier (e.g. NEX_HEAVY_MODEL=kimi-k2:1t)
+// Checked before auto-routing — set in .env to control sub-agent model selection.
+const ENV_TIER_MODELS = {
+  essential: process.env.NEX_FAST_MODEL || null,
+  standard:  process.env.NEX_STANDARD_MODEL || null,
+  full:      process.env.NEX_HEAVY_MODEL || null,
+};
+
 /**
- * Resolve the model for a sub-agent: explicit override or auto-routing.
+ * Resolve the model for a sub-agent: explicit override, ENV tier override, or auto-routing.
+ * Priority: agentDef.model > NEX_HEAVY/STANDARD/FAST_MODEL > pickModelForTier > active model
  * @param {{ task: string, model?: string }} agentDef
  * @returns {{ provider: string|null, model: string|null, tier: string|null }}
  */
@@ -127,11 +136,26 @@ function resolveSubAgentModel(agentDef) {
       const tier = getModelTier(model, provName);
       return { provider: provName, model, tier };
     }
-    // Invalid spec → fall through to auto-routing
+    // Invalid spec → fall through to ENV/auto-routing
   }
 
-  // Auto-routing: classify task → pick model at matching tier
+  // Classify task to determine target tier
   const targetTier = classifyTask(agentDef.task);
+
+  // ENV tier override: NEX_HEAVY_MODEL / NEX_STANDARD_MODEL / NEX_FAST_MODEL
+  const envModel = ENV_TIER_MODELS[targetTier];
+  if (envModel) {
+    const { provider, model } = parseModelSpec(envModel);
+    const prov = provider ? getProvider(provider) : getActiveProvider();
+    const provName = provider || getActiveProviderName();
+    if (prov && prov.isConfigured() && (prov.getModel(model) || provName === 'local')) {
+      const tier = getModelTier(model, provName);
+      return { provider: provName, model, tier };
+    }
+    // ENV model not found/configured → fall through to auto-routing
+  }
+
+  // Auto-routing: pick best available model at target tier
   const pick = pickModelForTier(targetTier);
   if (pick) {
     const tier = getModelTier(pick.model, pick.provider);
