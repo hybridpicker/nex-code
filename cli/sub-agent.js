@@ -220,8 +220,9 @@ ERROR RECOVERY:
     agentTier
   );
 
-  // Log sub-agent model selection (matches [fallback: ...] style)
-  if (agentModel) {
+  // Log sub-agent model selection only when running standalone (not inside executeSpawnAgents)
+  // When running via spawn_agents, the model is already shown in the progress bar label.
+  if (agentModel && !agentDef._skipLog) {
     const tierLabel = agentTier ? ` (${agentTier})` : '';
     process.stderr.write(`  [sub-agent: ${agentProvider}:${agentModel}${tierLabel}]\n`);
   }
@@ -371,13 +372,25 @@ async function executeSpawnAgents(args) {
     return `ERROR: Max ${MAX_PARALLEL_AGENTS} parallel agents allowed, got ${agents.length}`;
   }
 
-  const labels = agents.map((a, i) => `Agent ${i + 1}: ${a.task.substring(0, 50)}${a.task.length > 50 ? '...' : ''}`);
+  // Resolve models upfront so labels can include model info (avoids interleaving with spinner)
+  const routings = agents.map(a => resolveSubAgentModel(a));
+  const labels = agents.map((a, i) => {
+    const r = routings[i];
+    const modelTag = r.model ? ` [${r.model}]` : '';
+    const task = a.task.substring(0, 44 - modelTag.length);
+    return `Agent ${i + 1}${modelTag}: ${task}${a.task.length > task.length ? '...' : ''}`;
+  });
   const progress = new MultiProgress(labels);
   progress.start();
 
   try {
-    const promises = agents.map((agentDef, idx) =>
-      runSubAgent(agentDef, {
+    const promises = agents.map((agentDef, idx) => {
+      // Pass pre-resolved model and suppress per-agent stderr log (shown in label already)
+      const r = routings[idx];
+      const defWithRouting = r.model
+        ? { ...agentDef, model: `${r.provider}:${r.model}`, _skipLog: true }
+        : { ...agentDef, _skipLog: true };
+      return runSubAgent(defWithRouting, {
         onUpdate: () => {}, // progress is already showing spinner
       }).then(result => {
         progress.update(idx, result.status === 'done' ? 'done' : 'error');
@@ -391,8 +404,8 @@ async function executeSpawnAgents(args) {
           toolsUsed: [],
           tokensUsed: { input: 0, output: 0 },
         };
-      })
-    );
+      });
+    });
 
     const results = await Promise.all(promises);
     progress.stop();

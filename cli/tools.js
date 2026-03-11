@@ -696,6 +696,20 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'switch_model',
+      description: 'Switch the active AI model mid-conversation. Use when a different model is better for the next steps — e.g. switch to a fast model for simple lookups, or a more capable model for complex refactoring. The switch persists for all subsequent turns.',
+      parameters: {
+        type: 'object',
+        properties: {
+          model: { type: 'string', description: 'Model spec: "provider:model" (e.g. "ollama:devstral-small-2:24b") or just model name' },
+        },
+        required: ['model'],
+      },
+    },
+  },
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
@@ -1310,6 +1324,14 @@ async function _executeToolInner(name, args, options = {}) {
     case 'spawn_agents': {
       const { executeSpawnAgents } = require('./sub-agent');
       return executeSpawnAgents(args);
+    }
+
+    case 'switch_model': {
+      const { setActiveModel, getActiveProviderName, getActiveModelId } = require('./providers/registry');
+      if (setActiveModel(args.model)) {
+        return `Switched to ${getActiveProviderName()}:${getActiveModelId()}`;
+      }
+      return `ERROR: Unknown model: ${args.model}. Use /providers to see available models.`;
     }
 
     case 'gh_run_list': {
