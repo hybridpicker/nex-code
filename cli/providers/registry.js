@@ -162,8 +162,10 @@ function setActiveModel(spec) {
 
     const model = provider.getModel(modelId);
     if (!model) {
-      // Allow setting model even if not in predefined list (for local models)
-      if (providerName === 'local') {
+      // Allow setting model even if not in predefined list:
+      // - 'local': custom local models
+      // - 'ollama': dynamically discovered cloud models not yet in hardcoded list
+      if (providerName === 'local' || providerName === 'ollama') {
         activeProviderName = providerName;
         activeModelId = modelId;
         // Invalidate caches on model change

@@ -220,6 +220,12 @@ ERROR RECOVERY:
     agentTier
   );
 
+  // Log sub-agent model selection (matches [fallback: ...] style)
+  if (agentModel) {
+    const tierLabel = agentTier ? ` (${agentTier})` : '';
+    process.stderr.write(`  [sub-agent: ${agentProvider}:${agentModel}${tierLabel}]\n`);
+  }
+
   // Build callChat options for provider/model routing
   const chatOptions = {};
   if (agentProvider) chatOptions.provider = agentProvider;
