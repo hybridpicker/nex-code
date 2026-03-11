@@ -22,7 +22,11 @@ const { findFileInIndex, getFileIndex } = require('./index-engine');
 
 // ─── Interactive Command Detection ────────────────────────────
 // Commands that require a PTY / raw terminal (spawned with stdio:inherit)
-const INTERACTIVE_CMDS = /^(vim?|nano|emacs|pico|less|more|top|htop|iftop|iotop|glances|ssh\s|telnet\s|screen|tmux|fzf|gum|dialog|whiptail|man\s|node\s*$|python3?\s*$|irb\s*$|rails\s*c|psql\s|mysql\s|redis-cli|mongosh?|sqlite3)\b/;
+const INTERACTIVE_CMDS = /^(vim?|nano|emacs|pico|less|more|top|htop|iftop|iotop|glances|telnet\s|screen|tmux|fzf|gum|dialog|whiptail|man\s|node\s*$|python3?\s*$|irb\s*$|rails\s*c|psql\s|mysql\s|redis-cli|mongosh?|sqlite3)\b/;
+// SSH is interactive only when logging in without a remote command.
+// `ssh host "cmd"` / `ssh host cmd` are non-interactive — output must be captured.
+const SSH_INTERACTIVE_RE = /^ssh\s/;
+const SSH_HAS_REMOTE_CMD_RE = /^ssh(?:\s+-\S+)*\s+\S+@?\S+\s+["']?[^-]/;
 
 // ─── Auto-Fix Helpers ─────────────────────────────────────────
 
@@ -89,6 +93,42 @@ async function autoFixPath(originalPath) {
 }
 
 /**
+ * Return a recovery hint when a command is blocked, suggesting safe alternatives.
+ * @param {string} cmd
+ * @returns {string}
+ */
+function getBlockedHint(cmd) {
+  if (/\bprintenv\b/.test(cmd)) {
+    return 'printenv exposes all secrets. Use `echo $VAR_NAME` for a single variable, or `env | grep PATTERN` for filtered output.';
+  }
+  if (/cat\s+.*\.env\b/.test(cmd)) {
+    return 'Reading .env directly is blocked. Use `grep -v "KEY=" .env` to inspect non-secret entries, or ask the user to share specific values.';
+  }
+  if (/cat\s+.*credentials/i.test(cmd)) {
+    return 'Credentials files are blocked. Reference the variable name from the application config instead.';
+  }
+  if (/python3?\s+-c\s/.test(cmd)) {
+    return 'Inline python -c is blocked. Write a temporary script file and run it with `python3 script.py` instead.';
+  }
+  if (/node\s+-e\s/.test(cmd)) {
+    return 'Inline node -e is blocked. Write a temporary script file and run it with `node script.js` instead.';
+  }
+  if (/curl.*-X\s*POST|curl.*--data/.test(cmd)) {
+    return 'curl POST is blocked to prevent data exfiltration. Use the application\'s own API client or ask the user to run the request.';
+  }
+  if (/base64.*\|.*bash/.test(cmd)) {
+    return 'Piping base64-decoded content to bash is blocked. Decode the content first, inspect it, then run explicitly.';
+  }
+  if (/\beval\s*\(/.test(cmd)) {
+    return 'eval is blocked. Execute the command directly without eval.';
+  }
+  if (/(?:^|[;&|]\s*)history(?:\s|$)/.test(cmd)) {
+    return 'Shell history is blocked. Look at git log or project files for context instead.';
+  }
+  return '';
+}
+
+/**
  * Enrich bash error output with actionable hints.
  * @param {string} errorOutput - Raw stderr/stdout from bash
  * @param {string} command - The command that was run
@@ -151,6 +191,37 @@ function enrichBashError(errorOutput, command) {
   // Git errors
   if (/fatal: not a git repository/i.test(errorOutput)) {
     hints.push('HINT: Not inside a git repository. Run git init or cd to a git project.');
+  }
+
+  // curl exit codes
+  if (/^curl\b/.test(command)) {
+    const exitMatch = errorOutput.match(/curl:\s*\((\d+)\)/);
+    const curlCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
+    if (curlCode === 6 || /Could not resolve host/i.test(errorOutput)) {
+      hints.push('HINT: curl exit 6 — hostname could not be resolved. Check DNS or use an IP address directly.');
+    } else if (curlCode === 7 || /Failed to connect|Connection refused/i.test(errorOutput)) {
+      hints.push('HINT: curl exit 7 — service is not running or port is wrong. Check if the service is up and the port is correct.');
+    } else if (curlCode === 22 || /HTTP error/i.test(errorOutput)) {
+      hints.push('HINT: curl exit 22 — HTTP 4xx/5xx response. The endpoint exists but returned an error status.');
+    } else if (curlCode === 28 || /timed out/i.test(errorOutput)) {
+      hints.push('HINT: curl exit 28 — request timed out. The host may be unreachable or the service is slow.');
+    } else if (curlCode === 35 || /SSL.*error/i.test(errorOutput)) {
+      hints.push('HINT: curl exit 35 — SSL/TLS handshake failed. Try with --insecure to bypass, or check the certificate.');
+    }
+  }
+
+  // SSH tunnel errors
+  if (/remote port forwarding failed/i.test(errorOutput)) {
+    const portMatch = errorOutput.match(/port (\d+)/);
+    const port = portMatch ? portMatch[1] : '';
+    hints.push(`HINT: SSH remote port forwarding failed for port ${port}. The port may already be bound on the server. ` +
+      `Check with: ssh server "ss -tuln | grep ${port}" and kill any lingering process with that port.`);
+  }
+  if (/bind.*Cannot assign requested address|Address already in use/i.test(errorOutput)) {
+    hints.push('HINT: Port is already in use. Find the process with: ss -tuln | grep <port> and kill it, then retry.');
+  }
+  if (/Connection.*timed out|ssh.*timeout/i.test(errorOutput) && /^ssh\b/.test(command)) {
+    hints.push('HINT: SSH connection timed out. Check if the host is reachable: ping <host> and verify the port with: nc -zv <host> 22');
   }
 
   if (hints.length === 0) return errorOutput;
@@ -633,7 +704,10 @@ async function _executeToolInner(name, args, options = {}) {
     case 'bash': {
       const cmd = args.command;
       const forbidden = isForbidden(cmd);
-      if (forbidden) return `BLOCKED: Command matches forbidden pattern: ${forbidden}`;
+      if (forbidden) {
+        const hint = getBlockedHint(cmd);
+        return `BLOCKED: Command matches forbidden pattern: ${forbidden}${hint ? `\nHINT: ${hint}` : ''}`;
+      }
 
       const needsPrompt = options.autoConfirm ? isCritical(cmd) : isDangerous(cmd);
       if (needsPrompt) {
@@ -643,8 +717,10 @@ async function _executeToolInner(name, args, options = {}) {
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }
 
-      // Interactive commands (vim, top, ssh, etc.) need a real TTY — spawn with stdio:inherit
-      if (INTERACTIVE_CMDS.test(cmd.trim())) {
+      // Interactive commands (vim, top, etc.) need a real TTY — spawn with stdio:inherit.
+      // SSH with a remote command (e.g. ssh host "cmd") is non-interactive: capture output normally.
+      const isSSHLogin = SSH_INTERACTIVE_RE.test(cmd.trim()) && !SSH_HAS_REMOTE_CMD_RE.test(cmd.trim());
+      if (INTERACTIVE_CMDS.test(cmd.trim()) || isSSHLogin) {
         if (!options.silent) console.log(`${C.dim}  ▶ interactive: ${cmd}${C.reset}`);
         const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', cwd: process.cwd() });
         if (result.error) return `ERROR: ${result.error.message}`;
