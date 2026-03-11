@@ -164,8 +164,16 @@ function formatToolSummary(name, args, result, isError) {
     case 'bash': {
       const exitMatch = r.match(/^EXIT (\d+)/);
       if (exitMatch) {
+        const code = exitMatch[1];
         const hintMatch = r.match(/\nHINT: (.+)/);
-        summary = `Exit ${exitMatch[1]}${hintMatch ? ` — ${hintMatch[1].substring(0, 60)}` : ''}`;
+        if (hintMatch) {
+          summary = `Exit ${code} — ${hintMatch[1].substring(0, 60)}`;
+        } else {
+          // Show exit code + first non-empty output line
+          const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT '));
+          const firstOut = outputLines[0] ? ` · ${outputLines[0].substring(0, 60)}` : '';
+          summary = `Exit ${code}${firstOut}`;
+        }
       } else {
         const lines = r.split('\n').filter(Boolean);
         summary = lines.length > 1
