@@ -807,6 +807,93 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'container_list',
+      description: 'List Docker containers on a server (or locally). Shows container ID, name, image, status, and ports. Read-only, no confirmation needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          all: { type: 'boolean', description: 'Show all containers including stopped ones. Default: false (running only).' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'container_logs',
+      description: 'Fetch logs from a Docker container on a server (or locally). Read-only, no confirmation needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          container: { type: 'string', description: 'Container name or ID.' },
+          lines: { type: 'number', description: 'Number of recent log lines. Default: 50.' },
+          since: { type: 'string', description: 'Time filter, e.g. "1h", "30m", "2024-01-01T12:00:00". Optional.' },
+        },
+        required: ['container'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'container_exec',
+      description: 'Execute a command inside a running Docker container. Destructive or state-changing commands require confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          container: { type: 'string', description: 'Container name or ID.' },
+          command: { type: 'string', description: 'Command to run inside the container (e.g. "cat /etc/nginx/nginx.conf").' },
+        },
+        required: ['container', 'command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'container_manage',
+      description: 'Start, stop, restart, or remove a Docker container. All actions except "inspect" require confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          container: { type: 'string', description: 'Container name or ID.' },
+          action: {
+            type: 'string',
+            enum: ['start', 'stop', 'restart', 'remove', 'inspect'],
+            description: 'Action to perform on the container.',
+          },
+        },
+        required: ['container', 'action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'deploy',
+      description: 'Deploy files to a remote server via rsync + optional remote script. Syncs local_path to remote_path on the server, then runs deploy_script if provided. Requires confirmation before executing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host".' },
+          local_path: { type: 'string', description: 'Local directory or file to sync (e.g. "dist/", "./build").' },
+          remote_path: { type: 'string', description: 'Remote destination path (e.g. "/var/www/app").' },
+          deploy_script: { type: 'string', description: 'Shell command to run on the remote after sync (e.g. "systemctl restart gunicorn"). Optional.' },
+          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from sync (e.g. ["node_modules", ".env"]). Optional.' },
+          dry_run: { type: 'boolean', description: 'Show what would be synced without actually syncing. Default: false.' },
+        },
+        required: ['server', 'local_path', 'remote_path'],
+      },
+    },
+  },
 ];
 
 // ─── Tool Implementations ─────────────────────────────────────
@@ -1674,6 +1761,176 @@ async function _executeToolInner(name, args, options = {}) {
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
       if (exitCode !== 0) return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
       return output || '(no log output)';
+    }
+
+    // ─── Docker Tools ─────────────────────────────────────────
+
+    case 'container_list': {
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      const allFlag = args.all ? '-a' : '';
+      const cmd = `docker ps ${allFlag} --format "table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"`.trim().replace(/\s+/g, ' ');
+
+      if (isLocal) {
+        try {
+          const { stdout, stderr } = await exec(cmd, { timeout: 10000 });
+          return (stdout || stderr || '(no containers)').trim();
+        } catch (e) {
+          return `EXIT ${e.code || 1}\n${(e.stderr || e.message || '').toString().trim()}`;
+        }
+      }
+
+      let profile;
+      try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 15000 });
+      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) return `EXIT ${exitCode}\n${error || out}`;
+      return out || '(no containers)';
+    }
+
+    case 'container_logs': {
+      if (!args.container) return 'ERROR: container is required';
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      const lines = args.lines || 50;
+      const sinceFlag = args.since ? `--since "${args.since}"` : '';
+      const cmd = `docker logs --tail ${lines} ${sinceFlag} ${args.container} 2>&1`.trim().replace(/\s+/g, ' ');
+
+      if (isLocal) {
+        try {
+          const { stdout, stderr } = await exec(cmd, { timeout: 15000 });
+          return (stdout || stderr || '(no log output)').trim();
+        } catch (e) {
+          return `EXIT ${e.code || 1}\n${(e.stderr || e.message || '').toString().trim()}`;
+        }
+      }
+
+      let profile;
+      try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 20000 });
+      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) return `EXIT ${exitCode}\n${error || out}`;
+      return out || '(no log output)';
+    }
+
+    case 'container_exec': {
+      if (!args.container) return 'ERROR: container is required';
+      if (!args.command) return 'ERROR: command is required';
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+
+      // Confirm non-trivial / state-changing commands
+      const DOCKER_SAFE_RE = /^(cat|ls|echo|env|printenv|df|du|ps|id|whoami|uname|hostname|date|pwd|which|find\s|head\s|tail\s|grep\s|curl\s+-[A-Za-z]*G|curl\s+https?:\/\/[^\s]+$)/;
+      const needsConfirm = !options.autoConfirm && !DOCKER_SAFE_RE.test(args.command.trim());
+      if (needsConfirm) {
+        const where = isLocal ? 'local' : args.server;
+        console.log(`\n${C.yellow}  ⚠ docker exec in ${args.container} on ${where}: ${args.command}${C.reset}`);
+        const ok = await confirm('  Execute?');
+        if (!ok) return 'CANCELLED: User declined.';
+      }
+
+      const cmd = `docker exec ${args.container} sh -c ${JSON.stringify(args.command)}`;
+
+      if (isLocal) {
+        try {
+          const { stdout, stderr } = await exec(cmd, { timeout: 30000 });
+          return (stdout || stderr || '(no output)').trim();
+        } catch (e) {
+          return `EXIT ${e.code || 1}\n${(e.stderr || e.message || '').toString().trim()}`;
+        }
+      }
+
+      let profile;
+      try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 35000 });
+      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) return `EXIT ${exitCode}\n${error || out}`;
+      return out || '(no output)';
+    }
+
+    case 'container_manage': {
+      if (!args.container) return 'ERROR: container is required';
+      if (!args.action) return 'ERROR: action is required';
+      const VALID_ACTIONS = ['start', 'stop', 'restart', 'remove', 'inspect'];
+      if (!VALID_ACTIONS.includes(args.action)) return `ERROR: invalid action "${args.action}". Valid: ${VALID_ACTIONS.join(', ')}`;
+
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      const isReadOnly = args.action === 'inspect';
+
+      if (!isReadOnly && !options.autoConfirm) {
+        const where = isLocal ? 'local' : args.server;
+        console.log(`\n${C.yellow}  ⚠ docker ${args.action} ${args.container} on ${where}${C.reset}`);
+        const ok = await confirm('  Execute?');
+        if (!ok) return 'CANCELLED: User declined.';
+      }
+
+      const dockerAction = args.action === 'remove' ? 'rm' : args.action;
+      const cmd = args.action === 'inspect'
+        ? `docker inspect ${args.container}`
+        : `docker ${dockerAction} ${args.container}`;
+
+      if (isLocal) {
+        try {
+          const { stdout, stderr } = await exec(cmd, { timeout: 30000 });
+          return (stdout || stderr || `docker ${args.action} ${args.container}: OK`).trim();
+        } catch (e) {
+          return `EXIT ${e.code || 1}\n${(e.stderr || e.message || '').toString().trim()}`;
+        }
+      }
+
+      let profile;
+      try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      const { stdout, stderr, exitCode, error } = await sshExec(profile, cmd, { timeout: 35000 });
+      const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+      if (exitCode !== 0) return `EXIT ${exitCode}\n${error || out}`;
+      return out || `docker ${args.action} ${args.container}: OK`;
+    }
+
+    // ─── Deploy Tool ──────────────────────────────────────────
+
+    case 'deploy': {
+      if (!args.server) return 'ERROR: server is required';
+      if (!args.local_path) return 'ERROR: local_path is required';
+      if (!args.remote_path) return 'ERROR: remote_path is required';
+
+      let profile;
+      try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+
+      const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+      const portFlag = profile.port && Number(profile.port) !== 22 ? `-e "ssh -p ${profile.port}"` : '';
+      const keyFlag = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}"` : '';
+      const sshFlags = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}${profile.port && Number(profile.port) !== 22 ? ` -p ${profile.port}` : ''}"` : portFlag;
+      const excludeFlags = (args.exclude || []).map(e => `--exclude="${e}"`).join(' ');
+      const dryRun = args.dry_run ? '--dry-run' : '';
+
+      const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
+      const rsyncCmd = `rsync -avz --delete ${dryRun} ${excludeFlags} ${sshFlags} ${localPath} ${target}:${args.remote_path}`.trim().replace(/\s+/g, ' ');
+
+      if (!args.dry_run && !options.autoConfirm) {
+        console.log(`\n${C.yellow}  ⚠ Deploy: ${localPath} → ${target}:${args.remote_path}${C.reset}`);
+        if (args.deploy_script) console.log(`${C.yellow}  Then run: ${args.deploy_script}${C.reset}`);
+        const ok = await confirm('  Proceed with deployment?');
+        if (!ok) return 'CANCELLED: User declined.';
+      }
+
+      let output = '';
+      try {
+        const { stdout, stderr } = await exec(rsyncCmd, { timeout: 120000 });
+        output = (stdout || stderr || '').trim();
+      } catch (e) {
+        return `ERROR (rsync): ${(e.stderr || e.message || '').toString().trim()}`;
+      }
+
+      if (args.dry_run) return `DRY RUN:\n${output || '(nothing to sync)'}`;
+
+      let remoteResult = '';
+      if (args.deploy_script) {
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, args.deploy_script, { timeout: 60000 });
+        const remoteOut = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          return `rsync OK\n\nERROR (deploy_script, exit ${exitCode}):\n${error || remoteOut}`;
+        }
+        remoteResult = `\n\nRemote script output:\n${remoteOut || '(no output)'}`;
+      }
+
+      return `Deployed ${localPath} → ${target}:${args.remote_path}\n${output}${remoteResult}`.trim();
     }
 
     default:
