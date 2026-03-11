@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1855-blue.svg" alt="Tests: 1855">
+  <img src="https://img.shields.io/badge/tests-1944-blue.svg" alt="Tests: 1944">
 </p>
 
 ---
@@ -81,6 +81,9 @@ npm update -g nex-code
 | **Browser agent (headless)** | ✅ Playwright-based | ❌ | ⚠️ Experimental | ❌ |
 | **Grounded web search** | ✅ Perplexity/DDG | ❌ | ✅ Google grounded | ❌ |
 | **GitHub Actions tools** | ✅ native | ❌ | ❌ | ❌ |
+| **SSH server management** | ✅ native (AlmaLinux/macOS) | ❌ | ❌ | ❌ |
+| **Docker tools** | ✅ local + remote via SSH | ❌ | ❌ | ❌ |
+| **Deploy tool (rsync)** | ✅ named configs | ❌ | ❌ | ❌ |
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
@@ -341,8 +344,9 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 
 ## Tools
 
-The agent has 17 built-in tools:
+The agent has 33 built-in tools:
 
+### Core & File System
 | Tool | Description |
 |------|-------------|
 | `bash` | Execute shell commands (90s timeout, 5MB buffer) |
@@ -354,27 +358,148 @@ The agent has 17 built-in tools:
 | `search_files` | Regex search across files (like grep) |
 | `glob` | Fast file search by name/extension pattern |
 | `grep` | Content search with regex and line numbers |
+
+### Git & Web
+| Tool | Description |
+|------|-------------|
 | `git_status` | Git working tree status |
 | `git_diff` | Git diff with optional path filter |
 | `git_log` | Git commit history with configurable count |
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Grounded search via Perplexity (if `PERPLEXITY_API_KEY` set) or DuckDuckGo |
+
+### Interaction & Agents
+| Tool | Description |
+|------|-------------|
 | `ask_user` | Ask the user a question and wait for input |
 | `task_list` | Create and manage task lists for multi-step operations |
 | `spawn_agents` | Run parallel sub-agents with auto model routing |
+
+### Browser (optional — requires Playwright)
+| Tool | Description |
+|------|-------------|
 | `browser_open` | Open URL in headless browser, return text + links (JS-heavy pages) |
 | `browser_screenshot` | Screenshot a URL → saved file + vision-ready path |
 | `browser_click` | Click element by CSS selector or visible text |
 | `browser_fill` | Fill form field and optionally submit |
+
+### GitHub Actions
+| Tool | Description |
+|------|-------------|
 | `gh_run_list` | List GitHub Actions workflow runs |
 | `gh_run_view` | View run details and step logs |
 | `gh_workflow_trigger` | Trigger a workflow dispatch event |
+
+### SSH & Server Management
+Requires `.nex/servers.json` — run `/init` to configure. See [Server Management](#server-management).
+
+| Tool | Description |
+|------|-------------|
+| `ssh_exec` | Execute a command on a remote server via SSH |
+| `ssh_upload` | Upload a file or directory via SCP |
+| `ssh_download` | Download a file or directory via SCP |
+| `service_manage` | Start/stop/restart/reload/enable/disable a systemd service (local or remote) |
+| `service_logs` | Fetch journalctl logs (local or remote, with `--since` support) |
+
+### Docker
+| Tool | Description |
+|------|-------------|
+| `container_list` | List Docker containers (local or remote via SSH) |
+| `container_logs` | Fetch Docker container logs (`--tail`, `--since`) |
+| `container_exec` | Execute a command inside a running container |
+| `container_manage` | Start/stop/restart/remove/inspect a container |
+
+### Deploy
+| Tool | Description |
+|------|-------------|
+| `deploy` | rsync files to a remote server + optional post-deploy script. Supports named configs from `.nex/deploy.json`. |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
 **Browser tools** require Playwright (`npm install playwright && npx playwright install chromium`). nex-code works without it — browser tools return a helpful install message if missing.
 
 Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
+
+---
+
+## Server Management
+
+nex-code has first-class support for remote server management via SSH, optimised for **AlmaLinux 9** and **macOS**.
+
+### Setup
+
+Run `/init` inside nex-code to interactively configure your servers:
+
+```
+> /init
+```
+
+Or create `.nex/servers.json` manually:
+
+```json
+{
+  "prod": {
+    "host": "94.130.37.43",
+    "user": "jarvis",
+    "port": 22,
+    "key": "~/.ssh/id_rsa",
+    "os": "almalinux9",
+    "sudo": true
+  },
+  "macbook": {
+    "host": "192.168.1.10",
+    "user": "lukas",
+    "os": "macos"
+  }
+}
+```
+
+**OS values**: `almalinux9`, `almalinux8`, `ubuntu`, `debian`, `macos`
+
+When `.nex/servers.json` exists, the agent automatically receives OS-aware context:
+- **AlmaLinux 9**: `dnf`, `firewalld`, `systemctl`, SELinux hints
+- **macOS**: `brew`, `launchctl`, `log show` instead of `journalctl`
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/servers` | List all configured server profiles |
+| `/servers ping` | Check SSH connectivity for all servers in parallel |
+| `/servers ping <name>` | Check a specific server |
+| `/docker` | List running containers across all servers + local |
+| `/docker -a` | Include stopped containers |
+| `/deploy` | List all named deploy configs |
+| `/deploy <name>` | Run a named deploy (with confirmation) |
+| `/deploy <name> --dry-run` | Preview without syncing |
+| `/init` | Interactive wizard: create `.nex/servers.json` |
+| `/init deploy` | Interactive wizard: create `.nex/deploy.json` |
+
+### Named Deploy Configs
+
+Create `.nex/deploy.json` (or use `/init deploy`):
+
+```json
+{
+  "prod": {
+    "server": "prod",
+    "local_path": "dist/",
+    "remote_path": "/var/www/app",
+    "exclude": ["node_modules", ".env"],
+    "deploy_script": "systemctl restart gunicorn"
+  }
+}
+```
+
+Then deploy with:
+```
+> /deploy prod
+```
+
+Or from within a conversation:
+```
+deploy the latest build to prod
+```
 
 ---
 
@@ -593,8 +718,8 @@ Four features that make Nex Code significantly more reliable with open-source mo
 
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
-- **standard** (13 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list
-- **full** (17 tools): all tools
+- **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
+- **full** (33 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
