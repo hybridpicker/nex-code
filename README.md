@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1825-blue.svg" alt="Tests: 1825">
+  <img src="https://img.shields.io/badge/tests-1855-blue.svg" alt="Tests: 1855">
 </p>
 
 ---
@@ -147,6 +147,13 @@ ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet 4.6, Opus 4.6, Haiku 4.
 GEMINI_API_KEY=your-key       # Google Gemini (3.1 Pro Preview, 2.5 Pro/Flash, 2.0 Flash)
 PERPLEXITY_API_KEY=your-key   # Perplexity (optional — enables grounded web search)
 # No key needed for local Ollama — just have it running
+
+# Optional tuning
+DEFAULT_PROVIDER=ollama        # Active provider on startup
+DEFAULT_MODEL=qwen3-coder:480b # Active model on startup
+FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
+NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
+NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
 ```
 
 ### Verify

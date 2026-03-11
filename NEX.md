@@ -94,13 +94,17 @@ Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
 - `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
 - `DEFAULT_PROVIDER` (default: `ollama`)
 - `DEFAULT_MODEL` (default: provider-abhängig)
+- `FALLBACK_CHAIN` (comma-separated, e.g. `anthropic,openai`)
+- `NEX_STALE_WARN_MS` (default: `60000`) — Warn if no tokens received for N ms
+- `NEX_STALE_ABORT_MS` (default: `120000`) — Abort and retry stream after N ms without tokens
 
 ## Key Patterns
 
 - Provider-Abstraction: Jeder Provider implementiert `chat()`, `stream()`, `isConfigured()`
-- `registry.js` verwaltet aktiven Provider + Model, resolving von Model-Specs
+- `registry.js` verwaltet aktiven Provider + Model, resolving von Model-Specs; shared `_tryProviders()` helper eliminiert Code-Duplikation zwischen `callStream` und `callChat`
 - `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming, Spinner bei Rate-Limit/Network-Retry-Waits
 - `callChat()` hat Stream-Fallback: bei chat-Fehler wird `provider.stream()` mit no-op onToken versucht
+- Stale-Stream-Thresholds konfigurierbar via `NEX_STALE_WARN_MS` / `NEX_STALE_ABORT_MS` (default: 60s/120s)
 - Streaming-Output wird durch `renderMarkdown()` gepiped (rich terminal rendering)
 - `ollama.js` ist Backward-compatible Wrapper (delegiert an Registry)
 - 17 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents
