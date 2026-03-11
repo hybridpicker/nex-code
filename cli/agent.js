@@ -21,7 +21,7 @@ const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = requir
 const { trackUsage } = require('./costs');
 const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
-const { getConfiguredProviders } = require('./providers/registry');
+const { getConfiguredProviders, getActiveProviderName, getActiveModelId } = require('./providers/registry');
 const fsSync = require('fs');
 const path = require('path');
 
@@ -225,8 +225,8 @@ const PARALLEL_SAFE = new Set([
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
-const STALE_WARN_MS = 60000;   // Warn after 60s without tokens
-const STALE_ABORT_MS = 120000; // Abort after 120s without tokens
+const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || '60000', 10);   // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
+const STALE_ABORT_MS = parseInt(process.env.NEX_STALE_ABORT_MS || '120000', 10); // Abort after 120s without tokens (ENV: NEX_STALE_ABORT_MS)
 // Use process.cwd() dynamically
 
 /**
@@ -889,6 +889,8 @@ async function processInput(userInput) {
       });
     } catch (err) {
       clearInterval(staleTimer);
+      if (flushTimeout) { clearTimeout(flushTimeout); flushTimeout = null; }
+      if (tokenBuffer && stream) { stream.push(tokenBuffer); tokenBuffer = ''; }
       if (taskProgress && !taskProgress._paused) taskProgress.pause();
       if (spinner) spinner.stop();
       stream.stopCursor();
@@ -1065,7 +1067,6 @@ async function processInput(userInput) {
 
     // Track token usage for cost dashboard
     if (result && result.usage) {
-      const { getActiveProviderName, getActiveModelId } = require('./providers/registry');
       trackUsage(
         getActiveProviderName(),
         getActiveModelId(),

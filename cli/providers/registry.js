@@ -18,7 +18,7 @@ const { checkBudget } = require('../costs');
 // Used during fallback to pick an equivalent model on a different provider.
 
 const MODEL_EQUIVALENTS = {
-  top:    { ollama: 'kimi-k2.5',        openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
+  top:    { ollama: 'kimi-k2:1t',       openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
   strong: { ollama: 'qwen3-coder:480b', openai: 'gpt-4o',        anthropic: 'claude-sonnet',     gemini: 'gemini-2.5-flash' },
   fast:   { ollama: 'devstral-small-2:24b', openai: 'gpt-4.1-mini', anthropic: 'claude-haiku',   gemini: 'gemini-2.0-flash' },
 };
@@ -309,12 +309,14 @@ function isRetryableError(err) {
 }
 
 /**
- * Make a streaming call through the active provider.
- * Falls back to next provider in chain on retryable errors.
- * Skips providers that are over budget.
+ * Shared provider-fallback loop.
+ * Iterates through the active provider + fallback chain, skipping budget-blocked
+ * or unconfigured providers. On retryable errors, advances to the next provider.
+ *
+ * @param {Function} callFn - async (provider, provName, model) => result
+ * @returns {Promise<*>}
  */
-async function callStream(messages, tools, options = {}) {
-  initDefaults();
+async function _tryProviders(callFn) {
   const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
 
   let lastError;
@@ -340,12 +342,10 @@ async function callStream(messages, tools, options = {}) {
       if (isFallback && model !== activeModelId) {
         process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
       }
-      return await provider.stream(messages, tools, { model, signal: options.signal, ...options });
+      return await callFn(provider, provName, model);
     } catch (err) {
       lastError = err;
-      if (isRetryableError(err) && idx < providersToTry.length - 1) {
-        continue;
-      }
+      if (isRetryableError(err) && idx < providersToTry.length - 1) continue;
       throw err;
     }
   }
@@ -354,6 +354,18 @@ async function callStream(messages, tools, options = {}) {
     throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
   }
   throw lastError || new Error('No configured provider available');
+}
+
+/**
+ * Make a streaming call through the active provider.
+ * Falls back to next provider in chain on retryable errors.
+ * Skips providers that are over budget.
+ */
+async function callStream(messages, tools, options = {}) {
+  initDefaults();
+  return _tryProviders((provider, _provName, model) =>
+    provider.stream(messages, tools, { model, signal: options.signal, ...options })
+  );
 }
 
 /**
@@ -385,52 +397,19 @@ async function callChat(messages, tools, options = {}) {
     }
   }
 
-  const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
-
-  let lastError;
-  let budgetBlockedCount = 0;
-  let configuredCount = 0;
-  for (let idx = 0; idx < providersToTry.length; idx++) {
-    const provName = providersToTry[idx];
-    const provider = providers[provName];
-    if (!provider || !provider.isConfigured()) continue;
-    configuredCount++;
-
-    // Budget gate: skip providers that are over budget
-    const budget = checkBudget(provName);
-    if (!budget.allowed) {
-      budgetBlockedCount++;
-      lastError = new Error(`Budget limit reached for ${provName}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}`);
-      continue;
-    }
-
+  return _tryProviders(async (provider, _provName, model) => {
     try {
-      const isFallback = idx > 0;
-      const model = isFallback ? resolveModelForProvider(activeModelId, provName) : activeModelId;
-      if (isFallback && model !== activeModelId) {
-        process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
-      }
       return await provider.chat(messages, tools, { model, ...options });
     } catch (err) {
       // Fallback: try streaming endpoint before giving up on this provider
-      const fallbackModel = idx > 0 ? resolveModelForProvider(activeModelId, provName) : activeModelId;
       if (typeof provider.stream === 'function') {
         try {
-          return await provider.stream(messages, tools, { model: fallbackModel, ...options, onToken: () => {} });
-        } catch { /* stream fallback also failed — continue with original error */ }
-      }
-      lastError = err;
-      if (isRetryableError(err) && idx < providersToTry.length - 1) {
-        continue;
+          return await provider.stream(messages, tools, { model, ...options, onToken: () => {} });
+        } catch { /* stream fallback also failed — rethrow original */ }
       }
       throw err;
     }
-  }
-
-  if (budgetBlockedCount > 0 && budgetBlockedCount === configuredCount) {
-    throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
-  }
-  throw lastError || new Error('No configured provider available');
+  });
 }
 
 /**
