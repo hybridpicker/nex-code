@@ -719,7 +719,123 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'k8s_pods',
+      description: 'List Kubernetes pods. Shows pod name, status, restarts, and age. Runs kubectl locally or via SSH on a remote server. Use namespace to filter, or omit for all namespaces.',
+      parameters: {
+        type: 'object',
+        properties: {
+          namespace: { type: 'string', description: 'Namespace to list pods in (default: all namespaces)' },
+          label: { type: 'string', description: 'Label selector filter (e.g. "app=nginx")' },
+          context: { type: 'string', description: 'kubectl context to use (optional)' },
+          server: { type: 'string', description: 'Remote server as user@host to run kubectl via SSH (optional, local kubectl if omitted)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'k8s_logs',
+      description: 'Fetch logs from a Kubernetes pod. Use tail to limit output, since for time-based filtering (e.g. "1h", "30m").',
+      parameters: {
+        type: 'object',
+        properties: {
+          pod: { type: 'string', description: 'Pod name' },
+          namespace: { type: 'string', description: 'Namespace (default: default)' },
+          container: { type: 'string', description: 'Container name (required if pod has multiple containers)' },
+          tail: { type: 'number', description: 'Number of recent lines to show (default: 100)' },
+          since: { type: 'string', description: 'Show logs since duration (e.g. "1h", "30m", "5s")' },
+          context: { type: 'string', description: 'kubectl context (optional)' },
+          server: { type: 'string', description: 'Remote server user@host (optional)' },
+        },
+        required: ['pod'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'k8s_exec',
+      description: 'Execute a command inside a running Kubernetes pod (kubectl exec). Requires user confirmation. Use for inspecting container state, reading configs, or debugging.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pod: { type: 'string', description: 'Pod name' },
+          command: { type: 'string', description: 'Command to run in the pod (e.g. "env", "ls /app", "cat /etc/config.yaml")' },
+          namespace: { type: 'string', description: 'Namespace (default: default)' },
+          container: { type: 'string', description: 'Container name (optional)' },
+          context: { type: 'string', description: 'kubectl context (optional)' },
+          server: { type: 'string', description: 'Remote server user@host (optional)' },
+        },
+        required: ['pod', 'command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'k8s_apply',
+      description: 'Apply a Kubernetes manifest file (kubectl apply -f). Requires confirmation before applying to the cluster. Use dry_run=true to validate without applying.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Path to manifest YAML file (relative or absolute)' },
+          namespace: { type: 'string', description: 'Override namespace (optional)' },
+          dry_run: { type: 'boolean', description: 'Validate only without applying (default: false)' },
+          context: { type: 'string', description: 'kubectl context (optional)' },
+          server: { type: 'string', description: 'Remote server user@host (optional)' },
+        },
+        required: ['file'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'k8s_rollout',
+      description: 'Manage Kubernetes deployment rollouts: check status, restart (rolling update), view history, or undo (rollback). Restart and undo require confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['status', 'restart', 'history', 'undo'], description: 'Action: status (check rollout progress), restart (rolling restart), history (show revision history), undo (rollback to previous revision)' },
+          deployment: { type: 'string', description: 'Deployment name' },
+          namespace: { type: 'string', description: 'Namespace (default: default)' },
+          context: { type: 'string', description: 'kubectl context (optional)' },
+          server: { type: 'string', description: 'Remote server user@host (optional)' },
+        },
+        required: ['action', 'deployment'],
+      },
+    },
+  },
 ];
+
+// ─── Kubernetes Helper ────────────────────────────────────────
+/**
+ * Build a kubectl command string, optionally tunnelled over SSH.
+ * @param {string} kubectlArgs - Everything after `kubectl`, e.g. "get pods -A"
+ * @param {{ server?: string, context?: string }} opts
+ * @returns {string} Shell command string
+ */
+function buildKubectlCmd(kubectlArgs, { server, context } = {}) {
+  // Sanitize: only allow safe characters for server (user@host) and context names
+  const safeServer = server ? server.replace(/[^a-zA-Z0-9@._-]/g, '') : null;
+  const safeContext = context ? context.replace(/[^a-zA-Z0-9._/-]/g, '') : null;
+
+  let kubectl = 'kubectl';
+  if (safeContext) kubectl += ` --context ${safeContext}`;
+  kubectl += ` ${kubectlArgs}`;
+
+  if (safeServer) {
+    // Escape double-quotes inside the remote command
+    const escaped = kubectl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `ssh -o ConnectTimeout=10 -o BatchMode=yes ${safeServer} "${escaped}"`;
+  }
+  return kubectl;
+}
 
 // ─── Tool Implementations ─────────────────────────────────────
 async function _executeToolInner(name, args, options = {}) {
@@ -1417,6 +1533,103 @@ async function _executeToolInner(name, args, options = {}) {
         return `Workflow "${args.workflow}" triggered on branch "${branch}". Check status with gh_run_list.`;
       } catch (e) {
         return `ERROR: ${(e.stderr || e.message || '').toString().split('\n')[0]}`;
+      }
+    }
+
+    case 'k8s_pods': {
+      const nsFlag = args.namespace ? `-n ${args.namespace}` : '-A';
+      const labelFlag = args.label ? `-l ${args.label}` : '';
+      const cmd = buildKubectlCmd(`get pods ${nsFlag} ${labelFlag} -o wide`.trim(), args);
+      try {
+        const { stdout, stderr } = await exec(cmd, { timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
+        return (stdout || stderr || '(no pods)').trim();
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().split('\n')[0];
+        if (msg.includes('command not found')) return 'ERROR: kubectl not found. Install kubectl or provide a server with kubectl.';
+        return `ERROR: ${msg}`;
+      }
+    }
+
+    case 'k8s_logs': {
+      if (!args.pod) return 'ERROR: pod is required';
+      const ns = args.namespace || 'default';
+      const tail = args.tail || 100;
+      let kubectlArgs = `logs ${args.pod} -n ${ns} --tail=${tail}`;
+      if (args.since) kubectlArgs += ` --since=${args.since}`;
+      if (args.container) kubectlArgs += ` -c ${args.container}`;
+      const cmd = buildKubectlCmd(kubectlArgs, args);
+      try {
+        const { stdout, stderr } = await exec(cmd, { timeout: 60000, maxBuffer: 5 * 1024 * 1024 });
+        const out = (stdout || stderr || '(no logs)').trim();
+        return out.substring(0, 20000) + (out.length > 20000 ? '\n...(truncated)' : '');
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().split('\n')[0];
+        return `ERROR: ${msg}`;
+      }
+    }
+
+    case 'k8s_exec': {
+      if (!args.pod) return 'ERROR: pod is required';
+      if (!args.command) return 'ERROR: command is required';
+      const ns = args.namespace || 'default';
+      console.log(`\n${C.yellow}  ⚠ kubectl exec into pod: ${args.pod} (ns: ${ns})${C.reset}`);
+      console.log(`${C.dim}  Command: ${args.command}${C.reset}`);
+      const ok = await confirm('  Execute in pod?');
+      if (!ok) return 'CANCELLED: User declined.';
+      let kubectlArgs = `exec ${args.pod} -n ${ns}`;
+      if (args.container) kubectlArgs += ` -c ${args.container}`;
+      kubectlArgs += ` -- sh -c ${JSON.stringify(args.command)}`;
+      const cmd = buildKubectlCmd(kubectlArgs, args);
+      try {
+        const { stdout, stderr } = await exec(cmd, { timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
+        return (stdout || stderr || '(no output)').trim();
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().split('\n')[0];
+        return `ERROR: ${msg}`;
+      }
+    }
+
+    case 'k8s_apply': {
+      if (!args.file) return 'ERROR: file is required';
+      const isDryRun = !!args.dry_run;
+      if (!isDryRun) {
+        const manifestPath = args.file;
+        console.log(`\n${C.yellow}  ⚠ kubectl apply: ${manifestPath}${args.namespace ? ` (ns: ${args.namespace})` : ''}${C.reset}`);
+        const ok = await confirm('  Apply to cluster?');
+        if (!ok) return 'CANCELLED: User declined.';
+      }
+      let kubectlArgs = `apply -f ${args.file}`;
+      if (args.namespace) kubectlArgs += ` -n ${args.namespace}`;
+      if (isDryRun) kubectlArgs += ' --dry-run=client';
+      const cmd = buildKubectlCmd(kubectlArgs, args);
+      try {
+        const { stdout, stderr } = await exec(cmd, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+        return (stdout || stderr || '(no output)').trim();
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString();
+        return `ERROR: ${msg.split('\n')[0]}`;
+      }
+    }
+
+    case 'k8s_rollout': {
+      if (!args.action) return 'ERROR: action is required';
+      if (!args.deployment) return 'ERROR: deployment is required';
+      const ns = args.namespace || 'default';
+      const needsConfirm = args.action === 'restart' || args.action === 'undo';
+      if (needsConfirm) {
+        const label = args.action === 'restart' ? 'Rolling restart' : 'Rollback (undo)';
+        console.log(`\n${C.yellow}  ⚠ ${label}: deployment/${args.deployment} (ns: ${ns})${C.reset}`);
+        const ok = await confirm(`  ${label}?`);
+        if (!ok) return 'CANCELLED: User declined.';
+      }
+      const kubectlArgs = `rollout ${args.action} deployment/${args.deployment} -n ${ns}`;
+      const cmd = buildKubectlCmd(kubectlArgs, args);
+      try {
+        const { stdout, stderr } = await exec(cmd, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+        return (stdout || stderr || '(no output)').trim();
+      } catch (e) {
+        const msg = (e.stderr || e.message || '').toString().split('\n')[0];
+        return `ERROR: ${msg}`;
       }
     }
 
