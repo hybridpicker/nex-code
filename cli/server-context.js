@@ -56,7 +56,7 @@ function getServerContext() {
 
   const lines = ['## Remote Servers (.nex/servers.json)'];
   lines.push('');
-  lines.push('Available server profiles (use with ssh_exec, ssh_upload, ssh_download, service_manage, service_logs):');
+  lines.push('Available server profiles (use with ssh_exec, ssh_upload, ssh_download, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy):');
 
   for (const [name, profile] of Object.entries(profiles)) {
     const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;

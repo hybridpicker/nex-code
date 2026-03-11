@@ -59,6 +59,7 @@ const SLASH_COMMANDS = [
   { cmd: '/hooks', desc: 'Show configured hooks' },
   { cmd: '/skills', desc: 'List, enable, disable skills' },
   { cmd: '/tasks', desc: 'Show task list' },
+  { cmd: '/servers', desc: 'List server profiles / ping' },
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
@@ -1018,6 +1019,54 @@ ${C.cyan}${C.bold}└───────────────────�
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
+      return true;
+    }
+
+    case '/servers': {
+      const { loadServerProfiles, resolveProfile: rp, sshExec: sx } = require('./ssh');
+      const profiles = loadServerProfiles();
+      const names = Object.keys(profiles);
+      if (names.length === 0) {
+        console.log(`\n${C.dim}No servers configured. Create .nex/servers.json:${C.reset}`);
+        console.log(`${C.dim}  { "prod": { "host": "1.2.3.4", "user": "jarvis", "os": "almalinux9" } }${C.reset}\n`);
+        return true;
+      }
+
+      const subcmd = rest[0];
+
+      if (subcmd === 'ping') {
+        // SSH connectivity check for all (or specified) servers
+        const toCheck = rest[1] ? [rest[1]] : names;
+        console.log(`\n${C.bold}${C.cyan}Server connectivity:${C.reset}`);
+        await Promise.all(toCheck.map(async (name) => {
+          if (!profiles[name]) {
+            console.log(`  ${C.red}✗${C.reset} ${name} — unknown profile`);
+            return;
+          }
+          try {
+            const profile = { ...profiles[name], _name: name };
+            const { exitCode } = await sx(profile, 'echo ok', { timeout: 8000 });
+            if (exitCode === 0) {
+              console.log(`  ${C.green}✓${C.reset} ${name} (${profile.user ? profile.user + '@' : ''}${profile.host})`);
+            } else {
+              console.log(`  ${C.red}✗${C.reset} ${name} (${profile.host}) — SSH failed (exit ${exitCode})`);
+            }
+          } catch (e) {
+            console.log(`  ${C.red}✗${C.reset} ${name} — ${e.message}`);
+          }
+        }));
+        console.log('');
+        return true;
+      }
+
+      // Default: list all profiles
+      const { formatProfile } = require('./ssh');
+      console.log(`\n${C.bold}${C.cyan}Configured servers (${names.length}):${C.reset}`);
+      for (const name of names) {
+        console.log(`  ${C.green}${name}${C.reset}  ${C.dim}${formatProfile(name, profiles[name])}${C.reset}`);
+      }
+      console.log(`\n${C.dim}/servers ping          — check SSH connectivity for all servers${C.reset}`);
+      console.log(`${C.dim}/servers ping <name>   — check a specific server${C.reset}\n`);
       return true;
     }
 
