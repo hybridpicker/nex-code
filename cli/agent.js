@@ -499,10 +499,66 @@ async function executeBatch(prepared, quiet = false, options = {}) {
 // Persistent conversation state
 let conversationMessages = [];
 
+// Mid-run user input buffer: notes injected by the user while the agent is running
+const _midRunBuffer = [];
+
+/**
+ * Inject a user note into the running agent loop.
+ * Called by the REPL when input arrives during processing.
+ * @param {string} text
+ */
+function injectMidRunNote(text) {
+  _midRunBuffer.push(text.trim());
+}
+
+/**
+ * Drain and return buffered mid-run notes as a single string, or null if empty.
+ */
+function _drainMidRunBuffer() {
+  if (_midRunBuffer.length === 0) return null;
+  const notes = _midRunBuffer.splice(0, _midRunBuffer.length);
+  return notes.join('\n');
+}
+
 /**
  * Build dynamic model routing guide for spawn_agents.
  * Only shown when 2+ models are available across configured providers.
  */
+/**
+ * Build language enforcement block for the system prompt.
+ * Reads NEX_LANGUAGE, NEX_CODE_LANGUAGE, NEX_COMMIT_LANGUAGE from env.
+ * If only NEX_LANGUAGE is set, code comments and commits default to English.
+ */
+function _buildLanguagePrompt() {
+  const uiLang = process.env.NEX_LANGUAGE;
+  const codeLang = process.env.NEX_CODE_LANGUAGE;
+  const commitLang = process.env.NEX_COMMIT_LANGUAGE;
+
+  if (!uiLang && !codeLang && !commitLang) return '';
+
+  const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
+
+  if (uiLang) {
+    lines.push(`RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`);
+  }
+
+  const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
+  if (effectiveCodeLang) {
+    lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
+  }
+
+  const effectiveCommitLang = commitLang || (uiLang ? 'English' : null);
+  if (effectiveCommitLang) {
+    lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
+  }
+
+  if (uiLang) {
+    lines.push(`\nThis is a hard requirement. Do NOT fall back to English or any other language for your responses, even if the user writes in a different language first.`);
+  }
+
+  return lines.join('\n') + '\n\n';
+}
+
 function _buildModelRoutingGuide() {
   if (cachedModelRoutingGuide !== null) return cachedModelRoutingGuide;
   try {
@@ -555,12 +611,12 @@ async function buildSystemPrompt() {
   const planPrompt = isPlanMode() ? getPlanModePrompt() : '';
   // Model routing guide is also cached internally
 
+  const languagePrompt = _buildLanguagePrompt();
   cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
 WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
-
-PROJECT CONTEXT:
+${languagePrompt ? `\n${languagePrompt}` : ''}PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
 # Core Behavior
@@ -798,7 +854,7 @@ async function processInput(userInput) {
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
     function printStepIfNeeded() {
       if (!stepPrinted) {
-        console.log(`${C.dim}  ── step ${totalSteps} ──${C.reset}`);
+        console.log(`${C.cyan}  ◆ Step ${totalSteps}${C.reset}`);
         stepPrinted = true;
       }
     }
@@ -1149,6 +1205,17 @@ async function processInput(userInput) {
       conversationMessages.push(toolMsg);
       apiMessages.push(toolMsg);
     }
+
+    // ─── Mid-run user notes ───
+    // If the user typed something while the agent was running, inject it now
+    // before the next API call so the model can take it into account.
+    const midRunNote = _drainMidRunBuffer();
+    if (midRunNote) {
+      const noteMsg = { role: 'user', content: `[User note mid-run]: ${midRunNote}` };
+      conversationMessages.push(noteMsg);
+      apiMessages.push(noteMsg);
+      console.log(`${C.cyan}  ✎ Kontext hinzugefügt${C.reset}`);
+    }
   }
 
   // Only print résumé + max-iterations warning if the loop actually exhausted (not on break)
@@ -1199,4 +1266,6 @@ module.exports = {
   getProjectContextHash,
   // Export for testing
   buildUserContent,
+  // Mid-run input injection
+  injectMidRunNote,
 };

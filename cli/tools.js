@@ -257,6 +257,15 @@ function autoFixEdit(content, oldText, newText) {
 
 // Auto-checkpoint: tag last known state before first agent edit
 let _checkpointCreated = false;
+
+// Cancellable ask_user support
+let _cancelAskUser = null;
+function cancelPendingAskUser() {
+  if (_cancelAskUser) {
+    _cancelAskUser();
+    _cancelAskUser = null;
+  }
+}
 async function ensureCheckpoint() {
   if (_checkpointCreated) return;
   _checkpointCreated = true;
@@ -1241,8 +1250,13 @@ async function _executeToolInner(name, args, options = {}) {
           input: process.stdin,
           output: process.stdout,
         });
+        _cancelAskUser = () => {
+          rl.close();
+          resolve('CANCELLED');
+        };
         console.log(`\n${C.cyan}${C.bold}  ? ${question}${C.reset}`);
         rl.question(`${C.cyan}  > ${C.reset}`, (answer) => {
+          _cancelAskUser = null;
           rl.close();
           resolve(answer.trim() || '(no response)');
         });
@@ -1428,4 +1442,4 @@ async function executeTool(name, args, options = {}) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError };
+module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser };
