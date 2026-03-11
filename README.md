@@ -335,13 +335,14 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/redo` | Redo last undone change |
 | `/history` | Show file change history |
 | `/review [file]` | Code review on current diff or a specific file |
+| `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
 | `/exit` | Quit |
 
 ---
 
 ## Tools
 
-The agent has 17 built-in tools:
+The agent has 29 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -362,6 +363,7 @@ The agent has 17 built-in tools:
 | `ask_user` | Ask the user a question and wait for input |
 | `task_list` | Create and manage task lists for multi-step operations |
 | `spawn_agents` | Run parallel sub-agents with auto model routing |
+| `switch_model` | Switch active model mid-conversation |
 | `browser_open` | Open URL in headless browser, return text + links (JS-heavy pages) |
 | `browser_screenshot` | Screenshot a URL → saved file + vision-ready path |
 | `browser_click` | Click element by CSS selector or visible text |
@@ -369,6 +371,11 @@ The agent has 17 built-in tools:
 | `gh_run_list` | List GitHub Actions workflow runs |
 | `gh_run_view` | View run details and step logs |
 | `gh_workflow_trigger` | Trigger a workflow dispatch event |
+| `k8s_pods` | List Kubernetes pods (local kubectl or remote via SSH) |
+| `k8s_logs` | Fetch pod logs with `--tail` / `--since` filtering |
+| `k8s_exec` | Run a command inside a pod (with confirmation) |
+| `k8s_apply` | Apply a manifest file — `dry_run` mode supported (with confirmation) |
+| `k8s_rollout` | Rollout status / restart / history / undo for deployments |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
@@ -719,7 +726,7 @@ Or place executable scripts in `.nex/hooks/`:
 ```
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
-├── index.js             # REPL + ~38 slash commands + history persistence + AbortController
+├── index.js             # REPL + ~39 slash commands + history persistence + AbortController
 ├── agent.js             # Agentic loop + conversation state + compact output + résumé + abort handling
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
