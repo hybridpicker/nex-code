@@ -319,6 +319,17 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/remember <text>` | Save a memory (persists across sessions) |
 | `/forget <key>` | Delete a memory |
 | `/memory` | Show all memories |
+| `/brain add <name>` | Add a document to the knowledge base |
+| `/brain list` | List all brain documents |
+| `/brain search <query>` | Search the knowledge base |
+| `/brain show <name>` | Show a brain document |
+| `/brain remove <name>` | Remove a brain document |
+| `/brain rebuild` | Rebuild keyword index |
+| `/brain embed` | Build/rebuild embedding index |
+| `/brain status` | Show brain status (docs, index, embeddings) |
+| `/brain review` | Review pending brain changes (git diff) |
+| `/brain undo` | Undo last brain write |
+| `/learn` | Reflect on session and auto-update memory + NEX.md |
 | `/permissions` | Show tool permissions |
 | `/allow <tool>` | Auto-allow a tool |
 | `/deny <tool>` | Block a tool |
@@ -476,6 +487,20 @@ Persistent project memory that survives across sessions:
 ```
 
 Also loads `NEX.md` from project root for project-level instructions.
+
+### Brain — Persistent Knowledge Base
+A project-scoped knowledge base stored in `.nex/brain/`. The agent automatically retrieves relevant documents for each query and can write new entries as it discovers useful patterns, decisions, or context:
+```
+/brain add auth-flow         # add a document (prompted for content)
+/brain search "jwt token"    # keyword + semantic search
+/brain list                  # list all documents
+/brain show auth-flow        # display a document
+/brain remove auth-flow      # delete a document
+/brain status                # index health (docs, keywords, embeddings)
+/brain review                # git diff of recent brain writes
+/brain undo                  # undo last brain write
+```
+The agent uses the `brain_write` tool to save discoveries automatically. All writes are tracked in git so you can review, revert, or audit what the agent has stored.
 
 ### Plan Mode
 Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made:

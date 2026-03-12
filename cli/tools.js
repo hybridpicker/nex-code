@@ -811,6 +811,32 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'brain_write',
+      description: 'Write or update a knowledge document in the project brain (.nex/brain/). Use this to persist important findings, architecture decisions, debugging insights, or conventions discovered during the session. The user can review changes via /brain review or git diff.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Document name (without .md extension). Use kebab-case. Examples: "api-auth-flow", "db-schema-notes", "deployment-checklist"',
+          },
+          content: {
+            type: 'string',
+            description: 'Full Markdown content. Use headings (#), lists (-), and code blocks. Include optional YAML frontmatter with tags.',
+          },
+          mode: {
+            type: 'string',
+            enum: ['create', 'update', 'append'],
+            description: 'create: new document (fails if exists). update: overwrite existing. append: add to end of existing document.',
+          },
+        },
+        required: ['name', 'content', 'mode'],
+      },
+    },
+  },
 ];
 
 // ─── Kubernetes Helper ────────────────────────────────────────
@@ -1631,6 +1657,31 @@ async function _executeToolInner(name, args, options = {}) {
         const msg = (e.stderr || e.message || '').toString().split('\n')[0];
         return `ERROR: ${msg}`;
       }
+    }
+
+    case 'brain_write': {
+      if (!args.name) return 'ERROR: name is required';
+      if (!args.content) return 'ERROR: content is required';
+      if (!args.mode) return 'ERROR: mode is required (create, update, append)';
+      const { writeDocument: brainWrite, readDocument: brainRead } = require('./brain');
+      const { name: docName, content: docContent, mode: docMode } = args;
+
+      if (docMode === 'create') {
+        const existing = brainRead(docName);
+        if (existing.content) {
+          return `ERROR: Document "${docName}" already exists. Use mode "update" to overwrite.`;
+        }
+      }
+
+      if (docMode === 'append') {
+        const existing = brainRead(docName);
+        const combined = existing.content ? existing.content + '\n\n' + docContent : docContent;
+        brainWrite(docName, combined);
+        return `Appended to brain document: ${docName}.md`;
+      }
+
+      brainWrite(docName, docContent);
+      return `${docMode === 'create' ? 'Created' : 'Updated'} brain document: ${docName}.md`;
     }
 
     default:
