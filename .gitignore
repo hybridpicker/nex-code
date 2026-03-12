@@ -1,6 +1,10 @@
 node_modules/
 .env
 .nex/
+!.nex/brain/
+!.nex/brain/*.md
+.nex/brain/.brain-index.json
+.nex/brain/.embeddings.json
 coverage/
 *.log
 .DS_Store

@@ -43,6 +43,17 @@ const SLASH_COMMANDS = [
   { cmd: '/remember', desc: 'Save a memory' },
   { cmd: '/forget', desc: 'Delete a memory' },
   { cmd: '/memory', desc: 'Show all memories' },
+  { cmd: '/brain', desc: 'Manage knowledge base' },
+  { cmd: '/brain add', desc: 'Add document: /brain add <name> [content]' },
+  { cmd: '/brain list', desc: 'List all brain documents' },
+  { cmd: '/brain search', desc: 'Search brain: /brain search <query>' },
+  { cmd: '/brain show', desc: 'Show document: /brain show <name>' },
+  { cmd: '/brain remove', desc: 'Remove document: /brain remove <name>' },
+  { cmd: '/brain rebuild', desc: 'Rebuild keyword index' },
+  { cmd: '/brain embed', desc: 'Build/rebuild embedding index' },
+  { cmd: '/brain status', desc: 'Show brain status (docs, index, embeddings)' },
+  { cmd: '/brain review', desc: 'Review pending brain changes (git diff)' },
+  { cmd: '/brain undo', desc: 'Undo last brain write' },
   { cmd: '/learn', desc: 'Reflect on session and update memory' },
   { cmd: '/optimize', desc: 'Show optimization opportunities' },
   { cmd: '/permissions', desc: 'Show tool permissions' },
@@ -548,8 +559,226 @@ async function handleSlashCommand(input, rl) {
       return true;
     }
 
+    case '/brain': {
+      const {
+        listDocuments, readDocument, writeDocument, removeDocument,
+        buildIndex, buildEmbeddingIndex, isEmbeddingAvailable, query: brainQuery,
+      } = require('./brain');
+      const sub = rest[0];
+      const arg = rest.slice(1).join(' ').trim();
+
+      switch (sub) {
+        case 'add': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain add <name> [content]${C.reset}`);
+            console.log(`${C.dim}  /brain add api-notes — creates empty file${C.reset}`);
+            console.log(`${C.dim}  /brain add api-notes This is content — writes directly${C.reset}`);
+            return true;
+          }
+          const spaceIdx = arg.indexOf(' ');
+          if (spaceIdx < 0) {
+            writeDocument(arg, `# ${arg}\n\n`);
+            const brainPath = require('path').join(process.cwd(), '.nex', 'brain', `${arg}.md`);
+            console.log(`${C.green}Created .nex/brain/${arg}.md${C.reset}`);
+            console.log(`${C.dim}Edit it directly at: ${brainPath}${C.reset}`);
+          } else {
+            const docName = arg.substring(0, spaceIdx);
+            const docContent = arg.substring(spaceIdx + 1);
+            writeDocument(docName, docContent);
+            console.log(`${C.green}Added to brain: ${docName}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'list': {
+          const docs = listDocuments();
+          if (docs.length === 0) {
+            console.log(`${C.dim}No brain documents yet. Use /brain add <name> to create one.${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}Brain Documents:${C.reset}`);
+          const nameW = Math.max(8, ...docs.map(d => d.name.length));
+          const tagW = 20;
+          console.log(`  ${'Name'.padEnd(nameW + 2)}${'Tags'.padEnd(tagW)}${'Size'.padStart(7)}  Modified`);
+          console.log(`  ${'-'.repeat(nameW + 2)}${'-'.repeat(tagW)}${'-'.repeat(7)}  --------`);
+          for (const doc of docs) {
+            const { frontmatter } = readDocument(doc.name);
+            const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags.join(', ') : '';
+            const size = doc.size < 1024 ? `${doc.size}B` : `${(doc.size / 1024).toFixed(1)}K`;
+            const mod = doc.modified.toLocaleDateString();
+            console.log(`  ${C.cyan}${doc.name.padEnd(nameW + 2)}${C.reset}${C.dim}${tags.substring(0, tagW - 1).padEnd(tagW)}${size.padStart(7)}  ${mod}${C.reset}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'search': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain search <query>${C.reset}`);
+            return true;
+          }
+          const results = await brainQuery(arg, { topK: 5 });
+          if (results.length === 0) {
+            console.log(`${C.dim}No matching brain documents for: ${arg}${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}Brain Search: "${arg}"${C.reset}`);
+          for (const r of results) {
+            const scoreStr = typeof r.score === 'number' ? r.score.toFixed(2) : r.score;
+            console.log(`\n  ${C.cyan}${r.name}${C.reset} ${C.dim}(score: ${scoreStr})${C.reset}`);
+            console.log(`  ${C.dim}${r.excerpt || ''}${C.reset}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'show': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain show <name>${C.reset}`);
+            return true;
+          }
+          const doc = readDocument(arg);
+          if (!doc.content) {
+            console.log(`${C.red}Document not found: ${arg}${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}${arg}.md${C.reset}\n`);
+          console.log(doc.content);
+          return true;
+        }
+
+        case 'remove': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain remove <name>${C.reset}`);
+            return true;
+          }
+          const { confirm: brainConfirm } = require('./safety');
+          const ok = await brainConfirm(`Remove brain document "${arg}"?`);
+          if (!ok) {
+            console.log(`${C.dim}Cancelled${C.reset}`);
+            return true;
+          }
+          const removed = removeDocument(arg);
+          if (removed) {
+            console.log(`${C.green}Removed: ${arg}.md${C.reset}`);
+          } else {
+            console.log(`${C.red}Document not found: ${arg}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'rebuild': {
+          const idx = buildIndex();
+          const count = Object.keys(idx.documents).length;
+          console.log(`${C.green}Index rebuilt: ${count} document(s)${C.reset}`);
+          return true;
+        }
+
+        case 'embed': {
+          const available = await isEmbeddingAvailable();
+          if (!available) {
+            console.log(`${C.yellow}Ollama embedding model not available.${C.reset}`);
+            console.log(`${C.dim}Set NEX_EMBED_MODEL env var (default: nomic-embed-text) and ensure Ollama is running.${C.reset}`);
+            return true;
+          }
+          console.log(`${C.dim}Building embedding index...${C.reset}`);
+          try {
+            const cache = await buildEmbeddingIndex();
+            const count = Object.keys(cache.documents || {}).length;
+            console.log(`${C.green}Embedding index built: ${count} document(s)${C.reset}`);
+          } catch (err) {
+            console.log(`${C.red}Embedding failed: ${err.message}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'status': {
+          const docs = listDocuments();
+          const fs2 = require('fs');
+          const path2 = require('path');
+          const indexPath = path2.join(process.cwd(), '.nex', 'brain', '.brain-index.json');
+          const embPath = path2.join(process.cwd(), '.nex', 'brain', '.embeddings.json');
+          console.log(`\n${C.bold}${C.cyan}Brain Status${C.reset}`);
+          console.log(`  Documents:  ${docs.length}`);
+          console.log(`  Index:      ${fs2.existsSync(indexPath) ? C.green + 'present' + C.reset : C.dim + 'not built' + C.reset}`);
+          console.log(`  Embeddings: ${fs2.existsSync(embPath) ? C.green + 'present' + C.reset : C.dim + 'not built (run /brain embed)' + C.reset}`);
+          if (docs.length > 0) {
+            const totalSize = docs.reduce((s, d) => s + d.size, 0);
+            console.log(`  Total size: ${totalSize < 1024 ? totalSize + 'B' : (totalSize / 1024).toFixed(1) + 'K'}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'review': {
+          const { exec: execAsync } = require('child_process');
+          const { promisify } = require('util');
+          const execP = promisify(execAsync);
+          try {
+            const { stdout } = await execP('git diff .nex/brain/', { cwd: process.cwd() });
+            if (!stdout.trim()) {
+              console.log(`${C.dim}No pending brain changes (clean git state)${C.reset}`);
+            } else {
+              console.log(`\n${C.bold}${C.cyan}Brain Changes (git diff):${C.reset}\n`);
+              console.log(stdout);
+            }
+          } catch {
+            console.log(`${C.dim}Not a git repo or no brain dir${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'undo': {
+          const fs2 = require('fs');
+          const path2 = require('path');
+          const brainDir = path2.join(process.cwd(), '.nex', 'brain');
+          if (!fs2.existsSync(brainDir)) {
+            console.log(`${C.dim}No brain directory found${C.reset}`);
+            return true;
+          }
+          // Find the most recently modified brain doc
+          const docs2 = listDocuments();
+          if (docs2.length === 0) {
+            console.log(`${C.dim}No brain documents to undo${C.reset}`);
+            return true;
+          }
+          const newest = docs2[0]; // sorted by modified desc
+          const { exec: execAsync2 } = require('child_process');
+          const { promisify: promisify2 } = require('util');
+          const execP2 = promisify2(execAsync2);
+          try {
+            await execP2(`git checkout -- ".nex/brain/${newest.name}.md"`, { cwd: process.cwd() });
+            buildIndex();
+            console.log(`${C.green}Undone: restored ${newest.name}.md from git${C.reset}`);
+          } catch {
+            console.log(`${C.red}Could not undo — not tracked in git or no prior version${C.reset}`);
+          }
+          return true;
+        }
+
+        default: {
+          // No sub-command or unknown: show list
+          const docs = listDocuments();
+          if (docs.length === 0) {
+            console.log(`\n${C.bold}${C.cyan}Brain Knowledge Base${C.reset}`);
+            console.log(`${C.dim}No documents yet. Create with /brain add <name>${C.reset}`);
+            console.log(`\n${C.dim}Commands: add · list · search · show · remove · rebuild · embed · status · review · undo${C.reset}\n`);
+          } else {
+            console.log(`\n${C.bold}${C.cyan}Brain: ${docs.length} document(s)${C.reset}`);
+            for (const doc of docs) {
+              const { frontmatter } = readDocument(doc.name);
+              const tags = Array.isArray(frontmatter.tags) ? ` [${frontmatter.tags.join(', ')}]` : '';
+              console.log(`  ${C.cyan}${doc.name}${C.reset}${C.dim}${tags}${C.reset}`);
+            }
+            console.log(`\n${C.dim}Use /brain search <query> · /brain show <name> · /brain add <name>${C.reset}\n`);
+          }
+          return true;
+        }
+      }
+    }
+
     case '/learn': {
-      const { learnFromSession } = require('./learner');
+      const { learnFromSession, learnBrainFromSession } = require('./learner');
       const { getConversationMessages: _learnMsgs } = require('./agent');
       const msgs = _learnMsgs();
       const userCount = msgs.filter(m => m.role === 'user').length;
@@ -559,34 +788,51 @@ async function handleSlashCommand(input, rl) {
       }
       console.log(`${C.dim}Analyzing session for learnings...${C.reset}`);
       try {
-        const lr = await learnFromSession(msgs);
-        if (lr.skipped) {
+        // Run memory learning and brain learning in parallel
+        const [lr, br] = await Promise.all([
+          learnFromSession(msgs),
+          learnBrainFromSession(msgs),
+        ]);
+
+        if (lr.skipped && (!br.written || br.written.length === 0)) {
           console.log(`${C.dim}Session too short${C.reset}`);
           return true;
         }
         if (lr.error) {
           console.log(`${C.red}Reflection error: ${lr.error}${C.reset}`);
-          return true;
         }
+
         console.log('');
         if (lr.summary) {
           console.log(`${C.bold}Session:${C.reset} ${C.dim}${lr.summary}${C.reset}`);
           console.log('');
         }
-        if (lr.applied.length === 0 && lr.nexAdded.length === 0) {
+
+        const hasMemory = lr.applied && lr.applied.length > 0;
+        const hasNex = lr.nexAdded && lr.nexAdded.length > 0;
+        const hasBrain = br.written && br.written.length > 0;
+
+        if (!hasMemory && !hasNex && !hasBrain) {
           console.log(`${C.dim}No new learnings extracted from this session${C.reset}`);
         } else {
-          if (lr.applied.length > 0) {
+          if (hasMemory) {
             console.log(`${C.bold}${C.cyan}Memory updates:${C.reset}`);
             for (const { key, value, action } of lr.applied) {
               const icon = action === 'updated' ? `${C.yellow}~${C.reset}` : `${C.green}+${C.reset}`;
               console.log(`  ${icon} ${C.bold}${key}${C.reset} = ${value}`);
             }
           }
-          if (lr.nexAdded.length > 0) {
+          if (hasNex) {
             console.log(`${C.bold}${C.cyan}Added to NEX.md:${C.reset}`);
             for (const line of lr.nexAdded) {
               console.log(`  ${C.green}+${C.reset} ${line}`);
+            }
+          }
+          if (hasBrain) {
+            console.log(`${C.bold}${C.cyan}Brain documents:${C.reset}`);
+            for (const { name, reason, action } of br.written) {
+              const icon = action === 'updated' ? `${C.yellow}~${C.reset}` : `${C.green}+${C.reset}`;
+              console.log(`  ${icon} ${C.bold}${name}.md${C.reset}${reason ? C.dim + ' — ' + reason + C.reset : ''}`);
             }
           }
         }
