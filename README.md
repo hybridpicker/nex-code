@@ -157,6 +157,7 @@ DEFAULT_MODEL=qwen3-coder:480b # Active model on startup
 FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
 NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
 NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
+NEX_LANGUAGE=auto              # Response language: "auto" (mirrors user's language, default) or e.g. "English", "Deutsch"
 ```
 
 ### Verify
@@ -543,6 +544,10 @@ When the model runs tools but produces no visible text, an automatic nudge force
 
 ### Response Quality
 The system prompt enforces substantive responses: the model always presents findings as formatted text after using tools (users only see 1-line tool summaries). Responses use markdown with headers, bullet lists, and code blocks. The model states its approach before non-trivial tasks and summarizes results after completing work.
+
+**Language:** By default (`NEX_LANGUAGE=auto`), the model mirrors the language of the user's message — write in German, get a German response; write in English, get an English response. Set `NEX_LANGUAGE=English` (or any language) to force a fixed response language.
+
+**Code examples:** The model is instructed to always show actual, working code — never pseudocode or placeholder snippets.
 
 ### Performance
 - **Asynchronous I/O**: The entire CLI is built on non-blocking I/O. File reads, writes, and git operations never block the main thread, keeping the UI responsive even during heavy tasks.
