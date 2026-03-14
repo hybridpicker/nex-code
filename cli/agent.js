@@ -557,6 +557,14 @@ function _buildLanguagePrompt() {
 
   // Always enforce real code examples
   lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
+  lines.push('COMPLETENESS RULES:');
+  lines.push('  • ALWAYS show actual code when explaining implementations — never describe without showing');
+  lines.push('  • Include complete examples with full context (imports, function signatures, error handling)');
+  lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
+  lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
+  lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
+  lines.push('  • For Makefiles, always display the actual .PHONY declarations and dependency chains');
+  lines.push('  • For dataclasses, always show the complete class definition with field types and defaults');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -650,6 +658,13 @@ If you run tools but write NO text → the user sees NOTHING useful. This is the
 
 MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, grep, ssh commands, etc.), you MUST write a text response summarizing the findings. NEVER end your response with only tool calls and no text.
 
+CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When explaining code:
+  • Show the complete code snippet, not just describe it
+  • Include file paths and line numbers (e.g., "src/app.js:42")
+  • For regex patterns, show both the pattern and example matches
+  • For Makefiles, display the actual .PHONY and target declarations
+  • For dataclasses, show the complete class definition with all fields
+
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
 
@@ -659,6 +674,11 @@ Response patterns by request type:
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
+- **Regex explanations**: Always show the actual regex pattern and test it with examples. For named groups, use the correct syntax: `(?<name>pattern)` not `(?<name:pattern>)` or similar incorrect variants.
+- **Hook implementations**: When explaining hooks, show the actual hook file content and explain how to configure it in .nex/config.json. Handle edge cases like console.log in strings vs actual code.
+- **Memory leak explanations**: When explaining memory leaks, show actual code examples of both problematic and fixed versions. Explain WHY solutions work, not just what they are.
+- **Makefile tasks**: Always display the actual Makefile code with .PHONY declarations and dependency chains. Show complete target definitions.
+- **Dataclass definitions**: Always show the complete dataclass code with all field types, defaults, and validation logic. Include __post_init__ methods when relevant.
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
 
