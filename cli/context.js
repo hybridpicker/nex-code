@@ -7,6 +7,7 @@ const path = require('path');
 const exec = require('util').promisify(require('child_process').exec);
 const { C } = require('./ui');
 const { getMergeConflicts } = require('./git');
+const { getServerContext } = require('./server-context');
 
 // Context cache to avoid redundant file I/O on every turn
 const contextCache = new Map();
@@ -178,6 +179,12 @@ async function gatherProjectContext(cwd) {
     const conflictFiles = conflicts.map(c => `  ${c.file}`).join('\n');
     gitParts.push(`MERGE CONFLICTS (resolve before editing these files):\n${conflictFiles}`);
   }
+
+  // Server context from .nex/servers.json (injected once, not cached — file rarely changes)
+  try {
+    const serverCtx = getServerContext();
+    if (serverCtx) gitParts.push(serverCtx);
+  } catch { /* servers.json missing or malformed — skip silently */ }
 
   return gitParts.join('\n\n');
 }
