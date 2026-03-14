@@ -33,16 +33,19 @@ Web search via DuckDuckGo is already built in. Perplexity adds AI-summarized, ci
 Tools for interacting with GitHub Actions from within the agent.
 - Status: **Shipped** (v0.3.15) — `gh_run_list`, `gh_run_view`, `gh_workflow_trigger` tools. Requires `gh` CLI authenticated.
 
+### SSH Server Management + Docker + Deploy
+First-class remote server management for AlmaLinux 9 and macOS, plus Docker and rsync-based deployments.
+- Status: **Shipped** (v0.3.23) — `ssh_exec`, `ssh_upload`, `ssh_download`, `service_manage`, `service_logs`, `container_list`, `container_logs`, `container_exec`, `container_manage`, `deploy` tools. Plus `/init` wizard, `/servers`, `/docker`, `/deploy` commands. Configure via `.nex/servers.json` and `.nex/deploy.json`.
+
 ---
 
 ## Priority 3 — Nice to Have
 
 | Feature | Notes |
 |---|---|
-| Onboarding wizard on first start | Guide new users through provider setup |
 | Web dashboard for sessions/costs | Browser UI showing session history, token spend |
-| Docker tool (`container_logs`, `container_exec`) | First-class Docker/K8s workflow support |
 | Multi-repo agent | Span agent context across multiple git repos |
+| Kubernetes tools (`kubectl` wrapper) | First-class K8s workflow support |
 
 ---
 
