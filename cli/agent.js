@@ -535,20 +535,28 @@ function _drainMidRunBuffer() {
 /**
  * Build language enforcement block for the system prompt.
  * Reads NEX_LANGUAGE, NEX_CODE_LANGUAGE, NEX_COMMIT_LANGUAGE from env.
- * If only NEX_LANGUAGE is set, code comments and commits default to English.
+ * If NEX_LANGUAGE is unset or "auto", the model responds in the user's message language.
+ * If only NEX_LANGUAGE is set to a specific language, code comments and commits default to English.
  */
 function _buildLanguagePrompt() {
-  const uiLang = process.env.NEX_LANGUAGE;
+  const uiLangRaw = process.env.NEX_LANGUAGE;
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
-  if (!uiLang && !codeLang && !commitLang) return '';
+  // Treat unset and "auto" the same: respond in user's language
+  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
 
   const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
 
   if (uiLang) {
     lines.push(`RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`);
+  } else {
+    // Auto mode: mirror the user's language
+    lines.push('RESPONSE LANGUAGE: Always respond in the same language as the user\'s message. If the user writes in German, respond in German; if in English, respond in English; etc.');
   }
+
+  // Always enforce real code examples
+  lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
