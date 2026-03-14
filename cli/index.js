@@ -43,6 +43,17 @@ const SLASH_COMMANDS = [
   { cmd: '/remember', desc: 'Save a memory' },
   { cmd: '/forget', desc: 'Delete a memory' },
   { cmd: '/memory', desc: 'Show all memories' },
+  { cmd: '/brain', desc: 'Manage knowledge base' },
+  { cmd: '/brain add', desc: 'Add document: /brain add <name> [content]' },
+  { cmd: '/brain list', desc: 'List all brain documents' },
+  { cmd: '/brain search', desc: 'Search brain: /brain search <query>' },
+  { cmd: '/brain show', desc: 'Show document: /brain show <name>' },
+  { cmd: '/brain remove', desc: 'Remove document: /brain remove <name>' },
+  { cmd: '/brain rebuild', desc: 'Rebuild keyword index' },
+  { cmd: '/brain embed', desc: 'Build/rebuild embedding index' },
+  { cmd: '/brain status', desc: 'Show brain status (docs, index, embeddings)' },
+  { cmd: '/brain review', desc: 'Review pending brain changes (git diff)' },
+  { cmd: '/brain undo', desc: 'Undo last brain write' },
   { cmd: '/learn', desc: 'Reflect on session and update memory' },
   { cmd: '/optimize', desc: 'Show optimization opportunities' },
   { cmd: '/permissions', desc: 'Show tool permissions' },
@@ -59,9 +70,14 @@ const SLASH_COMMANDS = [
   { cmd: '/hooks', desc: 'Show configured hooks' },
   { cmd: '/skills', desc: 'List, enable, disable skills' },
   { cmd: '/tasks', desc: 'Show task list' },
+  { cmd: '/servers', desc: 'List server profiles / ping' },
+  { cmd: '/docker', desc: 'List containers across all servers' },
+  { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
+  { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
+  { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
 ];
 
@@ -547,8 +563,226 @@ async function handleSlashCommand(input, rl) {
       return true;
     }
 
+    case '/brain': {
+      const {
+        listDocuments, readDocument, writeDocument, removeDocument,
+        buildIndex, buildEmbeddingIndex, isEmbeddingAvailable, query: brainQuery,
+      } = require('./brain');
+      const sub = rest[0];
+      const arg = rest.slice(1).join(' ').trim();
+
+      switch (sub) {
+        case 'add': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain add <name> [content]${C.reset}`);
+            console.log(`${C.dim}  /brain add api-notes — creates empty file${C.reset}`);
+            console.log(`${C.dim}  /brain add api-notes This is content — writes directly${C.reset}`);
+            return true;
+          }
+          const spaceIdx = arg.indexOf(' ');
+          if (spaceIdx < 0) {
+            writeDocument(arg, `# ${arg}\n\n`);
+            const brainPath = require('path').join(process.cwd(), '.nex', 'brain', `${arg}.md`);
+            console.log(`${C.green}Created .nex/brain/${arg}.md${C.reset}`);
+            console.log(`${C.dim}Edit it directly at: ${brainPath}${C.reset}`);
+          } else {
+            const docName = arg.substring(0, spaceIdx);
+            const docContent = arg.substring(spaceIdx + 1);
+            writeDocument(docName, docContent);
+            console.log(`${C.green}Added to brain: ${docName}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'list': {
+          const docs = listDocuments();
+          if (docs.length === 0) {
+            console.log(`${C.dim}No brain documents yet. Use /brain add <name> to create one.${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}Brain Documents:${C.reset}`);
+          const nameW = Math.max(8, ...docs.map(d => d.name.length));
+          const tagW = 20;
+          console.log(`  ${'Name'.padEnd(nameW + 2)}${'Tags'.padEnd(tagW)}${'Size'.padStart(7)}  Modified`);
+          console.log(`  ${'-'.repeat(nameW + 2)}${'-'.repeat(tagW)}${'-'.repeat(7)}  --------`);
+          for (const doc of docs) {
+            const { frontmatter } = readDocument(doc.name);
+            const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags.join(', ') : '';
+            const size = doc.size < 1024 ? `${doc.size}B` : `${(doc.size / 1024).toFixed(1)}K`;
+            const mod = doc.modified.toLocaleDateString();
+            console.log(`  ${C.cyan}${doc.name.padEnd(nameW + 2)}${C.reset}${C.dim}${tags.substring(0, tagW - 1).padEnd(tagW)}${size.padStart(7)}  ${mod}${C.reset}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'search': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain search <query>${C.reset}`);
+            return true;
+          }
+          const results = await brainQuery(arg, { topK: 5 });
+          if (results.length === 0) {
+            console.log(`${C.dim}No matching brain documents for: ${arg}${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}Brain Search: "${arg}"${C.reset}`);
+          for (const r of results) {
+            const scoreStr = typeof r.score === 'number' ? r.score.toFixed(2) : r.score;
+            console.log(`\n  ${C.cyan}${r.name}${C.reset} ${C.dim}(score: ${scoreStr})${C.reset}`);
+            console.log(`  ${C.dim}${r.excerpt || ''}${C.reset}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'show': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain show <name>${C.reset}`);
+            return true;
+          }
+          const doc = readDocument(arg);
+          if (!doc.content) {
+            console.log(`${C.red}Document not found: ${arg}${C.reset}`);
+            return true;
+          }
+          console.log(`\n${C.bold}${C.cyan}${arg}.md${C.reset}\n`);
+          console.log(doc.content);
+          return true;
+        }
+
+        case 'remove': {
+          if (!arg) {
+            console.log(`${C.red}Usage: /brain remove <name>${C.reset}`);
+            return true;
+          }
+          const { confirm: brainConfirm } = require('./safety');
+          const ok = await brainConfirm(`Remove brain document "${arg}"?`);
+          if (!ok) {
+            console.log(`${C.dim}Cancelled${C.reset}`);
+            return true;
+          }
+          const removed = removeDocument(arg);
+          if (removed) {
+            console.log(`${C.green}Removed: ${arg}.md${C.reset}`);
+          } else {
+            console.log(`${C.red}Document not found: ${arg}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'rebuild': {
+          const idx = buildIndex();
+          const count = Object.keys(idx.documents).length;
+          console.log(`${C.green}Index rebuilt: ${count} document(s)${C.reset}`);
+          return true;
+        }
+
+        case 'embed': {
+          const available = await isEmbeddingAvailable();
+          if (!available) {
+            console.log(`${C.yellow}Ollama embedding model not available.${C.reset}`);
+            console.log(`${C.dim}Set NEX_EMBED_MODEL env var (default: nomic-embed-text) and ensure Ollama is running.${C.reset}`);
+            return true;
+          }
+          console.log(`${C.dim}Building embedding index...${C.reset}`);
+          try {
+            const cache = await buildEmbeddingIndex();
+            const count = Object.keys(cache.documents || {}).length;
+            console.log(`${C.green}Embedding index built: ${count} document(s)${C.reset}`);
+          } catch (err) {
+            console.log(`${C.red}Embedding failed: ${err.message}${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'status': {
+          const docs = listDocuments();
+          const fs2 = require('fs');
+          const path2 = require('path');
+          const indexPath = path2.join(process.cwd(), '.nex', 'brain', '.brain-index.json');
+          const embPath = path2.join(process.cwd(), '.nex', 'brain', '.embeddings.json');
+          console.log(`\n${C.bold}${C.cyan}Brain Status${C.reset}`);
+          console.log(`  Documents:  ${docs.length}`);
+          console.log(`  Index:      ${fs2.existsSync(indexPath) ? C.green + 'present' + C.reset : C.dim + 'not built' + C.reset}`);
+          console.log(`  Embeddings: ${fs2.existsSync(embPath) ? C.green + 'present' + C.reset : C.dim + 'not built (run /brain embed)' + C.reset}`);
+          if (docs.length > 0) {
+            const totalSize = docs.reduce((s, d) => s + d.size, 0);
+            console.log(`  Total size: ${totalSize < 1024 ? totalSize + 'B' : (totalSize / 1024).toFixed(1) + 'K'}`);
+          }
+          console.log();
+          return true;
+        }
+
+        case 'review': {
+          const { exec: execAsync } = require('child_process');
+          const { promisify } = require('util');
+          const execP = promisify(execAsync);
+          try {
+            const { stdout } = await execP('git diff .nex/brain/', { cwd: process.cwd() });
+            if (!stdout.trim()) {
+              console.log(`${C.dim}No pending brain changes (clean git state)${C.reset}`);
+            } else {
+              console.log(`\n${C.bold}${C.cyan}Brain Changes (git diff):${C.reset}\n`);
+              console.log(stdout);
+            }
+          } catch {
+            console.log(`${C.dim}Not a git repo or no brain dir${C.reset}`);
+          }
+          return true;
+        }
+
+        case 'undo': {
+          const fs2 = require('fs');
+          const path2 = require('path');
+          const brainDir = path2.join(process.cwd(), '.nex', 'brain');
+          if (!fs2.existsSync(brainDir)) {
+            console.log(`${C.dim}No brain directory found${C.reset}`);
+            return true;
+          }
+          // Find the most recently modified brain doc
+          const docs2 = listDocuments();
+          if (docs2.length === 0) {
+            console.log(`${C.dim}No brain documents to undo${C.reset}`);
+            return true;
+          }
+          const newest = docs2[0]; // sorted by modified desc
+          const { exec: execAsync2 } = require('child_process');
+          const { promisify: promisify2 } = require('util');
+          const execP2 = promisify2(execAsync2);
+          try {
+            await execP2(`git checkout -- ".nex/brain/${newest.name}.md"`, { cwd: process.cwd() });
+            buildIndex();
+            console.log(`${C.green}Undone: restored ${newest.name}.md from git${C.reset}`);
+          } catch {
+            console.log(`${C.red}Could not undo — not tracked in git or no prior version${C.reset}`);
+          }
+          return true;
+        }
+
+        default: {
+          // No sub-command or unknown: show list
+          const docs = listDocuments();
+          if (docs.length === 0) {
+            console.log(`\n${C.bold}${C.cyan}Brain Knowledge Base${C.reset}`);
+            console.log(`${C.dim}No documents yet. Create with /brain add <name>${C.reset}`);
+            console.log(`\n${C.dim}Commands: add · list · search · show · remove · rebuild · embed · status · review · undo${C.reset}\n`);
+          } else {
+            console.log(`\n${C.bold}${C.cyan}Brain: ${docs.length} document(s)${C.reset}`);
+            for (const doc of docs) {
+              const { frontmatter } = readDocument(doc.name);
+              const tags = Array.isArray(frontmatter.tags) ? ` [${frontmatter.tags.join(', ')}]` : '';
+              console.log(`  ${C.cyan}${doc.name}${C.reset}${C.dim}${tags}${C.reset}`);
+            }
+            console.log(`\n${C.dim}Use /brain search <query> · /brain show <name> · /brain add <name>${C.reset}\n`);
+          }
+          return true;
+        }
+      }
+    }
+
     case '/learn': {
-      const { learnFromSession } = require('./learner');
+      const { learnFromSession, learnBrainFromSession } = require('./learner');
       const { getConversationMessages: _learnMsgs } = require('./agent');
       const msgs = _learnMsgs();
       const userCount = msgs.filter(m => m.role === 'user').length;
@@ -558,34 +792,51 @@ async function handleSlashCommand(input, rl) {
       }
       console.log(`${C.dim}Analyzing session for learnings...${C.reset}`);
       try {
-        const lr = await learnFromSession(msgs);
-        if (lr.skipped) {
+        // Run memory learning and brain learning in parallel
+        const [lr, br] = await Promise.all([
+          learnFromSession(msgs),
+          learnBrainFromSession(msgs),
+        ]);
+
+        if (lr.skipped && (!br.written || br.written.length === 0)) {
           console.log(`${C.dim}Session too short${C.reset}`);
           return true;
         }
         if (lr.error) {
           console.log(`${C.red}Reflection error: ${lr.error}${C.reset}`);
-          return true;
         }
+
         console.log('');
         if (lr.summary) {
           console.log(`${C.bold}Session:${C.reset} ${C.dim}${lr.summary}${C.reset}`);
           console.log('');
         }
-        if (lr.applied.length === 0 && lr.nexAdded.length === 0) {
+
+        const hasMemory = lr.applied && lr.applied.length > 0;
+        const hasNex = lr.nexAdded && lr.nexAdded.length > 0;
+        const hasBrain = br.written && br.written.length > 0;
+
+        if (!hasMemory && !hasNex && !hasBrain) {
           console.log(`${C.dim}No new learnings extracted from this session${C.reset}`);
         } else {
-          if (lr.applied.length > 0) {
+          if (hasMemory) {
             console.log(`${C.bold}${C.cyan}Memory updates:${C.reset}`);
             for (const { key, value, action } of lr.applied) {
               const icon = action === 'updated' ? `${C.yellow}~${C.reset}` : `${C.green}+${C.reset}`;
               console.log(`  ${icon} ${C.bold}${key}${C.reset} = ${value}`);
             }
           }
-          if (lr.nexAdded.length > 0) {
+          if (hasNex) {
             console.log(`${C.bold}${C.cyan}Added to NEX.md:${C.reset}`);
             for (const line of lr.nexAdded) {
               console.log(`  ${C.green}+${C.reset} ${line}`);
+            }
+          }
+          if (hasBrain) {
+            console.log(`${C.bold}${C.cyan}Brain documents:${C.reset}`);
+            for (const { name, reason, action } of br.written) {
+              const icon = action === 'updated' ? `${C.yellow}~${C.reset}` : `${C.green}+${C.reset}`;
+              console.log(`  ${icon} ${C.bold}${name}.md${C.reset}${reason ? C.dim + ' — ' + reason + C.reset : ''}`);
             }
           }
         }
@@ -1018,6 +1269,182 @@ ${C.cyan}${C.bold}└───────────────────�
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
+      return true;
+    }
+
+    case '/k8s': {
+      const k8sArg = rest.join(' ').trim();
+      const { exec: k8sExec } = require('child_process');
+      const { promisify: k8sPromisify } = require('util');
+      const execAsync = k8sPromisify(k8sExec);
+      const server = k8sArg || null;
+      const sshPrefix = server ? `ssh -o ConnectTimeout=10 -o BatchMode=yes ${server.replace(/[^a-zA-Z0-9@._-]/g, '')} ` : '';
+      const wrapCmd = (cmd) => server ? `${sshPrefix}"${cmd.replace(/"/g, '\\"')}"` : cmd;
+      console.log(`\n${C.bold}${C.cyan}Kubernetes Overview${C.reset}${server ? C.dim + ' (remote: ' + server + ')' + C.reset : ''}\n`);
+      // List namespaces
+      try {
+        const { stdout: ns } = await execAsync(wrapCmd('kubectl get namespaces --no-headers -o custom-columns=NAME:.metadata.name'), { timeout: 15000 });
+        const namespaces = ns.trim().split('\n').filter(Boolean);
+        console.log(`${C.bold}Namespaces (${namespaces.length}):${C.reset}`);
+        for (const n of namespaces) console.log(`  ${C.cyan}${n}${C.reset}`);
+        console.log();
+      } catch {
+        console.log(`${C.dim}Could not reach cluster — is kubectl configured?${C.reset}\n`);
+        return true;
+      }
+      // List all pods
+      try {
+        const { stdout: pods } = await execAsync(wrapCmd('kubectl get pods -A --no-headers -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount'), { timeout: 20000 });
+        const podLines = pods.trim().split('\n').filter(Boolean);
+        const running = podLines.filter(l => l.includes('Running')).length;
+        const pending = podLines.filter(l => l.includes('Pending')).length;
+        const failed = podLines.filter(l => l.includes('Failed') || l.includes('Error') || l.includes('CrashLoop')).length;
+        console.log(`${C.bold}Pods: ${podLines.length} total  ${C.green}${running} running${C.reset}  ${C.yellow}${pending} pending${C.reset}  ${C.red}${failed} unhealthy${C.reset}\n`);
+        // Show unhealthy first
+        const unhealthy = podLines.filter(l => !l.includes('Running') && !l.includes('<none>'));
+        if (unhealthy.length > 0) {
+          console.log(`${C.bold}${C.red}Unhealthy Pods:${C.reset}`);
+          for (const l of unhealthy) console.log(`  ${C.red}${l}${C.reset}`);
+          console.log();
+        }
+        console.log(`${C.dim}Use k8s_pods / k8s_logs / k8s_exec tools for details${C.reset}`);
+        console.log(`${C.dim}Or: /k8s user@host to query a remote cluster${C.reset}\n`);
+      } catch (e) {
+        console.log(`${C.dim}Could not list pods: ${e.message}${C.reset}\n`);
+      }
+      return true;
+    }
+
+    case '/servers': {
+      const { loadServerProfiles, resolveProfile: rp, sshExec: sx } = require('./ssh');
+      const profiles = loadServerProfiles();
+      const names = Object.keys(profiles);
+      if (names.length === 0) {
+        console.log(`\n${C.dim}No servers configured. Create .nex/servers.json:${C.reset}`);
+        console.log(`${C.dim}  { "prod": { "host": "1.2.3.4", "user": "jarvis", "os": "almalinux9" } }${C.reset}\n`);
+        return true;
+      }
+
+      const subcmd = rest[0];
+
+      if (subcmd === 'ping') {
+        // SSH connectivity check for all (or specified) servers
+        const toCheck = rest[1] ? [rest[1]] : names;
+        console.log(`\n${C.bold}${C.cyan}Server connectivity:${C.reset}`);
+        await Promise.all(toCheck.map(async (name) => {
+          if (!profiles[name]) {
+            console.log(`  ${C.red}✗${C.reset} ${name} — unknown profile`);
+            return;
+          }
+          try {
+            const profile = { ...profiles[name], _name: name };
+            const { exitCode } = await sx(profile, 'echo ok', { timeout: 8000 });
+            if (exitCode === 0) {
+              console.log(`  ${C.green}✓${C.reset} ${name} (${profile.user ? profile.user + '@' : ''}${profile.host})`);
+            } else {
+              console.log(`  ${C.red}✗${C.reset} ${name} (${profile.host}) — SSH failed (exit ${exitCode})`);
+            }
+          } catch (e) {
+            console.log(`  ${C.red}✗${C.reset} ${name} — ${e.message}`);
+          }
+        }));
+        console.log('');
+        return true;
+      }
+
+      // Default: list all profiles
+      const { formatProfile } = require('./ssh');
+      console.log(`\n${C.bold}${C.cyan}Configured servers (${names.length}):${C.reset}`);
+      for (const name of names) {
+        console.log(`  ${C.green}${name}${C.reset}  ${C.dim}${formatProfile(name, profiles[name])}${C.reset}`);
+      }
+      console.log(`\n${C.dim}/servers ping          — check SSH connectivity for all servers${C.reset}`);
+      console.log(`${C.dim}/servers ping <name>   — check a specific server${C.reset}\n`);
+      return true;
+    }
+
+    case '/docker': {
+      const { loadServerProfiles, sshExec: sshExecDocker } = require('./ssh');
+      const { exec: execDocker } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(execDocker);
+      const dockerCmd = rest[0] === '-a' || rest[0] === '--all'
+        ? 'docker ps -a --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"'
+        : 'docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"';
+
+      const profiles = loadServerProfiles();
+      const servers = [['local', null], ...Object.entries(profiles)];
+
+      console.log(`\n${C.bold}${C.cyan}Docker Containers:${C.reset}`);
+      for (const [name, profile] of servers) {
+        const label = name === 'local' ? `${C.dim}local${C.reset}` : `${C.cyan}${name}${C.reset}`;
+        try {
+          let out;
+          if (name === 'local') {
+            const { stdout } = await execAsync(dockerCmd, { timeout: 8000 });
+            out = (stdout || '').trim();
+          } else {
+            const r = await sshExecDocker(profile, dockerCmd, { timeout: 10000 });
+            out = [r.stdout, r.stderr].filter(Boolean).join('').trim();
+            if (r.exitCode !== 0) { console.log(`  ${label}: ${C.red}SSH error (${r.exitCode})${C.reset}`); continue; }
+          }
+          if (!out || out === 'NAMES\tIMAGE\tSTATUS\tPORTS') {
+            console.log(`  ${label}: ${C.dim}(no containers)${C.reset}`);
+          } else {
+            console.log(`  ${label}:`);
+            out.split('\n').forEach((line) => console.log(`    ${C.dim}${line}${C.reset}`));
+          }
+        } catch (e) {
+          console.log(`  ${label}: ${C.red}${e.message}${C.reset}`);
+        }
+      }
+      console.log('');
+      return true;
+    }
+
+    case '/deploy': {
+      const { loadDeployConfigs: ldc } = require('./deploy-config');
+      const configs = ldc();
+      const names = Object.keys(configs);
+      const subcmd = rest[0];
+
+      // /deploy <name> [--dry-run] — run a named deploy
+      if (subcmd && names.includes(subcmd)) {
+        const dryRun = rest.includes('--dry-run') || rest.includes('-n');
+        const cfg = configs[subcmd];
+        const { executeTool } = require('./tools');
+        console.log(`\n${C.bold}Running deploy: ${subcmd}${dryRun ? ' (dry run)' : ''}${C.reset}`);
+        const result = await executeTool('deploy', { ...cfg, dry_run: dryRun });
+        console.log(result);
+        return true;
+      }
+
+      // List all configs
+      if (names.length === 0) {
+        console.log(`\n${C.dim}No deploy configs. Run /init to create .nex/deploy.json${C.reset}\n`);
+        return true;
+      }
+      console.log(`\n${C.bold}${C.cyan}Deploy configs (${names.length}):${C.reset}`);
+      for (const [n, cfg] of Object.entries(configs)) {
+        const local = cfg.local_path || '';
+        const remote = `${cfg.server}:${cfg.remote_path}`;
+        const script = cfg.deploy_script ? `  ${C.dim}→ ${cfg.deploy_script}${C.reset}` : '';
+        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${local} → ${remote}${C.reset}${script}`);
+      }
+      console.log(`\n${C.dim}/deploy <name>          — run a named deploy${C.reset}`);
+      console.log(`${C.dim}/deploy <name> --dry-run — preview without syncing${C.reset}\n`);
+      return true;
+    }
+
+    case '/init': {
+      const { runServerWizard, runDeployWizard, setWizardRL } = require('./wizard');
+      setWizardRL(rl);
+      const subcmd = rest[0];
+      if (subcmd === 'deploy') {
+        await runDeployWizard();
+      } else {
+        await runServerWizard();
+      }
       return true;
     }
 

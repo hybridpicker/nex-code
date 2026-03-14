@@ -201,6 +201,14 @@ async function getProjectContextHash() {
       const memHash = getMemoryContextHash();
       if (memHash) hashes.push(`memory:${memHash}`);
     } catch { /* ignore */ }
+    // Include brain dir mtime so cache invalidates when brain docs change
+    try {
+      const brainDir = path.join(process.cwd(), '.nex', 'brain');
+      if (fsSync.existsSync(brainDir)) {
+        const brainStat = await fs.stat(brainDir);
+        hashes.push(`brain:${brainStat.mtimeMs}`);
+      }
+    } catch { /* ignore */ }
     return hashes.join('|');
   } catch {
     return `fallback:${Date.now()}`;
@@ -527,20 +535,28 @@ function _drainMidRunBuffer() {
 /**
  * Build language enforcement block for the system prompt.
  * Reads NEX_LANGUAGE, NEX_CODE_LANGUAGE, NEX_COMMIT_LANGUAGE from env.
- * If only NEX_LANGUAGE is set, code comments and commits default to English.
+ * If NEX_LANGUAGE is unset or "auto", the model responds in the user's message language.
+ * If only NEX_LANGUAGE is set to a specific language, code comments and commits default to English.
  */
 function _buildLanguagePrompt() {
-  const uiLang = process.env.NEX_LANGUAGE;
+  const uiLangRaw = process.env.NEX_LANGUAGE;
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
-  if (!uiLang && !codeLang && !commitLang) return '';
+  // Treat unset and "auto" the same: respond in user's language
+  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
 
   const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
 
   if (uiLang) {
     lines.push(`RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`);
+  } else {
+    // Auto mode: mirror the user's language
+    lines.push('RESPONSE LANGUAGE: Always respond in the same language as the user\'s message. If the user writes in German, respond in German; if in English, respond in English; etc.');
   }
+
+  // Always enforce real code examples
+  lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -641,7 +657,7 @@ Response patterns by request type:
 - **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. NEVER just run tools and stop.
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
-- **Ambiguous requests**: When a request is vague or could be interpreted multiple ways (e.g. "optimize this", "improve performance", "fix the issues", "refactor this"), ALWAYS ask clarifying questions first using ask_user. Do NOT guess scope or intent. Ask about: which specific area, what the expected outcome is, any constraints. Only proceed after the user clarifies.
+- **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
@@ -716,6 +732,17 @@ When a tool call returns ERROR:
 - Dangerous commands (git push, npm publish, sudo, rm -rf) require user confirmation.
 - Prefer creating new git commits over amending. Never force-push without explicit permission.
 - If you encounter unexpected state (unfamiliar files, branches), investigate before modifying.
+
+# Brain Knowledge Base
+
+You have access to a persistent knowledge base in .nex/brain/.
+- Use brain_write to save important discoveries, patterns, or decisions
+- Write when you find: architecture insights, recurring error patterns, API quirks, deployment steps
+- Do NOT write trivial or session-specific information
+- Do NOT duplicate what's already in NEX.md or project memory
+- Use descriptive kebab-case names: "auth-flow", "db-migration-steps"
+- Include tags in frontmatter for better retrieval
+- The user reviews all brain writes via /brain review or git diff
 
 `;
 
@@ -797,7 +824,18 @@ async function processInput(userInput) {
   });
 
   const systemPrompt = await buildSystemPrompt();
-  const fullMessages = [{ role: 'system', content: systemPrompt }, ...conversationMessages];
+
+  // Append brain context (query-dependent, not part of cached system prompt)
+  let effectiveSystemPrompt = systemPrompt;
+  try {
+    const { getBrainContext } = require('./brain');
+    const brainContext = await getBrainContext(userInput);
+    if (brainContext) {
+      effectiveSystemPrompt = systemPrompt + '\n' + brainContext + '\n';
+    }
+  } catch { /* brain is optional */ }
+
+  const fullMessages = [{ role: 'system', content: effectiveSystemPrompt }, ...conversationMessages];
 
   // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
   const preSpinner = new Spinner('Thinking...');
