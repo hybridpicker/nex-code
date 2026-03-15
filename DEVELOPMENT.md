@@ -76,3 +76,28 @@ Install all hooks with:
 |------|---------|
 | `pre-push` | Scans pushed commits for secrets (API keys, tokens, private keys) and blocks the push if found |
 | `post-merge` | On `devel→main` merge: auto-bumps patch version and commits. On any merge with `package.json` changes: runs `npm install` |
+
+## Known Logic Patterns & Past Bug Fixes
+
+### Sub-agent File Locking (`cli/sub-agent.js`)
+
+Write-tool file locking uses `lockedFiles` (module-level Map) guarded by `acquireLock`/`releaseLock`.
+Two rules enforced since v0.3.26:
+
+1. **No concurrent same-agent locks**: `locksHeld` (per-run Set) is checked *before* calling `acquireLock`.
+   Even though `acquireLock` allows re-locking by the same `agentId`, parallel tool calls within one
+   `Promise.all` batch would both pass — `locksHeld` prevents this.
+2. **Lock released on tool completion**: Each promise's `.then()` / `.catch()` calls `releaseLock` and
+   removes from `locksHeld` immediately, rather than waiting until end-of-iteration.
+
+### Rate Limit / Network Retry Counters (`cli/agent.js`)
+
+`rateLimitRetries` and `networkRetries` are reset to `0` after every successful API response.
+Without this reset, transient errors early in a session would eat into the retry budget (`MAX_RATE_LIMIT_RETRIES = 5`,
+`MAX_NETWORK_RETRIES = 3`) for all subsequent calls, causing premature hard-stop errors.
+
+### Context Compression Phase 4 (`cli/context-engine.js` — `fitToContext`)
+
+In Phase 4 (message removal), `tokens` tracks message-only token counts.
+`available = targetMax - toolTokens`, so the correct loop condition is `tokens > available`
+(not `tokens + toolTokens > available`, which would over-remove messages by targeting `targetMax - 2*toolTokens`).
