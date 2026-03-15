@@ -259,11 +259,7 @@ class StickyFooter {
         self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
         // Position cursor at next available row in scroll region
         self._origWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
-        // Echo the user's input so it's visible in the scroll region.
-        // Goes through patched stdout so _lastOutputRow is updated automatically.
-        if (line && line.trim()) {
-          process.stdout.write(C_DIM + '› ' + line + C_RESET + '\n');
-        }
+        // Input echo is handled by index.js after paste resolution (full content).
         self.drawFooter();
       }
     });
