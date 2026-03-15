@@ -180,7 +180,9 @@ describe('git.js', () => {
        fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'feature-change\n', 'utf-8');
        execSync('git add conflict.txt && git commit -m "feature change"', { cwd: tmpDir });
 
-       execSync('git checkout main', { cwd: tmpDir });
+       // Use 'git checkout -' to return to the default branch regardless of its name
+       // (may be 'main' or 'master' depending on git version / OS config)
+       execSync('git checkout -', { cwd: tmpDir });
        fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'main-change\n', 'utf-8');
        execSync('git add conflict.txt && git commit -m "main change"', { cwd: tmpDir });
 
