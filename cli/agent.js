@@ -985,12 +985,26 @@ async function _staleRecoveryPrompt() {
     console.log(`  ${C.cyan}[${opt.key}]${C.reset} ${opt.label}`);
   }
 
+  process.stdout.write(`  ${C.yellow}> ${C.reset}`);
+
   return new Promise((resolve) => {
-    const readline = require('readline');
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`  ${C.yellow}> ${C.reset}`, (answer) => {
-      rl.close();
-      const a = answer.trim().toLowerCase();
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    const onKey = (key) => {
+      stdin.setRawMode(wasRaw || false);
+      stdin.pause();
+      stdin.removeListener('data', onKey);
+
+      const a = key.toLowerCase().trim();
+      process.stdout.write(`${a}\n`); // echo the chosen key
+
+      // Ctrl+C → quit
+      if (key === '\u0003') return resolve({ action: 'quit' });
+
       const match = options.find(o => o.key === a);
       if (!match || match.key === 'q' || (!match.model && match.key !== 'r')) {
         resolve({ action: 'quit' });
@@ -999,7 +1013,9 @@ async function _staleRecoveryPrompt() {
       } else {
         resolve({ action: 'switch', model: match.model, provider: providerName });
       }
-    });
+    };
+
+    stdin.on('data', onKey);
   });
 }
 
