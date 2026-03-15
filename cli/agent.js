@@ -495,13 +495,14 @@ async function executeBatch(prepared, quiet = false, options = {}) {
 
   await flushBatch();
 
-  // Stop spinner and print compact summaries
+  // Stop spinner
   if (spinner) spinner.stop();
+  // Print summaries only when not collecting them at the call site
   if (quiet && summaries.length > 0 && !options.skipSummaries) {
     for (const s of summaries) console.log(s);
   }
 
-  return results;
+  return { results, summaries };
 }
 
 // Persistent conversation state
@@ -922,12 +923,6 @@ async function processInput(userInput) {
 
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
-    function printStepIfNeeded(prepared) {
-      if (!stepPrinted) {
-        console.log(formatSectionHeader(prepared, totalSteps));
-        stepPrinted = true;
-      }
-    }
 
     let spinner = null;
     if (taskProgress && taskProgress.isActive()) {
@@ -1006,7 +1001,7 @@ async function processInput(userInput) {
             } else if (spinner) {
               spinner.stop();
             }
-            printStepIfNeeded();
+            if (!stepPrinted) { stepPrinted = true; }
             stream.startCursor();
             firstToken = false;
           }
@@ -1252,10 +1247,30 @@ async function processInput(userInput) {
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
-    if (!batchOpts.skipSummaries) printStepIfNeeded(prepared);
+    // Capture whether to show section header (deferred — only from step 2+ onwards)
+    const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
+    if (_showStepHeader) stepPrinted = true;
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
-    const toolMessages = await executeBatch(prepared, true, batchOpts);
+    const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
+
+    // Compact display: section header + summaries printed together after execution
+    if (!batchOpts.skipSummaries) {
+      if (_showStepHeader) {
+        const header = formatSectionHeader(prepared, totalSteps);
+        if (batchSummaries.length === 1) {
+          // Single tool: one compact line — header + result
+          console.log(header + batchSummaries[0]);
+        } else {
+          // Multi-tool batch: header on its own line, then each result
+          console.log(header);
+          for (const s of batchSummaries) console.log(s);
+        }
+      } else {
+        // First iteration (step 1): just summaries, no section header
+        for (const s of batchSummaries) console.log(s);
+      }
+    }
 
     // Track modified and read files
     for (let j = 0; j < prepared.length; j++) {
