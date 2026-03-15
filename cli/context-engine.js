@@ -435,7 +435,9 @@ async function fitToContext(messages, tools, options = {}) {
         // Compacted but still too large → continue with compacted messages as base
         oldMessages = compressedOld;
       }
-    } catch { /* silent fallback */ }
+    } catch (err) {
+      if (process.env.NEX_DEBUG) console.error('[context-engine] LLM compacting failed:', err.message);
+    }
   }
 
   // Determine compression level based on how far over target we are
