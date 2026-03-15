@@ -1326,6 +1326,7 @@ async function processInput(userInput) {
       if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
         const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
         apiMessages.push(nudge);
+        conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
         continue; // retry — don't count as a new step
       }
       // In plan mode: save the plan text output to disk
@@ -1424,18 +1425,20 @@ async function processInput(userInput) {
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();
     if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
-      // Free provider — auto-extend silently
+      // Free provider — auto-extend silently.
+      // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
+      // so the next pass runs exactly 20 more iterations (not the full cumulative sum).
       autoExtensions++;
-      iterLimit += 20;
-      console.log(`${C.dim}  ── auto-extending to ${iterLimit} turns ──${C.reset}`);
+      iterLimit = 20;
+      console.log(`${C.dim}  ── auto-extending (+20 turns, ext ${autoExtensions}/${MAX_AUTO_EXTENSIONS}) ──${C.reset}`);
       continue outer;
     }
 
     // Paid provider (or hard cap reached) — ask before spending more
-    console.log(`\n${C.yellow}⚠ Max iterations (${iterLimit}) reached.${C.reset}`);
+    console.log(`\n${C.yellow}⚠ Max iterations reached.${C.reset}`);
     const keepGoing = await confirm(`  Continue for 20 more turns?`);
     if (keepGoing) {
-      iterLimit += 20;
+      iterLimit = 20; // continue outer resets i to 0, so set exactly 20 new turns
       continue outer;
     }
 
