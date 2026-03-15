@@ -994,10 +994,13 @@ async function _staleRecoveryPrompt() {
     stdin.resume();
     stdin.setEncoding('utf8');
 
+    let handled = false;
     const onKey = (key) => {
+      if (handled) return;
+      handled = true;
+      stdin.removeListener('data', onKey);
       stdin.setRawMode(wasRaw || false);
       stdin.pause();
-      stdin.removeListener('data', onKey);
 
       const a = key.toLowerCase().trim();
       process.stdout.write(`${a}\n`); // echo the chosen key
