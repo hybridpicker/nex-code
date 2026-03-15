@@ -56,7 +56,12 @@ async function callWithRetry(messages, tools, options) {
     } catch (err) {
       lastError = err;
       if (attempt < MAX_CHAT_RETRIES && isRetryableError(err)) {
-        const delay = Math.min(2000 * Math.pow(2, attempt), 15000);
+        // Rate limits: full exponential backoff (provider needs recovery time)
+        // Server/network errors: shorter delay — callStream already tried the full fallback chain
+        const isRateLimit = (err.message || '').includes('429');
+        const delay = isRateLimit
+          ? Math.min(2000 * Math.pow(2, attempt), 15000)
+          : Math.min(500 * Math.pow(2, attempt), 4000);
         await new Promise(r => setTimeout(r, delay).unref());
         continue;
       }
@@ -338,7 +343,8 @@ ERROR RECOVERY:
 
     return {
       task: agentDef.task,
-      status: 'done',
+      status: 'truncated',
+      abortReason: 'iteration_limit',
       result: messages[messages.length - 1]?.content || '(max iterations reached)',
       toolsUsed,
       tokensUsed,
@@ -393,7 +399,7 @@ async function executeSpawnAgents(args) {
       return runSubAgent(defWithRouting, {
         onUpdate: () => {}, // progress is already showing spinner
       }).then(result => {
-        progress.update(idx, result.status === 'done' ? 'done' : 'error');
+        progress.update(idx, result.status === 'failed' ? 'error' : 'done');
         return result;
       }).catch(err => {
         progress.update(idx, 'error');
@@ -420,7 +426,7 @@ async function executeSpawnAgents(args) {
 
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
-      const statusIcon = r.status === 'done' ? '✓' : '✗';
+      const statusIcon = r.status === 'done' ? '✓' : r.status === 'truncated' ? '⚠' : '✗';
       const modelLabel = r.modelSpec ? ` [${r.modelSpec}]` : '';
       lines.push(`${statusIcon} Agent ${i + 1}${modelLabel}: ${r.task}`);
       lines.push(`  Status: ${r.status}`);

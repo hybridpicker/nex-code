@@ -127,23 +127,34 @@ const toolFilterCache = new Map();
 const TOOL_RESULT_TOKEN_THRESHOLD = 10000;
 const TOOL_RESULT_COMPRESS_TARGET = 6000;
 
+// ─── Secret Scrubbing ─────────────────────────────────────────
+// Redact common secret patterns from tool results before they enter the conversation.
+// Matches env-style assignments for well-known secret prefixes (API_KEY, TOKEN, etc.)
+const SECRET_SCRUB_RE = /\b((?:API|ACCESS|AUTH|BEARER|CLIENT|GITHUB|GITLAB|SLACK|STRIPE|TWILIO|SENDGRID|AWS|GCP|AZURE|OPENAI|ANTHROPIC|GEMINI|OLLAMA)[_A-Z0-9]*(?:KEY|TOKEN|SECRET|PASS(?:WORD)?|CREDENTIAL)[_A-Z0-9]*)\s*=\s*["']?([A-Za-z0-9\-_.+/=]{10,})["']?/g;
+
+function scrubSecrets(content) {
+  if (!content || typeof content !== 'string') return content;
+  return content.replace(SECRET_SCRUB_RE, (_, varName) => `${varName}=***REDACTED***`);
+}
+
 /**
- * Compress tool result if it exceeds token threshold.
+ * Scrub secrets and compress tool result if it exceeds token threshold.
  * Uses context-engine compression to reduce token count.
  */
 function compressToolResultIfNeeded(content) {
-  const tokens = estimateTokens(content);
+  const scrubbed = scrubSecrets(content);
+  const tokens = estimateTokens(scrubbed);
   if (tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
     try {
       const { compressToolResult } = require('./context-engine');
-      const compressed = compressToolResult(content, TOOL_RESULT_COMPRESS_TARGET);
+      const compressed = compressToolResult(scrubbed, TOOL_RESULT_COMPRESS_TARGET);
       return compressed;
     } catch {
-      // Fallback: return original if compression fails
-      return content;
+      // Fallback: return scrubbed original if compression fails
+      return scrubbed;
     }
   }
-  return content;
+  return scrubbed;
 }
 
 /**
@@ -225,11 +236,16 @@ function invalidateSystemPromptCache() {
 }
 
 // Tools that can safely run in parallel (read-only, no side effects)
+// Kept for reference; execution now uses SEQUENTIAL_ONLY logic instead.
 const PARALLEL_SAFE = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
   'web_fetch', 'web_search', 'git_status', 'git_diff', 'git_log',
   'task_list', 'gh_run_list', 'gh_run_view',
 ]);
+// Tools that MUST run one-at-a-time: manage their own terminal display
+// or require strict ordering. ALL other tools run in parallel when the
+// LLM returns them in the same response (parallel_tool_calls convention).
+const SEQUENTIAL_ONLY = new Set(['spawn_agents']);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
@@ -478,9 +494,7 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       continue;
     }
 
-    if (PARALLEL_SAFE.has(prep.fnName)) {
-      batch.push(i);
-    } else {
+    if (SEQUENTIAL_ONLY.has(prep.fnName)) {
       await flushBatch();
       // spawn_agents manages its own display (MultiProgress) — stop outer spinner
       if (prep.fnName === 'spawn_agents' && spinner) {
@@ -490,6 +504,10 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       const { msg, summary } = await executeSingleTool(prep, quiet);
       results[i] = msg;
       summaries.push(summary);
+    } else {
+      // All other tools batch together: when the LLM returns them in the same
+      // response, they are presumed independent (parallel_tool_calls convention).
+      batch.push(i);
     }
   }
 
@@ -507,6 +525,9 @@ async function executeBatch(prepared, quiet = false, options = {}) {
 
 // Persistent conversation state
 let conversationMessages = [];
+// Sliding window: oldest messages trimmed beyond this limit to prevent unbounded RAM growth.
+// fitToContext() still handles what gets sent to the API — this caps the in-memory store only.
+const MAX_CONVERSATION_HISTORY = 300;
 
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
@@ -615,7 +636,8 @@ function _buildModelRoutingGuide() {
     }
     cachedModelRoutingGuide = guide;
     return guide;
-  } catch {
+  } catch (err) {
+    if (process.env.NEX_DEBUG) console.error('[agent] model routing guide failed:', err.message);
     cachedModelRoutingGuide = '';
     return '';
   }
@@ -787,6 +809,12 @@ function clearConversation() {
   conversationMessages = [];
 }
 
+function trimConversationHistory() {
+  if (conversationMessages.length > MAX_CONVERSATION_HISTORY) {
+    conversationMessages.splice(0, conversationMessages.length - MAX_CONVERSATION_HISTORY);
+  }
+}
+
 function getConversationLength() {
   return conversationMessages.length;
 }
@@ -803,6 +831,76 @@ function setConversationMessages(messages) {
  * Print résumé + follow-up suggestions after the agent loop.
  * Only shown for multi-step responses (totalSteps >= 1).
  */
+/**
+ * Quick project pre-scan: file counts + dependency snapshot.
+ * Runs concurrently with fitToContext to fill the "Thinking..." gap.
+ * Only called on the first user message of a new conversation.
+ * Returns a formatted string or null if the project is too small.
+ */
+async function _runPreScan() {
+  const { execFile } = require('child_process');
+  const fs = require('fs');
+  const cwd = process.cwd();
+
+  const run = (cmd, args) => new Promise((resolve) => {
+    execFile(cmd, args, { cwd, timeout: 3000 }, (err, stdout) => {
+      resolve(err ? '' : (stdout || '').trim());
+    });
+  });
+
+  // Find source files (exclude common build/dependency dirs)
+  const [filesOut] = await Promise.all([
+    run('find', ['.', '-type', 'f',
+      '-not', '-path', '*/node_modules/*',
+      '-not', '-path', '*/.git/*',
+      '-not', '-path', '*/dist/*',
+      '-not', '-path', '*/.next/*',
+      '-not', '-path', '*/build/*',
+      '-not', '-path', '*/__pycache__/*',
+      '-not', '-path', '*/vendor/*',
+    ]),
+  ]);
+
+  const EXTS = new Set(['js', 'ts', 'jsx', 'tsx', 'py', 'go', 'rs', 'rb', 'java', 'cpp', 'c', 'cs']);
+  const files = (filesOut ? filesOut.split('\n') : []).filter(f => {
+    const ext = f.split('.').pop();
+    return EXTS.has(ext);
+  });
+
+  if (files.length < 3) return null;
+
+  // Count by extension
+  const counts = {};
+  for (const f of files) {
+    const ext = f.split('.').pop();
+    counts[ext] = (counts[ext] || 0) + 1;
+  }
+
+  const fileParts = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([ext, n]) => `${n} .${ext}`)
+    .join(' · ');
+
+  let line = `  📁 ${fileParts}`;
+
+  // Dependencies from package.json if present
+  const pkgPath = path.join(cwd, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      const deps = Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) });
+      if (deps.length > 0) {
+        const shown = deps.slice(0, 5).join(' · ');
+        const extra = deps.length > 5 ? ` +${deps.length - 5}` : '';
+        line += `\n  📦 ${shown}${extra}`;
+      }
+    } catch { /* ignore malformed package.json */ }
+  }
+
+  return line;
+}
+
 function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
   if (totalSteps < 1) return;
 
@@ -834,6 +932,7 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
 async function processInput(userInput) {
   const userContent = buildUserContent(userInput);
   conversationMessages.push({ role: 'user', content: userContent });
+  trimConversationHistory();
 
   const { setOnChange } = require('./tasks');
   let taskProgress = null;
@@ -866,7 +965,9 @@ async function processInput(userInput) {
     if (brainContext) {
       effectiveSystemPrompt = systemPrompt + '\n' + brainContext + '\n';
     }
-  } catch { /* brain is optional */ }
+  } catch (err) { /* brain is optional */
+    if (process.env.NEX_DEBUG) console.error('[agent] brain context failed:', err.message);
+  }
 
   const fullMessages = [{ role: 'system', content: effectiveSystemPrompt }, ...conversationMessages];
 
@@ -874,17 +975,27 @@ async function processInput(userInput) {
   const preSpinner = new Spinner('Thinking...');
   preSpinner.start();
 
+  // Start pre-scan concurrently on the FIRST message of a new conversation.
+  // Results fill the "Thinking..." dead time with useful project context.
+  const isFirstMessage = conversationMessages.length === 1;
+  const preScanPromise = isFirstMessage ? _runPreScan().catch(() => null) : Promise.resolve(null);
+
   // Context-aware compression: fit messages into context window
   const allTools = getAllToolDefinitions();
-  const { messages: fittedMessages, compressed, compacted, tokensRemoved } = await fitToContext(
-    fullMessages,
-    allTools
-  );
+  const [{ messages: fittedMessages, compressed, compacted, tokensRemoved }, preScanResult] = await Promise.all([
+    fitToContext(fullMessages, allTools),
+    preScanPromise,
+  ]);
 
   // Context budget warning
   const usage = getUsage(fullMessages, allTools);
 
   preSpinner.stop();
+
+  // Show pre-scan snapshot (first message only, non-empty projects)
+  if (preScanResult) {
+    console.log(`${C.dim}${preScanResult}${C.reset}`);
+  }
 
   if (compacted) {
     console.log(`${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`);
