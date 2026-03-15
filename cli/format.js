@@ -130,10 +130,11 @@ function formatSectionHeader(prepared, stepNum) {
     title = descs[0];
     const t = tools[0];
     const a = t.args || {};
-    if (a.path)    title += `  ${C.dim}${a.path.split('/').pop()}${C.cyan}`;
-    else if (a.command)  title += `  ${C.dim}${String(a.command).substring(0, 40)}${C.cyan}`;
-    else if (a.query)    title += `  ${C.dim}${String(a.query).substring(0, 40)}${C.cyan}`;
-    else if (a.pattern)  title += `  ${C.dim}${String(a.pattern).substring(0, 40)}${C.cyan}`;
+    const _sep = `  ${C.reset}${C.dim}`;
+    if (a.path)         title += `${_sep}${a.path.split('/').pop()}`;
+    else if (a.command) title += `${_sep}${String(a.command).substring(0, 50)}`;
+    else if (a.query)   title += `${_sep}${String(a.query).substring(0, 50)}`;
+    else if (a.pattern) title += `${_sep}${String(a.pattern).substring(0, 50)}`;
   } else if (descs.length === 1) {
     title = `${descs[0]} (${tools.length})`;
   } else if (descs.length <= 3) {
