@@ -28,7 +28,7 @@
 ---
 ## Demo
 
-https://github.com/hybridpicker/nex-code/releases/download/v0.3.27/nex-code-demo-v0.3.27.mp4
+https://github.com/user-attachments/assets/634e70eb-645c-42f7-a604-824f17e49840
 
 
 ---
