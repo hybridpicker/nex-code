@@ -206,6 +206,26 @@ class StickyFooter {
       self._cursorOnInputRow = true;
     };
 
+    // 7b. Patch rl.question — anchor confirm prompts to the input row like rl.prompt.
+    //     Without this, rl.question writes its prompt at the current cursor position
+    //     (often mid-scroll-region), causing the typed answer to appear above the
+    //     question and leaving the question text on screen after Enter.
+    const origQuestion = rl.question.bind(rl);
+    rl.question = function(prompt, callback) {
+      if (!self._active) { return origQuestion(prompt, callback); }
+      // Clear input row and position cursor there before writing the question
+      self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
+      rl._prevPos = null;
+      self._cursorOnInputRow = true;
+      origQuestion(prompt, (answer) => {
+        // After answer: clear input row, return cursor to scroll region
+        self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
+        self._cursorOnInputRow = false;
+        self.drawFooter();
+        callback(answer);
+      });
+    };
+
     // 8. Patch rl._refreshLine to prevent long input lines from wrapping.
     //    When prompt + line exceeds terminal width, readline would wrap to the
     //    next row — but row N is the last row outside the scroll region, so
