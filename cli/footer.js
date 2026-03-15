@@ -24,6 +24,12 @@
 const C_DIM   = '\x1b[2m';
 const C_RESET = '\x1b[0m';
 
+/** Strip ANSI escape sequences to measure the true visible character width. */
+function visibleLen(str) {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '').length;
+}
+
 class StickyFooter {
   constructor() {
     this._active            = false;
@@ -31,6 +37,7 @@ class StickyFooter {
     this._origWrite         = null;   // original process.stdout.write (pre-patch)
     this._origPrompt        = null;
     this._origSetPr         = null;
+    this._origRefreshLine   = null;   // original rl._refreshLine
     this._origLog           = null;
     this._origError         = null;
     this._origStderrWrite   = null;
@@ -199,7 +206,49 @@ class StickyFooter {
       self._cursorOnInputRow = true;
     };
 
-    // 8. After user submits input (Enter), move cursor into scroll zone.
+    // 8. Patch rl._refreshLine to prevent long input lines from wrapping.
+    //    When prompt + line exceeds terminal width, readline would wrap to the
+    //    next row — but row N is the last row outside the scroll region, so
+    //    wrapping corrupts the separator and prompt label via terminal auto-wrap.
+    //    Fix: temporarily replace rl.line with a truncated "scrolled" view
+    //    so _refreshLine always renders a single row.  The full content of
+    //    rl.line is preserved for actual submission.
+    const origRefreshLine = rl._refreshLine ? rl._refreshLine.bind(rl) : null;
+    this._origRefreshLine = origRefreshLine;
+    if (origRefreshLine) {
+      rl._refreshLine = function() {
+        if (!self._active) { return origRefreshLine(); }
+
+        const cols        = self._cols;
+        const promptVis   = visibleLen(rl._prompt || '');
+        const maxLineLen  = cols - promptVis - 1;   // chars available for line text
+
+        if (rl.line.length <= maxLineLen) {
+          // Line fits — render normally
+          return origRefreshLine();
+        }
+
+        // Line is too long: show a horizontally-scrolled view.
+        // Keep the characters near the cursor visible; prefix with a dim «.
+        const savedLine   = rl.line;
+        const savedCursor = rl.cursor;
+
+        const viewLen   = Math.max(1, maxLineLen - 1);  // 1 char for « prefix
+        const cursorEnd = savedCursor;
+        const start     = Math.max(0, cursorEnd - viewLen);
+        const truncated = (start > 0 ? '«' : '') + savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
+
+        rl.line   = truncated;
+        rl.cursor = truncated.length;
+        origRefreshLine();
+
+        // Restore actual content (never modified for submission)
+        rl.line   = savedLine;
+        rl.cursor = savedCursor;
+      };
+    }
+
+    // 9. After user submits input (Enter), move cursor into scroll zone.
     //    readline's \r\n is now suppressed (by the stdout patch above) so the
     //    terminal won't scroll outside the scroll region.  We echo the typed
     //    input into the scroll region so it's visible before the response.
@@ -249,8 +298,9 @@ class StickyFooter {
 
     // Restore readline methods
     if (this._rl) {
-      if (this._origPrompt) { this._rl.prompt    = this._origPrompt; this._origPrompt = null; }
-      if (this._origSetPr)  { this._rl.setPrompt = this._origSetPr;  this._origSetPr  = null; }
+      if (this._origPrompt)      { this._rl.prompt        = this._origPrompt;      this._origPrompt      = null; }
+      if (this._origSetPr)       { this._rl.setPrompt     = this._origSetPr;       this._origSetPr       = null; }
+      if (this._origRefreshLine) { this._rl._refreshLine  = this._origRefreshLine; this._origRefreshLine = null; }
     }
 
     // Clear status bar and restore full scroll region
