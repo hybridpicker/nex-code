@@ -1493,7 +1493,7 @@ For each issue, include:
 
     case '/exit':
     case '/quit':
-      console.log(`\n${C.dim}Bye!${C.reset}`);
+      process.stdout.write('\x1b[r\x1b[H\x1b[2J\x1b[3J');
       process.exit(0);
 
     default:
@@ -1680,7 +1680,7 @@ async function startREPL() {
     footer.deactivate();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-    process.stdout.write(`\n${C.dim}Bye!${C.reset}\n`);
+    process.stdout.write('\x1b[r\x1b[H\x1b[2J\x1b[3J');
     process.exit(0);
   }
 
@@ -2076,7 +2076,7 @@ async function startREPL() {
 
   rl.on('close', () => {
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l'); // disable bracketed paste
-    console.log(`\n${C.dim}Bye!${C.reset}`);
+    process.stdout.write('\x1b[r\x1b[H\x1b[2J\x1b[3J');
     process.exit(0);
   });
 }
