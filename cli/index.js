@@ -65,7 +65,7 @@ const SLASH_COMMANDS = [
   { cmd: '/auto', desc: 'Set autonomy level' },
   { cmd: '/commit', desc: 'Smart commit (diff + message)' },
   { cmd: '/diff', desc: 'Show current diff' },
-  { cmd: '/review', desc: 'Code review on current diff or file' },
+  { cmd: '/review [--strict] [file]', desc: 'Deep code review with score table and diff suggestions (--strict: force ≥3 critical findings)' },
   { cmd: '/branch', desc: 'Create feature branch' },
   { cmd: '/mcp', desc: 'MCP servers and tools' },
   { cmd: '/hooks', desc: 'Show configured hooks' },
@@ -1071,10 +1071,52 @@ ${C.cyan}${C.bold}└───────────────────�
     case '/review': {
       const { isGitRepo: isGitRepo2, getDiff: getDiff2 } = require('./git');
       const { processInput: processInputFn } = require('./agent');
-      const fileArg = rest.join(' ').trim();
+      const reviewArgs = rest.join(' ').trim();
+      const strictMode = reviewArgs.includes('--strict');
+      const fileArg = reviewArgs.replace('--strict', '').trim();
+
+      const strictAddendum = strictMode
+        ? `\n\n⚠ STRICT MODE: You MUST identify at least 3 critical weaknesses. If the code appears clean, dig deeper — look for subtle error-swallowing, race conditions, missing validation, or architecture risks. Do not give a passing score without identifying at least 3 critical issues.`
+        : '';
+
+      const reviewInstructions = `## Review Protocol
+
+**Phase 1 — Broad Scan:** Read the target code and identify all issues at a high level.
+
+**Phase 2 — Deep Dive:** Select the 2-3 files or sections you consider most critical (highest risk or complexity). For each, run a targeted grep for specific anti-patterns:
+- Error swallowing: \`catch.*{\\s*}\` or \`catch.*console\`
+- Missing awaits, unhandled promises
+- Hardcoded secrets or credentials
+- Input validation gaps
+Briefly report what each grep found or confirmed.
+
+**Phase 3 — Report:** Present findings in this format:
+
+### Score
+
+| Category | Score | Notes |
+|---|---|---|
+| Security | X/10 | ... |
+| Error Handling | X/10 | ... |
+| Code Quality | X/10 | ... |
+| Correctness | X/10 | ... |
+| **Overall** | **X/10** | ... |
+
+### Findings
+
+For each issue, include:
+- **Severity**: 🔴 Critical / 🟡 Warning / 🔵 Suggestion
+- **Location**: file:line
+- **Issue**: description
+- **Fix**:
+\`\`\`diff
+- old code
++ fixed code
+\`\`\`${strictAddendum}`;
+
       let reviewPrompt;
       if (fileArg) {
-        reviewPrompt = `Do a thorough code review of \`${fileArg}\`. Check for bugs, security issues, code quality, correctness, and suggest concrete improvements. Format findings by severity (critical, warning, suggestion).`;
+        reviewPrompt = `Do a thorough code review of \`${fileArg}\`.\n\n${reviewInstructions}`;
       } else {
         if (!isGitRepo2()) {
           console.log(`${C.red}Not a git repository — try /review <file>${C.reset}`);
@@ -1086,7 +1128,7 @@ ${C.cyan}${C.bold}└───────────────────�
           console.log(`${C.yellow}No changes to review — commit something or specify a file: /review <file>${C.reset}`);
           return true;
         }
-        reviewPrompt = `Review the following code diff for bugs, security issues, code quality, and improvements. Format findings by severity (critical, warning, suggestion):\n\n\`\`\`diff\n${fullDiff.substring(0, 20000)}\n\`\`\``;
+        reviewPrompt = `Review the following code diff.\n\n${reviewInstructions}\n\n\`\`\`diff\n${fullDiff.substring(0, 20000)}\n\`\`\``;
       }
       await processInputFn(reviewPrompt);
       return true;
