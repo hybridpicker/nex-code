@@ -461,5 +461,6 @@ module.exports = {
   setFallbackChain,
   getFallbackChain,
   resolveModelForProvider,
+  MODEL_EQUIVALENTS,
   _reset,
 };
