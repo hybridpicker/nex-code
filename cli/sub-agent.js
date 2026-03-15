@@ -297,37 +297,43 @@ ERROR RECOVERY:
           });
         }
 
-        // File locking for write tools (synchronous — runs before any await)
+        // File locking for write tools (synchronous — runs before any await).
+        // Lock is denied even for same agentId if already held, to prevent
+        // concurrent writes from parallel tool calls within one iteration batch.
+        let lockedFp = null;
         if (WRITE_TOOLS.has(fnName) && args.path) {
           const pathModule = require('path');
           const fp = pathModule.isAbsolute(args.path)
             ? args.path
             : pathModule.resolve(process.cwd(), args.path);
-          if (!acquireLock(fp, agentId)) {
+          if (locksHeld.has(fp) || !acquireLock(fp, agentId)) {
             return Promise.resolve({
               role: 'tool',
-              content: `ERROR: File '${args.path}' is locked by another sub-agent. Try a different approach or skip this file.`,
+              content: `ERROR: File '${args.path}' is locked by another operation. Try a different approach or skip this file.`,
               tool_call_id: callId,
             });
           }
           locksHeld.add(fp);
+          lockedFp = fp;
         }
 
         toolsUsed.push(fnName);
 
         return executeTool(fnName, args, { autoConfirm: true, silent: true })
           .then(toolResult => {
+            // Release lock immediately after write completes — don't hold until
+            // end-of-iteration so other tool calls in subsequent iterations can proceed.
+            if (lockedFp) { releaseLock(lockedFp); locksHeld.delete(lockedFp); }
             const safeResult = String(toolResult ?? '');
             const truncated = safeResult.length > 20000
               ? safeResult.substring(0, 20000) + `\n...(truncated)`
               : safeResult;
             return { role: 'tool', content: truncated, tool_call_id: callId };
           })
-          .catch(err => ({
-            role: 'tool',
-            content: `ERROR: ${err.message}`,
-            tool_call_id: callId,
-          }));
+          .catch(err => {
+            if (lockedFp) { releaseLock(lockedFp); locksHeld.delete(lockedFp); }
+            return { role: 'tool', content: `ERROR: ${err.message}`, tool_call_id: callId };
+          });
       });
 
       const toolMessages = await Promise.all(toolResultPromises);
