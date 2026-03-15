@@ -90,33 +90,35 @@ describe('ui.js', () => {
   describe('formatToolCall()', () => {
     it('formats write_file with path', () => {
       const result = formatToolCall('write_file', { path: 'test.js', content: 'hello' });
-      expect(result).toContain('write_file');
+      // formatToolCall shows human-readable labels, not raw tool names
+      expect(result).toMatch(/[Ww]rite/);
       expect(result).toContain('test.js');
       expect(result).toContain('⏺');
     });
 
     it('formats edit_file with path only', () => {
       const result = formatToolCall('edit_file', { path: 'test.js', old_text: 'a', new_text: 'b' });
-      expect(result).toContain('edit_file');
+      expect(result).toMatch(/[Ee]dit/);
       expect(result).toContain('test.js');
     });
 
     it('formats bash with command preview', () => {
       const result = formatToolCall('bash', { command: 'ls -la' });
-      expect(result).toContain('bash');
+      expect(result).toMatch(/[Rr]un|[Bb]ash|command/i);
       expect(result).toContain('ls -la');
     });
 
     it('formats bash with long command truncated', () => {
       const longCmd = 'a'.repeat(200);
       const result = formatToolCall('bash', { command: longCmd });
-      expect(result).toContain('bash');
+      expect(result).toMatch(/[Rr]un|[Bb]ash|command/i);
       expect(result.length).toBeLessThan(250);
     });
 
-    it('formats unknown tool as JSON', () => {
+    it('formats search_files with pattern', () => {
       const result = formatToolCall('search_files', { path: '.', pattern: 'test' });
-      expect(result).toContain('search_files');
+      // formatToolCall shows human-readable labels (e.g. "Search files") not raw name
+      expect(result).toMatch(/[Ss]earch/);
       expect(result).toContain('test');
     });
 
