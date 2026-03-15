@@ -11,3 +11,4 @@ coverage/
 .nex/push-allowlist
 CLAUDE.md
 .npmrc
+IMPROVEMENT_LOG.md
