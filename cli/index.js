@@ -1501,7 +1501,9 @@ function getPrompt() {
 
   const providerName = getActiveProviderName();
   const model = getActiveModel();
-  parts.push(`${providerName}:${model.id}`);
+  // Show short model label: strip provider prefix for well-known providers
+  const modelLabel = providerName === 'ollama' ? model.id : `${providerName}:${model.id}`;
+  parts.push(modelLabel);
 
   const tag = parts.length > 0 ? `${C.dim}[${parts.join(' · ')}]${C.reset} ` : '';
   return `${tag}${C.bold}${C.cyan}>${C.reset} `;
@@ -1593,15 +1595,8 @@ async function startREPL() {
     process.exit(1);
   }
 
-  banner(`${loadInfo.providerName}:${loadInfo.model.id}`, CWD, { yolo: getAutoConfirm() });
-  
-  // Display version update notification if available
-  if (versionInfo.hasNewVersion) {
-    console.log(`${C.yellow}💡 New version available!${C.reset} Run ${C.cyan}npm update -g nex-code${C.reset} to upgrade from ${C.dim}${versionInfo.currentVersion}${C.reset} to ${C.green}${versionInfo.latestVersion}${C.reset}\n`);
-  }
-  
-  await printContext(CWD);
-
+  // Create readline + activate sticky footer BEFORE banner so all output
+  // (including the banner) flows through wrappedLog and is tracked from row 1.
   const history = loadHistory();
 
   const rl = readline.createInterface({
@@ -1617,6 +1612,18 @@ async function startREPL() {
 
   const footer = new StickyFooter();
   footer.activate(rl);
+
+  const bannerModel = loadInfo.providerName === 'ollama'
+    ? loadInfo.model.id
+    : `${loadInfo.providerName}:${loadInfo.model.id}`;
+  banner(bannerModel, CWD, { yolo: getAutoConfirm() });
+
+  // Display version update notification if available
+  if (versionInfo.hasNewVersion) {
+    console.log(`${C.yellow}💡 New version available!${C.reset} Run ${C.cyan}npm update -g nex-code${C.reset} to upgrade from ${C.dim}${versionInfo.currentVersion}${C.reset} to ${C.green}${versionInfo.latestVersion}${C.reset}\n`);
+  }
+
+  await printContext(CWD);
 
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
@@ -1686,33 +1693,56 @@ async function startREPL() {
   // ─── Bracketed Paste Mode ──────────────────────────────────
   let _pasteActive = false;
   let _pasteLines = [];
-  let _pendingPaste = null;
+  let _pasteCount = 0;
+  let _pastes = {};   // { 1: "full content", 2: "full content", ... }
+  let _hadPaste = false;
 
   /**
-   * Complete a paste: store text, show [Pasted content] indicator, wait for Enter.
+   * Complete a paste: append [Pasted content #N] label to existing rl.line so
+   * the user can freely interleave typed text and pastes.  On Enter the labels
+   * are resolved back to their actual content.
    */
   function _completePaste() {
-    const combined = _pasteLines.join('\n').trim();
+    const combined = _pasteLines.join('\n').replace(/\r/g, '').trim();
     _pasteLines = [];
     _pasteActive = false;
     if (!combined) return true;
 
-    _pendingPaste = combined;
-    const lines = combined.split('\n');
-    const lineCount = lines.length;
+    _pasteCount++;
+    _hadPaste = true;
+    const n = _pasteCount;
+    _pastes[n] = combined;
 
-    // Show paste indicator — user must press Enter to submit
-    const preview = lines[0].length > 80 ? lines[0].substring(0, 77) + '...' : lines[0];
-    const label = lineCount > 1 ? `[Pasted content — ${lineCount} lines]` : '[Pasted content]';
-    console.log(`\n${C.dim}  ${label}${C.reset}`);
-    console.log(`${C.dim}  ⎿  ${preview}${C.reset}`);
-    if (lineCount > 1) {
-      console.log(`${C.dim}  ⎿  … +${lineCount - 1} more lines${C.reset}`);
-    }
-    console.log(`${C.dim}  Press Enter to send${C.reset}`);
+    const thisLines = combined.split('\n').length;
+    const thisLabel = thisLines > 1 ? `[Pasted content #${n} — ${thisLines} lines]` : `[Pasted content #${n}]`;
 
-    // Don't write text into readline — just wait for Enter
+    // Append label to whatever the user has already typed (preserve existing text)
+    const currentLine = rl.line || '';
+    const sep = currentLine && !currentLine.endsWith(' ') ? ' ' : '';
+    const newLine = currentLine + sep + thisLabel;
+
+    rl.setPrompt(getPrompt());
+
+    // Inject into readline buffer without rl.write() (which splits on \n → spurious 'line' events)
+    rl.prompt();
+    rl.line = newLine;
+    rl.cursor = newLine.length;
+    rl._refreshLine();
+
     return true;
+  }
+
+  /** Replace [Pasted content #N ...] markers in a string with their stored content. */
+  function _resolvePastes(text) {
+    return text.replace(/\[Pasted content #(\d+)(?:[^\]]*)\]/g, (_, num) => {
+      return _pastes[Number(num)] || '';
+    });
+  }
+
+  function _resetPasteState() {
+    _pasteCount = 0;
+    _pastes = {};
+    _hadPaste = false;
   }
 
   if (process.stdin.isTTY) {
@@ -1826,22 +1856,22 @@ async function startREPL() {
   rl.on('line', async (line) => {
     _clearSug();
 
+    // Resolve any [Pasted content #N] labels to their actual content
+    if (Object.keys(_pastes).length > 0) {
+      line = _resolvePastes(line);
+      _resetPasteState();
+      rl.setPrompt(getPrompt());
+    }
+
     // Mid-run input: buffer user notes instead of dropping them silently
     if (_processing) {
-      const note = (_pendingPaste !== null ? _pendingPaste : line).trim();
-      _pendingPaste = null;
+      const note = line.trim();
       if (note) {
         const { injectMidRunNote } = require('./agent');
         injectMidRunNote(note);
         process.stdout.write(`${C.cyan}  ✎ Wird im nächsten Schritt berücksichtigt${C.reset}\n`);
       }
       return;
-    }
-
-    // Intercept pasted content (stored by paste handler, submitted with Enter)
-    if (_pendingPaste !== null) {
-      line = _pendingPaste;
-      _pendingPaste = null;
     }
 
     // Multi-line mode handling
@@ -1961,6 +1991,15 @@ async function startREPL() {
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;
+    }
+
+    // If there was paste content, echo the resolved input so the user can see what was sent
+    if (_hadPaste) {
+      const echoLines = input.split('\n');
+      const totalLines = echoLines.length;
+      const firstLine = echoLines[0].length > 120 ? echoLines[0].substring(0, 117) + '…' : echoLines[0];
+      const more = totalLines > 1 ? ` ${C.cyan}[+${totalLines - 1} lines]${C.reset}` : '';
+      console.log(`${C.dim}  ╰ ${firstLine}${more}${C.reset}`);
     }
 
     // Process through agent
