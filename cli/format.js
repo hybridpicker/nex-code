@@ -278,12 +278,29 @@ function formatToolSummary(name, args, result, isError) {
       summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
       break;
     }
-    case 'edit_file':
-      summary = 'Edited successfully';
+    case 'edit_file': {
+      const oldLines = (args.old_text || '').split('\n');
+      const newLines = (args.new_text || '').split('\n');
+      const removed = oldLines.length;
+      const added = newLines.length;
+      const PREVIEW = 3;
+      const showOld = oldLines.slice(0, PREVIEW).filter(l => l.trim());
+      const showNew = newLines.slice(0, PREVIEW).filter(l => l.trim());
+      const diffLines = [];
+      for (const l of showOld) diffLines.push(`${C.red}     - ${l.trimEnd().substring(0, 72)}${C.reset}`);
+      if (oldLines.length > PREVIEW) diffLines.push(`${C.dim}     … ${oldLines.length - PREVIEW} more removed${C.reset}`);
+      for (const l of showNew) diffLines.push(`${C.green}     + ${l.trimEnd().substring(0, 72)}${C.reset}`);
+      if (newLines.length > PREVIEW) diffLines.push(`${C.dim}     … ${newLines.length - PREVIEW} more added${C.reset}`);
+      // Note: outer wrapper adds "  ⎿  " prefix — summary starts after that
+      summary = `${C.reset}${C.red}−${removed}${C.reset}  ${C.green}+${added}${C.reset}` +
+        (diffLines.length > 0 ? '\n' + diffLines.join('\n') : '');
       break;
+    }
     case 'patch_file': {
-      const n = (args.patches || []).length;
-      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}`;
+      const patches = args.patches || [];
+      const totalRemoved = patches.reduce((s, p) => s + (p.old_text || '').split('\n').length, 0);
+      const totalAdded = patches.reduce((s, p) => s + (p.new_text || '').split('\n').length, 0);
+      summary = `${C.reset}${patches.length} patch${patches.length !== 1 ? 'es' : ''}  ${C.red}−${totalRemoved}${C.reset}  ${C.green}+${totalAdded}${C.reset}`;
       break;
     }
     case 'bash': {
