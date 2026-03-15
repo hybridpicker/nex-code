@@ -13,6 +13,7 @@ const { getActiveModel, setActiveModel } = require('./ollama');
 const { printContext } = require('./context');
 const { loadAllSkills, getSkillCommands, handleSkillCommand } = require('./skills');
 const { setReadlineInterface, setAutoConfirm, getAutoConfirm } = require('./safety');
+const { StickyFooter } = require('./footer');
 // Lazy-loaded imports in startREPL or handlers
 
 const CWD = process.cwd();
@@ -1614,6 +1615,9 @@ async function startREPL() {
 
   setReadlineInterface(rl);
 
+  const footer = new StickyFooter();
+  footer.activate(rl);
+
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
   let _sigintCount = 0;
@@ -1624,9 +1628,10 @@ async function startREPL() {
   function gracefulShutdown() {
     // Flush any pending auto-save
     flushAutoSave();
+    footer.deactivate();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write('\x1b[?2004l');
-    console.log(`\n${C.dim}Bye!${C.reset}`);
+    process.stdout.write(`\n${C.dim}Bye!${C.reset}\n`);
     process.exit(0);
   }
 

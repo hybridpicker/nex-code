@@ -73,7 +73,7 @@ ${logo}
 
 // Re-exports from spinner.js and format.js for backward compatibility
 const { Spinner, MultiProgress, TaskProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal } = require('./spinner');
-const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary } = require('./format');
+const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader } = require('./format');
 
 module.exports = {
   C,
@@ -90,4 +90,5 @@ module.exports = {
   formatResult,
   getToolSpinnerText,
   formatToolSummary,
+  formatSectionHeader,
 };
