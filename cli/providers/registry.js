@@ -355,6 +355,9 @@ async function _tryProviders(callFn) {
   if (budgetBlockedCount > 0 && budgetBlockedCount === configuredCount) {
     throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
   }
+  if (configuredCount === 0) {
+    throw new Error('No configured provider available');
+  }
   throw lastError || new Error('No configured provider available');
 }
 
