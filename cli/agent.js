@@ -713,8 +713,8 @@ When performing audits, code reviews, bug hunts, or security reviews:
 
 **1. Context Highlighting — always show WHY you're reading a file:**
   When following a reference found in one file to read another, prefix your explanation with the source:
-  "Found reference in `src/auth.js`, checking `lib/token.js` to verify..."
-  "Imported by `main.js:42`, reading `utils/parse.js` to trace the call..."
+  "Found reference in \`src/auth.js\`, checking \`lib/token.js\` to verify..."
+  "Imported by \`main.js:42\`, reading \`utils/parse.js\` to trace the call..."
   This helps the user follow your investigation chain without seeing raw tool output.
 
 **2. Selective reading — avoid reading large files blindly:**
