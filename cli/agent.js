@@ -1272,6 +1272,10 @@ async function processInput(userInput) {
     }
 
     clearInterval(staleTimer);
+    // Successful API response — reset per-call retry counters so transient
+    // rate-limit or network errors earlier in the session don't eat future retry budget.
+    rateLimitRetries = 0;
+    networkRetries = 0;
 
     if (firstToken) {
       if (taskProgress && !taskProgress._paused) taskProgress.pause();

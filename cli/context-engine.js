@@ -453,13 +453,17 @@ async function fitToContext(messages, tools, options = {}) {
     };
   }
 
-  // Phase 4: Remove oldest messages until we fit
-  while (compressed.length > 0 && tokens + toolTokens > available) {
+  // Phase 4: Remove oldest messages until we fit.
+  // `tokens` tracks message tokens only; `available = targetMax - toolTokens`,
+  // so the correct stop condition is `tokens > available` — not `tokens + toolTokens > available`
+  // (the latter would target targetMax - 2*toolTokens, over-removing by one toolTokens worth).
+  while (compressed.length > 0 && tokens > available) {
     const removed = compressed.shift();
     tokens -= estimateMessageTokens(removed);
   }
 
   result = buildResult(system, compressed, recentMessages);
+  // Re-verify: recentMessages and system are not tracked by the running `tokens` subtraction above.
   tokens = estimateMessagesTokens(result);
 
   return {
@@ -584,7 +588,6 @@ module.exports = {
   estimateDeltaTokens,
   estimateToolsTokens,
   serializeMessage,
-  getMessageCacheKey,
   getContextWindow,
   getUsage,
   compressMessage,
