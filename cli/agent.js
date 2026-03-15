@@ -1118,6 +1118,9 @@ async function processInput(userInput) {
   const filesModified = new Set();
   const filesRead = new Set();
   const startTime = Date.now();
+  const fileEditCounts = new Map(); // loop detection: edits per file
+  const LOOP_WARN_EDITS = 5;  // warn agent after 5 edits to same file
+  const LOOP_ABORT_EDITS = 10; // abort loop after 10 edits to same file
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1515,7 +1518,28 @@ async function processInput(userInput) {
       const res = toolMessages[j].content;
       const isOk = !res.startsWith('ERROR') && !res.includes('CANCELLED');
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
-        if (prep.args && prep.args.path) filesModified.add(prep.args.path);
+        if (prep.args && prep.args.path) {
+          filesModified.add(prep.args.path);
+          const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
+          fileEditCounts.set(prep.args.path, count);
+          const shortPath = prep.args.path.split('/').slice(-2).join('/');
+          if (count === LOOP_WARN_EDITS) {
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
+            const loopWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] You have edited "${prep.args.path}" ${count} times in this session. This may indicate an edit loop. STOP editing this file repeatedly. Re-read it once to verify the current state, then make ONE final targeted edit or declare the task complete.`,
+            };
+            conversationMessages.push(loopWarning);
+            apiMessages.push(loopWarning);
+          } else if (count >= LOOP_ABORT_EDITS) {
+            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+            autoSave(conversationMessages);
+            return;
+          }
+        }
       }
       if (isOk && prep.fnName === 'read_file') {
         if (prep.args && prep.args.path) filesRead.add(prep.args.path);
