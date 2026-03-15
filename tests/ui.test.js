@@ -300,9 +300,10 @@ describe('ui.js', () => {
     });
 
     // edit_file
-    it('shows edited for edit_file', () => {
-      const result = formatToolSummary('edit_file', { path: 'src/x.js' }, 'ok', false);
-      expect(result).toMatch(/edited/i);
+    it('shows diff summary for edit_file', () => {
+      const result = formatToolSummary('edit_file', { path: 'src/x.js', old_text: 'foo', new_text: 'bar' }, 'ok', false);
+      expect(result).toContain('−1');
+      expect(result).toContain('+1');
     });
 
     // patch_file
