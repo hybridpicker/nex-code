@@ -1061,12 +1061,20 @@ async function _executeToolInner(name, args, options = {}) {
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }
 
+      // Resolve a safe working directory: if the current directory was deleted during the session,
+      // exec() would fail with a confusing "spawn /bin/sh ENOENT" error. Fall back to $HOME.
+      let safeCwd = process.cwd();
+      try { fsSync.accessSync(safeCwd); } catch {
+        safeCwd = require('os').homedir();
+        if (!options.silent) console.log(`${C.yellow}  ⚠ Working directory no longer exists — running in ${safeCwd}${C.reset}`);
+      }
+
       // Interactive commands (vim, top, etc.) need a real TTY — spawn with stdio:inherit.
       // SSH with a remote command (e.g. ssh host "cmd") is non-interactive: capture output normally.
       const isSSHLogin = SSH_INTERACTIVE_RE.test(cmd.trim()) && !SSH_HAS_REMOTE_CMD_RE.test(cmd.trim());
       if (INTERACTIVE_CMDS.test(cmd.trim()) || isSSHLogin) {
         if (!options.silent) console.log(`${C.dim}  ▶ interactive: ${cmd}${C.reset}`);
-        const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', cwd: process.cwd() });
+        const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit', cwd: safeCwd });
         if (result.error) return `ERROR: ${result.error.message}`;
         return result.status === 0
           ? `(interactive command completed successfully)`
@@ -1077,7 +1085,7 @@ async function _executeToolInner(name, args, options = {}) {
       if (bashSpinner) bashSpinner.start();
       try {
         const { stdout, stderr } = await exec(cmd, {
-          cwd: process.cwd(),
+          cwd: safeCwd,
           timeout: 90000,
           maxBuffer: 5 * 1024 * 1024,
         });
