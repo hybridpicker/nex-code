@@ -210,10 +210,81 @@ function isCritical(command) {
  * @param {{ toolName?: string }} [opts]
  * @returns {Promise<boolean>}
  *
- * Accepts: y / Enter (default yes) / a (always allow tool) / n
+ * Interactive cursor menu (arrow keys + Enter). Shortcuts y/n/a still work.
+ * Falls back to readline text input when stdin/stdout is not a TTY (tests, pipes).
  */
 function confirm(question, opts = {}) {
   if (autoConfirm) return Promise.resolve(true);
+
+  // Non-TTY fallback (piped input, test environment)
+  if (!process.stdout.isTTY || !process.stdin.isTTY) {
+    return _confirmText(question, opts);
+  }
+
+  const options = opts.toolName
+    ? ['Yes', 'No', 'Always allow']
+    : ['Yes', 'No'];
+
+  return new Promise((resolve) => {
+    let selected = 0;
+    let drawn = false;
+
+    if (_rl) _rl.pause();
+
+    const render = () => {
+      if (drawn) process.stdout.write(`\x1b[${options.length + 1}A`);
+      drawn = true;
+      process.stdout.write(`\r\x1b[K${C.yellow}${question}${C.reset}\n`);
+      for (let i = 0; i < options.length; i++) {
+        const sel = i === selected;
+        const cursor = sel ? `${C.yellow}❯${C.reset}` : ' ';
+        const label = sel ? `${C.yellow}${options[i]}${C.reset}` : options[i];
+        process.stdout.write(`\r\x1b[K  ${cursor} ${label}\n`);
+      }
+    };
+
+    const cleanup = (result) => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener('data', onKey);
+      // Erase menu lines
+      process.stdout.write(`\x1b[${options.length + 1}A`);
+      for (let i = 0; i < options.length + 1; i++) {
+        process.stdout.write(`\r\x1b[K\n`);
+      }
+      process.stdout.write(`\x1b[${options.length + 1}A`);
+      if (_rl) _rl.resume();
+      resolve(result);
+    };
+
+    const choose = (idx) => {
+      if (idx === 1) { cleanup(false); return; }
+      if (idx === 2 && opts.toolName) _onAllowAlways(opts.toolName);
+      cleanup(true);
+    };
+
+    const onKey = (key) => {
+      if (key[0] === 0x03) { cleanup(false); return; } // Ctrl+C → No
+      const str = key.toString();
+      if (str === '\r' || str === '\n') { choose(selected); return; }
+      if (str === '\x1b[A') { selected = (selected - 1 + options.length) % options.length; render(); return; } // ↑
+      if (str === '\x1b[B') { selected = (selected + 1) % options.length; render(); return; } // ↓
+      // Keyboard shortcuts
+      const a = str.toLowerCase().trim();
+      if (a === 'y') { cleanup(true); return; }
+      if (a === 'n') { cleanup(false); return; }
+      if (a === 'a' && opts.toolName) { _onAllowAlways(opts.toolName); cleanup(true); return; }
+    };
+
+    render();
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', onKey);
+  });
+}
+
+/** Text-input fallback for non-TTY environments */
+function _confirmText(question, opts) {
   const hint = opts.toolName ? '[Y/n/a] ' : '[Y/n] ';
   return new Promise((resolve) => {
     const handler = (answer) => {
