@@ -25,6 +25,12 @@ All tool implementations that execute external commands use `execFileSync` with 
 ### MCP Environment Isolation
 MCP server subprocesses receive only a safe allowlist of environment variables (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `TERM`, `NODE_ENV`). API keys and secrets from `process.env` are never leaked to MCP servers.
 
+### Tool Result Secret Scrubbing
+Tool results (e.g., `read_file`, `bash`) are automatically scanned for common secret patterns before being inserted into the conversation context. Matches against well-known prefixes (`API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL` — 14 provider prefixes including AWS, GCP, GitHub, Stripe, etc.) are redacted as `VARNAME=***REDACTED***`. This prevents secrets accidentally read from files from persisting in LLM context across turns.
+
+### Dependency Vulnerability Scanning
+`npm audit --audit-level=high` runs in CI on every push and pull request. High and critical CVEs in transitive dependencies block the build.
+
 ## Known Limitations
 
 - **LLM-generated commands**: The `bash` tool executes shell commands suggested by the LLM. While safety patterns block many dangerous commands, the pattern list is not exhaustive. Always review commands before confirming execution.
