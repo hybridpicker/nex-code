@@ -26,9 +26,8 @@ const stringTokenCache = new Map();
 const MAX_STRING_CACHE_SIZE = 1000;
 
 // Message serialization cache (for API calls)
+// WeakMap keyed by object identity: collision-free and GC-safe.
 const messageSerializationCache = new WeakMap();
-const messageStringCache = new Map();
-const MAX_MESSAGE_CACHE_SIZE = 500;
 
 // Cached token ratio — invalidated on model change via invalidateTokenRatioCache()
 let _cachedTokenRatio = null;
@@ -85,48 +84,16 @@ function estimateTokens(text) {
 
 /**
  * Serialize a message for API calls (with caching).
- * Avoids redundant JSON.stringify calls for unchanged messages.
- * 
+ * Uses WeakMap keyed by object identity — collision-free and GC-safe.
+ *
  * @param {object} msg - Message object
  * @returns {string} Serialized message
  */
 function serializeMessage(msg) {
-  // Check WeakMap cache first (for object references)
-  if (messageSerializationCache.has(msg)) {
-    return messageSerializationCache.get(msg);
-  }
-  
-  // Check string cache (for content equality)
-  const cacheKey = getMessageCacheKey(msg);
-  if (messageStringCache.has(cacheKey)) {
-    const cached = messageStringCache.get(cacheKey);
-    messageSerializationCache.set(msg, cached);
-    return cached;
-  }
-  
-  // Serialize
+  if (messageSerializationCache.has(msg)) return messageSerializationCache.get(msg);
   const serialized = JSON.stringify(msg);
-  
-  // Cache — trim to half when full
-  if (messageStringCache.size >= MAX_MESSAGE_CACHE_SIZE) {
-    const trimCount = MAX_MESSAGE_CACHE_SIZE >> 1;
-    const keys = messageStringCache.keys();
-    for (let i = 0; i < trimCount; i++) messageStringCache.delete(keys.next().value);
-  }
-  messageStringCache.set(cacheKey, serialized);
   messageSerializationCache.set(msg, serialized);
-  
   return serialized;
-}
-
-/**
- * Generate a cache key for a message (shallow hash).
- */
-function getMessageCacheKey(msg) {
-  const role = msg.role || '';
-  const content = typeof msg.content === 'string' ? msg.content.substring(0, 100) : '';
-  const toolCalls = msg.tool_calls ? msg.tool_calls.length : 0;
-  return `${role}:${content.length}:${toolCalls}`;
 }
 
 /**
@@ -312,9 +279,10 @@ function compressToolResult(content, maxChars) {
   let tailLen = 0;
   const tailBudget = Math.floor(budget * 0.4);
   for (let i = lines.length - 1; i >= lines.length - tailCount && tailLen < tailBudget; i--) {
-    tailLines.unshift(lines[i]);
+    tailLines.push(lines[i]); // push is O(1); unshift was O(k) per call → O(n²) total
     tailLen += lines[i].length + 1;
   }
+  tailLines.reverse(); // single O(k) pass to restore order
 
   const omitted = lines.length - headLines.length - tailLines.length;
   return headLines.join('\n') + `\n...(${omitted} lines omitted, ${lines.length} total)...\n` + tailLines.join('\n');
