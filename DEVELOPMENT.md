@@ -101,3 +101,33 @@ Without this reset, transient errors early in a session would eat into the retry
 In Phase 4 (message removal), `tokens` tracks message-only token counts.
 `available = targetMax - toolTokens`, so the correct loop condition is `tokens > available`
 (not `tokens + toolTokens > available`, which would over-remove messages by targeting `targetMax - 2*toolTokens`).
+
+### Auto-Extension Loop (`cli/agent.js` — `processInput`)
+
+`continue outer` resets `i = 0`. Therefore `iterLimit` must be set to **exactly 20** (not `+= 20`)
+when auto-extending. Using `iterLimit += 20` causes the next pass to run `iterLimit` iterations
+from scratch (70, then 90, then 110…), producing up to 1 650 total iterations instead of the
+intended 250 (50 initial + 10 × 20). Fixed in v0.3.26.
+
+### Nudge Message Sync (`cli/agent.js` — `processInput`)
+
+When the LLM returns an empty assistant message after using tools, a nudge is pushed into
+`apiMessages` to prompt a summary. This nudge **must also be appended to `conversationMessages`**
+to keep the two arrays in sync. Without this, subsequent turns have two consecutive assistant
+messages in `conversationMessages`, violating the strict user/assistant alternation required by
+Anthropic's API (→ 400 Bad Request) and causing context confusion on other providers.
+
+### `serializeMessage` Hash Collision (`cli/context-engine.js`)
+
+The old two-cache implementation keyed messages by `role:content.length:tool_calls.length`.
+Any two messages with the same role, same content length, and same number of tool calls would
+collide — returning the serialized form of the first message for all subsequent ones, silently
+corrupting API payloads. Replaced with a single WeakMap keyed by object identity, which is
+collision-free by definition and GC-safe (entries are freed when the message object is released
+from the conversation array).
+
+### O(n²) `unshift` in `compressToolResult` (`cli/context-engine.js`)
+
+Building the tail-window of a large log by calling `Array.unshift` in a loop is O(k) per call
+and O(k²) overall. On a 100 k-line log this caused a UI freeze. Fixed by using `push` (O(1))
+followed by a single `reverse()` call (O(k)).
