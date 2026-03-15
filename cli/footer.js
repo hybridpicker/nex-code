@@ -136,9 +136,21 @@ class StickyFooter {
           if (!stripped) return true;
           return rawWrite(stripped, ...rest);
         }
-        const nl = (data.match(/\n/g) || []).length;
-        if (nl > 0) {
-          self._lastOutputRow = Math.min(self._lastOutputRow + nl, self._scrollEnd);
+        // Count explicit newlines AND soft-wrap rows caused by long lines.
+        // Without soft-wrap counting, _lastOutputRow drifts low and subsequent
+        // writes overwrite previous lines instead of advancing past them.
+        const cols = self._cols || 80;
+        let extraRows = 0;
+        // Split on \n to examine each logical line for soft-wrap
+        const parts = data.split('\n');
+        for (let p = 0; p < parts.length; p++) {
+          const visLen = visibleLen(parts[p]);
+          if (visLen > 0) extraRows += Math.floor(visLen / cols);
+        }
+        const nl = parts.length - 1; // number of \n chars
+        const rowAdvance = nl + extraRows;
+        if (rowAdvance > 0) {
+          self._lastOutputRow = Math.min(self._lastOutputRow + rowAdvance, self._scrollEnd);
         }
       }
       return rawWrite(data, ...rest);
