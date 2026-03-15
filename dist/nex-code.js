@@ -373,8 +373,7 @@ This is a hard requirement. Do NOT fall back to English or any other language fo
 
 WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
-${r?`
-${r}`:""}PROJECT CONTEXT:
+PROJECT CONTEXT:
 ${e}
 ${s?`
 ${s}
@@ -383,7 +382,8 @@ ${n}
 `:""}${o?`
 ${o}
 `:""}
-# Core Behavior
+${r?`${r}
+`:""}# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
