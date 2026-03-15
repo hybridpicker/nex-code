@@ -2035,13 +2035,18 @@ async function startREPL() {
       return;
     }
 
-    // If there was paste content, echo the resolved input so the user can see what was sent
-    if (_hadPaste) {
+    // Always echo the full resolved prompt with subtle background highlight
+    {
+      const BG = '\x1b[48;5;237m'; // subtle dark-gray background
+      const cols = (process.stdout.columns || 80);
       const echoLines = input.split('\n');
-      const totalLines = echoLines.length;
-      const firstLine = echoLines[0].length > 120 ? echoLines[0].substring(0, 117) + '…' : echoLines[0];
-      const more = totalLines > 1 ? ` ${C.cyan}[+${totalLines - 1} lines]${C.reset}` : '';
-      console.log(`${C.dim}  ╰ ${firstLine}${more}${C.reset}`);
+      echoLines.forEach((l, i) => {
+        // \x1b[22;39m resets bold+fg only — keeps background active
+        const marker = i === 0 ? `\x1b[1;36m›\x1b[22;39m` : ' ';
+        const visibleLen = 2 + l.length; // '› ' or '  ' prefix
+        const pad = ' '.repeat(Math.max(0, cols - visibleLen));
+        console.log(`${BG}${marker} ${l}${pad}\x1b[0m`);
+      });
     }
 
     // Process through agent
