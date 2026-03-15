@@ -1490,7 +1490,8 @@ describe('index.js (REPL commands)', () => {
 
       const { getPrompt } = require('../cli/index');
       const prompt = getPrompt();
-      expect(prompt).toContain('ollama');
+      // ollama: prefix is intentionally stripped for ollama provider (cleaner display)
+      expect(prompt).not.toContain('ollama:');
       expect(prompt).toContain('kimi-k2.5');
       expect(prompt).toContain('>');
     });
