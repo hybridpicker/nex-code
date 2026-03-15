@@ -3,7 +3,7 @@
  * Hybrid: chat + tool-use in a single conversation.
  */
 
-const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, setActiveTaskProgress } = require('./ui');
+const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, formatSectionHeader, setActiveTaskProgress } = require('./ui');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { executeTool } = require('./tools');
@@ -922,9 +922,9 @@ async function processInput(userInput) {
 
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
-    function printStepIfNeeded() {
+    function printStepIfNeeded(prepared) {
       if (!stepPrinted) {
-        console.log(`${C.cyan}  ◆ Step ${totalSteps}${C.reset}`);
+        console.log(formatSectionHeader(prepared, totalSteps));
         stepPrinted = true;
       }
     }
@@ -1252,7 +1252,7 @@ async function processInput(userInput) {
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
-    if (!batchOpts.skipSummaries) printStepIfNeeded();
+    if (!batchOpts.skipSummaries) printStepIfNeeded(prepared);
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const toolMessages = await executeBatch(prepared, true, batchOpts);

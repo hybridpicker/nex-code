@@ -22,6 +22,129 @@ const C = {
   brightBlue: '\x1b[94m',
 };
 
+// Human-readable labels for tool names
+const TOOL_LABELS = {
+  read_file:          'Read file',
+  write_file:         'Write file',
+  edit_file:          'Edit file',
+  patch_file:         'Patch file',
+  list_directory:     'List directory',
+  bash:               'Run command',
+  grep:               'Search code',
+  search_files:       'Search files',
+  glob:               'Find files',
+  web_fetch:          'Fetch URL',
+  web_search:         'Web search',
+  git_status:         'Git status',
+  git_diff:           'Git diff',
+  git_log:            'Git log',
+  git_commit:         'Git commit',
+  git_push:           'Git push',
+  git_pull:           'Git pull',
+  git_branch:         'Git branch',
+  git_stash:          'Git stash',
+  task_list:          'Task list',
+  spawn_agents:       'Spawn agents',
+  ask_user:           'Ask user',
+  switch_model:       'Switch model',
+  gh_run_list:        'GH Actions',
+  gh_run_view:        'GH Actions',
+  gh_workflow_trigger:'GH trigger',
+  browser_open:       'Browser open',
+  browser_screenshot: 'Screenshot',
+  browser_click:      'Browser click',
+  browser_fill:       'Browser fill',
+  ssh_exec:           'SSH exec',
+  ssh_upload:         'SSH upload',
+  ssh_download:       'SSH download',
+  service_manage:     'Service',
+  service_logs:       'Service logs',
+  container_list:     'Containers',
+  container_logs:     'Container logs',
+  container_exec:     'Container exec',
+  brain_write:        'Brain write',
+  deploy:             'Deploy',
+};
+
+// Section descriptions used in step headers (grouped action phrases)
+const STEP_DESCRIPTIONS = {
+  read_file:          'Reading file',
+  write_file:         'Writing file',
+  edit_file:          'Editing file',
+  patch_file:         'Patching file',
+  list_directory:     'Listing directory',
+  bash:               'Running command',
+  grep:               'Searching code',
+  search_files:       'Searching files',
+  glob:               'Finding files',
+  web_fetch:          'Fetching content',
+  web_search:         'Searching the web',
+  git_status:         'Checking repository',
+  git_diff:           'Analyzing changes',
+  git_log:            'Reading git history',
+  git_commit:         'Creating commit',
+  git_push:           'Pushing changes',
+  git_pull:           'Pulling changes',
+  git_branch:         'Managing branches',
+  git_stash:          'Stashing changes',
+  task_list:          'Managing tasks',
+  spawn_agents:       'Delegating to agents',
+  ask_user:           'Awaiting input',
+  switch_model:       'Switching model',
+  gh_run_list:        'GitHub Actions',
+  gh_run_view:        'GitHub Actions',
+  gh_workflow_trigger:'Triggering workflow',
+  browser_open:       'Opening browser',
+  browser_screenshot: 'Taking screenshot',
+  browser_click:      'Clicking element',
+  browser_fill:       'Filling form',
+  ssh_exec:           'Running on server',
+  ssh_upload:         'Uploading to server',
+  ssh_download:       'Downloading from server',
+  service_manage:     'Managing service',
+  service_logs:       'Reading service logs',
+  container_list:     'Listing containers',
+  container_logs:     'Reading container logs',
+  container_exec:     'Running in container',
+  brain_write:        'Saving to memory',
+  deploy:             'Deploying',
+};
+
+/**
+ * Build a meaningful section header from a list of prepared tool calls.
+ * Falls back to "Step N" if no tools or no mapping found.
+ */
+function formatSectionHeader(prepared, stepNum) {
+  const tools = (prepared || []).filter(p => p && p.canExecute !== false);
+
+  if (tools.length === 0) {
+    return `${C.cyan}  ◆ Step ${stepNum}${C.reset}`;
+  }
+
+  // Collect unique action descriptions
+  const descs = [...new Set(tools.map(t => STEP_DESCRIPTIONS[t.fnName] || t.fnName))];
+
+  let title;
+  if (descs.length === 1 && tools.length === 1) {
+    // Single tool — add a short context hint from args
+    title = descs[0];
+    const t = tools[0];
+    const a = t.args || {};
+    if (a.path)    title += `  ${C.dim}${a.path.split('/').pop()}${C.cyan}`;
+    else if (a.command)  title += `  ${C.dim}${String(a.command).substring(0, 40)}${C.cyan}`;
+    else if (a.query)    title += `  ${C.dim}${String(a.query).substring(0, 40)}${C.cyan}`;
+    else if (a.pattern)  title += `  ${C.dim}${String(a.pattern).substring(0, 40)}${C.cyan}`;
+  } else if (descs.length === 1) {
+    title = `${descs[0]} (${tools.length})`;
+  } else if (descs.length <= 3) {
+    title = descs.join(' · ');
+  } else {
+    title = `${tools.length} actions`;
+  }
+
+  return `${C.cyan}  ◆ ${title}${C.reset}`;
+}
+
 function formatToolCall(name, args) {
   let primary;
   switch (name) {
@@ -49,8 +172,9 @@ function formatToolCall(name, args) {
     default:
       primary = JSON.stringify(args).substring(0, 80);
   }
-  const argStr = primary ? `${C.dim}(${primary})${C.reset}` : '';
-  return `${C.cyan}⏺${C.reset} ${C.bold}${name}${C.reset}${argStr}`;
+  const label = TOOL_LABELS[name] || name.replace(/_/g, ' ');
+  const argStr = primary ? `  ${C.dim}${primary}${C.reset}` : '';
+  return `${C.cyan}  ⏺${C.reset} ${C.bold}${label}${C.reset}${argStr}`;
 }
 
 function formatResult(text, maxLines = 8) {
@@ -257,4 +381,4 @@ function formatToolSummary(name, args, result, isError) {
   return `  ${C.dim}⎿  ${summary}${C.reset}`;
 }
 
-module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary };
+module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader };
