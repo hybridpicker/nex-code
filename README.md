@@ -349,7 +349,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/undo` | Undo last file change |
 | `/redo` | Redo last undone change |
 | `/history` | Show file change history |
-| `/review [file]` | Code review on current diff or a specific file |
+| `/review [--strict] [file]` | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
 | `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
 | `/exit` | Quit |
 
