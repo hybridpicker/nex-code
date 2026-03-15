@@ -249,8 +249,9 @@ const SEQUENTIAL_ONLY = new Set(['spawn_agents']);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
-const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || '60000', 10);   // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
+const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || '60000', 10);    // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
 const STALE_ABORT_MS = parseInt(process.env.NEX_STALE_ABORT_MS || '120000', 10); // Abort after 120s without tokens (ENV: NEX_STALE_ABORT_MS)
+const STALE_AUTO_SWITCH = process.env.NEX_STALE_AUTO_SWITCH !== '0';             // Auto-switch to fast model on 2nd stale retry (disable: NEX_STALE_AUTO_SWITCH=0)
 // Use process.cwd() dynamically
 
 /**
@@ -1269,6 +1270,15 @@ async function processInput(userInput) {
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
           apiMessages = compressedMsgs;
           console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          // Auto-switch to fast model after repeated stale timeouts
+          if (STALE_AUTO_SWITCH) {
+            const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+            if (fastModel && fastModel !== getActiveModelId()) {
+              setActiveModel(`${getActiveProviderName()}:${fastModel}`);
+              console.log(`${C.cyan}  ⚡ Auto-switched to ${fastModel} to avoid further stale timeouts${C.reset}`);
+              console.log(`${C.dim}  (disable with NEX_STALE_AUTO_SWITCH=0)${C.reset}`);
+            }
+          }
         } else {
           console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`);
         }
