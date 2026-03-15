@@ -85,6 +85,10 @@ function estimateTokens(text) {
 /**
  * Serialize a message for API calls (with caching).
  * Uses WeakMap keyed by object identity — collision-free and GC-safe.
+ * The old two-cache scheme (WeakMap + string Map with a length-based key) had
+ * hash collisions: any two messages with the same role, same content.length,
+ * and same tool_calls.length got the same cache key and received each other's
+ * serialized output, corrupting API payloads.
  *
  * @param {object} msg - Message object
  * @returns {string} Serialized message
