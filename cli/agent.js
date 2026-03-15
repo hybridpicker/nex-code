@@ -664,10 +664,10 @@ async function buildSystemPrompt() {
 
 WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
-${languagePrompt ? `\n${languagePrompt}` : ''}PROJECT CONTEXT:
+PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-# Core Behavior
+${languagePrompt ? `${languagePrompt}\n` : ''}# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
