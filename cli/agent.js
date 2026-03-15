@@ -1459,12 +1459,8 @@ async function processInput(userInput) {
     if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
       // Free provider — auto-extend silently.
       // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
-<<<<<<< HEAD
-      // so the next pass runs exactly 20 more iterations (not the full cumulative sum).
-=======
       // so the next pass runs exactly 20 more iterations, not the full cumulative sum
       // (which would give 70+90+...+250 = 1650 total instead of the intended 250).
->>>>>>> 12b076d (fix(agent): iterLimit = 20 not += 20 when auto-extending (continue outer resets i to 0))
       autoExtensions++;
       iterLimit = 20;
       console.log(`${C.dim}  ── auto-extending (+20 turns, ext ${autoExtensions}/${MAX_AUTO_EXTENSIONS}) ──${C.reset}`);
