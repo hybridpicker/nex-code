@@ -171,18 +171,18 @@ describe('git.js', () => {
       expect(await git.getMergeConflicts()).toEqual([]);
     });
 
-    it('detects merge conflicts (UU)', async () => {
-      // Create a conflict: modify same file on two branches
-      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'line1\n', 'utf-8');
-      execSync('git add conflict.txt && git commit -m "add conflict.txt"', { cwd: tmpDir });
+     it('detects merge conflicts (UU)', async () => {
+       // Create a conflict: modify same file on two branches
+       fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'line1\n', 'utf-8');
+       execSync('git add conflict.txt && git commit -m "add conflict.txt"', { cwd: tmpDir });
 
-      execSync('git checkout -b feature', { cwd: tmpDir });
-      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'feature-change\n', 'utf-8');
-      execSync('git add conflict.txt && git commit -m "feature change"', { cwd: tmpDir });
+       execSync('git checkout -b feature', { cwd: tmpDir });
+       fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'feature-change\n', 'utf-8');
+       execSync('git add conflict.txt && git commit -m "feature change"', { cwd: tmpDir });
 
-      execSync('git checkout master', { cwd: tmpDir });
-      fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'master-change\n', 'utf-8');
-      execSync('git add conflict.txt && git commit -m "master change"', { cwd: tmpDir });
+       execSync('git checkout main', { cwd: tmpDir });
+       fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'main-change\n', 'utf-8');
+       execSync('git add conflict.txt && git commit -m "main change"', { cwd: tmpDir });
 
       // Merge will fail with conflict
       try { execSync('git merge feature', { cwd: tmpDir, stdio: 'pipe' }); } catch { }

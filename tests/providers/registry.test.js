@@ -8,6 +8,8 @@ describe('providers/registry.js', () => {
     process.env.OLLAMA_API_KEY = 'test-key';
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
     delete process.env.DEFAULT_PROVIDER;
     delete process.env.DEFAULT_MODEL;
   });
@@ -16,6 +18,8 @@ describe('providers/registry.js', () => {
     delete process.env.OLLAMA_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
     delete process.env.DEFAULT_PROVIDER;
     delete process.env.DEFAULT_MODEL;
   });
