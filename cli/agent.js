@@ -21,7 +21,7 @@ const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = requir
 const { trackUsage } = require('./costs');
 const { validateToolArgs } = require('./tool-validator');
 const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
-const { getConfiguredProviders, getActiveProviderName, getActiveModelId } = require('./providers/registry');
+const { getConfiguredProviders, getActiveProviderName, getActiveModelId, setActiveModel, MODEL_EQUIVALENTS } = require('./providers/registry');
 const fsSync = require('fs');
 const path = require('path');
 
@@ -954,6 +954,56 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
 }
 
 /**
+ * Interactive recovery prompt shown when stale-stream retries are exhausted.
+ * Offers: retry / switch to fast model / switch to reliable model / quit.
+ * Returns { action: 'retry' | 'switch' | 'quit', model?: string, provider?: string }
+ */
+async function _staleRecoveryPrompt() {
+  if (!process.stdout.isTTY) return { action: 'quit' };
+
+  const providerName = getActiveProviderName();
+  const currentModelId = getActiveModelId();
+  const fastModel = MODEL_EQUIVALENTS.fast?.[providerName];
+  const reliableModel = MODEL_EQUIVALENTS.strong?.[providerName];
+
+  const hasFastAlt = fastModel && fastModel !== currentModelId;
+  const hasReliableAlt = reliableModel && reliableModel !== currentModelId && reliableModel !== fastModel;
+
+  const options = [];
+  options.push({ key: 'r', label: `Retry with current model ${C.dim}(${currentModelId})${C.reset}` });
+  if (hasFastAlt) {
+    options.push({ key: 'f', label: `Switch to ${C.bold}${fastModel}${C.reset} ${C.dim}— fast, low latency${C.reset}`, model: fastModel });
+  }
+  if (hasReliableAlt) {
+    options.push({ key: 's', label: `Switch to ${C.bold}${reliableModel}${C.reset} ${C.dim}— reliable tool-calling, medium speed${C.reset}`, model: reliableModel });
+  }
+  options.push({ key: 'q', label: `${C.dim}Quit${C.reset}` });
+
+  console.log();
+  console.log(`${C.yellow}  Stream stale — all retries exhausted.${C.reset} What would you like to do?`);
+  for (const opt of options) {
+    console.log(`  ${C.cyan}[${opt.key}]${C.reset} ${opt.label}`);
+  }
+
+  return new Promise((resolve) => {
+    const readline = require('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`  ${C.yellow}> ${C.reset}`, (answer) => {
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      const match = options.find(o => o.key === a);
+      if (!match || match.key === 'q' || (!match.model && match.key !== 'r')) {
+        resolve({ action: 'quit' });
+      } else if (match.key === 'r') {
+        resolve({ action: 'retry' });
+      } else {
+        resolve({ action: 'switch', model: match.model, provider: providerName });
+      }
+    });
+  });
+}
+
+/**
  * Process a single user input through the agentic loop.
  * Maintains conversation state across calls.
  */
@@ -1090,7 +1140,9 @@ async function processInput(userInput) {
       } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
         staleWarned = true;
         stream._clearCursorLine();
+        const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
         console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
+        if (fastModel) console.log(`${C.dim}  💡 Ctrl+C → /model ${fastModel} to switch to a faster model${C.reset}`);
       }
     }, 5000);
     
@@ -1171,12 +1223,23 @@ async function processInput(userInput) {
             i--;
             continue;
           }
-          console.log(`${C.red}  ✗ Stream stale: max retries (${MAX_STALE_RETRIES}) exceeded. The model may be overloaded — try again or switch models.${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          autoSave(conversationMessages);
-          break;
+          const recovery = await _staleRecoveryPrompt();
+          if (recovery.action === 'quit') {
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+            autoSave(conversationMessages);
+            break;
+          }
+          if (recovery.action === 'switch') {
+            setActiveModel(`${recovery.provider}:${recovery.model}`);
+            console.log(`${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`);
+          }
+          // 'retry' or 'switch': reset counters and retry
+          staleRetries = 0;
+          contextRetries = 0;
+          i--;
+          continue;
         }
         // Progressive delay + optional compress on 2nd retry
         const delay = staleRetries === 1 ? 3000 : 5000;
