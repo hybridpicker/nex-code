@@ -707,6 +707,31 @@ Response patterns by request type:
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
 
+# Audit & Code Review Output
+
+When performing audits, code reviews, bug hunts, or security reviews:
+
+**1. Context Highlighting — always show WHY you're reading a file:**
+  When following a reference found in one file to read another, prefix your explanation with the source:
+  "Found reference in `src/auth.js`, checking `lib/token.js` to verify..."
+  "Imported by `main.js:42`, reading `utils/parse.js` to trace the call..."
+  This helps the user follow your investigation chain without seeing raw tool output.
+
+**2. Selective reading — avoid reading large files blindly:**
+  For files over 300 lines where relevance is uncertain, read a small range first (lines 1–80) to assess content and structure before committing to a full read. State your intent: "Large file (X lines) — scanning top to assess relevance..."
+
+**3. Audit summary table — end every audit with a findings table:**
+  After completing an audit, code review, or bug hunt, ALWAYS append a Markdown table summarizing results:
+  | # | Finding | File | Severity | Recommended Fix |
+  |---|---------|------|----------|-----------------|
+  Severity levels: Critical / High / Medium / Low / Info.
+  If nothing was found, write a brief "✓ No issues found" table with the areas checked.
+
+**4. Actionable next steps — offer to apply fixes:**
+  After the findings table, list numbered fixes and ask explicitly:
+  "Shall I apply **Fix #1** (race condition in auth.js)? Type 'yes' or 'fix 1'."
+  If multiple fixes exist, list them all and let the user choose which to apply first.
+
 # Response Content Guidelines
 
 - **Avoid opinionated additions**: Only include what was explicitly requested. Do not add:
@@ -920,6 +945,9 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
     console.log(`${C.dim}  💡 /diff · /commit · /undo${C.reset}`);
+  } else if (filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
+    // Audit / read-heavy session — prompt for applying fixes
+    console.log(`${C.dim}  💡 Found issues? Say "fix 1" or "apply all fixes"${C.reset}`);
   } else if (filesRead.size > 0 && totalSteps >= 2) {
     console.log(`${C.dim}  💡 /save · /clear${C.reset}`);
   }
@@ -1431,7 +1459,12 @@ async function processInput(userInput) {
     if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
       // Free provider — auto-extend silently.
       // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
+<<<<<<< HEAD
       // so the next pass runs exactly 20 more iterations (not the full cumulative sum).
+=======
+      // so the next pass runs exactly 20 more iterations, not the full cumulative sum
+      // (which would give 70+90+...+250 = 1650 total instead of the intended 250).
+>>>>>>> 12b076d (fix(agent): iterLimit = 20 not += 20 when auto-extending (continue outer resets i to 0))
       autoExtensions++;
       iterLimit = 20;
       console.log(`${C.dim}  ── auto-extending (+20 turns, ext ${autoExtensions}/${MAX_AUTO_EXTENSIONS}) ──${C.reset}`);
