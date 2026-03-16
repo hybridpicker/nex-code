@@ -371,10 +371,15 @@ class StreamRenderer {
   }
 
   _renderCursor() {
-    // Same braille spinner as Thinking... — seamless continuation on stderr
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    const f = frames[this._cursorFrame % frames.length];
-    this._cursorWrite(`\x1b[2K\r\x1b[36m${f}\x1b[0m`);
+    // Bouncing ball — matches the Thinking... spinner style
+    const BOUNCE_WIDTH = 5;
+    const BOUNCE_POSITIONS = [0, 1, 2, 3, 4, 3, 2, 1];
+    const pos = BOUNCE_POSITIONS[this._cursorFrame % BOUNCE_POSITIONS.length];
+    let track = '';
+    for (let i = 0; i < BOUNCE_WIDTH; i++) {
+      track += i === pos ? '\x1b[36m●\x1b[0m' : '\x1b[2m○\x1b[0m';
+    }
+    this._cursorWrite(`\x1b[2K\r${track}`);
     this._cursorFrame++;
   }
 
