@@ -283,18 +283,17 @@ function formatToolSummary(name, args, result, isError) {
       summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''} — ${contentPreview}${contentPreview.length < (args.content || '').length ? '…' : ''}`;
       break;
     }
-    case 'edit_file':
-      // Try to extract the actual changes from the result
-      const changeLines = r.split('\n').filter(l => l.trim() && !l.startsWith('OK:') && !l.startsWith('EDIT:') && !l.startsWith('PATH:') && !l.startsWith('LINES:'));
-      const preview = changeLines.slice(0, 3).join('\n');
-      summary = `Edited — ${preview.substring(0, 80)}${preview.length > 80 ? '…' : ''}`;
+    case 'edit_file': {
+      const newStr = (args.new_string || '').trim();
+      const editPreview = newStr.substring(0, 80);
+      summary = editPreview ? `Edited — ${editPreview}${newStr.length > 80 ? '…' : ''}` : 'Edited successfully';
       break;
+    }
     case 'patch_file': {
       const n = (args.patches || []).length;
-      // Show a preview of the first patch if it's a string
       const firstPatch = args.patches && args.patches.length > 0 ? args.patches[0] : null;
-      const preview = firstPatch && typeof firstPatch === 'string' ? firstPatch.substring(0, 80) : '';
-      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}${preview ? ` — ${preview}` : ''}`;
+      const patchPreview = firstPatch ? (firstPatch.new_text || '').trim().substring(0, 80) : '';
+      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}${patchPreview ? ` — ${patchPreview}` : ''}`;
       break;
     }
     case 'bash': {
@@ -314,7 +313,8 @@ function formatToolSummary(name, args, result, isError) {
       } else {
         const lines = r.split('\n').filter(Boolean);
         if (lines.length > 1) {
-          summary = `${lines.length} lines output`;
+          const bashPreview = lines.slice(0, 2).join(' · ').substring(0, 80);
+          summary = `${lines.length} lines — ${bashPreview}${lines.join('').length > 80 ? '…' : ''}`;
         } else {
           summary = (lines[0] || '').substring(0, 70) || 'Done';
         }
