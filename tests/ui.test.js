@@ -80,7 +80,7 @@ describe('ui.js', () => {
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
       // Banner uses Unicode box characters with ANSI color codes
       // Check for raw box characters (without ANSI codes) in the source
-      expect(output).toContain('Agentic Coding CLI');
+      expect(output).toContain('nex-code');
       expect(output).toContain(`v${require('../package.json').version}`);
       logSpy.mockRestore();
     });

@@ -665,31 +665,27 @@ npm install
       process.stderr.isTTY = origIsTTY;
     });
 
-    it('startCursor hides terminal cursor and renders first braille frame', () => {
+    it('startCursor hides terminal cursor and renders first bouncing ball frame', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
       expect(sr._cursorActive).toBe(true);
       expect(sr._cursorTimer).not.toBeNull();
       // First write: hide terminal cursor (on stderr)
       expect(stderrSpy.mock.calls[0][0]).toBe('\x1b[?25l');
-      // Second write: frame 0 (⠋ in cyan)
-      expect(stderrSpy.mock.calls[1][0]).toContain('⠋');
+      // Second write: frame 0 (● in cyan)
+      expect(stderrSpy.mock.calls[1][0]).toContain('●');
       expect(stderrSpy.mock.calls[1][0]).toContain('\x1b[36m');
       sr.stopCursor();
     });
 
-    it('cursor cycles through braille spinner frames', () => {
+    it('cursor advances bouncing ball frame on each interval tick', () => {
       const sr = new StreamRenderer();
       sr.startCursor();
-      const braille = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-      // calls[0] = hide cursor, calls[1+] = frames (on stderr)
-      for (let i = 0; i < braille.length; i++) {
-        expect(stderrSpy.mock.calls[1 + i][0]).toContain(braille[i]);
-        if (i < braille.length - 1) jest.advanceTimersByTime(80);
-      }
-      // Frame 10 wraps to frame 0
-      jest.advanceTimersByTime(80);
-      expect(stderrSpy.mock.calls[11][0]).toContain('⠋');
+      // calls[0] = hide cursor, calls[1] = first frame
+      expect(stderrSpy.mock.calls[1][0]).toContain('●');
+      // Advance one interval tick (100ms) — next frame should appear
+      jest.advanceTimersByTime(100);
+      expect(stderrSpy.mock.calls[2][0]).toContain('●');
       sr.stopCursor();
     });
 
@@ -716,9 +712,9 @@ npm install
       expect(stderrCalls[0]).toBe('\x1b[2K\r');
       // Content rendered on stdout
       expect(stdoutCalls.some(c => c.includes('hello'))).toBe(true);
-      // Last stderr: cursor reappears (braille spinner continues)
+      // Last stderr: cursor reappears (bouncing ball continues)
       const lastStderr = stderrCalls[stderrCalls.length - 1];
-      expect(lastStderr).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+      expect(lastStderr).toContain('●');
       sr.stopCursor();
     });
 

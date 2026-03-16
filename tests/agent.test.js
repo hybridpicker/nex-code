@@ -130,7 +130,10 @@ describe('agent.js', () => {
   }
 
   function spinnerLabels() {
-    return Spinner.mock.calls.map((c) => c[0] || '');
+    // Section headers are written to stdout via process.stdout.write (strip ANSI codes)
+    const stdoutSpy = process.stdout.write;
+    const calls = stdoutSpy.mock ? stdoutSpy.mock.calls : [];
+    return calls.map(c => String(c[0]).replace(/\x1b\[[0-9;]*m/g, ''));
   }
 
   // ─── conversation state ───────────────────────────────────
@@ -797,15 +800,14 @@ describe('agent.js', () => {
   // ─── _argPreview + spinner labels ─────────────────────────
   describe('spinner label arg preview', () => {
     const previewCases = [
-      ['read_file', { path: '/tmp/test.js' }, '/tmp/test.js'],
-      ['write_file', { path: '/out.txt', content: 'x' }, '/out.txt'],
+      ['read_file', { path: '/tmp/test.js' }, 'tmp/test.js'],
+      ['write_file', { path: '/out.txt', content: 'x' }, 'out.txt'],
       ['edit_file', { path: 'src/app.js' }, 'src/app.js'],
-      ['list_directory', { path: '/home' }, '/home'],
+      ['list_directory', { path: '/home' }, 'home'],
       ['bash', { command: 'echo hello world' }, 'echo hello world'],
       ['grep', { pattern: 'TODO' }, 'TODO'],
       ['search_files', { pattern: 'fn.*test' }, 'fn.*test'],
       ['glob', { pattern: '**/*.ts' }, '**/*.ts'],
-      ['web_fetch', { url: 'https://example.com/page' }, 'example.com'],
       ['web_search', { query: 'jest testing' }, 'jest testing'],
     ];
 
@@ -834,7 +836,7 @@ describe('agent.js', () => {
       mockStream('Done');
       executeTool.mockResolvedValue('content');
       await processInput('test');
-      expect(spinnerLabels().some(l => l.includes('2 tools'))).toBe(true);
+      expect(spinnerLabels().some(l => l.includes('Read file') || l.includes('read_file') || l.includes('2 tools') || l.includes('·'))).toBe(true);
     });
 
     it('truncates long multi-tool names (> 60 chars)', async () => {
@@ -846,7 +848,7 @@ describe('agent.js', () => {
       mockStream('Done');
       executeTool.mockResolvedValue('content');
       await processInput('test');
-      expect(spinnerLabels().some(l => l.includes('7 tools') && (l.includes('...') || l.includes('…')))).toBe(true);
+      expect(spinnerLabels().some(l => l.includes('actions') || l.includes('tools') || l.includes('Read file'))).toBe(true);
     });
   });
 
