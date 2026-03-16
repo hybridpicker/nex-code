@@ -1695,12 +1695,16 @@ async function startREPL() {
   // Handle Ctrl+C via readline (fires on TTY before process SIGINT)
   rl.on('SIGINT', () => {
     cleanupTerminal();
+    _sigintCount++;
+
+    // 2nd Ctrl+C always exits immediately — no more hanging
+    if (_sigintCount >= 2) {
+      process.exit(0);
+      return;
+    }
+
     if (_processing) {
-      _sigintCount++;
-      if (_sigintCount >= 2) {
-        gracefulShutdown();
-        return;
-      }
+      // 1st Ctrl+C during work: cancel task
       if (_abortController) _abortController.abort();
       const { cancelPendingAskUser } = require('./tools');
       cancelPendingAskUser();
@@ -1708,19 +1712,14 @@ async function startREPL() {
       _processing = false;
       rl.setPrompt(getPrompt());
       rl.prompt();
-      return;
-    }
-    // At prompt — require a second Ctrl+C to exit
-    if (_exitPrompt) {
-      gracefulShutdown();
     } else {
-      _exitPrompt = true;
+      // 1st Ctrl+C at prompt: warn, reset after 2s
       process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
       _exitPromptTimer = setTimeout(() => {
-        _exitPrompt = false;
+        _sigintCount = 0;
         _exitPromptTimer = null;
       }, 2000);
     }
