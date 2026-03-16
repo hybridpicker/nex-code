@@ -351,6 +351,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/history` | Show file change history |
 | `/review [--strict] [file]` | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
 | `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
+| `/setup` | Interactive setup wizard — configure provider, API keys, web search |
 | `/exit` | Quit |
 
 ---
@@ -1019,6 +1020,8 @@ Everything else is Node.js built-in.
 npm install -g nex-code    # global install
 npx nex-code               # or run without installing
 ```
+
+On first launch with no API keys configured, nex-code starts an **interactive setup wizard** that guides you through choosing a provider and entering credentials. You can re-run it anytime with `/setup`.
 
 ## Roadmap
 
