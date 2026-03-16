@@ -457,10 +457,10 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       if (execTools.length === 1) {
         const p = execTools[0];
         const preview = _argPreview(p.fnName, p.args);
-        label = `⏺ ${p.fnName}${preview ? `(${preview})` : ''}`;
+        label = `● ${p.fnName}${preview ? `(${preview})` : ''}`;
       } else {
         const names = execTools.map(p => p.fnName).join(', ');
-        label = `⏺ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '…' : names}`;
+        label = `● ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '…' : names}`;
       }
       spinner = new Spinner(label);
       spinner.start();
@@ -1493,18 +1493,12 @@ async function processInput(userInput) {
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Compact display: section header + summaries printed together after execution
+    // Compact display: bullet header on its own line, summaries below
     if (!batchOpts.skipSummaries) {
       if (_showStepHeader) {
         const header = formatSectionHeader(prepared, totalSteps);
-        if (batchSummaries.length === 1) {
-          // Single tool: one compact line — header + result
-          console.log(header + batchSummaries[0]);
-        } else {
-          // Multi-tool batch: header on its own line, then each result
-          console.log(header);
-          for (const s of batchSummaries) console.log(s);
-        }
+        console.log(header);
+        for (const s of batchSummaries) console.log(s);
       } else {
         // First iteration (step 1): just summaries, no section header
         for (const s of batchSummaries) console.log(s);
