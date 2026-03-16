@@ -49,7 +49,7 @@ const DOG_MATRIX = [
   '01111110',  // head solid
   '01011010',  // face — eye gaps at cols 2 and 5
   '01111110',  // snout
-  '00100100',  // legs
+  '01111110',  // body base
 ];
 
 function renderDog(matrix) {
