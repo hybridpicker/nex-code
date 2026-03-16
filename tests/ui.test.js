@@ -93,12 +93,12 @@ describe('ui.js', () => {
       // formatToolCall shows human-readable labels, not raw tool names
       expect(result).toMatch(/[Ww]rite/);
       expect(result).toContain('test.js');
-      expect(result).toContain('⏺');
+      // ⏺ removed — now uses ● (colored per category)
     });
 
     it('formats edit_file with path only', () => {
       const result = formatToolCall('edit_file', { path: 'test.js', old_text: 'a', new_text: 'b' });
-      expect(result).toMatch(/[Ee]dit/);
+      expect(result).toMatch(/[Uu]pdate/);
       expect(result).toContain('test.js');
     });
 
@@ -226,7 +226,7 @@ describe('ui.js', () => {
       const result = formatResult(lines.join('\n'));
       expect(result).toContain('line1');
       expect(result).toContain('line8');
-      expect(result).toContain('+7 more lines');
+      expect(result).toContain('+7');
     });
 
     it('respects custom maxLines', () => {
@@ -234,7 +234,7 @@ describe('ui.js', () => {
       const result = formatResult(lines.join('\n'), 3);
       expect(result).toContain('line1');
       expect(result).toContain('line3');
-      expect(result).toContain('+7 more lines');
+      expect(result).toContain('+7');
     });
 
     it('handles single line', () => {
@@ -256,7 +256,7 @@ describe('ui.js', () => {
 
     it('shows ⎿ and error message for errors', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, 'ERROR: command not found', true);
-      expect(result).toContain('⎿');
+      expect(result).toContain('└');
       expect(result).toContain('command not found');
     });
 
@@ -274,7 +274,7 @@ describe('ui.js', () => {
 
     it('shows ⎿ for success', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, 'file1\nfile2', false);
-      expect(result).toContain('⎿');
+      expect(result).toContain('└');
     });
 
     // read_file
@@ -326,7 +326,7 @@ describe('ui.js', () => {
     it('shows multi-line output count for bash with many lines', () => {
       const output = Array.from({ length: 5 }, (_, i) => `line${i}`).join('\n');
       const result = formatToolSummary('bash', { command: 'ls' }, output, false);
-      expect(result).toMatch(/\d+ lines/);
+      expect(result).toMatch(/\+\d+/); // shows +N more
     });
 
     // grep / search_files
@@ -381,7 +381,7 @@ describe('ui.js', () => {
 
     it('shows log info for git_log', () => {
       const result = formatToolSummary('git_log', {}, 'abc123 feat: stuff', false);
-      expect(result).toContain('⎿');
+      expect(result).toContain('└');
     });
 
     // web tools
@@ -429,7 +429,7 @@ describe('ui.js', () => {
     // edge cases
     it('handles null/undefined result', () => {
       const result = formatToolSummary('bash', { command: 'ls' }, null, false);
-      expect(result).toContain('⎿');
+      expect(result).toContain('└');
     });
 
     it('handles missing args', () => {

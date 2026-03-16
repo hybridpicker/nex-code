@@ -368,27 +368,22 @@ describe('spinner.js', () => {
       expect(tp._stopped).toBe(true);
     });
 
-    it('removes keypress listeners from stdin', () => {
-      // Mock stdin.isTTY to be true
+    it('does not remove keypress listeners (readline safety)', () => {
+      // cleanupTerminal no longer removes keypress listeners —
+      // doing so would break readline's Ctrl+C handler
       const originalIsTTY = process.stdin.isTTY;
       Object.defineProperty(process.stdin, 'isTTY', { value: true, writable: true });
       
-      // Add a mock listener
       const mockListener = jest.fn();
       process.stdin.on('keypress', mockListener);
+      const before = process.stdin.listeners('keypress').length;
       
-      // Verify listener was added
-      const listeners = process.stdin.listeners('keypress');
-      expect(listeners.length).toBeGreaterThan(0);
-      
-      // Call cleanupTerminal
       cleanupTerminal();
       
-      // Verify listener was removed
-      const remainingListeners = process.stdin.listeners('keypress');
-      expect(remainingListeners.length).toBe(0);
+      const after = process.stdin.listeners('keypress').length;
+      expect(after).toBe(before); // listeners preserved
       
-      // Restore original isTTY
+      process.stdin.removeListener('keypress', mockListener);
       Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, writable: true });
     });
 
