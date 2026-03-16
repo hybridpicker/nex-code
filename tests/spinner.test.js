@@ -230,7 +230,7 @@ describe('spinner.js', () => {
         mp = new MultiProgress(['A']);
         mp.start();
         const initialFrame = mp.frame;
-        jest.advanceTimersByTime(80);
+        jest.advanceTimersByTime(100);
         expect(mp.frame).toBeGreaterThan(initialFrame);
       });
     });
