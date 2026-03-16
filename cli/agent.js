@@ -1488,15 +1488,37 @@ async function processInput(userInput) {
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
     // Print bullet header immediately (before execution) so it appears while working
     const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
+    let _dotAnim = null;
     if (_showStepHeader) {
       stepPrinted = true;
-      console.log(formatSectionHeader(prepared, totalSteps, false));
+      const _baseHeader = formatSectionHeader(prepared, totalSteps, false);
+      process.stdout.write(_baseHeader + '\n');
+      // Animate the ● in-place while executing (TTY only, suppress executeBatch spinner)
+      if (process.stdout.isTTY) {
+        batchOpts.skipSpinner = true;
+        process.stdout.write('\x1b[?25l');
+        const _frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+        let _fi = 0;
+        _dotAnim = setInterval(() => {
+          const f = _frames[_fi++ % _frames.length];
+          const animated = _baseHeader.replace(`${C.green}●${C.reset}`, `${C.cyan}${f}${C.reset}`);
+          process.stdout.write(`\x1b[1A\x1b[2K${animated}\n`);
+        }, 80);
+      }
     }
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Print summaries below the already-printed header
+    // Stop animation and restore final ● header
+    if (_dotAnim) {
+      clearInterval(_dotAnim);
+      _dotAnim = null;
+      process.stdout.write('\x1b[?25h');
+      process.stdout.write(`\x1b[1A\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`);
+    }
+
+    // Print summaries below the header
     if (!batchOpts.skipSummaries) {
       for (const s of batchSummaries) console.log(s);
     }
