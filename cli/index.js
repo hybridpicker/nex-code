@@ -1756,7 +1756,7 @@ async function startREPL() {
 
     // 2nd Ctrl+C always exits immediately — no more hanging
     if (_sigintCount >= 2) {
-      process.exit(0);
+      gracefulShutdown();
       return;
     }
 
@@ -1790,7 +1790,7 @@ async function startREPL() {
       // Safety-net: rl.on('SIGINT') should handle TTY, but if readline is
       // in a broken state after cancel, this ensures 2nd Ctrl+C always exits
       _sigintCount++;
-      if (_sigintCount >= 2) process.exit(0);
+      if (_sigintCount >= 2) gracefulShutdown();
     }
   });
 
