@@ -368,6 +368,9 @@ function cleanupTerminal() {
     _activeTaskProgress.stop();
     _activeTaskProgress = null;
   }
+  // NOTE: do NOT removeAllListeners('keypress') — that kills readline's
+  // internal Ctrl+C handler and breaks subsequent Ctrl+C presses.
+  // picker.js cleans up its own listener; index.js adds only one.
   // Single write: show cursor + clear line (avoids flicker)
   process.stderr.write('\x1b[?25h\x1b[2K\r');
 }
