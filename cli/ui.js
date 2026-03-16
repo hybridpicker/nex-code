@@ -41,18 +41,15 @@ function lerpColor(stops, t) {
   ];
 }
 
-// Dog mascot — compact 14×9 pixel art (1 = filled, 0 = background)
-// Renders to 5 half-block rows
+// Dog mascot — minimal 8×6 pixel art (1 = filled, 0 = background)
+// Renders to 3 half-block rows
 const DOG_MATRIX = [
-  '00110000001100',  // ear tips
-  '01111000011110',  // ear bases
-  '01111111111110',  // top of head
-  '01100111100110',  // face — eye gaps at cols 2-3 and 10-11
-  '01111111111110',  // muzzle
-  '00111111111100',  // upper body
-  '00111111111100',  // body
-  '00001100110000',  // legs
-  '00001100110000',  // paws
+  '01100110',  // ears
+  '01111110',  // head
+  '01111110',  // head solid
+  '01011010',  // face — eye gaps at cols 2 and 5
+  '01111110',  // snout
+  '00100100',  // legs
 ];
 
 function renderDog(matrix) {
@@ -77,18 +74,16 @@ function banner(modelName, cwd, opts = {}) {
   const B = C.bold;
   const d = C.dim;
   const r = C.reset;
-  const accent = '\x1b[38;2;80;200;255m'; // mid-gradient cyan
+  const accent = '\x1b[38;2;80;200;255m';
 
   const dogLines = renderDog(DOG_MATRIX);
   const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
   const version = require('../package.json').version;
 
-  // 5 text lines matching dog height — vertically centered
+  // 3 text lines — same height as dog
   const subtitles = [
-    '',
-    `   ${accent}${B}nex-code${r}`,
-    `   ${d}Agentic Coding CLI  v${version}${r}`,
-    `   ${d}${modelName}  ·  /help${r}${yoloTag}`,
+    `  ${accent}${B}nex-code${r}  ${d}v${version}${r}`,
+    `  ${d}${modelName}  ·  /help${r}${yoloTag}`,
     '',
   ];
 
