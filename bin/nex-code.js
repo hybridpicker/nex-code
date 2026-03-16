@@ -94,6 +94,60 @@ function preventSleep() {
   } catch { /* caffeinate unavailable, no-op */ }
 }
 
+// ─── first-run setup check ───────────────────────────────────
+function checkSetup() {
+  const fs = require('fs');
+  const hasEnvFile =
+    fs.existsSync(path.join(__dirname, '..', '.env')) ||
+    fs.existsSync(path.join(process.cwd(), '.env'));
+  const hasApiKey =
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.OPENROUTER_API_KEY;
+  const hasExplicitProvider = process.env.DEFAULT_PROVIDER || process.env.DEFAULT_MODEL;
+
+  if (hasEnvFile || hasApiKey || hasExplicitProvider) return; // configured — skip
+
+  const R = '\x1b[0m';
+  const B = '\x1b[1m';
+  const D = '\x1b[2m';
+  const Y = '\x1b[33m';
+  const C = '\x1b[36m';
+  const G = '\x1b[32m';
+
+  console.log();
+  console.log(`${Y}${B}  ✦ No configuration found — quick setup guide${R}`);
+  console.log(`${D}  ─────────────────────────────────────────────────────────${R}`);
+  console.log();
+  console.log(`  Create a ${B}.env${R} file in your project directory with one of:`);
+  console.log();
+  console.log(`${G}  ┌─ Ollama (local or cloud, no API key required) ─────────┐${R}`);
+  console.log(`${G}  │${R}  Works out of the box if Ollama is running locally.     ${G}│${R}`);
+  console.log(`${G}  │${R}                                                         ${G}│${R}`);
+  console.log(`${G}  │${R}  ${D}# .env${R}                                               ${G}│${R}`);
+  console.log(`${G}  │${R}  ${C}DEFAULT_PROVIDER${R}=ollama                               ${G}│${R}`);
+  console.log(`${G}  │${R}  ${C}DEFAULT_MODEL${R}=qwen3-coder                             ${G}│${R}`);
+  console.log(`${G}  │${R}  ${C}OLLAMA_HOST${R}=http://localhost:11434                    ${G}│${R}`);
+  console.log(`${G}  └─────────────────────────────────────────────────────────┘${R}`);
+  console.log();
+  console.log(`${C}  ┌─ Anthropic (Claude) ───────────────────────────────────┐${R}`);
+  console.log(`${C}  │${R}  ${C}DEFAULT_PROVIDER${R}=anthropic                             ${C}│${R}`);
+  console.log(`${C}  │${R}  ${C}ANTHROPIC_API_KEY${R}=sk-ant-...                           ${C}│${R}`);
+  console.log(`${C}  └─────────────────────────────────────────────────────────┘${R}`);
+  console.log();
+  console.log(`${D}  ┌─ OpenAI ───────────────────────────────────────────────┐${R}`);
+  console.log(`${D}  │${R}  ${C}DEFAULT_PROVIDER${R}=openai                                ${D}│${R}`);
+  console.log(`${D}  │${R}  ${C}OPENAI_API_KEY${R}=sk-...                                  ${D}│${R}`);
+  console.log(`${D}  └─────────────────────────────────────────────────────────┘${R}`);
+  console.log();
+  console.log(`  Run ${B}/init${R} inside nex-code for an interactive setup wizard.`);
+  console.log(`  Docs: ${D}https://github.com/hybridpicker/nex-code${R}`);
+  console.log();
+  console.log(`${D}  Continuing with Ollama defaults (localhost:11434)...${R}`);
+  console.log();
+}
+
 // ─── helper: run headless task ───────────────────────────────
 function runHeadlessTask(task) {
   if (args.includes('--auto')) {
@@ -167,6 +221,7 @@ if (promptFileIdx !== -1) {
     runHeadlessTask(task);
   } else {
     // Normal REPL mode
+    checkSetup(); // show onboarding screen if no config found
     preventSleep();
     const { startREPL } = require('../cli/index');
     startREPL();
