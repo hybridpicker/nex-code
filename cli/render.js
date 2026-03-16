@@ -367,7 +367,7 @@ class StreamRenderer {
     this._cursorFrame = 0;
     this._cursorWrite('\x1b[?25l');   // hide terminal cursor
     this._renderCursor();
-    this._cursorTimer = setInterval(() => this._renderCursor(), 150);
+    this._cursorTimer = setInterval(() => this._renderCursor(), 300);
   }
 
   _renderCursor() {
@@ -420,7 +420,7 @@ class StreamRenderer {
     if (this._cursorActive) {
       this._renderCursor();
       if (this._cursorTimer) clearInterval(this._cursorTimer);
-      this._cursorTimer = setInterval(() => this._renderCursor(), 150);
+      this._cursorTimer = setInterval(() => this._renderCursor(), 300);
     }
   }
 
