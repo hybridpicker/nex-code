@@ -267,24 +267,63 @@ function compressToolResult(content, maxChars) {
   }
 
   // Long outputs (>10 lines): line-based 40/40 head/tail split
+  // Try to preserve complete logical units (code blocks, function definitions, etc.)
   const headCount = Math.floor(lines.length * 0.4);
   const tailCount = Math.floor(lines.length * 0.4);
 
-  // Build head and tail within budget
+  // Build head and tail within budget, trying to keep complete logical units
   let headLines = [];
   let headLen = 0;
   const headBudget = Math.floor(budget * 0.4);
   for (let i = 0; i < headCount && headLen < headBudget; i++) {
-    headLines.push(lines[i]);
-    headLen += lines[i].length + 1;
+    // If we're about to exceed budget and this line starts a code block, include it
+    if (headLen + lines[i].length + 1 > headBudget && lines[i].trim().startsWith('```')) {
+      // Force include code block start and try to include as much as possible
+      headLines.push(lines[i]);
+      headLen += lines[i].length + 1;
+      // Try to include the next few lines of the code block
+      let j = i + 1;
+      while (j < lines.length && headLen < headBudget * 1.5 && !lines[j].trim().startsWith('```')) {
+        headLines.push(lines[j]);
+        headLen += lines[j].length + 1;
+        j++;
+      }
+      if (j < lines.length && lines[j].trim().startsWith('```')) {
+        headLines.push(lines[j]);
+        headLen += lines[j].length + 1;
+      }
+      i = j;
+    } else {
+      headLines.push(lines[i]);
+      headLen += lines[i].length + 1;
+    }
   }
 
   let tailLines = [];
   let tailLen = 0;
   const tailBudget = Math.floor(budget * 0.4);
   for (let i = lines.length - 1; i >= lines.length - tailCount && tailLen < tailBudget; i--) {
-    tailLines.push(lines[i]); // push is O(1); unshift was O(k) per call → O(n²) total
-    tailLen += lines[i].length + 1;
+    // If we're about to exceed budget and this line ends a code block, include it
+    if (tailLen + lines[i].length + 1 > tailBudget && lines[i].trim().startsWith('```')) {
+      // Force include code block end and try to include as much as possible
+      tailLines.push(lines[i]); // push is O(1); unshift was O(k) per call → O(n²) total
+      tailLen += lines[i].length + 1;
+      // Try to include the previous few lines of the code block
+      let j = i - 1;
+      while (j >= 0 && tailLen < tailBudget * 1.5 && !lines[j].trim().startsWith('```')) {
+        tailLines.push(lines[j]);
+        tailLen += lines[j].length + 1;
+        j--;
+      }
+      if (j >= 0 && lines[j].trim().startsWith('```')) {
+        tailLines.push(lines[j]);
+        tailLen += lines[j].length + 1;
+      }
+      i = j;
+    } else {
+      tailLines.push(lines[i]); // push is O(1); unshift was O(k) per call → O(n²) total
+      tailLen += lines[i].length + 1;
+    }
   }
   tailLines.reverse(); // single O(k) pass to restore order
 
