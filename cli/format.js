@@ -266,24 +266,35 @@ function formatToolSummary(name, args, result, isError) {
       const lastLine = resultLines[resultLines.length - 1];
       const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
       const isPartial = args.line_start || args.line_end;
+      
+      // Show first few lines of content for better context
+      const contentPreview = resultLines.slice(0, 3).join('\n');
+      
       if (isPartial && lastLineNum > count) {
-        summary = `Read lines ${args.line_start || 1}–${lastLineNum}`;
+        summary = `Read lines ${args.line_start || 1}–${lastLineNum} — ${contentPreview.substring(0, 80)}${contentPreview.length > 80 ? '…' : ''}`;
       } else {
-        summary = `Read ${count} line${count !== 1 ? 's' : ''}`;
+        summary = `Read ${count} line${count !== 1 ? 's' : ''} — ${contentPreview.substring(0, 80)}${contentPreview.length > 80 ? '…' : ''}`;
       }
       break;
     }
     case 'write_file': {
       const lines = (args.content || '').split('\n').length;
-      summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
+      const contentPreview = (args.content || '').substring(0, 100);
+      summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''} — ${contentPreview}${contentPreview.length < (args.content || '').length ? '…' : ''}`;
       break;
     }
     case 'edit_file':
-      summary = 'Edited successfully';
+      // Try to extract the actual changes from the result
+      const changeLines = r.split('\n').filter(l => l.trim() && !l.startsWith('OK:') && !l.startsWith('EDIT:') && !l.startsWith('PATH:') && !l.startsWith('LINES:'));
+      const preview = changeLines.slice(0, 3).join('\n');
+      summary = `Edited — ${preview.substring(0, 80)}${preview.length > 80 ? '…' : ''}`;
       break;
     case 'patch_file': {
       const n = (args.patches || []).length;
-      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}`;
+      // Show a preview of the first patch if it's a string
+      const firstPatch = args.patches && args.patches.length > 0 ? args.patches[0] : null;
+      const preview = firstPatch && typeof firstPatch === 'string' ? firstPatch.substring(0, 80) : '';
+      summary = `Applied ${n} patch${n !== 1 ? 'es' : ''}${preview ? ` — ${preview}` : ''}`;
       break;
     }
     case 'bash': {
@@ -294,16 +305,19 @@ function formatToolSummary(name, args, result, isError) {
         if (hintMatch) {
           summary = `Exit ${code} — ${hintMatch[1].substring(0, 60)}`;
         } else {
-          // Show exit code + first non-empty output line
+          // Show exit code + first few output lines for better context
           const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT '));
-          const firstOut = outputLines[0] ? ` · ${outputLines[0].substring(0, 60)}` : '';
+          const preview = outputLines.slice(0, 3).join(' ').substring(0, 80);
+          const firstOut = preview ? ` · ${preview}` : '';
           summary = `Exit ${code}${firstOut}`;
         }
       } else {
         const lines = r.split('\n').filter(Boolean);
-        summary = lines.length > 1
-          ? `${lines.length} lines output`
-          : (lines[0] || '').substring(0, 70) || 'Done';
+        if (lines.length > 1) {
+          summary = `${lines.length} lines output`;
+        } else {
+          summary = (lines[0] || '').substring(0, 70) || 'Done';
+        }
       }
       break;
     }
