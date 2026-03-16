@@ -1343,21 +1343,12 @@ async function processInput(userInput) {
       } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
         userMessage = 'Access denied — your API key may not have permission for this model';
       } else if (err.message.includes('400')) {
-        // Check if this is a context-too-long error before generic 400 handling.
-        // Also treat a bare 400 as context overflow when the current context is large
-        // (Ollama doesn't always include "context" in its error message for overflows).
-        const errLower = (err.message || '').toLowerCase();
-        const estimatedTokens = estimateTokens(apiMessages);
-        const modelCtx = (() => { try { const { getActiveModel } = require('./providers/registry'); return getActiveModel()?.contextWindow || 0; } catch { return 0; } })();
-        const likelyOverflow = modelCtx > 0 && estimatedTokens > modelCtx * 0.85;
-        const isContextTooLong = likelyOverflow ||
-          errLower.includes('context') || errLower.includes('token') ||
-          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
-          errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
-          errLower.includes('num_ctx') || errLower.includes('input');
-        if (isContextTooLong && contextRetries < 2) {
+        // On any 400, always try force-compress first — the most common cause is a context
+        // overflow where Ollama returns a bare 400 with no useful message. Token-count
+        // heuristics are too unreliable to gate this: just try and retry.
+        if (contextRetries < 2) {
           contextRetries++;
-          console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying... (attempt ${contextRetries}/2)${C.reset}`);
+          console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/2)${C.reset}`);
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
           apiMessages = compressedMsgs;
@@ -1367,10 +1358,16 @@ async function processInput(userInput) {
           i--;
           continue;
         }
+        // All compress retries exhausted — give up with informative message
+        const errLower = (err.message || '').toLowerCase();
+        const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
+          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
+          errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
+          errLower.includes('num_ctx') || errLower.includes('input');
         if (isContextTooLong) {
           userMessage = 'Context too long — force compression exhausted. Use /clear to start fresh';
         } else {
-          userMessage = 'Bad request — the conversation may be too long or contain unsupported content. Try /clear and retry';
+          userMessage = 'Bad request — compression did not help. Use /clear and retry';
         }
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';

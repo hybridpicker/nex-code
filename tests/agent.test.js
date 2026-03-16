@@ -32,8 +32,9 @@ jest.mock('../cli/context-engine', () => ({
   getUsage: jest.fn().mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),
   estimateTokens: jest.fn().mockImplementation((text) => text ? text.length / 4 : 0),
   compressToolResult: jest.fn().mockImplementation((content) => content),
+  forceCompress: jest.fn().mockImplementation((messages) => ({ messages, tokensRemoved: 0 })),
 }));
-jest.mock('../cli/session', () => ({ autoSave: jest.fn() }));
+jest.mock('../cli/session', () => ({ autoSave: jest.fn(), flushAutoSave: jest.fn() }));
 jest.mock('../cli/memory', () => ({ getMemoryContext: jest.fn().mockReturnValue('') }));
 jest.mock('../cli/permissions', () => ({ checkPermission: jest.fn().mockReturnValue('allow'), setPermission: jest.fn(), savePermissions: jest.fn() }));
 jest.mock('../cli/planner', () => ({ isPlanMode: jest.fn().mockReturnValue(false), getPlanModePrompt: jest.fn().mockReturnValue('') }));
@@ -406,7 +407,6 @@ describe('agent.js', () => {
       ['ENOTFOUND', 'Network error', { code: 'ENOTFOUND' }],
       ['401 Unauthorized', 'Authentication failed', {}],
       ['403 Forbidden', 'Access denied', {}],
-      ['400 Bad Request', 'Bad request', {}],
       ['500 Internal Server Error', 'API server error', {}],
       ['502 Bad Gateway', 'API server error', {}],
       ['503 Service Unavailable', 'API server error', {}],
@@ -419,6 +419,15 @@ describe('agent.js', () => {
       callStream.mockRejectedValueOnce(err);
       await processInput('test');
       expect(logOutput()).toContain(expected);
+      expect(autoSave).toHaveBeenCalled();
+    });
+
+    it('"400 Bad Request" shows "Bad request" after compress retries exhausted', async () => {
+      // 400 handler retries twice (force-compress + retry) before showing the error message
+      const err = new Error('400 Bad Request');
+      callStream.mockRejectedValueOnce(err).mockRejectedValueOnce(err).mockRejectedValueOnce(err);
+      await processInput('test');
+      expect(logOutput()).toContain('Bad request');
       expect(autoSave).toHaveBeenCalled();
     });
 
