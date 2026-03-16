@@ -268,6 +268,10 @@ function cancelPendingAskUser() {
     _cancelAskUser = null;
   }
 }
+
+// ask_user handler — set by cli/index.js to render options UI
+let _askUserFn = null;
+function setAskUserHandler(fn) { _askUserFn = fn; }
 async function ensureCheckpoint() {
   if (_checkpointCreated) return;
   _checkpointCreated = true;
@@ -318,7 +322,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: "Read a file's contents with line numbers. Always read a file BEFORE editing it to see exact content. Use line_start/line_end for large files to read specific sections. Prefer this over bash cat/head/tail.",
+      description: "Read a file's contents with line numbers. Always read a file BEFORE editing it to see exact content. Use line_start/line_end for large files to read specific sections. Prefer this over bash cat/head/tail. Files are read with UTF-8 encoding. For binary files, use bash with appropriate flags. Alternative: use util.promisify(fs.readFile) for programmatic access.",
       parameters: {
         type: 'object',
         properties: {
@@ -550,13 +554,20 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'ask_user',
-      description: 'Ask the user a question and wait for their response. Use when requirements are ambiguous, you need to choose between approaches, or a decision has significant impact. Do not ask unnecessary questions — proceed if the intent is clear.',
+      description: "Ask the user a clarifying question with 2-3 specific options. Use when the user's intent is ambiguous. Always provide concrete, actionable options. The user can select an option or type a custom answer.",
       parameters: {
         type: 'object',
         properties: {
-          question: { type: 'string', description: 'The question to ask the user' },
+          question: { type: 'string', description: 'The clarifying question to ask' },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2-3 specific, actionable answer options for the user to choose from',
+            minItems: 1,
+            maxItems: 3,
+          },
         },
-        required: ['question'],
+        required: ['question', 'options'],
       },
     },
   },
@@ -1289,15 +1300,29 @@ async function _executeToolInner(name, args, options = {}) {
     case 'search_files': {
       const dp = resolvePath(args.path);
       if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const grepArgs = ['-rn'];
+      const grepArgs = ['-rn', '--null', '-H'];
       if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
       grepArgs.push(args.pattern, dp);
       try {
         const { stdout } = await execFile('grep', grepArgs, {
           cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
-        const lines = stdout.split('\n').slice(0, 50).join('\n');
-        return lines || '(no matches)';
+        // Parse null-delimited output to handle filenames with spaces
+        const parts = stdout.split('\0');
+        const results = [];
+        for (let i = 0; i < parts.length; i += 2) {
+          const file = parts[i];
+          const content = parts[i + 1];
+          if (file && content) {
+            const lines = content.split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              results.push(`${file}:${line}`);
+              if (results.length >= 50) break;
+            }
+          }
+          if (results.length >= 50) break;
+        }
+        return results.join('\n') || '(no matches)';
       } catch {
         return '(no matches)';
       }
@@ -1349,7 +1374,7 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'grep': {
       const searchPath = args.path ? resolvePath(args.path) : process.cwd();
-      const grepArgs2 = ['-rn', '-E']; // Extended regex (supports |, +, etc.)
+      const grepArgs2 = ['-rn', '-E', '--null', '-H']; // Extended regex (supports |, +, etc.) + null-delimited for spaces
       if (args.ignore_case) grepArgs2.push('-i');
       if (args.include) grepArgs2.push(`--include=${args.include}`);
       grepArgs2.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=coverage');
@@ -1358,8 +1383,22 @@ async function _executeToolInner(name, args, options = {}) {
         const { stdout } = await execFile('grep', grepArgs2, {
           cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
-        const lines = stdout.split('\n').slice(0, 100).join('\n');
-        return lines.trim() || '(no matches)';
+        // Parse null-delimited output to handle filenames with spaces
+        const parts = stdout.split('\0');
+        const results = [];
+        for (let i = 0; i < parts.length; i += 2) {
+          const file = parts[i];
+          const content = parts[i + 1];
+          if (file && content) {
+            const lines = content.split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              results.push(`${file}:${line}`);
+              if (results.length >= 100) break;
+            }
+          }
+          if (results.length >= 100) break;
+        }
+        return results.join('\n').trim() || '(no matches)';
       } catch (e) {
         // exit 1 = no matches (normal), exit 2 = regex error
         if (e.code === 2) {
@@ -1573,7 +1612,17 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'ask_user': {
-      const question = args.question;
+      const { question, options = [] } = args;
+      if (_askUserFn) {
+        return new Promise((resolve) => {
+          _cancelAskUser = () => resolve('CANCELLED');
+          _askUserFn(question, options).then((answer) => {
+            _cancelAskUser = null;
+            resolve(answer || 'User did not answer');
+          });
+        });
+      }
+      // Fallback: plain readline prompt (non-TTY / no handler registered)
       return new Promise((resolve) => {
         const rl = require('readline').createInterface({
           input: process.stdin,
@@ -1583,7 +1632,8 @@ async function _executeToolInner(name, args, options = {}) {
           rl.close();
           resolve('CANCELLED');
         };
-        console.log(`\n${C.cyan}${C.bold}  ? ${question}${C.reset}`);
+        const optText = options.length > 0 ? `\n${options.map((o, i) => `  ${i + 1}. ${o}`).join('\n')}\n` : '';
+        console.log(`\n${C.cyan}${C.bold}  ? ${question}${C.reset}${optText}`);
         rl.question(`${C.cyan}  > ${C.reset}`, (answer) => {
           _cancelAskUser = null;
           rl.close();
@@ -2244,4 +2294,4 @@ async function executeTool(name, args, options = {}) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser };
+module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser, setAskUserHandler };

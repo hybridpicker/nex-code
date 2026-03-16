@@ -1652,6 +1652,63 @@ async function startREPL() {
 
   setReadlineInterface(rl);
 
+  // ─── ask_user handler — options-based clarification UI ──────
+  const { setAskUserHandler } = require('./tools');
+  setAskUserHandler(async (question, options) => {
+    const C_reset = '\x1b[0m', C_bold = '\x1b[1m', C_dim = '\x1b[2m';
+    const C_cyan = '\x1b[36m', C_yellow = '\x1b[33m';
+
+    process.stdout.write(`\n  ${C_bold}${C_yellow}❓${C_reset}  ${C_bold}${question}${C_reset}\n\n`);
+    options.forEach((opt, i) => {
+      process.stdout.write(`  ${C_cyan}${i + 1}${C_reset}  ${opt}\n`);
+    });
+    process.stdout.write(`  ${C_dim}${options.length + 1}${C_reset}  ${C_dim}Eigene Antwort…${C_reset}\n`);
+    process.stdout.write(`\n  ${C_cyan}[1-${options.length + 1}]${C_reset} › `);
+
+    return new Promise((resolve) => {
+      rl.pause();
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+      const onData = (buf) => {
+        const ch = buf.toString();
+
+        // Ctrl+C
+        if (ch === '\u0003') {
+          process.stdout.write('\n');
+          cleanup();
+          resolve('');
+          return;
+        }
+
+        const n = parseInt(ch);
+
+        if (n >= 1 && n <= options.length) {
+          process.stdout.write(`${C_bold}${options[n - 1]}${C_reset}\n\n`);
+          cleanup();
+          resolve(options[n - 1]);
+        } else if (n === options.length + 1 || ch === '\r' || ch === '\n') {
+          process.stdout.write('\n');
+          if (process.stdin.isTTY) process.stdin.setRawMode(false);
+          process.stdin.removeListener('data', onData);
+          process.stdout.write(`  ${C_cyan}›${C_reset} `);
+          rl.resume();
+          rl.once('line', (line) => {
+            process.stdout.write('\n');
+            resolve(line.trim() || '');
+          });
+        }
+      };
+
+      function cleanup() {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        process.stdin.removeListener('data', onData);
+        rl.resume();
+      }
+
+      process.stdin.on('data', onData);
+    });
+  });
+
   const footer = new StickyFooter();
   footer.activate(rl);
 
@@ -1695,12 +1752,16 @@ async function startREPL() {
   // Handle Ctrl+C via readline (fires on TTY before process SIGINT)
   rl.on('SIGINT', () => {
     cleanupTerminal();
+    _sigintCount++;
+
+    // 2nd Ctrl+C always exits immediately — no more hanging
+    if (_sigintCount >= 2) {
+      gracefulShutdown();
+      return;
+    }
+
     if (_processing) {
-      _sigintCount++;
-      if (_sigintCount >= 2) {
-        gracefulShutdown();
-        return;
-      }
+      // 1st Ctrl+C during work: cancel task
       if (_abortController) _abortController.abort();
       const { cancelPendingAskUser } = require('./tools');
       cancelPendingAskUser();
@@ -1708,19 +1769,14 @@ async function startREPL() {
       _processing = false;
       rl.setPrompt(getPrompt());
       rl.prompt();
-      return;
-    }
-    // At prompt — require a second Ctrl+C to exit
-    if (_exitPrompt) {
-      gracefulShutdown();
     } else {
-      _exitPrompt = true;
+      // 1st Ctrl+C at prompt: warn, reset after 2s
       process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
       _exitPromptTimer = setTimeout(() => {
-        _exitPrompt = false;
+        _sigintCount = 0;
         _exitPromptTimer = null;
       }, 2000);
     }
@@ -1728,8 +1784,14 @@ async function startREPL() {
 
   // Fallback SIGINT handler for non-TTY (e.g. piped input or external signals)
   process.on('SIGINT', () => {
-    if (!process.stdin.isTTY) gracefulShutdown();
-    // else: rl.on('SIGINT') handles it
+    if (!process.stdin.isTTY) {
+      gracefulShutdown();
+    } else {
+      // Safety-net: rl.on('SIGINT') should handle TTY, but if readline is
+      // in a broken state after cancel, this ensures 2nd Ctrl+C always exits
+      _sigintCount++;
+      if (_sigintCount >= 2) gracefulShutdown();
+    }
   });
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
