@@ -144,17 +144,18 @@ const STEP_DESCRIPTIONS = {
  * Build a meaningful section header from a list of prepared tool calls.
  * Falls back to "Step N" if no tools or no mapping found.
  */
-function _dot(fnName, isError = false) {
+function _dot(fnName, isError = false, frame = null) {
   if (isError) return `${C.red}●${C.reset}`;
   const col = TOOL_DOT_COLOR[fnName] || C.green;
-  return `${col}●${C.reset}`;
+  const char = frame !== null ? frame : '●';
+  return `${col}${char}${C.reset}`;
 }
 
-function formatSectionHeader(prepared, stepNum, isError = false) {
+function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
   const tools = (prepared || []).filter(p => p && p.canExecute !== false);
 
   if (tools.length === 0) {
-    return `${_dot('', isError)} Step ${stepNum}`;
+    return `${_dot('', isError, frame)} Step ${stepNum}`;
   }
 
   if (tools.length === 1) {
@@ -167,14 +168,14 @@ function formatSectionHeader(prepared, stepNum, isError = false) {
     else if (a.query)   arg = String(a.query).substring(0, 50);
     else if (a.pattern) arg = String(a.pattern).substring(0, 50);
     const argStr = arg ? `${C.dim}(${arg})${C.reset}` : '';
-    return `${_dot(t.fnName, isError)} ${C.bold}${label}${C.reset} ${argStr}`;
+    return `${_dot(t.fnName, isError, frame)} ${C.bold}${label}${C.reset} ${argStr}`;
   }
 
   // Multi-tool: use first tool's color
   const firstFn = tools[0].fnName;
   const labels = [...new Set(tools.map(t => TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, ' ')))];
   const title = labels.length <= 3 ? labels.join(' · ') : `${tools.length} actions`;
-  return `${_dot(firstFn, isError)} ${title}`;
+  return `${_dot(firstFn, isError, frame)} ${title}`;
 }
 
 function formatToolCall(name, args) {
