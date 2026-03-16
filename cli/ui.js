@@ -41,34 +41,78 @@ function lerpColor(stops, t) {
   ];
 }
 
+// Dog mascot pixel matrix (1 = filled, 0 = background)
+const DOG_MATRIX = [
+  '000011000000000011000',
+  '000111100000000111100',
+  '000100000000000001000',
+  '000111111111111111100',
+  '000111111111111111100',
+  '000111111111111111100',
+  '000110110000011011100',
+  '000111100000001111100',
+  '000111111111111111100',
+  '000000011111111000000',
+  '000000011111111000000',
+  '000000011111111000000',
+  '000000011111111000000',
+  '000000111000111000000',
+];
+
+function renderDog(matrix) {
+  // Vertical gradient: Ice — White → Cyan → Deep Blue
+  const stops = [[220, 240, 255], [80, 200, 255], [40, 100, 220]];
+  const halfRows = Math.ceil(matrix.length / 2);
+  const lines = [];
+  for (let r = 0; r < matrix.length; r += 2) {
+    const [cr, cg, cb] = lerpColor(stops, (r / 2) / (halfRows - 1 || 1));
+    const color = `\x1b[38;2;${cr};${cg};${cb}m`;
+    let line = '';
+    for (let c = 0; c < matrix[0].length; c++) {
+      const top = matrix[r][c] === '1';
+      const bot = r + 1 < matrix.length && matrix[r + 1][c] === '1';
+      if (top && bot)       line += `${color}█\x1b[0m`;
+      else if (top && !bot) line += `${color}▀\x1b[0m`;
+      else if (!top && bot) line += `${color}▄\x1b[0m`;
+      else                  line += ' ';
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 function banner(modelName, cwd, opts = {}) {
   const B = C.bold;
   const d = C.dim;
   const r = C.reset;
 
-  const raw = [
-    '███╗   ██╗███████╗██╗  ██╗  ━   ██████╗ ██████╗ ██████╗ ███████╗',
-    '████╗  ██║██╔════╝╚██╗██╔╝  ━  ██╔════╝██╔═══██╗██╔══██╗██╔════╝',
-    '██╔██╗ ██║█████╗   ╚███╔╝   ━  ██║     ██║   ██║██║  ██║█████╗',
-    '██║╚██╗██║██╔══╝   ██╔██╗   ━  ██║     ██║   ██║██║  ██║██╔══╝',
-    '██║ ╚████║███████╗██╔╝ ██╗  ━  ╚██████╗╚██████╔╝██████╔╝███████╗',
-    '╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ━   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+  const dogLines = renderDog(DOG_MATRIX);
+  const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
+  const version = require('../package.json').version;
+
+  // Subtitle lines, vertically centered beside the dog
+  const subtitles = [
+    '',
+    '',
+    `   ${B}nex-code${r}`,
+    `   ${d}Agentic Coding CLI  v${version}${r}`,
+    `   ${d}Model: ${modelName}  ·  /help${r}${yoloTag}`,
+    '',
+    '',
   ];
 
-  // Vertical gradient: Ice — White → Cyan → Deep Blue
-  const stops = [[220, 240, 255], [80, 200, 255], [40, 100, 220]];
-  const logo = raw.map((line, i) => {
-    const t = i / (raw.length - 1 || 1);
-    return colorLine(line, lerpColor(stops, t));
-  }).join('\n');
+  const total = Math.max(dogLines.length, subtitles.length);
+  const dogOff  = Math.floor((total - dogLines.length) / 2);
+  const textOff = Math.floor((total - subtitles.length) / 2);
 
-  const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
+  const lines = [];
+  for (let i = 0; i < total; i++) {
+    const dog  = dogLines[i - dogOff]   ?? ' '.repeat(DOG_MATRIX[0].length);
+    const text = subtitles[i - textOff] ?? '';
+    lines.push(dog + text);
+  }
 
-  console.log(`
-${logo}
-              ${d}Agentic Coding CLI  v${require('../package.json').version}${r}
-              ${d}Model: ${modelName}${r}  ${d}·  /help${r}${yoloTag}
-`);
+  console.log('\n' + lines.join('\n') + '\n');
 }
 
 // Re-exports from spinner.js and format.js for backward compatibility
