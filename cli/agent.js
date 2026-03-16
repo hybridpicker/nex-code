@@ -1121,6 +1121,12 @@ async function processInput(userInput) {
   const fileEditCounts = new Map(); // loop detection: edits per file
   const LOOP_WARN_EDITS = 5;  // warn agent after 5 edits to same file
   const LOOP_ABORT_EDITS = 10; // abort loop after 10 edits to same file
+  const bashCmdCounts = new Map(); // loop detection: repeated bash commands
+  const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
+  const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
+  let consecutiveErrors = 0;  // loop detection: consecutive tool failures
+  const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
+  const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1556,6 +1562,50 @@ async function processInput(userInput) {
             return;
           }
         }
+      }
+      // Bash command loop detection
+      if (prep.fnName === 'bash_exec' && prep.args && prep.args.command) {
+        const cmdKey = prep.args.command.replace(/\s+/g, ' ').trim().slice(0, 100);
+        const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
+        bashCmdCounts.set(cmdKey, bashCount);
+        if (bashCount === LOOP_WARN_BASH) {
+          console.log(`${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`);
+          const bashWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] You have run the same or similar bash command ${bashCount} times. This looks like a debug loop. STOP repeating the same command. Try a completely different approach or declare that the current approach is not working and explain why.`,
+          };
+          conversationMessages.push(bashWarning);
+          apiMessages.push(bashWarning);
+        } else if (bashCount >= LOOP_ABORT_BASH) {
+          console.log(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          autoSave(conversationMessages);
+          return;
+        }
+      }
+      // Consecutive error detection
+      if (!isOk) {
+        consecutiveErrors++;
+        if (consecutiveErrors === LOOP_WARN_ERRORS) {
+          console.log(`${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`);
+          const errWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive tool calls have failed. You appear to be stuck. STOP trying variations of the same failing approach. Either try something fundamentally different, acknowledge the limitation, or declare the task complete with what you have.`,
+          };
+          conversationMessages.push(errWarning);
+          apiMessages.push(errWarning);
+        } else if (consecutiveErrors >= LOOP_ABORT_ERRORS) {
+          console.log(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          autoSave(conversationMessages);
+          return;
+        }
+      } else {
+        consecutiveErrors = 0; // reset on success
       }
       if (isOk && prep.fnName === 'read_file') {
         if (prep.args && prep.args.path) filesRead.add(prep.args.path);
