@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Standalone agentic coding CLI. Provider-agnostisch, leichtgewichtig, open-source.
+Standalone agentic coding CLI. Provider-agnostic, lightweight, open-source.
 Repo: `github.com/hybridpicker/nex-code`
 
 ## Architecture
@@ -48,109 +48,113 @@ tests/                   → Jest, 43 Suites, 1783 Tests, 90%+ Stmts / 83%+ Bran
 
 ## Commit Message Convention
 
+All commit messages must be written in **English**. No exceptions.
+
 ```
-feat: <kurze Beschreibung>
-fix: <was gefixt wurde>
-test: <Test-Beschreibung>
-chore: <Maintenance>
+feat: <short description of the new feature>
+fix: <what was fixed>
+test: <what is being tested>
+chore: <maintenance task>
+refactor: <what was restructured>
+docs: <what was documented>
 ```
 
-Kein `Co-Authored-By: Claude` oder andere AI-Attributionen. NIEMALS.
+No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 
-## Sicherheit — Secrets & Credentials
+## Security — Secrets & Credentials
 
-- **NIEMALS** Passwörter, Tokens, API-Keys oder andere Secrets im Chat-Output anzeigen
-- Secrets werden generiert und **direkt in eine lokale Datei** geschrieben (chmod 600)
-- Nachfolgende Befehle lesen Secrets **aus der Datei** — nie aus dem Chat-Verlauf
-- Credentials-Dateien IMMER in `.gitignore` eintragen
+- **NEVER** display passwords, tokens, API keys or other secrets in chat output
+- Secrets are generated and written **directly to a local file** (chmod 600)
+- Subsequent commands read secrets **from the file** — never from the chat history
+- Credentials files ALWAYS added to `.gitignore`
 
 ## Git Rules
 
-- **NIEMALS** `Co-Authored-By: Claude` oder andere Claude/Anthropic-Signaturen einfügen
-- **NIEMALS** `--no-verify` bei git commit oder push
-- Commits werden OHNE jegliche AI-Attribution gepusht
+- **NEVER** add `Co-Authored-By: Claude` or other Claude/Anthropic signatures
+- **NEVER** use `--no-verify` with git commit or push
+- Commits are pushed WITHOUT any AI attribution
 
 ## Testing
 
 - Framework: Jest
-- Coverage-Ziel: 90%+ Statements, 80%+ Branches
+- Coverage target: 90%+ Statements, 80%+ Branches
 - Run: `npm test` (jest --coverage)
 - Watch: `npm run test:watch`
 - CI: GitHub Actions on push/PR (Node 18/20/22)
 
 ## Provider System
 
-### Unterstützte Provider:
+### Supported Providers:
 - **ollama** — Ollama Cloud (`OLLAMA_API_KEY`)
 - **openai** — OpenAI API (`OPENAI_API_KEY`)
 - **anthropic** — Anthropic API (`ANTHROPIC_API_KEY`)
-- **gemini** — Google Gemini API (`GEMINI_API_KEY` oder `GOOGLE_API_KEY`)
-- **local** — Lokaler Ollama Server (kein Key nötig)
+- **gemini** — Google Gemini API (`GEMINI_API_KEY` or `GOOGLE_API_KEY`)
+- **local** — Local Ollama Server (no key required)
 
-### Model-Spec-Format:
-`provider:model` (z.B. `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
+### Model-Spec Format:
+`provider:model` (e.g. `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
 
-### Env-Variablen:
+### Env Variables:
 - `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
 - `DEFAULT_PROVIDER` (default: `ollama`)
-- `DEFAULT_MODEL` (default: provider-abhängig)
+- `DEFAULT_MODEL` (default: provider-dependent)
 - `FALLBACK_CHAIN` (comma-separated, e.g. `anthropic,openai`)
 - `NEX_STALE_WARN_MS` (default: `60000`) — Warn if no tokens received for N ms
 - `NEX_STALE_ABORT_MS` (default: `120000`) — Abort and retry stream after N ms without tokens
 
 ## Key Patterns
 
-- Provider-Abstraction: Jeder Provider implementiert `chat()`, `stream()`, `isConfigured()`
-- `registry.js` verwaltet aktiven Provider + Model, resolving von Model-Specs; shared `_tryProviders()` helper eliminiert Code-Duplikation zwischen `callStream` und `callChat`
-- `agent.js` nutzt `registry.callStream()` mit `onToken` Callback für Streaming, Spinner bei Rate-Limit/Network-Retry-Waits
-- `callChat()` hat Stream-Fallback: bei chat-Fehler wird `provider.stream()` mit no-op onToken versucht
-- Stale-Stream-Thresholds konfigurierbar via `NEX_STALE_WARN_MS` / `NEX_STALE_ABORT_MS` (default: 60s/120s)
-- Streaming-Output wird durch `renderMarkdown()` gepiped (rich terminal rendering)
-- `ollama.js` ist Backward-compatible Wrapper (delegiert an Registry)
+- Provider Abstraction: Each provider implements `chat()`, `stream()`, `isConfigured()`
+- `registry.js` manages active provider + model, resolving model specs; shared `_tryProviders()` helper eliminates code duplication between `callStream` and `callChat`
+- `agent.js` uses `registry.callStream()` with `onToken` callback for streaming, spinner during rate-limit/network retry waits
+- `callChat()` has stream fallback: on chat error, `provider.stream()` is tried with no-op onToken
+- Stale stream thresholds configurable via `NEX_STALE_WARN_MS` / `NEX_STALE_ABORT_MS` (default: 60s/120s)
+- Streaming output is piped through `renderMarkdown()` (rich terminal rendering)
+- `ollama.js` is a backward-compatible wrapper (delegates to registry)
 - 17 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents
-- Permission-System: allow/ask/deny pro Tool (konfigurierbar in `.nex/config.json`)
-- Context Engine: Token-Counting, Auto-Compression bei >70% Window
-- Session-Persistenz: Auto-Save nach jedem Turn in `.nex/sessions/`
-- Project Memory: Key-Value + NEX.md
-- Plan Mode: Analyse → Plan → Approve → Execute
-- Git Intelligence: Smart Commit, Diff-Analyse, Branch-Erstellung
-- MCP Client: JSON-RPC over stdio, Tool-Discovery, Routing über `mcp_` Prefix
+- Permission system: allow/ask/deny per tool (configurable in `.nex/config.json`)
+- Context Engine: token counting, auto-compression above 70% window
+- Session persistence: auto-save after each turn in `.nex/sessions/`
+- Project Memory: key-value + NEX.md
+- Plan Mode: Analyze → Plan → Approve → Execute
+- Git Intelligence: smart commit, diff analysis, branch creation
+- MCP Client: JSON-RPC over stdio, tool discovery, routing via `mcp_` prefix
 - Hook System: pre-tool, post-tool, pre-commit, post-response, session-start, session-end
-- YOLO Mode: `nex-code -yolo` setzt autoConfirm=true, überspringt alle Bestätigungsprompts
-- Lazy `process.cwd()` Evaluation in Modulen (für Jest-Mocking)
-- Tool-Output wird bei 50KB abgeschnitten
-- Max 30 Iterationen pro User-Input im Agentic Loop
-- Tool-Call-Retry: Malformed Args → Schema-Hint mit erwartetem JSON-Schema
-- parseToolArgs: 5 Fallback-Strategien (JSON, trailing commas, JSON-Extract, unquoted keys, code fences)
-- Tool-Validator: Schema-Validation + Levenshtein-basiertes Auto-Correct + Did-you-mean
-- Auto-Fix: Path-Resolution (extension swap, basename glob, double-slash fix), Edit Auto-Fix (≤5% distance auto-apply), Bash Error Hints (command not found, MODULE_NOT_FOUND, port in use, etc.)
-- Tool-Tiers: essential (5) / standard (13) / full (17) — dynamisch pro Model/Provider, getModelTier() für beliebige Models, overrideTier in filterToolsForModel()
-- Task-List: create/update/get mit Dependencies, renderTaskList() für Terminal-Display, onChange-Callbacks für Live-Display-Integration
-- TaskProgress: Live animated multi-line display (✔/◼/◻/✗), Spinner-Header mit elapsed/tokens, pause/resume für sauberes Text-Streaming, auto-resume vor Tool-Execution
-- MultiProgress: Elapsed-Timer auf letzter Zeile, Spinner pro Agent-Zeile, Batch-Spinner wird vor spawn_agents gestoppt
-- Sub-Agents: Max 5 parallel, eigener Conversation-Context, File-Locking via Map<path,agentId>, callStream-basiert (stream:true für Zuverlässigkeit), Retry mit Exponential Backoff (max 3 Retries)
-- Sub-Agent Routing: Immer aktives Model, Keyword-basierte Task-Klassifizierung nur für Tool-Tier-Filterung (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM-halluzinierte Model-Namen werden ignoriert
-- Sub-Agent Defensive: Argument-Normalisierung (task/prompt/description/name Fallback), Model-Stripping (verhindert 404 durch halluzinierte Modelle wie "llama3"), Null-Response-Guard, Skip 'local' Provider
-- Local Provider: Dynamische Context-Window-Erkennung via /api/show
-- File-History: In-session Undo/Redo Stack (max 50), recordChange nach write/edit/patch
-- Progress Indicators: getToolSpinnerText() → Spinner-Wrapper um executeTool()
+- YOLO Mode: `nex-code -yolo` sets autoConfirm=true, skips all confirmation prompts
+- Lazy `process.cwd()` evaluation in modules (for Jest mocking)
+- Tool output truncated at 50KB
+- Max 30 iterations per user input in the agentic loop
+- Tool call retry: malformed args → schema hint with expected JSON schema
+- parseToolArgs: 5 fallback strategies (JSON, trailing commas, JSON-extract, unquoted keys, code fences)
+- Tool Validator: schema validation + Levenshtein-based auto-correct + did-you-mean
+- Auto-Fix: path resolution (extension swap, basename glob, double-slash fix), edit auto-fix (≤5% distance auto-apply), bash error hints (command not found, MODULE_NOT_FOUND, port in use, etc.)
+- Tool Tiers: essential (5) / standard (13) / full (17) — dynamic per model/provider, getModelTier() for arbitrary models, overrideTier in filterToolsForModel()
+- Task List: create/update/get with dependencies, renderTaskList() for terminal display, onChange callbacks for live display integration
+- TaskProgress: live animated multi-line display (✔/◼/◻/✗), spinner header with elapsed/tokens, pause/resume for clean text streaming, auto-resume before tool execution
+- MultiProgress: elapsed timer on last line, spinner per agent line, batch spinner stopped before spawn_agents
+- Sub-Agents: max 5 parallel, own conversation context, file locking via Map<path,agentId>, callStream-based (stream:true for reliability), retry with exponential backoff (max 3 retries)
+- Sub-Agent Routing: always uses active model, keyword-based task classification only for tool tier filtering (FAST_PATTERNS→essential, HEAVY_PATTERNS→full, default→standard), LLM-hallucinated model names are ignored
+- Sub-Agent Defensive: argument normalization (task/prompt/description/name fallback), model stripping (prevents 404 from hallucinated models like "llama3"), null response guard, skip 'local' provider
+- Local Provider: dynamic context window detection via /api/show
+- File History: in-session undo/redo stack (max 50), recordChange after write/edit/patch
+- Progress Indicators: getToolSpinnerText() → spinner wrapper around executeTool()
 - Compact Output: executeBatch(quiet=true) → single spinner + formatToolSummary() 1-line summaries
-- Response Quality: System-Prompt erzwingt substantive Text-Antworten nach Tool-Use, Markdown-Formatierung, Approach-Statement vor Tasks, Completion-Summary
-- Résumé: _printResume() zeigt Steps/Tools/Files-Modified/Files-Read nach Multi-Step-Tasks
-- Follow-Up: Kontext-basierte Vorschläge — 💡 /diff · /commit · /undo nach Edits, 💡 /save · /clear nach Read-Sessions
-- Tab-Completion: completeFilePath() für Dateipfad-Vervollständigung neben Slash-Commands
-- Bracketed Paste Mode: \x1b[200~/201~ Erkennung, Multi-Line-Paste als einzelner Input
+- Response Quality: system prompt enforces substantive text responses after tool use, markdown formatting, approach statement before tasks, completion summary
+- Résumé: _printResume() shows steps/tools/files-modified/files-read after multi-step tasks
+- Follow-Up: context-based suggestions — 💡 /diff · /commit · /undo after edits, 💡 /save · /clear after read sessions
+- Tab Completion: completeFilePath() for file path completion alongside slash commands
+- Bracketed Paste Mode: \x1b[200~/201~ detection, multi-line paste as single input
 - Interactive Picker: pickFromList() generic cursor-based list picker, showModelPicker() for `/model`
-- Cost Limits: setCostLimit/removeCostLimit/checkBudget pro Provider, Budget-Gate in callStream/callChat, Auto-Fallback bei Budget-Überschreitung, Persistenz in .nex/config.json
-- Performance: Non-blocking I/O für alle Datei- und Git-Operationen, <100ms Startup via Bundling, Instant-Suchergebnisse via In-Memory Index (rg-kompatibel).
+- Cost Limits: setCostLimit/removeCostLimit/checkBudget per provider, budget gate in callStream/callChat, auto-fallback on budget exceeded, persistence in .nex/config.json
+- Performance: non-blocking I/O for all file and git operations, <100ms startup via bundling, instant search results via in-memory index (rg-compatible)
 
-## .nex/ Verzeichnis
+## .nex/ Directory
 
 ```
 .nex/
-├── sessions/          # Gespeicherte Conversations
-├── memory/            # Persistentes Projekt-Wissen
-├── plans/             # Gespeicherte Plans
-├── hooks/             # Custom Hook-Scripts
-└── config.json        # Permissions, MCP-Server, Hooks, Aliases, maxIterations
+├── sessions/          # Saved conversations
+├── memory/            # Persistent project knowledge
+├── plans/             # Saved plans
+├── hooks/             # Custom hook scripts
+└── config.json        # Permissions, MCP servers, hooks, aliases, maxIterations
 ```
