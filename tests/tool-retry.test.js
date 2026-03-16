@@ -57,7 +57,7 @@ jest.mock('../cli/context-engine', () => ({
   compressToolResult: jest.fn().mockImplementation((content) => content),
 }));
 
-jest.mock('../cli/session', () => ({ autoSave: jest.fn() }));
+jest.mock('../cli/session', () => ({ autoSave: jest.fn(), flushAutoSave: jest.fn() }));
 jest.mock('../cli/memory', () => ({ getMemoryContext: jest.fn().mockReturnValue('') }));
 jest.mock('../cli/permissions', () => ({ checkPermission: jest.fn().mockReturnValue('allow') }));
 jest.mock('../cli/planner', () => ({ isPlanMode: jest.fn().mockReturnValue(false), getPlanModePrompt: jest.fn().mockReturnValue('') }));
