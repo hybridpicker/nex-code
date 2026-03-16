@@ -368,6 +368,10 @@ function cleanupTerminal() {
     _activeTaskProgress.stop();
     _activeTaskProgress = null;
   }
+  // Remove keypress listener to prevent accumulation
+  if (process.stdin.isTTY) {
+    process.stdin.removeAllListeners('keypress');
+  }
   // Single write: show cursor + clear line (avoids flicker)
   process.stderr.write('\x1b[?25h\x1b[2K\r');
 }

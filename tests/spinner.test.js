@@ -368,6 +368,30 @@ describe('spinner.js', () => {
       expect(tp._stopped).toBe(true);
     });
 
+    it('removes keypress listeners from stdin', () => {
+      // Mock stdin.isTTY to be true
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, writable: true });
+      
+      // Add a mock listener
+      const mockListener = jest.fn();
+      process.stdin.on('keypress', mockListener);
+      
+      // Verify listener was added
+      const listeners = process.stdin.listeners('keypress');
+      expect(listeners.length).toBeGreaterThan(0);
+      
+      // Call cleanupTerminal
+      cleanupTerminal();
+      
+      // Verify listener was removed
+      const remainingListeners = process.stdin.listeners('keypress');
+      expect(remainingListeners.length).toBe(0);
+      
+      // Restore original isTTY
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, writable: true });
+    });
+
     it('works when no active TaskProgress exists', () => {
       setActiveTaskProgress(null);
       expect(() => cleanupTerminal()).not.toThrow();
