@@ -94,9 +94,11 @@ function preventSleep() {
   } catch { /* caffeinate unavailable, no-op */ }
 }
 
-// ─── first-run setup check ───────────────────────────────────
-function checkSetup() {
+// ─── first-run interactive setup ─────────────────────────────
+async function checkSetup() {
   const fs = require('fs');
+  const readline = require('readline');
+
   const hasEnvFile =
     fs.existsSync(path.join(__dirname, '..', '.env')) ||
     fs.existsSync(path.join(process.cwd(), '.env'));
@@ -107,45 +109,148 @@ function checkSetup() {
     process.env.OPENROUTER_API_KEY;
   const hasExplicitProvider = process.env.DEFAULT_PROVIDER || process.env.DEFAULT_MODEL;
 
-  if (hasEnvFile || hasApiKey || hasExplicitProvider) return; // configured — skip
+  if (hasEnvFile || hasApiKey || hasExplicitProvider) return; // already configured
 
-  const R = '\x1b[0m';
-  const B = '\x1b[1m';
-  const D = '\x1b[2m';
-  const Y = '\x1b[33m';
-  const C = '\x1b[36m';
-  const G = '\x1b[32m';
+  const R = '\x1b[0m'; const B = '\x1b[1m'; const D = '\x1b[2m';
+  const Y = '\x1b[33m'; const CY = '\x1b[36m'; const G = '\x1b[32m';
+
+  // ─── tiny readline helpers (no REPL open yet) ───
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const ask = (q, def = '') => new Promise((res) => {
+    const hint = def ? ` ${D}[${def}]${R}` : '';
+    rl.question(`  ${CY}${q}${hint}${R}: `, (a) => res(a.trim() || def));
+  });
+  // Masked input (API keys) — hides characters while typing
+  const askSecret = (q) => new Promise((res) => {
+    process.stdout.write(`  ${CY}${q}${R}: `);
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    let input = '';
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const onData = (ch) => {
+      if (ch === '\r' || ch === '\n') {
+        stdin.setRawMode(wasRaw || false);
+        stdin.pause();
+        stdin.removeListener('data', onData);
+        process.stdout.write('\n');
+        res(input);
+      } else if (ch === '\u0003') { // Ctrl+C
+        process.stdout.write('\n');
+        process.exit(0);
+      } else if (ch === '\u007f') { // backspace
+        if (input.length > 0) { input = input.slice(0, -1); process.stdout.write('\b \b'); }
+      } else {
+        input += ch;
+        process.stdout.write('*');
+      }
+    };
+    stdin.on('data', onData);
+  });
 
   console.log();
-  console.log(`${Y}${B}  ✦ No configuration found — quick setup guide${R}`);
+  console.log(`${Y}${B}  ✦ Welcome to nex-code! No configuration found.${R}`);
   console.log(`${D}  ─────────────────────────────────────────────────────────${R}`);
+  console.log(`  Let's set you up in 60 seconds.`);
   console.log();
-  console.log(`  Create a ${B}.env${R} file in your project directory with one of:`);
+  console.log(`  ${B}Which AI provider do you want to use?${R}`);
   console.log();
-  console.log(`${G}  ┌─ Ollama (local or cloud, no API key required) ─────────┐${R}`);
-  console.log(`${G}  │${R}  Works out of the box if Ollama is running locally.     ${G}│${R}`);
-  console.log(`${G}  │${R}                                                         ${G}│${R}`);
-  console.log(`${G}  │${R}  ${D}# .env${R}                                               ${G}│${R}`);
-  console.log(`${G}  │${R}  ${C}DEFAULT_PROVIDER${R}=ollama                               ${G}│${R}`);
-  console.log(`${G}  │${R}  ${C}DEFAULT_MODEL${R}=qwen3-coder                             ${G}│${R}`);
-  console.log(`${G}  │${R}  ${C}OLLAMA_HOST${R}=http://localhost:11434                    ${G}│${R}`);
-  console.log(`${G}  └─────────────────────────────────────────────────────────┘${R}`);
+  console.log(`  ${G}1)${R} Ollama        ${D}local/cloud — no API key needed${R}`);
+  console.log(`  ${CY}2)${R} Anthropic     ${D}Claude (claude-sonnet-4-6 etc.)${R}`);
+  console.log(`  ${CY}3)${R} OpenAI        ${D}GPT-4o, GPT-4.1 etc.${R}`);
+  console.log(`  ${CY}4)${R} Gemini        ${D}Google Gemini 2.x${R}`);
+  console.log(`  ${D}5)  Skip          continue with Ollama defaults${R}`);
   console.log();
-  console.log(`${C}  ┌─ Anthropic (Claude) ───────────────────────────────────┐${R}`);
-  console.log(`${C}  │${R}  ${C}DEFAULT_PROVIDER${R}=anthropic                             ${C}│${R}`);
-  console.log(`${C}  │${R}  ${C}ANTHROPIC_API_KEY${R}=sk-ant-...                           ${C}│${R}`);
-  console.log(`${C}  └─────────────────────────────────────────────────────────┘${R}`);
+
+  const choice = await ask('Enter number', '1');
+  const envLines = [];
+
+  if (choice === '5') {
+    rl.close();
+    console.log(`\n${D}  Skipping — using Ollama defaults. Run /init anytime to configure.${R}\n`);
+    return;
+  }
+
+  if (choice === '1') {
+    // ── Ollama ──────────────────────────────────────────────
+    console.log();
+    const host = await ask('Ollama host', 'http://localhost:11434');
+    const model = await ask('Default model', 'qwen3-coder');
+    envLines.push('DEFAULT_PROVIDER=ollama', `DEFAULT_MODEL=${model}`, `OLLAMA_HOST=${host}`);
+    // apply immediately for this session
+    process.env.DEFAULT_PROVIDER = 'ollama';
+    process.env.DEFAULT_MODEL = model;
+    process.env.OLLAMA_HOST = host;
+
+  } else if (choice === '2') {
+    // ── Anthropic ───────────────────────────────────────────
+    console.log();
+    console.log(`  ${D}Get your key at: https://console.anthropic.com/settings/keys${R}`);
+    const key = await askSecret('ANTHROPIC_API_KEY');
+    if (!key) { rl.close(); console.log(`\n${Y}  No key entered — skipping.${R}\n`); return; }
+    const model = await ask('Default model', 'claude-sonnet-4-6');
+    envLines.push('DEFAULT_PROVIDER=anthropic', `DEFAULT_MODEL=${model}`, `ANTHROPIC_API_KEY=${key}`);
+    process.env.DEFAULT_PROVIDER = 'anthropic';
+    process.env.DEFAULT_MODEL = model;
+    process.env.ANTHROPIC_API_KEY = key;
+
+  } else if (choice === '3') {
+    // ── OpenAI ──────────────────────────────────────────────
+    console.log();
+    console.log(`  ${D}Get your key at: https://platform.openai.com/api-keys${R}`);
+    const key = await askSecret('OPENAI_API_KEY');
+    if (!key) { rl.close(); console.log(`\n${Y}  No key entered — skipping.${R}\n`); return; }
+    const model = await ask('Default model', 'gpt-4o');
+    envLines.push('DEFAULT_PROVIDER=openai', `DEFAULT_MODEL=${model}`, `OPENAI_API_KEY=${key}`);
+    process.env.DEFAULT_PROVIDER = 'openai';
+    process.env.DEFAULT_MODEL = model;
+    process.env.OPENAI_API_KEY = key;
+
+  } else if (choice === '4') {
+    // ── Gemini ──────────────────────────────────────────────
+    console.log();
+    console.log(`  ${D}Get your key at: https://aistudio.google.com/app/apikey${R}`);
+    const key = await askSecret('GEMINI_API_KEY');
+    if (!key) { rl.close(); console.log(`\n${Y}  No key entered — skipping.${R}\n`); return; }
+    const model = await ask('Default model', 'gemini-2.0-flash');
+    envLines.push('DEFAULT_PROVIDER=gemini', `DEFAULT_MODEL=${model}`, `GEMINI_API_KEY=${key}`);
+    process.env.DEFAULT_PROVIDER = 'gemini';
+    process.env.DEFAULT_MODEL = model;
+    process.env.GEMINI_API_KEY = key;
+  }
+
+  // ── Optional Perplexity key (grounded web search) ───────
   console.log();
-  console.log(`${D}  ┌─ OpenAI ───────────────────────────────────────────────┐${R}`);
-  console.log(`${D}  │${R}  ${C}DEFAULT_PROVIDER${R}=openai                                ${D}│${R}`);
-  console.log(`${D}  │${R}  ${C}OPENAI_API_KEY${R}=sk-...                                  ${D}│${R}`);
-  console.log(`${D}  └─────────────────────────────────────────────────────────┘${R}`);
+  const addPerplexity = await ask('Add Perplexity API key for web search? (y/N)', 'n');
+  if (addPerplexity.toLowerCase() === 'y') {
+    console.log(`  ${D}Get your key at: https://www.perplexity.ai/settings/api${R}`);
+    const pKey = await askSecret('PERPLEXITY_API_KEY');
+    if (pKey) {
+      envLines.push(`PERPLEXITY_API_KEY=${pKey}`);
+      process.env.PERPLEXITY_API_KEY = pKey;
+    }
+  }
+
+  // ── Save .env ────────────────────────────────────────────
   console.log();
-  console.log(`  Run ${B}/init${R} inside nex-code for an interactive setup wizard.`);
-  console.log(`  Docs: ${D}https://github.com/hybridpicker/nex-code${R}`);
-  console.log();
-  console.log(`${D}  Continuing with Ollama defaults (localhost:11434)...${R}`);
-  console.log();
+  const save = await ask('Save settings to .env in current directory? (Y/n)', 'y');
+  rl.close();
+
+  if (save.toLowerCase() !== 'n') {
+    const envPath = path.join(process.cwd(), '.env');
+    const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') + '\n' : '';
+    fs.writeFileSync(envPath, existing + envLines.join('\n') + '\n');
+    // ensure .gitignore has .env
+    const gitignorePath = path.join(process.cwd(), '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      const gi = fs.readFileSync(gitignorePath, 'utf-8');
+      if (!gi.includes('.env')) fs.appendFileSync(gitignorePath, '\n.env\n');
+    }
+    console.log(`\n${G}  ✓ Saved to ${envPath}${R}`);
+  }
+
+  console.log(`\n${G}  ✓ Setup complete — starting nex-code...${R}\n`);
 }
 
 // ─── helper: run headless task ───────────────────────────────
@@ -220,10 +325,11 @@ if (promptFileIdx !== -1) {
     preventSleep();
     runHeadlessTask(task);
   } else {
-    // Normal REPL mode
-    checkSetup(); // show onboarding screen if no config found
-    preventSleep();
-    const { startREPL } = require('../cli/index');
-    startREPL();
+    // Normal REPL mode — run interactive setup if needed, then start REPL
+    checkSetup().then(() => {
+      preventSleep();
+      const { startREPL } = require('../cli/index');
+      startREPL();
+    });
   }
 }
