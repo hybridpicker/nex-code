@@ -1504,7 +1504,7 @@ async function processInput(userInput) {
 
     // ─── Update stats ───
     totalSteps++;
-    if (totalSteps > 1) stepPrinted = false; // enable deferred step marker for steps 2+
+    if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
     for (const tc of tool_calls) {
       const name = tc.function.name;
       toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
@@ -1527,13 +1527,10 @@ async function processInput(userInput) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
       if (process.stdout.isTTY) {
-        // Animate the ● in place — no separate sub-spinner line
-        const _frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-        let _fi = 0;
-        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, _frames[0]));
-        _spinAnim = setInterval(() => {
-          process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false, _frames[_fi++ % _frames.length])}`);
-        }, 80);
+        // Blink the ● via ANSI \x1b[5m while the tool executes — no interval needed,
+        // the terminal handles blinking natively so it works even for sub-ms tools
+        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, 'blink'));
+        _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
       } else {
         process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
       }
@@ -1545,9 +1542,8 @@ async function processInput(userInput) {
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Stop animation, finalize header with static dot
+    // Stop blink, finalize header with static dot
     if (_spinAnim) {
-      clearInterval(_spinAnim);
       _spinAnim = null;
       process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`);
     }

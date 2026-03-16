@@ -75,6 +75,7 @@ const SLASH_COMMANDS = [
   { cmd: '/docker', desc: 'List containers across all servers' },
   { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
   { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
+  { cmd: '/setup', desc: 'Configure provider and API keys' },
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
@@ -1488,6 +1489,12 @@ For each issue, include:
       } else {
         await runServerWizard();
       }
+      return true;
+    }
+
+    case '/setup': {
+      const { runSetupWizard } = require('./setup');
+      await runSetupWizard({ rl, force: true });
       return true;
     }
 

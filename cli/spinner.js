@@ -22,7 +22,15 @@ const C = {
   brightBlue: '\x1b[94m',
 };
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// Bouncing ball: positions 0→4→0 ping-pong along a fixed-width track
+const BOUNCE_WIDTH = 5;
+const BOUNCE_POSITIONS = (() => {
+  const p = [];
+  for (let i = 0; i < BOUNCE_WIDTH; i++) p.push(i);
+  for (let i = BOUNCE_WIDTH - 2; i >= 1; i--) p.push(i);
+  return p; // [0,1,2,3,4,3,2,1]
+})();
+
 const TASK_FRAMES = ['✽', '✦', '✧', '✦'];
 
 class Spinner {
@@ -35,7 +43,12 @@ class Spinner {
 
   _render() {
     if (this._stopped) return;
-    const f = SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length];
+    const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    // Build track: dim dots with a cyan ball at current position
+    let track = '';
+    for (let i = 0; i < BOUNCE_WIDTH; i++) {
+      track += i === pos ? `${C.cyan}●${C.reset}` : ' ';
+    }
     let elapsed = '';
     if (this.startTime) {
       const totalSecs = Math.floor((Date.now() - this.startTime) / 1000);
@@ -47,7 +60,7 @@ class Spinner {
         elapsed = ` ${C.dim}${totalSecs}s${C.reset}`;
       }
     }
-    process.stderr.write(`\x1b[2K\r${C.cyan}${f}${C.reset} ${C.dim}${this.text}${C.reset}${elapsed}`);
+    process.stderr.write(`\x1b[2K\r${track} ${C.dim}${this.text}${C.reset}${elapsed}`);
     this.frame++;
   }
 
@@ -58,7 +71,7 @@ class Spinner {
     if (!process.stderr.isTTY) return;
     process.stderr.write('\x1b[?25l'); // hide cursor
     this._render(); // render first frame immediately
-    this.interval = setInterval(() => this._render(), 80);
+    this.interval = setInterval(() => this._render(), 100);
   }
 
   update(text) {
@@ -80,7 +93,7 @@ class Spinner {
 }
 
 // ─── MultiProgress ────────────────────────────────────────────
-const MULTI_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// MultiProgress reuses the same bounce positions as the main Spinner
 
 class MultiProgress {
   /**
@@ -106,7 +119,9 @@ class MultiProgress {
 
   _render() {
     if (this._stopped) return;
-    const f = MULTI_FRAMES[this.frame % MULTI_FRAMES.length];
+    const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    const ball = `${C.cyan}●${C.reset}`;
+    const empty = `${C.dim}○${C.reset}`;
     const elapsed = this._formatElapsed();
     const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : '';
     let buf = '';
@@ -123,7 +138,7 @@ class MultiProgress {
           color = C.dim;
           break;
         default:
-          icon = `${C.cyan}${f}${C.reset}`;
+          icon = i === pos ? ball : ' ';
           color = '';
       }
       // Show elapsed on last line only
@@ -149,7 +164,7 @@ class MultiProgress {
     if (this.lineCount > 0) buf += `\x1b[${this.lineCount}A`;
     process.stderr.write(buf);
     this._render();
-    this.interval = setInterval(() => this._render(), 80);
+    this.interval = setInterval(() => this._render(), 100);
   }
 
   /**
