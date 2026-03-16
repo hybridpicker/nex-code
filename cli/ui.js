@@ -56,13 +56,9 @@ const DOG_MATRIX = [
 ];
 
 function renderDog(matrix) {
-  // Vertical gradient: Ice White → Cyan → Deep Blue
-  const stops = [[220, 240, 255], [80, 200, 255], [40, 100, 220]];
-  const halfRows = Math.ceil(matrix.length / 2);
+  const color = '\x1b[38;2;80;200;255m'; // solid mid-cyan
   const lines = [];
   for (let r = 0; r < matrix.length; r += 2) {
-    const [cr, cg, cb] = lerpColor(stops, (r / 2) / (halfRows - 1 || 1));
-    const color = `\x1b[38;2;${cr};${cg};${cb}m`;
     let line = '';
     for (let c = 0; c < matrix[0].length; c++) {
       const top = matrix[r][c] === '1';
