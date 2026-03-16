@@ -75,6 +75,8 @@ jest.mock('../cli/context-engine', () => ({
 
 jest.mock('../cli/tools', () => ({
   TOOL_DEFINITIONS: [],
+  setAskUserHandler: jest.fn(),
+  cancelPendingAskUser: jest.fn(),
 }));
 
 jest.mock('../cli/session', () => ({
@@ -366,7 +368,7 @@ describe('index.js (REPL commands)', () => {
           messageCount: 5,
         }),
       }));
-      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
+      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [], setAskUserHandler: jest.fn(), cancelPendingAskUser: jest.fn() }));
       jest.mock('../cli/session', () => ({
         saveSession: jest.fn().mockReturnValue({ path: '/tmp/test.json', name: 'test' }),
         loadSession: jest.fn().mockReturnValue(null),
@@ -476,7 +478,7 @@ describe('index.js (REPL commands)', () => {
           messageCount: 5,
         }),
       }));
-      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
+      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [], setAskUserHandler: jest.fn(), cancelPendingAskUser: jest.fn() }));
       jest.mock('../cli/session', () => ({
         saveSession: jest.fn().mockReturnValue({ path: '/tmp/test.json', name: 'test' }),
         loadSession: jest.fn().mockReturnValue(null),
@@ -614,7 +616,7 @@ describe('index.js (REPL commands)', () => {
           messageCount: 5,
         }),
       }));
-      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
+      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [], setAskUserHandler: jest.fn(), cancelPendingAskUser: jest.fn() }));
       jest.mock('../cli/session', () => ({
         saveSession: jest.fn().mockReturnValue({ path: '/tmp/test.json', name: 'test' }),
         loadSession: jest.fn().mockImplementation((name) => {
@@ -1464,7 +1466,7 @@ describe('index.js (REPL commands)', () => {
         setMaxIterations: jest.fn(),
       }));
       jest.mock('../cli/context-engine', () => ({ getUsage: jest.fn() }));
-      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [] }));
+      jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [], setAskUserHandler: jest.fn(), cancelPendingAskUser: jest.fn() }));
       jest.mock('../cli/session', () => ({
         saveSession: jest.fn(), loadSession: jest.fn(),
         listSessions: jest.fn(), getLastSession: jest.fn(),
