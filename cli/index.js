@@ -1727,8 +1727,14 @@ async function startREPL() {
 
   // Fallback SIGINT handler for non-TTY (e.g. piped input or external signals)
   process.on('SIGINT', () => {
-    if (!process.stdin.isTTY) gracefulShutdown();
-    // else: rl.on('SIGINT') handles it
+    if (!process.stdin.isTTY) {
+      gracefulShutdown();
+    } else {
+      // Safety-net: rl.on('SIGINT') should handle TTY, but if readline is
+      // in a broken state after cancel, this ensures 2nd Ctrl+C always exits
+      _sigintCount++;
+      if (_sigintCount >= 2) process.exit(0);
+    }
   });
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
