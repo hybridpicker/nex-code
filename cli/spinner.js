@@ -47,7 +47,7 @@ class Spinner {
     // Build track: dim dots with a cyan ball at current position
     let track = '';
     for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${C.cyan}●${C.reset}` : `${C.dim}·${C.reset}`;
+      track += i === pos ? `${C.cyan}●${C.reset}` : `${C.dim}○${C.reset}`;
     }
     let elapsed = '';
     if (this.startTime) {
@@ -93,7 +93,7 @@ class Spinner {
 }
 
 // ─── MultiProgress ────────────────────────────────────────────
-const MULTI_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// MultiProgress reuses the same bounce positions as the main Spinner
 
 class MultiProgress {
   /**
@@ -119,7 +119,9 @@ class MultiProgress {
 
   _render() {
     if (this._stopped) return;
-    const f = MULTI_FRAMES[this.frame % MULTI_FRAMES.length];
+    const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    const ball = `${C.cyan}●${C.reset}`;
+    const empty = `${C.dim}○${C.reset}`;
     const elapsed = this._formatElapsed();
     const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : '';
     let buf = '';
@@ -136,7 +138,7 @@ class MultiProgress {
           color = C.dim;
           break;
         default:
-          icon = `${C.cyan}${f}${C.reset}`;
+          icon = i === pos ? ball : empty;
           color = '';
       }
       // Show elapsed on last line only
