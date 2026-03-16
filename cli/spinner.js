@@ -47,7 +47,7 @@ class Spinner {
     // Build track: dim dots with a cyan ball at current position
     let track = '';
     for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${C.cyan}●${C.reset}` : `${C.dim}○${C.reset}`;
+      track += i === pos ? `${C.cyan}●${C.reset}` : ' ';
     }
     let elapsed = '';
     if (this.startTime) {
@@ -138,7 +138,7 @@ class MultiProgress {
           color = C.dim;
           break;
         default:
-          icon = i === pos ? ball : empty;
+          icon = i === pos ? ball : ' ';
           color = '';
       }
       // Show elapsed on last line only
