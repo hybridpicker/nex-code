@@ -326,7 +326,7 @@ describe('ui.js', () => {
     it('shows multi-line output count for bash with many lines', () => {
       const output = Array.from({ length: 5 }, (_, i) => `line${i}`).join('\n');
       const result = formatToolSummary('bash', { command: 'ls' }, output, false);
-      expect(result).toContain('lines output');
+      expect(result).toMatch(/\d+ lines/);
     });
 
     // grep / search_files
