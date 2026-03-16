@@ -9,7 +9,11 @@ const { parseToolArgs } = require('./ollama');
 const { executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
 const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
-const { autoSave } = require('./session');
+const { autoSave, flushAutoSave } = require('./session');
+
+// Save session immediately — used on all terminal paths (break/return) so the
+// debounced timeout doesn't race against process exit.
+function saveNow(messages) { autoSave(messages); flushAutoSave(); }
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
@@ -241,6 +245,10 @@ const PARALLEL_SAFE = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
   'web_fetch', 'web_search', 'git_status', 'git_diff', 'git_log',
   'task_list', 'gh_run_list', 'gh_run_view',
+  // Read-only container/service queries safe to run in parallel
+  'container_list', 'container_logs', 'service_logs',
+  // Browser read-only operations (NOT click/fill — those mutate state)
+  'browser_open', 'browser_screenshot',
 ]);
 // Tools that MUST run one-at-a-time: manage their own terminal display
 // or require strict ordering. ALL other tools run in parallel when the
@@ -1110,7 +1118,8 @@ async function processInput(userInput) {
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
-  let contextRetries = 0;
+  let contextRetries = 0;    // budget for 400-error context-overflow recovery
+  let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -1171,7 +1180,11 @@ async function processInput(userInput) {
         stream._clearCursorLine();
         const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
         console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
-        if (fastModel) console.log(`${C.dim}  💡 Ctrl+C → /model ${fastModel} to switch to a faster model${C.reset}`);
+        if (fastModel && fastModel !== getActiveModelId()) {
+          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} if no tokens arrive before abort${C.reset}`);
+        } else if (fastModel) {
+          console.log(`${C.dim}  💡 Ctrl+C to abort and retry${C.reset}`);
+        }
       }
     }, 5000);
     
@@ -1192,6 +1205,11 @@ async function processInput(userInput) {
 
       result = await callStream(apiMessages, allTools, {
         signal: combinedAbort.signal,
+        onThinkingToken: () => {
+          // Thinking-model reasoning tokens: reset stale timer but don't display
+          lastTokenTime = Date.now();
+          staleWarned = false;
+        },
         onToken: (text) => {
           lastTokenTime = Date.now();
           staleWarned = false;
@@ -1257,7 +1275,7 @@ async function processInput(userInput) {
           if (recovery.action === 'quit') {
             setOnChange(null);
             _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-            autoSave(conversationMessages);
+            saveNow(conversationMessages);
             break;
           }
           if (recovery.action === 'switch') {
@@ -1270,16 +1288,19 @@ async function processInput(userInput) {
           i--;
           continue;
         }
-        // Progressive delay + optional compress on 2nd retry
+        // Progressive delay: 3s on first retry, 5s on subsequent
         const delay = staleRetries === 1 ? 3000 : 5000;
-        if (staleRetries >= 2 && contextRetries < 1) {
-          contextRetries++;
+        // Auto-switch to fast model on first stale retry (don't waste another 120s on the same model)
+        // Uses staleCompressUsed (not contextRetries) so 400-error recovery budget stays intact.
+        if (staleRetries >= 1 && staleCompressUsed < 1) {
+          staleCompressUsed++;
           console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...${C.reset}`);
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
           apiMessages = compressedMsgs;
-          console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
-          // Auto-switch to fast model after repeated stale timeouts
+          if (tokensRemoved > 0) {
+            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          }
           if (STALE_AUTO_SWITCH) {
             const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
             if (fastModel && fastModel !== getActiveModelId()) {
@@ -1305,7 +1326,7 @@ async function processInput(userInput) {
         if (taskProgress) { taskProgress.stop(); taskProgress = null; }
         setOnChange(null);
         _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-        autoSave(conversationMessages);
+        saveNow(conversationMessages);
         break;
       }
 
@@ -1322,19 +1343,27 @@ async function processInput(userInput) {
       } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
         userMessage = 'Access denied — your API key may not have permission for this model';
       } else if (err.message.includes('400')) {
-        // Check if this is a context-too-long error before generic 400 handling
+        // Check if this is a context-too-long error before generic 400 handling.
+        // Also treat a bare 400 as context overflow when the current context is large
+        // (Ollama doesn't always include "context" in its error message for overflows).
         const errLower = (err.message || '').toLowerCase();
-        const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
+        const estimatedTokens = estimateTokens(apiMessages);
+        const modelCtx = (() => { try { const { getActiveModel } = require('./providers/registry'); return getActiveModel()?.contextWindow || 0; } catch { return 0; } })();
+        const likelyOverflow = modelCtx > 0 && estimatedTokens > modelCtx * 0.85;
+        const isContextTooLong = likelyOverflow ||
+          errLower.includes('context') || errLower.includes('token') ||
           errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
           errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
           errLower.includes('num_ctx') || errLower.includes('input');
-        if (isContextTooLong && contextRetries < 1) {
+        if (isContextTooLong && contextRetries < 2) {
           contextRetries++;
-          console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying...${C.reset}`);
+          console.log(`${C.yellow}  ⚠ Context too long — force-compressing and retrying... (attempt ${contextRetries}/2)${C.reset}`);
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
           apiMessages = compressedMsgs;
-          console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          if (tokensRemoved > 0) {
+            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          }
           i--;
           continue;
         }
@@ -1357,7 +1386,7 @@ async function processInput(userInput) {
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          autoSave(conversationMessages);
+          saveNow(conversationMessages);
           break;
         }
         const delay = Math.min(10000 * Math.pow(2, rateLimitRetries - 1), 120000);
@@ -1380,7 +1409,7 @@ async function processInput(userInput) {
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          autoSave(conversationMessages);
+          saveNow(conversationMessages);
           break;
         }
         const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
@@ -1396,7 +1425,7 @@ async function processInput(userInput) {
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-      autoSave(conversationMessages);
+      saveNow(conversationMessages);
       break;
     }
 
@@ -1472,7 +1501,7 @@ async function processInput(userInput) {
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-      autoSave(conversationMessages);
+      saveNow(conversationMessages);
       return;
     }
 
@@ -1500,15 +1529,16 @@ async function processInput(userInput) {
     if (_showStepHeader && !hasAskUser) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
-      process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
-      // Spinner on the line below the header (uses \r — no cursor-up needed)
       if (process.stdout.isTTY) {
+        // Animate the ● in place — no separate sub-spinner line
         const _frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
         let _fi = 0;
-        process.stdout.write('  \x1b[2m⠋\x1b[0m');
+        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, _frames[0]));
         _spinAnim = setInterval(() => {
-          process.stdout.write(`\r  \x1b[2m${_frames[_fi++ % _frames.length]}\x1b[0m`);
+          process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false, _frames[_fi++ % _frames.length])}`);
         }, 80);
+      } else {
+        process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
       }
     } else if (_showStepHeader) {
       stepPrinted = true;
@@ -1518,11 +1548,11 @@ async function processInput(userInput) {
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Stop spinner, clear spinner line
+    // Stop animation, finalize header with static dot
     if (_spinAnim) {
       clearInterval(_spinAnim);
       _spinAnim = null;
-      process.stdout.write('\r\x1b[2K');
+      process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`);
     }
 
     // Print summaries below the header (skip ask_user — it renders its own UI)
@@ -1538,7 +1568,10 @@ async function processInput(userInput) {
       const prep = prepared[j];
       if (!prep.canExecute) continue;
       const res = toolMessages[j].content;
-      const isOk = !res.startsWith('ERROR') && !res.includes('CANCELLED');
+      // Only inspect the first line — tool output may legitimately contain
+      // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
+      const firstLine = res.split('\n')[0];
+      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED');
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
           filesModified.add(prep.args.path);
@@ -1558,7 +1591,7 @@ async function processInput(userInput) {
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
             _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-            autoSave(conversationMessages);
+            saveNow(conversationMessages);
             return;
           }
         }
@@ -1581,7 +1614,7 @@ async function processInput(userInput) {
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          autoSave(conversationMessages);
+          saveNow(conversationMessages);
           return;
         }
       }
@@ -1601,7 +1634,7 @@ async function processInput(userInput) {
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          autoSave(conversationMessages);
+          saveNow(conversationMessages);
           return;
         }
       } else {
@@ -1634,7 +1667,7 @@ async function processInput(userInput) {
     if (taskProgress) { taskProgress.stop(); taskProgress = null; }
     setOnChange(null);
     _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-    autoSave(conversationMessages);
+    saveNow(conversationMessages);
 
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();
