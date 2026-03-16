@@ -1486,27 +1486,19 @@ async function processInput(userInput) {
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
-    // Capture whether to show section header (deferred — only from step 2+ onwards)
+    // Print bullet header immediately (before execution) so it appears while working
     const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
-    if (_showStepHeader) stepPrinted = true;
+    if (_showStepHeader) {
+      stepPrinted = true;
+      console.log(formatSectionHeader(prepared, totalSteps, false));
+    }
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Compact display: bullet header on its own line, summaries below
+    // Print summaries below the already-printed header
     if (!batchOpts.skipSummaries) {
-      if (_showStepHeader) {
-        const hasError = toolMessages.some(m => {
-          const c = String(m.content || '');
-          return c.startsWith('ERROR') || c.includes('CANCELLED') || c.includes('BLOCKED');
-        });
-        const header = formatSectionHeader(prepared, totalSteps, hasError);
-        console.log(header);
-        for (const s of batchSummaries) console.log(s);
-      } else {
-        // First iteration (step 1): just summaries, no section header
-        for (const s of batchSummaries) console.log(s);
-      }
+      for (const s of batchSummaries) console.log(s);
     }
 
     // Track modified and read files
