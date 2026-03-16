@@ -1501,7 +1501,7 @@ async function processInput(userInput) {
         let _fi = 0;
         _dotAnim = setInterval(() => {
           const f = _frames[_fi++ % _frames.length];
-          const animated = _baseHeader.replace(`${C.green}●${C.reset}`, `${C.cyan}${f}${C.reset}`);
+          const animated = _baseHeader.replace(/\x1b\[\d+m●\x1b\[0m/, `${C.cyan}${f}${C.reset}`);
           process.stdout.write(`\x1b[1A\x1b[2K${animated}\n`);
         }, 80);
       }

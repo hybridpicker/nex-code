@@ -29,6 +29,29 @@ function _shortPath(p) {
   return parts.length > 1 ? parts.slice(-2).join('/') : parts[0];
 }
 
+// Bullet color per tool category
+const TOOL_DOT_COLOR = {
+  read_file:    '\x1b[36m',  // cyan
+  list_directory:'\x1b[36m', // cyan
+  write_file:   '\x1b[33m',  // yellow
+  edit_file:    '\x1b[33m',  // yellow
+  patch_file:   '\x1b[33m',  // yellow
+  bash:         '\x1b[35m',  // magenta
+  grep:         '\x1b[34m',  // blue
+  search_files: '\x1b[34m',  // blue
+  glob:         '\x1b[34m',  // blue
+  git_commit:   '\x1b[32m',  // green
+  git_push:     '\x1b[32m',  // green
+  git_pull:     '\x1b[32m',  // green
+  git_status:   '\x1b[32m',  // green
+  git_diff:     '\x1b[32m',  // green
+  git_log:      '\x1b[32m',  // green
+  git_branch:   '\x1b[32m',  // green
+  git_stash:    '\x1b[32m',  // green
+  web_fetch:    '\x1b[96m',  // bright cyan
+  web_search:   '\x1b[96m',  // bright cyan
+};
+
 // Human-readable labels for tool names
 const TOOL_LABELS = {
   read_file:          'Read file',
@@ -121,12 +144,17 @@ const STEP_DESCRIPTIONS = {
  * Build a meaningful section header from a list of prepared tool calls.
  * Falls back to "Step N" if no tools or no mapping found.
  */
+function _dot(fnName, isError = false) {
+  if (isError) return `${C.red}●${C.reset}`;
+  const col = TOOL_DOT_COLOR[fnName] || C.green;
+  return `${col}●${C.reset}`;
+}
+
 function formatSectionHeader(prepared, stepNum, isError = false) {
   const tools = (prepared || []).filter(p => p && p.canExecute !== false);
-  const dot = isError ? `${C.red}●${C.reset}` : `${C.green}●${C.reset}`;
 
   if (tools.length === 0) {
-    return `${dot} Step ${stepNum}`;
+    return `${_dot('', isError)} Step ${stepNum}`;
   }
 
   if (tools.length === 1) {
@@ -139,12 +167,14 @@ function formatSectionHeader(prepared, stepNum, isError = false) {
     else if (a.query)   arg = String(a.query).substring(0, 50);
     else if (a.pattern) arg = String(a.pattern).substring(0, 50);
     const argStr = arg ? `${C.dim}(${arg})${C.reset}` : '';
-    return `${dot} ${C.bold}${label}${C.reset} ${argStr}`;
+    return `${_dot(t.fnName, isError)} ${C.bold}${label}${C.reset} ${argStr}`;
   }
 
+  // Multi-tool: use first tool's color
+  const firstFn = tools[0].fnName;
   const labels = [...new Set(tools.map(t => TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, ' ')))];
   const title = labels.length <= 3 ? labels.join(' · ') : `${tools.length} actions`;
-  return `${dot} ${title}`;
+  return `${_dot(firstFn, isError)} ${title}`;
 }
 
 function formatToolCall(name, args) {
@@ -176,7 +206,7 @@ function formatToolCall(name, args) {
   }
   const label = TOOL_LABELS[name] || name.replace(/_/g, ' ');
   const argStr = primary ? ` ${C.dim}(${primary})${C.reset}` : '';
-  return `${C.green}●${C.reset} ${C.bold}${label}${C.reset}${argStr}`;
+  return `${_dot(name)} ${C.bold}${label}${C.reset}${argStr}`;
 }
 
 function formatResult(text, maxLines = 8) {
@@ -269,7 +299,7 @@ function formatToolSummary(name, args, result, isError) {
       const isPartial = args.line_start || args.line_end;
       // First content line, strip line-number prefix (e.g. "42: code")
       const firstContent = (resultLines[0] || '').replace(/^\d+:\s*/, '').trim();
-      const hint = firstContent ? ` — ${firstContent.substring(0, 60)}${firstContent.length > 60 ? '…' : ''}` : '';
+      const hint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 60)}${firstContent.length > 60 ? '…' : ''}${C.reset}` : '';
       if (isPartial && lastLineNum > count) {
         summary = `Read lines ${args.line_start || 1}–${lastLineNum}${hint}`;
       } else {
@@ -291,10 +321,10 @@ function formatToolSummary(name, args, result, isError) {
       const showOld = oldLines.slice(0, PREVIEW).filter(l => l.trim());
       const showNew = newLines.slice(0, PREVIEW).filter(l => l.trim());
       const diffLines = [];
-      for (const l of showOld) diffLines.push(`${C.red}     - ${l.trimEnd().substring(0, 72)}${C.reset}`);
-      if (oldLines.length > PREVIEW) diffLines.push(`${C.dim}     … ${oldLines.length - PREVIEW} more removed${C.reset}`);
-      for (const l of showNew) diffLines.push(`${C.green}     + ${l.trimEnd().substring(0, 72)}${C.reset}`);
-      if (newLines.length > PREVIEW) diffLines.push(`${C.dim}     … ${newLines.length - PREVIEW} more added${C.reset}`);
+      for (const l of showOld) diffLines.push(`${C.red}     - ${C.reset}${C.dim}${l.trimEnd().substring(0, 72)}${C.reset}`);
+      if (oldLines.length > PREVIEW) diffLines.push(`${C.dim}     … +${oldLines.length - PREVIEW}${C.reset}`);
+      for (const l of showNew) diffLines.push(`${C.green}     + ${C.reset}${C.dim}${l.trimEnd().substring(0, 72)}${C.reset}`);
+      if (newLines.length > PREVIEW) diffLines.push(`${C.dim}     … +${newLines.length - PREVIEW}${C.reset}`);
       summary = `${C.reset}${C.red}−${removed}${C.reset}  ${C.green}+${added}${C.reset}` +
         (diffLines.length > 0 ? '\n' + diffLines.join('\n') : '');
       break;
@@ -315,9 +345,10 @@ function formatToolSummary(name, args, result, isError) {
           summary = `Exit ${code} — ${hintMatch[1].substring(0, 60)}`;
         } else {
           const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && l.trim());
-          const firstOut = outputLines[0] ? ` · ${outputLines[0].substring(0, 70)}` : '';
-          const moreCount = outputLines.length > 1 ? ` ${C.dim}+${outputLines.length - 1} more${C.reset}` : '';
-          summary = `Exit ${code}${firstOut}${moreCount}`;
+          const firstOut = outputLines[0] ? ` ${C.dim}· ${outputLines[0].substring(0, 70)}${C.reset}` : '';
+          const moreCount = outputLines.length > 1 ? ` ${C.dim}+${outputLines.length - 1}${C.reset}` : '';
+          const icon = code === '0' ? `${C.green}✓${C.reset}` : `${C.red}✗ Exit ${code}${C.reset}`;
+          summary = `${icon}${firstOut}${moreCount}`;
         }
       } else {
         const lines = r.split('\n').filter(Boolean);
