@@ -268,6 +268,10 @@ function cancelPendingAskUser() {
     _cancelAskUser = null;
   }
 }
+
+// ask_user handler — set by cli/index.js to render options UI
+let _askUserFn = null;
+function setAskUserHandler(fn) { _askUserFn = fn; }
 async function ensureCheckpoint() {
   if (_checkpointCreated) return;
   _checkpointCreated = true;
@@ -550,13 +554,20 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'ask_user',
-      description: 'Ask the user a question and wait for their response. Use when requirements are ambiguous, you need to choose between approaches, or a decision has significant impact. Do not ask unnecessary questions — proceed if the intent is clear.',
+      description: "Ask the user a clarifying question with 2-3 specific options. Use when the user's intent is ambiguous. Always provide concrete, actionable options. The user can select an option or type a custom answer.",
       parameters: {
         type: 'object',
         properties: {
-          question: { type: 'string', description: 'The question to ask the user' },
+          question: { type: 'string', description: 'The clarifying question to ask' },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2-3 specific, actionable answer options for the user to choose from',
+            minItems: 1,
+            maxItems: 3,
+          },
         },
-        required: ['question'],
+        required: ['question', 'options'],
       },
     },
   },
@@ -1601,7 +1612,17 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case 'ask_user': {
-      const question = args.question;
+      const { question, options = [] } = args;
+      if (_askUserFn) {
+        return new Promise((resolve) => {
+          _cancelAskUser = () => resolve('CANCELLED');
+          _askUserFn(question, options).then((answer) => {
+            _cancelAskUser = null;
+            resolve(answer || 'User did not answer');
+          });
+        });
+      }
+      // Fallback: plain readline prompt (non-TTY / no handler registered)
       return new Promise((resolve) => {
         const rl = require('readline').createInterface({
           input: process.stdin,
@@ -1611,7 +1632,8 @@ async function _executeToolInner(name, args, options = {}) {
           rl.close();
           resolve('CANCELLED');
         };
-        console.log(`\n${C.cyan}${C.bold}  ? ${question}${C.reset}`);
+        const optText = options.length > 0 ? `\n${options.map((o, i) => `  ${i + 1}. ${o}`).join('\n')}\n` : '';
+        console.log(`\n${C.cyan}${C.bold}  ? ${question}${C.reset}${optText}`);
         rl.question(`${C.cyan}  > ${C.reset}`, (answer) => {
           _cancelAskUser = null;
           rl.close();
@@ -2272,4 +2294,4 @@ async function executeTool(name, args, options = {}) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser };
+module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser, setAskUserHandler };

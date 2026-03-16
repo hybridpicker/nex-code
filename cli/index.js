@@ -1652,6 +1652,63 @@ async function startREPL() {
 
   setReadlineInterface(rl);
 
+  // ─── ask_user handler — options-based clarification UI ──────
+  const { setAskUserHandler } = require('./tools');
+  setAskUserHandler(async (question, options) => {
+    const C_reset = '\x1b[0m', C_bold = '\x1b[1m', C_dim = '\x1b[2m';
+    const C_cyan = '\x1b[36m', C_yellow = '\x1b[33m';
+
+    process.stdout.write(`\n  ${C_bold}${C_yellow}❓${C_reset}  ${C_bold}${question}${C_reset}\n\n`);
+    options.forEach((opt, i) => {
+      process.stdout.write(`  ${C_cyan}${i + 1}${C_reset}  ${opt}\n`);
+    });
+    process.stdout.write(`  ${C_dim}${options.length + 1}${C_reset}  ${C_dim}Eigene Antwort…${C_reset}\n`);
+    process.stdout.write(`\n  ${C_cyan}[1-${options.length + 1}]${C_reset} › `);
+
+    return new Promise((resolve) => {
+      rl.pause();
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+      const onData = (buf) => {
+        const ch = buf.toString();
+
+        // Ctrl+C
+        if (ch === '\u0003') {
+          process.stdout.write('\n');
+          cleanup();
+          resolve('');
+          return;
+        }
+
+        const n = parseInt(ch);
+
+        if (n >= 1 && n <= options.length) {
+          process.stdout.write(`${C_bold}${options[n - 1]}${C_reset}\n\n`);
+          cleanup();
+          resolve(options[n - 1]);
+        } else if (n === options.length + 1 || ch === '\r' || ch === '\n') {
+          process.stdout.write('\n');
+          if (process.stdin.isTTY) process.stdin.setRawMode(false);
+          process.stdin.removeListener('data', onData);
+          process.stdout.write(`  ${C_cyan}›${C_reset} `);
+          rl.resume();
+          rl.once('line', (line) => {
+            process.stdout.write('\n');
+            resolve(line.trim() || '');
+          });
+        }
+      };
+
+      function cleanup() {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        process.stdin.removeListener('data', onData);
+        rl.resume();
+      }
+
+      process.stdin.on('data', onData);
+    });
+  });
+
   const footer = new StickyFooter();
   footer.activate(rl);
 

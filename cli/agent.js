@@ -696,7 +696,7 @@ Response patterns by request type:
 - **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. NEVER just run tools and stop.
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
-- **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information.
+- **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
 - **Regex explanations**: Always show the actual regex pattern and test it with examples. For named groups, use the correct syntax format (question mark open angle bracket name close angle bracket pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
@@ -1486,20 +1486,28 @@ async function processInput(userInput) {
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
+    // ask_user renders its own UI — skip the normal section header for it
+    const hasAskUser = prepared.some(p => p.fnName === 'ask_user');
     // Print bullet header immediately (before execution) so it appears while working
     const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
-    if (_showStepHeader) {
+    if (_showStepHeader && !hasAskUser) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
       process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
+    } else if (_showStepHeader) {
+      stepPrinted = true;
+      batchOpts.skipSpinner = true;
     }
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Print summaries below the header
+    // Print summaries below the header (skip ask_user — it renders its own UI)
     if (!batchOpts.skipSummaries) {
-      for (const s of batchSummaries) console.log(s);
+      for (let si = 0; si < batchSummaries.length; si++) {
+        if (prepared[si] && prepared[si].fnName === 'ask_user') continue;
+        console.log(batchSummaries[si]);
+      }
     }
 
     // Track modified and read files
