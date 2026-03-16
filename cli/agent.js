@@ -1527,13 +1527,10 @@ async function processInput(userInput) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
       if (process.stdout.isTTY) {
-        // Animate the ● in place — no separate sub-spinner line
-        const _frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-        let _fi = 1; // start at 1 so interval advances beyond the initial frame
-        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, _frames[0]));
-        _spinAnim = setInterval(() => {
-          process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false, _frames[_fi++ % _frames.length])}`);
-        }, 60);
+        // Blink the ● via ANSI \x1b[5m while the tool executes — no interval needed,
+        // the terminal handles blinking natively so it works even for sub-ms tools
+        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, 'blink'));
+        _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
       } else {
         process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
       }
@@ -1543,14 +1540,10 @@ async function processInput(userInput) {
     }
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
-    // Yield to the event loop so the terminal gets a chance to render the first
-    // animation frame before execution starts (matters for sub-60ms tools too)
-    if (_spinAnim) await new Promise(r => setImmediate(r));
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
 
-    // Stop animation, finalize header with static dot
+    // Stop blink, finalize header with static dot
     if (_spinAnim) {
-      clearInterval(_spinAnim);
       _spinAnim = null;
       process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`);
     }

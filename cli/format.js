@@ -147,6 +147,7 @@ const STEP_DESCRIPTIONS = {
 function _dot(fnName, isError = false, frame = null) {
   if (isError) return `${C.red}●${C.reset}`;
   const col = TOOL_DOT_COLOR[fnName] || C.green;
+  if (frame === 'blink') return `${col}\x1b[5m●\x1b[25m${C.reset}`;
   const char = frame !== null ? frame : '●';
   return `${col}${char}${C.reset}`;
 }
