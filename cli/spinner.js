@@ -71,7 +71,7 @@ class Spinner {
     if (!process.stderr.isTTY) return;
     process.stderr.write('\x1b[?25l'); // hide cursor
     this._render(); // render first frame immediately
-    this.interval = setInterval(() => this._render(), 80);
+    this.interval = setInterval(() => this._render(), 150);
   }
 
   update(text) {
@@ -164,7 +164,7 @@ class MultiProgress {
     if (this.lineCount > 0) buf += `\x1b[${this.lineCount}A`;
     process.stderr.write(buf);
     this._render();
-    this.interval = setInterval(() => this._render(), 80);
+    this.interval = setInterval(() => this._render(), 150);
   }
 
   /**
