@@ -342,7 +342,8 @@ function formatToolSummary(name, args, result, isError) {
         const code = exitMatch[1];
         const hintMatch = r.match(/\nHINT: (.+)/);
         if (hintMatch) {
-          summary = `Exit ${code} — ${hintMatch[1].substring(0, 60)}`;
+          const icon2 = code === '0' ? `${C.green}✓${C.reset}` : `${C.red}✗ Exit ${code}${C.reset}`;
+          summary = `${icon2} ${C.dim}— ${hintMatch[1].substring(0, 60)}${C.reset}`;
         } else {
           const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && l.trim());
           const firstOut = outputLines[0] ? ` ${C.dim}· ${outputLines[0].substring(0, 70)}${C.reset}` : '';
