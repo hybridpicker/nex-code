@@ -1496,7 +1496,11 @@ async function processInput(userInput) {
     // Compact display: bullet header on its own line, summaries below
     if (!batchOpts.skipSummaries) {
       if (_showStepHeader) {
-        const header = formatSectionHeader(prepared, totalSteps);
+        const hasError = toolMessages.some(m => {
+          const c = String(m.content || '');
+          return c.startsWith('ERROR') || c.includes('CANCELLED') || c.includes('BLOCKED');
+        });
+        const header = formatSectionHeader(prepared, totalSteps, hasError);
         console.log(header);
         for (const s of batchSummaries) console.log(s);
       } else {
