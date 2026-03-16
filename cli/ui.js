@@ -41,26 +41,22 @@ function lerpColor(stops, t) {
   ];
 }
 
-// Dog mascot pixel matrix (1 = filled, 0 = background)
+// Dog mascot — compact 14×9 pixel art (1 = filled, 0 = background)
+// Renders to 5 half-block rows
 const DOG_MATRIX = [
-  '000011000000000011000',
-  '000111100000000111100',
-  '000100000000000001000',
-  '000111111111111111100',
-  '000111111111111111100',
-  '000111111111111111100',
-  '000110110000011011100',
-  '000111100000001111100',
-  '000111111111111111100',
-  '000000011111111000000',
-  '000000011111111000000',
-  '000000011111111000000',
-  '000000011111111000000',
-  '000000111000111000000',
+  '00110000001100',  // ear tips
+  '01111000011110',  // ear bases
+  '01111111111110',  // top of head
+  '01100111100110',  // face — eye gaps at cols 2-3 and 10-11
+  '01111111111110',  // muzzle
+  '00111111111100',  // upper body
+  '00111111111100',  // body
+  '00001100110000',  // legs
+  '00001100110000',  // paws
 ];
 
 function renderDog(matrix) {
-  // Vertical gradient: Ice — White → Cyan → Deep Blue
+  // Vertical gradient: Ice White → Cyan → Deep Blue
   const stops = [[220, 240, 255], [80, 200, 255], [40, 100, 220]];
   const halfRows = Math.ceil(matrix.length / 2);
   const lines = [];
@@ -85,29 +81,29 @@ function banner(modelName, cwd, opts = {}) {
   const B = C.bold;
   const d = C.dim;
   const r = C.reset;
+  const accent = '\x1b[38;2;80;200;255m'; // mid-gradient cyan
 
   const dogLines = renderDog(DOG_MATRIX);
   const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
   const version = require('../package.json').version;
 
-  // Subtitle lines, vertically centered beside the dog
+  // 5 text lines matching dog height — vertically centered
   const subtitles = [
     '',
-    '',
-    `   ${B}nex-code${r}`,
+    `   ${accent}${B}nex-code${r}`,
     `   ${d}Agentic Coding CLI  v${version}${r}`,
-    `   ${d}Model: ${modelName}  ·  /help${r}${yoloTag}`,
-    '',
+    `   ${d}${modelName}  ·  /help${r}${yoloTag}`,
     '',
   ];
 
   const total = Math.max(dogLines.length, subtitles.length);
   const dogOff  = Math.floor((total - dogLines.length) / 2);
   const textOff = Math.floor((total - subtitles.length) / 2);
+  const dogWidth = DOG_MATRIX[0].length;
 
   const lines = [];
   for (let i = 0; i < total; i++) {
-    const dog  = dogLines[i - dogOff]   ?? ' '.repeat(DOG_MATRIX[0].length);
+    const dog  = dogLines[i - dogOff]   ?? ' '.repeat(dogWidth);
     const text = subtitles[i - textOff] ?? '';
     lines.push(dog + text);
   }
