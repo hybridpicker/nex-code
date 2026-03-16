@@ -1490,10 +1490,20 @@ async function processInput(userInput) {
     const hasAskUser = prepared.some(p => p.fnName === 'ask_user');
     // Print bullet header immediately (before execution) so it appears while working
     const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
+    let _spinAnim = null;
     if (_showStepHeader && !hasAskUser) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
       process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
+      // Spinner on the line below the header (uses \r — no cursor-up needed)
+      if (process.stdout.isTTY) {
+        const _frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+        let _fi = 0;
+        process.stdout.write('  \x1b[2m⠋\x1b[0m');
+        _spinAnim = setInterval(() => {
+          process.stdout.write(`\r  \x1b[2m${_frames[_fi++ % _frames.length]}\x1b[0m`);
+        }, 80);
+      }
     } else if (_showStepHeader) {
       stepPrinted = true;
       batchOpts.skipSpinner = true;
@@ -1501,6 +1511,13 @@ async function processInput(userInput) {
     // Resume TaskProgress animation during tool execution so the UI never looks frozen
     if (taskProgress && taskProgress._paused) taskProgress.resume();
     const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
+
+    // Stop spinner, clear spinner line
+    if (_spinAnim) {
+      clearInterval(_spinAnim);
+      _spinAnim = null;
+      process.stdout.write('\r\x1b[2K');
+    }
 
     // Print summaries below the header (skip ask_user — it renders its own UI)
     if (!batchOpts.skipSummaries) {
