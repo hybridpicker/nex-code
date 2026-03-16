@@ -169,6 +169,8 @@ class OllamaProvider extends BaseProvider {
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
     const onToken = options.onToken || (() => {});
+    // onThinkingToken: called for thinking-model reasoning tokens (not displayed, but resets stale timer)
+    const onThinkingToken = options.onThinkingToken || (() => {});
 
     let response;
     try {
@@ -223,6 +225,12 @@ class OllamaProvider extends BaseProvider {
             continue;
           }
 
+          // Thinking-model reasoning tokens (e.g. qwen3-coder, kimi-k2-thinking)
+          // Not displayed, but caller uses onThinkingToken to reset the stale timer
+          if (parsed.message?.thinking) {
+            onThinkingToken(parsed.message.thinking);
+          }
+
           if (parsed.message?.content) {
             onToken(parsed.message.content);
             content += parsed.message.content;
@@ -248,6 +256,9 @@ class OllamaProvider extends BaseProvider {
         if (buffer.trim()) {
           try {
             const parsed = JSON.parse(buffer);
+            if (parsed.message?.thinking) {
+              onThinkingToken(parsed.message.thinking);
+            }
             if (parsed.message?.content) {
               onToken(parsed.message.content);
               content += parsed.message.content;
