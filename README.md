@@ -360,7 +360,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 
 ## Tools
 
-The agent has 39 built-in tools:
+The agent has 42 built-in tools:
 
 ### Core & File System
 | Tool | Description |
@@ -435,6 +435,11 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 | Tool | Description |
 |------|-------------|
 | `deploy` | Deploy to a remote server via **rsync** (sync local files) or **git** (git pull on remote) + optional post-deploy script + optional health check. Supports named configs from `.nex/deploy.json`. |
+
+### Frontend Design
+| Tool | Description |
+|------|-------------|
+| `frontend_recon` | **Mandatory first step before any frontend work.** Scans the project and returns: (1) design tokens — CSS custom properties (`:root`), Tailwind theme colors/fonts, (2) main layout/index page structure, (3) a reference component of the same type (`type=` hint), (4) detected JS/CSS framework stack — Vue/React, Alpine.js v2 vs v3, HTMX, Tailwind, Django. Call this before writing any markup or styles so the agent uses the project's actual design system instead of inventing one. |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
@@ -797,7 +802,7 @@ Four features that make Nex Code significantly more reliable with open-source mo
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (33 tools): all tools
+- **full** (42 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
