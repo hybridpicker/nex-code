@@ -1839,6 +1839,22 @@ async function startREPL() {
     : `${loadInfo.providerName}:${loadInfo.model.id}`;
   banner(bannerModel, CWD, { yolo: getAutoConfirm() });
 
+  // Populate the status bar with model + git branch + project name
+  {
+    let _gitBranch = '';
+    try {
+      const { execSync } = require('child_process');
+      _gitBranch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', {
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch {}
+    footer.setStatusInfo({
+      model:   bannerModel,
+      branch:  _gitBranch,
+      project: path.basename(CWD),
+    });
+  }
+
   // Display version update notification if available
   if (versionInfo.hasNewVersion) {
     console.log(`${C.yellow}💡 New version available!${C.reset} Run ${C.cyan}npm update -g nex-code${C.reset} to upgrade from ${C.dim}${versionInfo.currentVersion}${C.reset} to ${C.green}${versionInfo.latestVersion}${C.reset}\n`);

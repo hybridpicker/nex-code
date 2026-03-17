@@ -1647,6 +1647,8 @@ async function processInput(userInput) {
         if (prepared[si] && prepared[si].fnName === 'ask_user') continue;
         console.log(batchSummaries[si]);
       }
+      // Blank line after each step group for visual separation
+      console.log('');
     }
 
     // Track modified and read files
