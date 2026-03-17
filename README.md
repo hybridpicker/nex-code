@@ -422,6 +422,7 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 | `ssh_download` | Download a file or directory via SCP |
 | `service_manage` | Start/stop/restart/reload/enable/disable a systemd service (local or remote) |
 | `service_logs` | Fetch journalctl logs (local or remote, with `--since` support) |
+| `sysadmin` | Senior sysadmin operations on any Linux server (local or SSH). Actions: `audit` (full health overview), `disk_usage`, `process_list`, `network_status`, `package` (dnf/apt auto-detect), `user_manage` (list/create/delete/add\_ssh\_key), `firewall` (firewalld/ufw/iptables auto-detect), `cron` (list/add/remove), `ssl_check` (domain or cert file), `log_tail` (any log), `find_large` (big files by size). Read-only actions run without confirmation; state-changing actions require approval. |
 
 ### Docker
 | Tool | Description |
@@ -802,7 +803,7 @@ Four features that make Nex Code significantly more reliable with open-source mo
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (42 tools): all tools
+- **full** (43 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
