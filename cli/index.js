@@ -1980,7 +1980,8 @@ async function startREPL() {
       if (note) {
         const { injectMidRunNote } = require('./agent');
         injectMidRunNote(note);
-        process.stdout.write(`${C.cyan}  ✎ Wird im nächsten Schritt berücksichtigt${C.reset}\n`);
+        process.stdout.write(`${C.cyan}  ✎ Queued — will be applied in the next step${C.reset}\n`);
+        rl.prompt(); // restore visible prompt so user can queue more input
       }
       return;
     }
@@ -1995,6 +1996,7 @@ async function startREPL() {
           if (input) {
             appendHistory(input.replace(/\n/g, '\\n'));
             _processing = true;
+            rl.prompt(); // keep input row visible and focusable while agent runs
             _sigintCount = 0;
             _exitPrompt = false;
             if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
@@ -2033,6 +2035,7 @@ async function startREPL() {
         if (input) {
           appendHistory(input.replace(/\n/g, '\\n'));
           _processing = true;
+          rl.prompt(); // keep input row visible and focusable while agent runs
           _sigintCount = 0;
           _exitPrompt = false;
           if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
@@ -2120,6 +2123,7 @@ async function startREPL() {
 
     // Process through agent
     _processing = true;
+    rl.prompt(); // keep input row visible and focusable while agent runs
     _sigintCount = 0;
     _exitPrompt = false;
     if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
