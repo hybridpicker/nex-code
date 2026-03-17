@@ -2,29 +2,31 @@
  * cli/footer.js — Sticky Status Bar
  *
  * Reserves the bottom 2 terminal rows:
- *   Row N-1 : status bar (model / mode info + separator line) — never scrolls
- *   Row N   : readline prompt + input — operates naturally, no special patching
+ *   Row N-1 : status bar (separator line) — never scrolls
+ *   Row N   : readline prompt + input
  *
- * The scroll region covers rows 1..N-2 so agent output never overwrites the
- * status bar or the readline input area.
+ * Scroll region = rows 1..N-2.  Agent output stays in the scroll region.
+ * readline draws on row N.  The stdout patch ensures that when the cursor
+ * is on row N, no \n can escape and break the layout.
  *
- * The key insight: we do NOT intercept readline's internal cursor management.
- * We only ensure readline is positioned on row N before each prompt call, and
- * that agent output stays in rows 1..N-2.
- *
- * Integration:
- *   const { StickyFooter } = require('./footer');
- *   const footer = new StickyFooter();
- *   footer.activate(rl);        // after readline.createInterface()
- *   footer.deactivate();        // on exit / graceful shutdown
+ * Debug: set FOOTER_DEBUG=1 to write trace log to /tmp/footer-debug.log
  */
 
 'use strict';
 
+const fs = require('fs');
 const C_DIM   = '\x1b[2m';
 const C_RESET = '\x1b[0m';
 
-/** Strip ANSI escape sequences to measure the true visible character width. */
+// ── Debug logger ────────────────────────────────────────────────────────────
+const DEBUG = process.env.FOOTER_DEBUG === '1';
+let _dbgFd = null;
+function _dbg(...args) {
+  if (!DEBUG) return;
+  if (!_dbgFd) _dbgFd = fs.openSync('/tmp/footer-debug.log', 'w');
+  fs.writeSync(_dbgFd, args.join(' ') + '\n');
+}
+
 function visibleLen(str) {
   // eslint-disable-next-line no-control-regex
   return str.replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '').length;
@@ -34,53 +36,44 @@ class StickyFooter {
   constructor() {
     this._active            = false;
     this._rl                = null;
-    this._origWrite         = null;   // original process.stdout.write (pre-patch)
+    this._origWrite         = null;
     this._origPrompt        = null;
     this._origSetPr         = null;
-    this._origRefreshLine   = null;   // original rl._refreshLine
+    this._origRefreshLine   = null;
     this._origLog           = null;
     this._origError         = null;
     this._origStderrWrite   = null;
     this._drawing           = false;
     this._offResize         = null;
-    this._cursorOnInputRow  = false;  // true when readline owns cursor (row N)
-    this._lastOutputRow     = 1;      // cursor row after last stdout write (tracks \n)
+    this._cursorOnInputRow  = false;
+    this._inRefreshLine     = false;
+    this._lastOutputRow     = 1;
+    this._prevTermRows      = 0;
+    this._prevTermCols      = 0;
+    this._consistencyTimer  = null;
+    this._dirty             = false;   // set when layout might be stale
   }
-
-  // ── Geometry ──────────────────────────────────────────────────────────────
 
   get _rows()       { return process.stdout.rows    || 24; }
   get _cols()       { return process.stdout.columns || 80; }
-
-  /** Last row of the scrolling zone (everything above status bar). */
   get _scrollEnd()  { return this._rows - 2; }
-
-  /** Row of the status bar (separator + prompt info). */
   get _rowStatus()  { return this._rows - 1; }
-
-  /** Row of the readline input line. */
   get _rowInput()   { return this._rows; }
-
-  // ── Low-level helpers ─────────────────────────────────────────────────────
 
   _goto(row, col = 1) { return `\x1b[${row};${col}H`; }
 
-  /** Build the status bar: a plain dim separator line. */
   _statusLine() {
     return C_DIM + '─'.repeat(this._cols) + C_RESET;
   }
 
-  // ── Status bar draw ───────────────────────────────────────────────────────
-
   drawFooter(promptOverride) {
     if (!this._origWrite || this._drawing) return;
     this._drawing = true;
-    // Use DECSC/DECRC (7/8) — more reliable than \x1b[s/\x1b[u across scroll regions
     this._origWrite(
-      '\x1b7' +                                                    // save cursor (DECSC)
-      this._goto(this._rowStatus) + '\x1b[2K' +                   // clear status row
-      this._statusLine(promptOverride) +                           // draw separator
-      '\x1b8'                                                      // restore cursor (DECRC)
+      '\x1b7' +
+      this._goto(this._rowStatus) + '\x1b[2K' +
+      this._statusLine(promptOverride) +
+      '\x1b8'
     );
     this._drawing = false;
   }
@@ -103,86 +96,161 @@ class StickyFooter {
     );
   }
 
-  // ── Activate / Deactivate ─────────────────────────────────────────────────
+  /** Write directly to stdout, bypassing the patch. */
+  rawWrite(data) {
+    if (this._origWrite) return this._origWrite(data);
+    return process.stdout.write(data);
+  }
+
+  /**
+   * Full relayout: clear footer area, set scroll region, redraw footer + prompt.
+   * Called by resize handler, consistency check, and any explicit layout fix.
+   */
+  _relayout(reason) {
+    if (!this._origWrite) return;
+    const rawWrite = this._origWrite;
+    const rows = this._rows;
+    const cols = this._cols;
+    const scrollEnd = Math.max(1, rows - 2);
+
+    _dbg('RELAYOUT:', reason, 'rows=' + rows, 'cols=' + cols,
+         'scrollEnd=' + scrollEnd, 'cursorOnInput=' + this._cursorOnInputRow);
+
+    this._prevTermRows = rows;
+    this._prevTermCols = cols;
+
+    // 1. Clear everything from last content row+1 to the bottom of the screen.
+    //    This catches ghost separators that wrapped when the terminal width shrank.
+    //    Use absolute positioning — no DECSC/DECRC to avoid stale saves.
+    const clearFrom = Math.min(this._lastOutputRow + 1, scrollEnd + 1);
+    let clearBuf = '';
+    for (let r = clearFrom; r <= rows; r++) {
+      clearBuf += this._goto(r) + '\x1b[2K';
+    }
+    rawWrite(clearBuf);
+
+    // 2. Set scroll region (resets cursor to 1,1 on many terminals).
+    this._setScrollRegion();
+    this._lastOutputRow = Math.min(this._lastOutputRow, scrollEnd);
+
+    // 3. Redraw status bar using DECSC/DECRC (cursor is at 1,1 after DECSTBM,
+    //    and DECRC restores to 1,1 — that's fine, step 4 repositions).
+    this.drawFooter();
+
+    // 4. Re-anchor prompt to input row.
+    if (this._cursorOnInputRow && this._rl) {
+      this._rl.prompt(true); // preserveCursor — keeps typed text
+    }
+
+    this._dirty = false;
+  }
 
   activate(rl) {
-    if (!process.stdout.isTTY) return; // no-op in pipes / CI
+    if (!process.stdout.isTTY) return;
     this._rl        = rl;
     this._origWrite = process.stdout.write.bind(process.stdout);
     this._active    = true;
+    this._prevTermRows = this._rows;
+    this._prevTermCols = this._cols;
 
-    // 1. Set scroll region — rows 1..N-2, leaving status bar + input outside.
-    //    Most terminals (macOS Terminal, iTerm2) reset cursor to (1,1) on DECSTBM.
     this._setScrollRegion();
     this._lastOutputRow = 1;
-
-    // 2. Draw initial status bar
     this.drawFooter();
 
     const self = this;
 
-    // 3. Patch process.stdout.write to track \n and advance _lastOutputRow.
-    //    When the cursor is on the input row (row N, outside the scroll region),
-    //    strip any \n from the write so readline's "Enter → \r\n" doesn't cause
-    //    the terminal to scroll the entire screen (which would break the footer).
+    // ── stdout patch ──────────────────────────────────────────────────────
     const rawWrite = process.stdout.write.bind(process.stdout);
-    this._origWrite = rawWrite;  // low-level write that bypasses our patch
+    this._origWrite = rawWrite;
+
     process.stdout.write = function(data, ...rest) {
-      if (self._active && typeof data === 'string') {
-        if (self._cursorOnInputRow) {
-          // Suppress \n while cursor is on input row — prevents terminal scroll
-          // outside the scroll region when readline emits \r\n for Enter.
+      if (!self._active || typeof data !== 'string') {
+        return rawWrite(data, ...rest);
+      }
+
+      // While origRefreshLine executes, just strip \n and pass through.
+      if (self._inRefreshLine) {
+        const stripped = data.replace(/\n/g, '');
+        if (!stripped) return true;
+        return rawWrite(stripped, ...rest);
+      }
+
+      if (self._cursorOnInputRow) {
+        // Agent streaming output: has \n, substantial, no \r.
+        if (data.includes('\n') && data.length > 4 && !data.includes('\r')) {
+          _dbg('STDOUT: agent output, leaving input row, data=' +
+               JSON.stringify(data).slice(0, 100));
+          self._cursorOnInputRow = false;
+          rawWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
+          // fall through to row-tracking
+        }
+        // Single printable char: readline fast-path echo.
+        else if (
+          data.length <= 4 &&
+          !data.includes('\n') &&
+          !data.includes('\r') &&
+          !/[\x00-\x1f\x7f]/.test(data)
+        ) {
+          _dbg('STDOUT: char intercept:', JSON.stringify(data));
+          if (self._origRefreshLine) {
+            self._doRefreshLine();
+          }
+          return true;
+        }
+        // Everything else on input row: strip \n.
+        else {
           const stripped = data.replace(/\n/g, '');
           if (!stripped) return true;
           return rawWrite(stripped, ...rest);
         }
-        // Count explicit newlines AND soft-wrap rows caused by long lines.
-        // Without soft-wrap counting, _lastOutputRow drifts low and subsequent
-        // writes overwrite previous lines instead of advancing past them.
-        const cols = self._cols || 80;
-        let extraRows = 0;
-        // Split on \n to examine each logical line for soft-wrap
-        const parts = data.split('\n');
-        for (let p = 0; p < parts.length; p++) {
-          const visLen = visibleLen(parts[p]);
-          if (visLen > 0) extraRows += Math.floor(visLen / cols);
-        }
-        const nl = parts.length - 1; // number of \n chars
-        const rowAdvance = nl + extraRows;
-        if (rowAdvance > 0) {
-          self._lastOutputRow = Math.min(self._lastOutputRow + rowAdvance, self._scrollEnd);
-        }
+      }
+
+      // Row tracking for scroll-region content.
+      const cols = self._cols || 80;
+      let extraRows = 0;
+      const parts = data.split('\n');
+      for (let p = 0; p < parts.length; p++) {
+        const vl = visibleLen(parts[p]);
+        if (vl > 0) extraRows += Math.floor((vl - 1) / cols);
+      }
+      const nl = parts.length - 1;
+      if (nl + extraRows > 0) {
+        self._lastOutputRow = Math.min(self._lastOutputRow + nl + extraRows, self._scrollEnd);
       }
       return rawWrite(data, ...rest);
     };
 
     this._cursorOnInputRow = false;
 
-    // 4. Patch process.stderr.write — anchor spinner/cursor animation.
-    //    Use _lastOutputRow+1 so spinner appears right after current content,
-    //    capped at scrollEnd to protect footer rows.
+    // ── stderr patch (spinner) ────────────────────────────────────────────
     this._origStderrWrite = process.stderr.write.bind(process.stderr);
     process.stderr.write = function(data, ...rest) {
       if (!self._active) return self._origStderrWrite(data, ...rest);
       if (typeof data === 'string' && data.includes('\r')) {
         const anchorRow = Math.min(self._lastOutputRow + 1, self._scrollEnd);
-        self._origWrite(self._goto(anchorRow));  // write anchor to stdout
+        if (self._cursorOnInputRow) {
+          self._origWrite('\x1b7');
+          self._origWrite(self._goto(anchorRow));
+          const result = self._origStderrWrite(data, ...rest);
+          self._origWrite('\x1b8');
+          return result;
+        }
+        self._origWrite(self._goto(anchorRow));
       }
       return self._origStderrWrite(data, ...rest);
     };
 
-    // 5. Patch console.log / console.error — keep output in scroll region
+    // ── console.log / console.error ───────────────────────────────────────
     this._origLog   = console.log;
     this._origError = console.error;
 
     function wrappedLog(...args) {
       if (!self._active) { self._origLog(...args); return; }
-      // Always position cursor at the next available row — handles cursor drift
-      // from spinners or other writes that don't go through this path.
       self._origWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
       self._cursorOnInputRow = false;
       self._origLog(...args);
       self.drawFooter();
+      if (self._rl) self._rl.prompt();
     }
 
     function wrappedError(...args) {
@@ -191,118 +259,160 @@ class StickyFooter {
       self._cursorOnInputRow = false;
       self._origError(...args);
       self.drawFooter();
+      if (self._rl) self._rl.prompt();
     }
 
     console.log   = wrappedLog;
     console.error = wrappedError;
 
-    // 6. Patch rl.setPrompt — update status bar when prompt text changes
+    // ── rl.setPrompt ──────────────────────────────────────────────────────
     this._origSetPr = rl.setPrompt.bind(rl);
     rl.setPrompt = function(prompt) {
       self._origSetPr(prompt);
       if (self._active) self.drawFooter(prompt);
     };
 
-    // 7. Patch rl.prompt — anchor readline to the input row (N) before writing
-    //    so readline's clearScreenDown only clears row N, never the status bar.
-    //    Reset _prevPos so readline never moves UP into the separator row.
+    // ── rl.prompt ─────────────────────────────────────────────────────────
     this._origPrompt = rl.prompt.bind(rl);
     rl.prompt = function(preserveCursor) {
       if (!self._active) { return self._origPrompt(preserveCursor); }
-      // Reset readline's row-tracking so it doesn't cursor-up into the separator
-      rl._prevPos = null;
-      // Position cursor on input row so readline writes there
-      self._origWrite(self._goto(self._rowInput));
-      self._origPrompt(preserveCursor);
-      // Mark that cursor is now on the input row
+      _dbg('PROMPT: goto rowInput=' + self._rowInput);
+      rl.prevRows = 0;
+      rawWrite(self._goto(self._rowInput));
       self._cursorOnInputRow = true;
+      self._origPrompt(preserveCursor);
     };
 
-    // 7b. Patch rl.question — anchor confirm prompts to the input row like rl.prompt.
-    //     Without this, rl.question writes its prompt at the current cursor position
-    //     (often mid-scroll-region), causing the typed answer to appear above the
-    //     question and leaving the question text on screen after Enter.
+    // ── rl.question ───────────────────────────────────────────────────────
     const origQuestion = rl.question.bind(rl);
     rl.question = function(prompt, callback) {
       if (!self._active) { return origQuestion(prompt, callback); }
-      // Clear input row and position cursor there before writing the question
-      self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
-      rl._prevPos = null;
+      rawWrite(self._goto(self._rowInput) + '\x1b[2K');
+      rl.prevRows = 0;
       self._cursorOnInputRow = true;
       origQuestion(prompt, (answer) => {
-        // After answer: clear input row, return cursor to scroll region
-        self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
+        rawWrite(self._goto(self._rowInput) + '\x1b[2K');
         self._cursorOnInputRow = false;
         self.drawFooter();
         callback(answer);
       });
     };
 
-    // 8. Patch rl._refreshLine to prevent long input lines from wrapping.
-    //    When prompt + line exceeds terminal width, readline would wrap to the
-    //    next row — but row N is the last row outside the scroll region, so
-    //    wrapping corrupts the separator and prompt label via terminal auto-wrap.
-    //    Fix: temporarily replace rl.line with a truncated "scrolled" view
-    //    so _refreshLine always renders a single row.  The full content of
-    //    rl.line is preserved for actual submission.
-    const origRefreshLine = rl._refreshLine ? rl._refreshLine.bind(rl) : null;
+    // ── _refreshLine patch (via Symbol) ───────────────────────────────────
+    const proto = Object.getPrototypeOf(rl);
+    const kRefreshLineSym = Object.getOwnPropertySymbols(proto)
+      .find(s => s.toString() === 'Symbol(_refreshLine)');
+    const origRefreshLine = kRefreshLineSym
+      ? proto[kRefreshLineSym].bind(rl)
+      : (rl._refreshLine ? rl._refreshLine.bind(rl) : null);
     this._origRefreshLine = origRefreshLine;
-    if (origRefreshLine) {
-      rl._refreshLine = function() {
-        if (!self._active) { return origRefreshLine(); }
 
-        const cols        = self._cols;
-        const promptVis   = visibleLen(rl._prompt || '');
-        const maxLineLen  = cols - promptVis - 1;   // chars available for line text
+    this._doRefreshLine = function() {
+      if (!self._active || !origRefreshLine) return;
 
+      // During resize drag, suppress per-pixel redraws — mark dirty instead.
+      if (self._rows !== self._prevTermRows || self._cols !== self._prevTermCols) {
+        self._dirty = true;
+        return;
+      }
+
+      rl.prevRows = 0;
+      rawWrite(self._goto(self._rowInput));
+
+      const cols      = self._cols;
+      const promptStr = rl._prompt || '';
+      const promptVis = visibleLen(promptStr);
+      const maxLineLen = cols - promptVis - 1;
+
+      self._inRefreshLine = true;
+      try {
         if (rl.line.length <= maxLineLen) {
-          // Line fits — render normally
-          return origRefreshLine();
+          _dbg('REFRESH: short line, len=' + rl.line.length);
+          origRefreshLine();
+          return;
         }
 
-        // Line is too long: show a horizontally-scrolled view.
-        // Keep the characters near the cursor visible; prefix with a dim «.
+        _dbg('REFRESH: long line, len=' + rl.line.length + ', max=' + maxLineLen);
         const savedLine   = rl.line;
         const savedCursor = rl.cursor;
-
-        const viewLen   = Math.max(1, maxLineLen - 1);  // 1 char for « prefix
-        const cursorEnd = savedCursor;
-        const start     = Math.max(0, cursorEnd - viewLen);
-        const truncated = (start > 0 ? '«' : '') + savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
-
+        const viewLen   = Math.max(1, maxLineLen - 1);
+        const start     = Math.max(0, savedCursor - viewLen);
+        const truncated = (start > 0 ? '«' : '') +
+          savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
         rl.line   = truncated;
         rl.cursor = truncated.length;
         origRefreshLine();
-
-        // Restore actual content (never modified for submission)
         rl.line   = savedLine;
         rl.cursor = savedCursor;
-      };
+      } finally {
+        self._inRefreshLine = false;
+      }
+    };
+
+    if (origRefreshLine) {
+      const doRefresh = this._doRefreshLine;
+      if (kRefreshLineSym) {
+        Object.defineProperty(rl, kRefreshLineSym, {
+          value: doRefresh, writable: true, configurable: true,
+        });
+      }
+      rl._refreshLine = doRefresh;
     }
 
-    // 9. After user submits input (Enter), move cursor into scroll zone.
-    //    readline's \r\n is now suppressed (by the stdout patch above) so the
-    //    terminal won't scroll outside the scroll region.  We echo the typed
-    //    input into the scroll region so it's visible before the response.
-    rl.on('line', (line) => {
+    // ── 'line' event ──────────────────────────────────────────────────────
+    rl.on('line', () => {
       if (self._active) {
-        self._cursorOnInputRow = false;  // unlock patched stdout (re-enable \n tracking)
-        // Clear the input row so the typed text doesn't linger
-        self._origWrite(self._goto(self._rowInput) + '\x1b[2K');
-        // Position cursor at next available row in scroll region
-        self._origWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
-        // Input echo is handled by index.js after paste resolution (full content).
+        _dbg('LINE: leaving input row');
+        self._cursorOnInputRow = false;
+        rawWrite(self._goto(self._rowInput) + '\x1b[2K');
+        rawWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
         self.drawFooter();
       }
     });
 
-    // 9. Handle terminal resize
+    // ── resize handler (debounced 80ms) ───────────────────────────────────
+    let _resizeTimer = null;
+    let _resizeCleanup = null;
+    const doResize = () => {
+      _resizeTimer = null;
+      self._relayout('resize');
+      // Schedule a second cleanup pass — terminals sometimes reflow content
+      // AFTER the resize event settles, leaving new ghost artifacts.
+      if (_resizeCleanup) clearTimeout(_resizeCleanup);
+      _resizeCleanup = setTimeout(() => {
+        _resizeCleanup = null;
+        self._relayout('resize-cleanup');
+      }, 300);
+    };
     const onResize = () => {
-      this._setScrollRegion();
-      this.drawFooter();
+      self._dirty = true;
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(doResize, 80);
     };
     process.stdout.on('resize', onResize);
-    this._offResize = () => process.stdout.off('resize', onResize);
+    this._offResize = () => {
+      process.stdout.off('resize', onResize);
+      if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null; }
+      if (_resizeCleanup) { clearTimeout(_resizeCleanup); _resizeCleanup = null; }
+    };
+
+    // ── Periodic consistency check (every 800ms) ──────────────────────────
+    // Catches ghost lines and layout drift that escape the resize handler.
+    this._consistencyTimer = setInterval(() => {
+      if (!self._active) return;
+      const rowsNow = self._rows;
+      const colsNow = self._cols;
+
+      // Detect if terminal size changed without a resize event, or if dirty.
+      if (self._dirty ||
+          rowsNow !== self._prevTermRows ||
+          colsNow !== self._prevTermCols) {
+        _dbg('CONSISTENCY: dirty=' + self._dirty +
+             ' rows=' + rowsNow + '/' + self._prevTermRows +
+             ' cols=' + colsNow + '/' + self._prevTermCols);
+        self._relayout('consistency');
+      }
+    }, 800);
   }
 
   deactivate() {
@@ -310,28 +420,30 @@ class StickyFooter {
     this._active = false;
 
     if (this._offResize) { this._offResize(); this._offResize = null; }
+    if (this._consistencyTimer) { clearInterval(this._consistencyTimer); this._consistencyTimer = null; }
 
-    // Restore stderr
     if (this._origStderrWrite) {
       process.stderr.write = this._origStderrWrite;
       this._origStderrWrite = null;
     }
 
-    // Restore console
     if (this._origLog)   { console.log   = this._origLog;   this._origLog   = null; }
     if (this._origError) { console.error = this._origError; this._origError = null; }
 
-    // Restore process.stdout.write
     if (this._origWrite) { process.stdout.write = this._origWrite; }
 
-    // Restore readline methods
     if (this._rl) {
-      if (this._origPrompt)      { this._rl.prompt        = this._origPrompt;      this._origPrompt      = null; }
-      if (this._origSetPr)       { this._rl.setPrompt     = this._origSetPr;       this._origSetPr       = null; }
-      if (this._origRefreshLine) { this._rl._refreshLine  = this._origRefreshLine; this._origRefreshLine = null; }
+      if (this._origPrompt) { this._rl.prompt    = this._origPrompt; this._origPrompt = null; }
+      if (this._origSetPr)  { this._rl.setPrompt = this._origSetPr;  this._origSetPr  = null; }
+      if (this._origRefreshLine) {
+        const kSym = Object.getOwnPropertySymbols(Object.getPrototypeOf(this._rl))
+          .find(s => s.toString() === 'Symbol(_refreshLine)');
+        if (kSym) delete this._rl[kSym];
+        delete this._rl._refreshLine;
+        this._origRefreshLine = null;
+      }
     }
 
-    // Clear status bar and restore full scroll region
     this._eraseStatus();
     this._clearScrollRegion();
     this._origWrite = null;
