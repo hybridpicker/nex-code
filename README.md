@@ -158,6 +158,7 @@ FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
 NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
 NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
 NEX_LANGUAGE=auto              # Response language: "auto" (mirrors user's language, default) or e.g. "English", "Deutsch"
+FOOTER_DEBUG=1                 # Write terminal layout debug log to /tmp/footer-debug.log
 ```
 
 ### Verify
@@ -948,6 +949,7 @@ cli/
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
+├── footer.js            # Sticky footer (scroll region, status bar, input row, resize, FOOTER_DEBUG)
 ├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
 ├── index-engine.js      # In-memory file index (ripgrep/fallback)
 ├── auto-fix.js          # Path resolution, edit matching, bash error hints

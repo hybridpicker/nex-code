@@ -41,6 +41,7 @@ cli/safety.js            → Forbidden/Dangerous Pattern Detection
 cli/tool-validator.js    → Tool Argument Validation + Auto-Correction
 cli/tool-tiers.js        → Dynamic Tool Set Selection (essential/standard/full) + Model Tier Lookup
 cli/picker.js            → Interactive Terminal Picker (model selection, generic cursor-based list)
+cli/footer.js            → Sticky Footer (scroll region, status bar, input row, resize handling, FOOTER_DEBUG)
 cli/skills.js            → Skills System (prompt + script skills)
 dist/                    → Final Bundled CLI scripts (esbuild)
 tests/                   → Jest, 43 Suites, 1783 Tests, 90%+ Stmts / 83%+ Branch Coverage
