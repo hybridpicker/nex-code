@@ -998,10 +998,10 @@ async function handleSlashCommand(input, rl) {
       setPlanMode(true);
       invalidateSystemPromptCache();
       console.log(`
-${C.cyan}${C.bold}┌─ PLAN MODE ─────────────────────────────────────┐${C.reset}
-${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}┌─ PLAN MODE ───────────────────────────────────────┐${C.reset}
+${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved   ${C.cyan}${C.bold}│${C.reset}
 ${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · /plan approve to execute${C.reset}  ${C.cyan}${C.bold}│${C.reset}
-${C.cyan}${C.bold}└─────────────────────────────────────────────────┘${C.reset}`);
+${C.cyan}${C.bold}└───────────────────────────────────────────────────┘${C.reset}`);
       if (arg) {
         console.log(`${C.dim}Task: ${arg}${C.reset}`);
       }
