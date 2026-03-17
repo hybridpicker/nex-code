@@ -612,8 +612,9 @@ function _buildLanguagePrompt() {
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
   lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
-  lines.push('  • For Makefiles, always display the actual .PHONY declarations and dependency chains. Show the complete Makefile content with all targets, dependencies, and recipes. Never just describe a Makefile without showing the actual file.');
-  lines.push('  • For dataclasses, always show the complete class definition with field types and defaults. Include the full code with all fields, type annotations, and any validation logic. Never describe a dataclass without showing the actual implementation.');
+  lines.push('  • For Makefiles, always display the FULL Makefile — every target, dependency, recipe, and .PHONY declaration. Never describe a Makefile without showing the complete file content.');
+  lines.push('  • For dataclasses, always show the COMPLETE dataclass code — all fields with types, defaults, and any __post_init__ validation. Never describe a dataclass without showing the actual implementation.');
+  lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -711,9 +712,10 @@ MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, g
 CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When explaining code:
   • Show the complete code snippet, not just describe it
   • Include file paths and line numbers (e.g., "src/app.js:42")
-  • For regex patterns, show both the pattern and example matches. Be precise about regex behavior - don't claim patterns don't allow leading zeros if they do. Note PCRE-only features like (?&name) backreferences and avoid making claims about universal regex support.
-  • For Makefiles, display the actual .PHONY and target declarations
-  • For dataclasses, show the complete class definition with all fields. Always display the actual 13+ lines of dataclass code, not just usage examples.
+  • For regex patterns, show both the pattern and example matches. Be precise — test the pattern mentally and do not make false claims about what it matches. Note PCRE-only features like (?&name) backreferences
+  • For Makefiles, show the COMPLETE file — every target, recipe, dependency, and .PHONY line. Never describe structure without the actual code.
+  • For dataclasses, show the COMPLETE implementation — all fields with types, __post_init__ validation, and any defaults. Never describe without showing the code.
+  • For cron expressions, quote the exact time constraint from the task verbatim, then write the expression. Verify boundary values (e.g., "8-18h" → hours 8 through 18 inclusive).
 
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
@@ -726,10 +728,11 @@ Response patterns by request type:
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
 - **Regex explanations**: Always show the actual regex pattern and test it with examples. Be precise about what the pattern actually matches - don't make false claims about leading zeros or other behavior. For named groups, use the correct syntax format (?<name>pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences. Always test patterns with actual examples to verify behavior.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
-- **Hook implementations**: When explaining hooks, show the actual hook file content and explain how to configure it in .nex/config.json. Handle edge cases like console.log in strings vs actual code.
+- **Hook implementations (Git, bash scripts)**: Write the complete, correct solution in a SINGLE attempt. Think through the logic before writing — do NOT iterate with bash trial-and-error. The hook file must be shown in full. Handle edge cases (console.log in strings vs real calls) in the initial implementation, not through repeated fix attempts. Show how to install the hook (chmod +x, .git/hooks/ path).
 - **Memory leak explanations**: When explaining memory leaks, show actual code examples of both problematic and fixed versions. Explain WHY solutions work, not just what they are.
-- **Makefile tasks**: Always display the actual Makefile code with .PHONY declarations and dependency chains. Show complete target definitions.
-- **Dataclass definitions**: Always show the complete dataclass code with all field types, defaults, and validation logic. Include __post_init__ methods when relevant.
+- **Makefile tasks**: Display the complete Makefile — every line, every target, every recipe, every .PHONY. Never summarise or omit parts.
+- **Dataclass definitions**: Show the complete dataclass implementation — @dataclass decorator, all fields with type annotations and defaults, __post_init__ for validation. Every line. Never just describe it.
+- **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked.
 - **Command suggestions**: Always use correct command flags and syntax. For null-delimited output, use --zero or find/printf instead of non-existent flags like -0.
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
