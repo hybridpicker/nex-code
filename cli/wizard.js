@@ -207,23 +207,46 @@ async function runDeployWizard(serverProfiles, nexDir) {
       server = await ask('Target server (profile name or user@host)');
     }
 
-    const localPath = await ask('Local path to sync (e.g. dist/ or ./build)', 'dist/');
-    const remotePath = await ask('Remote destination path (e.g. /var/www/app)');
+    const method = await askChoice('Deploy method', ['rsync', 'git'], 'rsync');
+
+    let localPath = '';
+    let exclude = [];
+    let branch = '';
+
+    if (method === 'rsync') {
+      localPath = await ask('Local path to sync (e.g. dist/ or ./build)', 'dist/');
+      const excludeStr = await ask('Exclude paths (comma-separated, e.g. node_modules,.env)', 'node_modules,.env');
+      exclude = excludeStr ? excludeStr.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    } else {
+      branch = await ask('Branch to pull (leave empty for current remote branch)', 'main');
+    }
+
+    const remotePath = await ask(
+      method === 'git' ? 'Remote repo path (e.g. /home/jarvis/my-app)' : 'Remote destination path (e.g. /var/www/app)'
+    );
     if (!remotePath) { console.log(`${C.red}  Remote path is required.${C.reset}`); continue; }
 
-    const deployScript = await ask('Deploy script to run after sync (leave empty to skip)', '');
-    const excludeStr = await ask('Exclude paths (comma-separated, e.g. node_modules,.env)', 'node_modules,.env');
-    const exclude = excludeStr ? excludeStr.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const deployScript = await ask('Command to run on remote after deploy (leave empty to skip)', '');
+    const healthCheck = await ask('Health check URL or remote command (leave empty to skip)', '');
 
-    const config = { server, local_path: localPath, remote_path: remotePath };
+    const config = { server, method, remote_path: remotePath };
+    if (method === 'rsync') {
+      config.local_path = localPath;
+      if (exclude.length > 0) config.exclude = exclude;
+    } else {
+      if (branch) config.branch = branch;
+    }
     if (deployScript) config.deploy_script = deployScript;
-    if (exclude.length > 0) config.exclude = exclude;
+    if (healthCheck) config.health_check = healthCheck;
 
     configs[name] = config;
 
-    const localDisp = localPath.endsWith('/') ? localPath : `${localPath}/`;
-    console.log(`\n  ${C.green}✓${C.reset} Deploy config "${name}": ${localDisp} → ${server}:${remotePath}`);
+    const targetLabel = method === 'git'
+      ? `${server}:${remotePath}${branch ? ` (${branch})` : ''}`
+      : `${localPath.endsWith('/') ? localPath : localPath + '/'} → ${server}:${remotePath}`;
+    console.log(`\n  ${C.green}✓${C.reset} Deploy config "${name}": [${method}] ${targetLabel}`);
     if (deployScript) console.log(`  ${C.dim}  Then: ${deployScript}${C.reset}`);
+    if (healthCheck) console.log(`  ${C.dim}  Health: ${healthCheck}${C.reset}`);
 
     addAnother = await askBool('\nAdd another deploy config?', false);
   }
