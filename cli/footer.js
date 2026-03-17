@@ -25,12 +25,23 @@ const C_RESET = '\x1b[0m';
 const _noScrollRegion = !isDark;
 
 // ── Debug logger ────────────────────────────────────────────────────────────
-const DEBUG = process.env.FOOTER_DEBUG === '1';
+const DEBUG      = process.env.FOOTER_DEBUG === '1' || process.env.FOOTER_DEBUG === '2';
+const DEBUG_ANSI = process.env.FOOTER_DEBUG === '2';  // full ANSI trace
 let _dbgFd = null;
 function _dbg(...args) {
   if (!DEBUG) return;
   if (!_dbgFd) _dbgFd = fs.openSync('/tmp/footer-debug.log', 'w');
   fs.writeSync(_dbgFd, args.join(' ') + '\n');
+}
+function _dbgAnsi(label, data) {
+  if (!DEBUG_ANSI || typeof data !== 'string') return;
+  if (!_dbgFd) _dbgFd = fs.openSync('/tmp/footer-debug.log', 'w');
+  const readable = data
+    .replace(/\x1b\[([^a-zA-Z]*)([a-zA-Z])/g, (_, p, cmd) => `<ESC[${p}${cmd}>`)
+    .replace(/\x1b([^[])/g, (_, c) => `<ESC${c}>`)
+    .replace(/\r/g, '<CR>').replace(/\n/g, '<LF>\n')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, c => `<${c.charCodeAt(0).toString(16).padStart(2,'0')}>`);
+  fs.writeSync(_dbgFd, `${label}: ${readable}\n`);
 }
 
 function visibleLen(str) {
@@ -129,7 +140,8 @@ class StickyFooter {
   }
 
   _clearScrollRegion() {
-    if (_noScrollRegion) return;
+    // Always clear — even on light terminals we must wipe any stale region
+    // left by a previous run that did set DECSTBM.
     if (this._origWrite) this._origWrite('\x1b[r');
   }
 
@@ -144,6 +156,7 @@ class StickyFooter {
 
   /** Write directly to stdout, bypassing the patch. */
   rawWrite(data) {
+    _dbgAnsi('RAW', data);
     if (this._origWrite) return this._origWrite(data);
     return process.stdout.write(data);
   }
@@ -199,6 +212,8 @@ class StickyFooter {
     this._prevTermRows = this._rows;
     this._prevTermCols = this._cols;
 
+    // Clear any stale scroll region left by a previous run before setting ours.
+    this._origWrite('\x1b[r');
     this._setScrollRegion();
     this._lastOutputRow = 1;
     this.drawFooter();
@@ -210,6 +225,7 @@ class StickyFooter {
     this._origWrite = rawWrite;
 
     process.stdout.write = function(data, ...rest) {
+      _dbgAnsi('PATCH', data);
       if (!self._active || typeof data !== 'string') {
         return rawWrite(data, ...rest);
       }

@@ -7,6 +7,7 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { C, banner, cleanupTerminal } = require('./ui');
+const { isDark } = require('./theme');
 const { listProviders, getActiveProviderName, listAllModels, setFallbackChain, getFallbackChain, getProvider } = require('./providers/registry');
 const { flushAutoSave } = require('./session');
 const { getActiveModel, setActiveModel } = require('./ollama');
@@ -2273,7 +2274,9 @@ async function startREPL() {
 
     // Always echo the full resolved prompt with subtle background highlight
     {
-      const BG = '\x1b[48;5;237m'; // subtle dark-gray background
+      const BG = isDark
+        ? '\x1b[48;5;237m'             // dark grey on dark terminal
+        : '\x1b[48;2;220;225;235m';   // light blue-grey on light terminal
       const cols = (process.stdout.columns || 80);
       const echoLines = input.split('\n');
       echoLines.forEach((l, i) => {
