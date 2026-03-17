@@ -434,7 +434,7 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 ### Deploy
 | Tool | Description |
 |------|-------------|
-| `deploy` | rsync files to a remote server + optional post-deploy script. Supports named configs from `.nex/deploy.json`. |
+| `deploy` | Deploy to a remote server via **rsync** (sync local files) or **git** (git pull on remote) + optional post-deploy script + optional health check. Supports named configs from `.nex/deploy.json`. |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
@@ -505,10 +505,20 @@ Create `.nex/deploy.json` (or use `/init deploy`):
 {
   "prod": {
     "server": "prod",
+    "method": "rsync",
     "local_path": "dist/",
     "remote_path": "/var/www/app",
     "exclude": ["node_modules", ".env"],
-    "deploy_script": "systemctl restart gunicorn"
+    "deploy_script": "systemctl restart gunicorn",
+    "health_check": "https://myapp.example.com/health"
+  },
+  "api": {
+    "server": "prod",
+    "method": "git",
+    "remote_path": "/home/jarvis/my-api",
+    "branch": "main",
+    "deploy_script": "npm ci --omit=dev && sudo systemctl restart my-api",
+    "health_check": "systemctl is-active my-api"
   }
 }
 ```
