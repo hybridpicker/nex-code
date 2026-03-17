@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 
 // ─── Stop Words ───────────────────────────────────────────────
 const STOP_WORDS = new Set([
@@ -119,7 +120,7 @@ function readDocument(name) {
  */
 function writeDocument(name, content) {
   const filePath = path.join(getBrainDir(), `${name}.md`);
-  fs.writeFileSync(filePath, content, 'utf-8');
+  atomicWrite(filePath, content);
   _updateDocumentInIndex(name, content);
   _autoRebuildEmbeddings();
 }
@@ -204,25 +205,29 @@ function _readIndex() {
 }
 
 function _writeIndex(index) {
-  fs.writeFileSync(getIndexPath(), JSON.stringify(index, null, 2), 'utf-8');
+  atomicWrite(getIndexPath(), JSON.stringify(index, null, 2));
 }
 
 function _updateDocumentInIndex(name, content) {
-  const index = _readIndex();
-  const { frontmatter } = parseFrontmatter(content);
-  const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
-  index.documents[name] = {
-    keywords: _extractKeywords(content),
-    tags,
-    modified: new Date().toISOString(),
-  };
-  _writeIndex(index);
+  withFileLockSync(getIndexPath(), () => {
+    const index = _readIndex();
+    const { frontmatter } = parseFrontmatter(content);
+    const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
+    index.documents[name] = {
+      keywords: _extractKeywords(content),
+      tags,
+      modified: new Date().toISOString(),
+    };
+    _writeIndex(index);
+  });
 }
 
 function _removeDocumentFromIndex(name) {
-  const index = _readIndex();
-  delete index.documents[name];
-  _writeIndex(index);
+  withFileLockSync(getIndexPath(), () => {
+    const index = _readIndex();
+    delete index.documents[name];
+    _writeIndex(index);
+  });
 }
 
 /**
