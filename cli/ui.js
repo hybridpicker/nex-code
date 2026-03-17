@@ -3,24 +3,8 @@
  * Rich terminal output with markdown rendering support
  */
 
-const C = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  white: '\x1b[37m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m',
-  gray: '\x1b[90m',
-  bgRed: '\x1b[41m',
-  bgGreen: '\x1b[42m',
-  brightCyan: '\x1b[96m',
-  brightMagenta: '\x1b[95m',
-  brightBlue: '\x1b[94m',
-};
+const { T } = require('./theme');
+const C = T;
 
 function colorLine(text, rgb) {
   // Color all visible chars in a line with a single RGB color
@@ -52,8 +36,7 @@ const DOG_MATRIX = [
   '00111100',  // body base (narrower)
 ];
 
-function renderDog(matrix) {
-  const color = '\x1b[38;2;80;200;255m'; // solid mid-cyan
+function renderDog(matrix, color) {
   const lines = [];
   for (let r = 0; r < matrix.length; r += 2) {
     let line = '';
@@ -72,18 +55,16 @@ function renderDog(matrix) {
 
 function banner(modelName, cwd, opts = {}) {
   const B = C.bold;
-  const d = C.dim;
   const r = C.reset;
-  const accent = '\x1b[38;2;80;200;255m';
 
-  const dogLines = renderDog(DOG_MATRIX);
-  const yoloTag = opts.yolo ? `  ${B}${C.yellow}⚡ YOLO${r}` : '';
+  const dogLines = renderDog(DOG_MATRIX, T.banner_logo);
+  const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : '';
   const version = require('../package.json').version;
 
   // 3 text lines — same height as dog
   const subtitles = [
-    `  ${accent}${B}nex-code${r}  ${d}v${version}${r}`,
-    `  ${d}${modelName}  ·  /help${r}${yoloTag}`,
+    `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
+    `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${yoloTag}`,
     '',
   ];
 

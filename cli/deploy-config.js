@@ -6,11 +6,14 @@
  * Format (.nex/deploy.json):
  * {
  *   "prod": {
- *     "server": "prod",
- *     "local_path": "dist/",
- *     "remote_path": "/var/www/app",
- *     "exclude": ["node_modules", ".env"],
- *     "deploy_script": "systemctl restart gunicorn"
+ *     "server": "prod",              // server profile from .nex/servers.json
+ *     "method": "rsync",             // "rsync" (default) or "git"
+ *     "local_path": "dist/",         // rsync only: local dir to sync
+ *     "remote_path": "/var/www/app", // destination (or git repo dir for git method)
+ *     "branch": "main",              // git only: branch to pull (optional)
+ *     "exclude": ["node_modules"],   // rsync only: paths to exclude
+ *     "deploy_script": "systemctl restart gunicorn", // remote command after sync
+ *     "health_check": "https://myapp.example.com/health" // URL or remote shell command
  *   }
  * }
  */

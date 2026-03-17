@@ -1016,20 +1016,86 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'frontend_recon',
+      description: 'MANDATORY first step before creating or significantly modifying any frontend file (HTML template, Vue/React component, CSS). Scans the project and returns: (1) design tokens — CSS variables, Tailwind theme colors/fonts, (2) main layout/index page structure, (3) a reference component of the same type, (4) detected JS/CSS framework stack. Call this BEFORE writing any markup or styles. Never skip it for frontend tasks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of frontend file you are about to create. Used to find a relevant reference component. Examples: "list", "form", "detail", "dashboard", "modal", "component". Optional but improves reference quality.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'deploy',
-      description: 'Deploy files to a remote server via rsync + optional remote script. Can use a named config from .nex/deploy.json (e.g. deploy("prod")) or explicit params. Requires confirmation before executing.',
+      description: 'Deploy to a remote server. Supports two methods: "rsync" (sync local files) and "git" (git pull on remote). Can use a named config from .nex/deploy.json. Requires confirmation before executing.',
       parameters: {
         type: 'object',
         properties: {
           config: { type: 'string', description: 'Named deploy config from .nex/deploy.json (e.g. "prod"). Overrides all other params if provided.' },
+          method: { type: 'string', enum: ['rsync', 'git'], description: 'Deploy method: "rsync" syncs local files (default), "git" runs git pull on the remote.' },
           server: { type: 'string', description: 'Profile name or "user@host". Required if no config.' },
-          local_path: { type: 'string', description: 'Local directory or file to sync (e.g. "dist/", "./build"). Required if no config.' },
-          remote_path: { type: 'string', description: 'Remote destination path (e.g. "/var/www/app"). Required if no config.' },
-          deploy_script: { type: 'string', description: 'Shell command to run on the remote after sync. Optional.' },
-          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from sync. Optional.' },
-          dry_run: { type: 'boolean', description: 'Show what would be synced without actually syncing. Default: false.' },
+          remote_path: { type: 'string', description: 'Remote project directory. Required for git method; destination path for rsync.' },
+          local_path: { type: 'string', description: 'Local directory or file to sync. Required for rsync method.' },
+          branch: { type: 'string', description: 'Branch to pull (git method only). Defaults to current remote branch.' },
+          deploy_script: { type: 'string', description: 'Shell command(s) to run on the remote after sync/pull (e.g. "npm ci && systemctl restart myapp"). Optional.' },
+          health_check: { type: 'string', description: 'URL (HTTP GET) or shell command to verify the service is healthy after deploy. If it fails, the deploy is marked as failed. Optional.' },
+          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from rsync. Optional.' },
+          dry_run: { type: 'boolean', description: 'Show what would happen without executing. Default: false.' },
         },
         required: [],
+      },
+    },
+  },
+  // ─── Sysadmin Tool ────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'sysadmin',
+      description: 'Senior sysadmin operations on a remote (or local) Linux server. Covers: system audit, disk_usage, process_list, network_status, package management (dnf/apt), user management, firewall (firewalld/ufw/iptables), cron, SSL cert checks, log tailing, large file discovery, systemd service management, process kill, journalctl log querying. Read-only actions run without confirmation; state-changing actions require user approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          action: {
+            type: 'string',
+            enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large', 'service', 'kill_process', 'journalctl'],
+            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
+          },
+          path: { type: 'string', description: 'File or directory path. For disk_usage (default /), log_tail (required), find_large (default /).' },
+          lines: { type: 'number', description: 'Lines to tail for log_tail or journalctl. Default: 100.' },
+          limit: { type: 'number', description: 'Result count for process_list (default 20) or find_large (default 20).' },
+          sort_by: { type: 'string', enum: ['cpu', 'mem'], description: 'Sort order for process_list. Default: cpu.' },
+          min_size: { type: 'string', description: 'Minimum file size for find_large. Default: "100M". Examples: "50M", "1G".' },
+          package_action: { type: 'string', enum: ['install', 'remove', 'update', 'list', 'upgrade'], description: 'Package sub-action for action=package.' },
+          packages: { type: 'array', items: { type: 'string' }, description: 'Package name(s) for install/remove/update.' },
+          user_action: { type: 'string', enum: ['list', 'create', 'delete', 'add_ssh_key', 'info'], description: 'User sub-action for action=user_manage.' },
+          user: { type: 'string', description: 'Linux username for user_manage or cron.' },
+          groups: { type: 'array', items: { type: 'string' }, description: 'Groups to assign on user create (e.g. ["sudo", "docker"]).' },
+          ssh_key: { type: 'string', description: 'SSH public key string to add for user_action=add_ssh_key.' },
+          firewall_action: { type: 'string', enum: ['status', 'allow', 'deny', 'remove', 'reload'], description: 'Firewall sub-action for action=firewall.' },
+          port: { type: 'string', description: 'Port/protocol for firewall rules, e.g. "80/tcp", "443", "8080/udp".' },
+          cron_action: { type: 'string', enum: ['list', 'add', 'remove'], description: 'Cron sub-action for action=cron.' },
+          schedule: { type: 'string', description: 'Cron schedule expression for cron add, e.g. "0 2 * * *".' },
+          command: { type: 'string', description: 'Command for cron add, or substring to match for cron remove.' },
+          domain: { type: 'string', description: 'Domain for ssl_check (e.g. "example.com"). Auto-detects Let\'s Encrypt cert on server; falls back to live TLS probe.' },
+          cert_path: { type: 'string', description: 'Explicit path to cert file on server for ssl_check (e.g. "/etc/letsencrypt/live/x/cert.pem").' },
+          service_name: { type: 'string', description: 'Systemd unit name for action=service (e.g. "nginx", "jarvis-api", "gunicorn"). .service suffix optional.' },
+          service_action: { type: 'string', enum: ['status', 'start', 'stop', 'restart', 'reload', 'enable', 'disable', 'list_failed'], description: 'Sub-action for action=service. list_failed shows all failed units.' },
+          pid: { type: 'number', description: 'Process ID to kill for action=kill_process.' },
+          process_name: { type: 'string', description: 'Process name to kill (uses pkill) for action=kill_process. Use with pid for safety.' },
+          signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL', 'SIGHUP', 'SIGINT'], description: 'Signal for kill_process. Default: SIGTERM.' },
+          unit: { type: 'string', description: 'Systemd unit to filter for journalctl (e.g. "nginx", "jarvis-api"). Omit for system-wide.' },
+          since: { type: 'string', description: 'Time filter for journalctl, e.g. "1 hour ago", "today", "2026-03-17 10:00". Default: last 200 lines.' },
+          priority: { type: 'string', enum: ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'], description: 'Minimum log priority for journalctl. Default: no filter.' },
+        },
+        required: ['action'],
       },
     },
   },
@@ -1179,8 +1245,11 @@ async function _executeToolInner(name, args, options = {}) {
       const dirExists = await fs.access(dir).then(() => true).catch(() => false);
       if (!dirExists) await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(fp, args.content, 'utf-8');
+      const needsExec = /[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || args.content.startsWith('#!');
+      if (needsExec) await fs.chmod(fp, 0o755);
       recordChange('write_file', fp, oldContent, args.content);
-      return `Written: ${fp} (${args.content.length} chars)`;
+      const execNote = needsExec ? ' [chmod +x applied]' : '';
+      return `Written: ${fp} (${args.content.length} chars)${execNote}`;
     }
 
     case 'edit_file': {
@@ -1222,6 +1291,7 @@ async function _executeToolInner(name, args, options = {}) {
               if (!ok) return 'CANCELLED: User declined to apply edit.';
             }
             await fs.writeFile(fp, fix.content, 'utf-8');
+            if (/[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || fix.content.startsWith('#!')) await fs.chmod(fp, 0o755);
             recordChange('edit_file', fp, content, fix.content);
             const matchPreview = fix.matchText.length > 80
               ? fix.matchText.substring(0, 77) + '...'
@@ -1250,6 +1320,7 @@ async function _executeToolInner(name, args, options = {}) {
       // Use split/join for literal replacement (no regex interpretation)
       const updated = content.split(matchText).join(args.new_text);
       await fs.writeFile(fp, updated, 'utf-8');
+      if (/[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || updated.startsWith('#!')) await fs.chmod(fp, 0o755);
       recordChange('edit_file', fp, content, updated);
       return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
     }
@@ -1481,9 +1552,12 @@ async function _executeToolInner(name, args, options = {}) {
 
       // Write the fully-validated preview (atomic — no partial application)
       await fs.writeFile(fp, preview, 'utf-8');
+      const needsExecP = /[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || preview.startsWith('#!');
+      if (needsExecP) await fs.chmod(fp, 0o755);
       recordChange('patch_file', fp, content, preview);
       const suffix = anyAutoFixed ? ' (auto-fixed)' : anyFuzzy ? ' (fuzzy match)' : '';
-      return `Patched: ${fp} (${patches.length} replacements)${suffix}`;
+      const execNoteP = needsExecP ? ' [chmod +x applied]' : '';
+      return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}`;
     }
 
     case 'web_fetch': {
@@ -2232,50 +2306,666 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       if (!args.server) return 'ERROR: server is required (or use config: "<name>")';
-      if (!args.local_path) return 'ERROR: local_path is required';
       if (!args.remote_path) return 'ERROR: remote_path is required';
+
+      const method = args.method || 'rsync';
+      if (method === 'rsync' && !args.local_path) return 'ERROR: local_path is required for rsync method';
 
       let profile;
       try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
 
       const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
-      const portFlag = profile.port && Number(profile.port) !== 22 ? `-e "ssh -p ${profile.port}"` : '';
-      const keyFlag = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}"` : '';
-      const sshFlags = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}${profile.port && Number(profile.port) !== 22 ? ` -p ${profile.port}` : ''}"` : portFlag;
-      const excludeFlags = (args.exclude || []).map(e => `--exclude="${e}"`).join(' ');
-      const dryRun = args.dry_run ? '--dry-run' : '';
 
-      const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
-      const rsyncCmd = `rsync -avz --delete ${dryRun} ${excludeFlags} ${sshFlags} ${localPath} ${target}:${args.remote_path}`.trim().replace(/\s+/g, ' ');
-
+      // ── Confirmation ──────────────────────────────────────────
       if (!args.dry_run && !options.autoConfirm) {
-        console.log(`\n${C.yellow}  ⚠ Deploy: ${localPath} → ${target}:${args.remote_path}${C.reset}`);
+        if (method === 'git') {
+          const branchLabel = args.branch ? ` (branch: ${args.branch})` : '';
+          console.log(`\n${C.yellow}  ⚠ Deploy [git pull]: ${target}:${args.remote_path}${branchLabel}${C.reset}`);
+        } else {
+          const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
+          console.log(`\n${C.yellow}  ⚠ Deploy [rsync]: ${localPath} → ${target}:${args.remote_path}${C.reset}`);
+        }
         if (args.deploy_script) console.log(`${C.yellow}  Then run: ${args.deploy_script}${C.reset}`);
+        if (args.health_check) console.log(`${C.yellow}  Health check: ${args.health_check}${C.reset}`);
         const ok = await confirm('  Proceed with deployment?');
         if (!ok) return 'CANCELLED: User declined.';
       }
 
-      let output = '';
-      try {
-        const { stdout, stderr } = await exec(rsyncCmd, { timeout: 120000 });
-        output = (stdout || stderr || '').trim();
-      } catch (e) {
-        return `ERROR (rsync): ${(e.stderr || e.message || '').toString().trim()}`;
-      }
+      let syncOutput = '';
 
-      if (args.dry_run) return `DRY RUN:\n${output || '(nothing to sync)'}`;
-
-      let remoteResult = '';
-      if (args.deploy_script) {
-        const { stdout, stderr, exitCode, error } = await sshExec(profile, args.deploy_script, { timeout: 60000 });
-        const remoteOut = [stdout, stderr].filter(Boolean).join('\n').trim();
-        if (exitCode !== 0) {
-          return `rsync OK\n\nERROR (deploy_script, exit ${exitCode}):\n${error || remoteOut}`;
+      // ── Sync step ─────────────────────────────────────────────
+      if (method === 'git') {
+        const pullCmd = args.branch
+          ? `cd ${args.remote_path} && git fetch origin && git checkout ${args.branch} && git pull origin ${args.branch}`
+          : `cd ${args.remote_path} && git pull`;
+        if (args.dry_run) {
+          return `DRY RUN [git]: would run on ${target}:\n  ${pullCmd}${args.deploy_script ? `\n  ${args.deploy_script}` : ''}`;
         }
-        remoteResult = `\n\nRemote script output:\n${remoteOut || '(no output)'}`;
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, pullCmd, { timeout: 120000 });
+        syncOutput = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          return `ERROR (git pull, exit ${exitCode}):\n${error || syncOutput}`;
+        }
+      } else {
+        const sshFlags = profile.key
+          ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}${profile.port && Number(profile.port) !== 22 ? ` -p ${profile.port}` : ''}"`
+          : profile.port && Number(profile.port) !== 22 ? `-e "ssh -p ${profile.port}"` : '';
+        const excludeFlags = (args.exclude || []).map(e => `--exclude="${e}"`).join(' ');
+        const dryRunFlag = args.dry_run ? '--dry-run' : '';
+        const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
+        const rsyncCmd = `rsync -avz --delete ${dryRunFlag} ${excludeFlags} ${sshFlags} ${localPath} ${target}:${args.remote_path}`.trim().replace(/\s+/g, ' ');
+        try {
+          const { stdout, stderr } = await exec(rsyncCmd, { timeout: 120000 });
+          syncOutput = (stdout || stderr || '').trim();
+        } catch (e) {
+          return `ERROR (rsync): ${(e.stderr || e.message || '').toString().trim()}`;
+        }
+        if (args.dry_run) return `DRY RUN [rsync]:\n${syncOutput || '(nothing to sync)'}`;
       }
 
-      return `Deployed ${localPath} → ${target}:${args.remote_path}\n${output}${remoteResult}`.trim();
+      // ── Post-deploy script ────────────────────────────────────
+      let scriptOutput = '';
+      if (args.deploy_script) {
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, args.deploy_script, { timeout: 120000 });
+        const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          return `${method === 'git' ? 'git pull' : 'rsync'} OK\n\nERROR (deploy_script, exit ${exitCode}):\n${error || out}`;
+        }
+        scriptOutput = `\n\nDeploy script output:\n${out || '(no output)'}`;
+      }
+
+      // ── Health check ──────────────────────────────────────────
+      let healthOutput = '';
+      if (args.health_check) {
+        const hc = args.health_check.trim();
+        const isUrl = /^https?:\/\//.test(hc);
+        if (isUrl) {
+          try {
+            const fetch = require('node-fetch');
+            const res = await Promise.race([
+              fetch(hc),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000)),
+            ]);
+            if (res.ok) {
+              healthOutput = `\n\nHealth check: ✓ ${hc} → ${res.status}`;
+            } else {
+              healthOutput = `\n\nHealth check FAILED: ${hc} → HTTP ${res.status}`;
+              return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+            }
+          } catch (e) {
+            healthOutput = `\n\nHealth check FAILED: ${hc} → ${e.message}`;
+            return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+          }
+        } else {
+          // Treat as remote shell command
+          const { stdout, stderr, exitCode } = await sshExec(profile, hc, { timeout: 15000 });
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+          if (exitCode !== 0) {
+            healthOutput = `\n\nHealth check FAILED (exit ${exitCode}): ${out}`;
+            return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+          }
+          healthOutput = `\n\nHealth check: ✓ ${out || '(exit 0)'}`;
+        }
+      }
+
+      const methodLabel = method === 'git' ? `${target}:${args.remote_path}` : `${args.local_path} → ${target}:${args.remote_path}`;
+      return `Deployed [${method}] ${methodLabel}\n${syncOutput}${scriptOutput}${healthOutput}`.trim();
+    }
+
+    case 'frontend_recon': {
+      const cwd = process.cwd();
+      const targetType = (args.type || '').toLowerCase();
+      const sections = [];
+
+      // Helper: read first N lines of a file, return null on error
+      const tryRead = async (fp, maxLines = 120) => {
+        try {
+          const abs = path.isAbsolute(fp) ? fp : path.join(cwd, fp);
+          const content = await fs.readFile(abs, 'utf8');
+          const lines = content.split('\n');
+          const preview = lines.slice(0, maxLines).join('\n');
+          return lines.length > maxLines
+            ? preview + `\n... (${lines.length - maxLines} more lines — use read_file for full content)`
+            : preview;
+        } catch { return null; }
+      };
+
+      // Helper: find files by name pattern, skip noisy dirs
+      // Each dir needs its own -not -path clause; alternation (|) is not valid in find glob patterns.
+      const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build', 'vendor', '.next', '__pycache__', 'venv', '.venv'];
+      const skipFlags = SKIP_DIRS.map(d => `-not -path "*/${d}/*"`).join(' ');
+      const findByName = async (name) => {
+        try {
+          const { stdout } = await exec(
+            `find "${cwd}" -type f -name "${name}" ${skipFlags} 2>/dev/null | head -10`,
+            { timeout: 8000 }
+          );
+          return stdout.trim().split('\n').filter(Boolean);
+        } catch { return []; }
+      };
+
+      // Helper: grep for pattern across file type
+      const grepForPattern = async (pattern, include) => {
+        try {
+          const { stdout } = await exec(
+            `grep -rl "${pattern}" "${cwd}" --include="${include}" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build 2>/dev/null | head -5`,
+            { timeout: 8000 }
+          );
+          return stdout.trim().split('\n').filter(Boolean);
+        } catch { return []; }
+      };
+
+      // ── STEP 1: Design Tokens ──────────────────────────────────
+      sections.push('## STEP 1: Design Tokens\n');
+
+      // Tailwind config
+      const tailwindFiles = [
+        ...await findByName('tailwind.config.js'),
+        ...await findByName('tailwind.config.ts'),
+        ...await findByName('tailwind.config.mjs'),
+      ];
+      if (tailwindFiles.length > 0) {
+        const content = await tryRead(tailwindFiles[0], 80);
+        if (content) sections.push(`### Tailwind config (${path.relative(cwd, tailwindFiles[0])})\n\`\`\`js\n${content}\n\`\`\``);
+      } else {
+        sections.push('(no tailwind.config found)');
+      }
+
+      // CSS custom properties (:root)
+      const cssCandidates = ['variables.css', '_variables.scss', 'tokens.css', 'base.css', 'global.css', 'main.css', 'index.css', 'app.css', 'style.css', 'styles.css'];
+      let foundCssVars = false;
+      for (const name of cssCandidates) {
+        const files = await findByName(name);
+        for (const fp of files) {
+          const content = await tryRead(fp, 100);
+          if (content && content.includes(':root')) {
+            sections.push(`### CSS Variables (${path.relative(cwd, fp)})\n\`\`\`css\n${content}\n\`\`\``);
+            foundCssVars = true;
+            break;
+          }
+        }
+        if (foundCssVars) break;
+      }
+      if (!foundCssVars) {
+        const rootFiles = await grepForPattern(':root', '*.css');
+        if (rootFiles.length > 0) {
+          const content = await tryRead(rootFiles[0], 100);
+          if (content) sections.push(`### CSS Variables (${path.relative(cwd, rootFiles[0])})\n\`\`\`css\n${content}\n\`\`\``);
+          foundCssVars = true;
+        }
+      }
+      if (!foundCssVars) sections.push('(no CSS custom properties / :root found)');
+
+      // ── STEP 2: Main Layout / Index Page ──────────────────────
+      sections.push('\n## STEP 2: Main Layout / Index Page\n');
+
+      const indexCandidates = ['base.html', '_base.html', 'layout.html', 'base.jinja', 'App.vue', 'App.jsx', 'App.tsx', '_app.jsx', '_app.tsx', '_app.js', 'layout.vue', 'index.html'];
+      let foundIndex = false;
+      for (const name of indexCandidates) {
+        const files = await findByName(name);
+        if (files.length > 0) {
+          const content = await tryRead(files[0], 150);
+          if (content) {
+            sections.push(`### Main layout: ${path.relative(cwd, files[0])}\n\`\`\`html\n${content}\n\`\`\``);
+            foundIndex = true;
+            break;
+          }
+        }
+      }
+      if (!foundIndex) sections.push('(no main layout/index file found — try read_file on your root template manually)');
+
+      // ── STEP 3: Reference Component ────────────────────────────
+      sections.push('\n## STEP 3: Reference Component (same type)\n');
+
+      let refFiles = [];
+      // Try to find files matching the type hint
+      if (targetType) {
+        for (const ext of ['*.html', '*.vue', '*.jsx', '*.tsx']) {
+          refFiles = await grepForPattern(targetType, ext);
+          if (refFiles.length > 0) break;
+        }
+      }
+      // Fallback: find recently modified frontend files, excluding layout/base files
+      if (refFiles.length === 0) {
+        try {
+          const { stdout } = await exec(
+            `find "${cwd}" -type f \\( -name "*.html" -o -name "*.vue" -o -name "*.jsx" -o -name "*.tsx" \\) ` +
+            `-not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" ` +
+            `-not -name "base.html" -not -name "_base.html" -not -name "layout.html" -not -name "App.vue" -not -name "App.jsx" ` +
+            `2>/dev/null | head -20`,
+            { timeout: 8000 }
+          );
+          refFiles = stdout.trim().split('\n').filter(Boolean);
+        } catch { refFiles = []; }
+      }
+
+      if (refFiles.length > 0) {
+        const fp = refFiles[0];
+        const content = await tryRead(fp, 150);
+        if (content) sections.push(`### Reference: ${path.relative(cwd, fp)}\n\`\`\`html\n${content}\n\`\`\``);
+        else sections.push('(reference file found but could not be read)');
+      } else {
+        sections.push('(no reference component found — check manually with glob or list_directory)');
+      }
+
+      // ── STEP 4: Framework Stack Detection ─────────────────────
+      sections.push('\n## STEP 4: Framework Stack\n');
+
+      const stackParts = [];
+
+      // package.json
+      const pkgContent = await tryRead(path.join(cwd, 'package.json'), 999);
+      if (pkgContent) {
+        if (pkgContent.includes('"react"') || pkgContent.includes("'react'")) stackParts.push('React');
+        if (pkgContent.includes('"vue"') || pkgContent.includes("'vue'")) {
+          const vueVer = pkgContent.match(/"vue":\s*"[\^~]?(\d+)/);
+          stackParts.push(vueVer ? `Vue.js v${vueVer[1]}` : 'Vue.js');
+        }
+        const alpineVer = pkgContent.match(/"alpinejs":\s*"[\^~]?(\d+)/);
+        if (alpineVer) stackParts.push(`Alpine.js v${alpineVer[1]} (⚠ v2 vs v3 API differs!)`);
+        if (pkgContent.includes('"htmx') || pkgContent.includes("'htmx")) stackParts.push('HTMX');
+        if (pkgContent.includes('"tailwindcss"')) stackParts.push('Tailwind CSS');
+        if (pkgContent.includes('"bootstrap"')) stackParts.push('Bootstrap');
+      }
+
+      // Django / Python detection (manage.py or requirements.txt)
+      const hasDjango = (await fs.access(path.join(cwd, 'manage.py')).then(() => true).catch(() => false)) ||
+        ((await tryRead(path.join(cwd, 'requirements.txt'), 50) || '').includes('Django'));
+      if (hasDjango) stackParts.push('Django (server-rendered templates)');
+
+      // Alpine.js / HTMX via CDN (not in package.json)
+      if (!stackParts.some(s => s.includes('Alpine'))) {
+        const alpineCdn = await grepForPattern('alpinejs', '*.html');
+        if (alpineCdn.length > 0) {
+          // Try to detect version from CDN URL
+          const sampleContent = await tryRead(alpineCdn[0], 30) || '';
+          const v = sampleContent.match(/alpinejs[@/]v?(\d)/);
+          stackParts.push(v ? `Alpine.js v${v[1]} (via CDN — ⚠ v2 vs v3 API differs!)` : 'Alpine.js (via CDN — check version!)');
+        }
+      }
+      if (!stackParts.some(s => s.includes('HTMX'))) {
+        const htmxCdn = await grepForPattern('htmx', '*.html');
+        if (htmxCdn.length > 0) stackParts.push('HTMX (via CDN)');
+      }
+
+      if (stackParts.length > 0) {
+        sections.push(stackParts.map(s => `- ${s}`).join('\n'));
+        sections.push('\n⚠ Use ONLY the frameworks listed above. Do NOT mix (e.g. no fetch() when HTMX is used for the same action).');
+      } else {
+        sections.push('(framework not detected — check package.json or script tags manually)');
+      }
+
+      sections.push('\n---\n✅ Design recon complete. Now build consistently with the patterns above.');
+      return sections.join('\n');
+    }
+
+    // ─── Sysadmin Tool ────────────────────────────────────────
+    case 'sysadmin': {
+      if (!args.action) return 'ERROR: action is required';
+
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      let sysProfile;
+      if (!isLocal) {
+        try { sysProfile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      }
+
+      // Helper: run command locally or via SSH
+      const sysRun = async (cmd, timeout = 30000) => {
+        if (isLocal) {
+          try {
+            const { stdout, stderr } = await exec(cmd, { timeout });
+            return { out: (stdout || stderr || '').trim(), exitCode: 0 };
+          } catch (e) {
+            return { out: (e.stderr || e.message || '').toString().trim(), exitCode: e.code || 1 };
+          }
+        } else {
+          const { stdout, stderr, exitCode, error } = await sshExec(sysProfile, cmd, { timeout });
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+          return { out: error && exitCode !== 0 ? (error + '\n' + out).trim() : out, exitCode };
+        }
+      };
+
+      const READ_ONLY_ACTIONS = ['audit', 'disk_usage', 'process_list', 'network_status', 'ssl_check', 'log_tail', 'find_large', 'journalctl'];
+      const isReadOnly = READ_ONLY_ACTIONS.includes(args.action)
+        || (args.action === 'package' && args.package_action === 'list')
+        || (args.action === 'user_manage' && ['list', 'info'].includes(args.user_action))
+        || (args.action === 'firewall' && args.firewall_action === 'status')
+        || (args.action === 'cron' && args.cron_action === 'list')
+        || (args.action === 'service' && ['status', 'list_failed'].includes(args.service_action));
+
+      if (!isReadOnly && !options.autoConfirm) {
+        const target = isLocal ? 'local' : args.server;
+        const ok = await confirm(`sysadmin [${args.action}] on ${target} — proceed?`);
+        if (!ok) return 'Cancelled.';
+      }
+
+      switch (args.action) {
+        case 'audit': {
+          const cmd = [
+            "echo '=== OS / KERNEL ==='",
+            "cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION)=' || uname -a",
+            "echo '=== UPTIME / LOAD ==='",
+            "uptime",
+            "echo '=== MEMORY / SWAP ==='",
+            "free -h",
+            "echo '=== DISK ==='",
+            "df -h --output=target,size,used,avail,pcent 2>/dev/null || df -h",
+            "echo '=== TOP 10 PROCESSES (CPU) ==='",
+            "ps aux --sort=-%cpu | head -11",
+            "echo '=== FAILED SYSTEMD UNITS ==='",
+            "systemctl list-units --state=failed --no-legend 2>/dev/null || echo '(systemctl not available)'",
+            "echo '=== RECENT ERRORS (journalctl) ==='",
+            "journalctl -p err --no-pager -n 15 2>/dev/null || echo '(journalctl not available)'",
+            "echo '=== LISTENING PORTS ==='",
+            "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo '(ss/netstat not available)'",
+          ].join(' && ');
+          const { out, exitCode } = await sysRun(cmd, 45000);
+          return out || `EXIT ${exitCode}\n(no output)`;
+        }
+
+        case 'disk_usage': {
+          const p = args.path || '/';
+          // Use --max-depth=1 via du -d1 for safety on large filesystems; -x to stay on same fs
+          const cmd = `df -h ${p}; echo '--- Top subdirs ---'; du -d1 -x -h ${p} 2>/dev/null | sort -rh | head -20`;
+          const { out, exitCode } = await sysRun(cmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'process_list': {
+          const sortCol = args.sort_by === 'mem' ? '4' : '3'; // ps aux col 3=CPU%, 4=MEM%
+          const limit = (args.limit || 20) + 1;
+          // Try GNU ps --sort first (Linux), fall back to awk sort (BSD/BusyBox)
+          const cmd = `ps aux --sort=-${args.sort_by === 'mem' ? '%mem' : '%cpu'} 2>/dev/null | head -${limit} || ps aux | awk 'NR==1{print; next} {print | "sort -k${sortCol} -rn"}' | head -${limit}`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'network_status': {
+          const cmd = `ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null; echo '--- Active connections ---'; ss -tnp 2>/dev/null | head -30`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'package': {
+          if (!args.package_action) return 'ERROR: package_action is required for action=package';
+          const { out: pmOut } = await sysRun('which dnf 2>/dev/null && echo dnf || (which apt-get 2>/dev/null && echo apt) || echo unknown', 10000);
+          const pm = pmOut.includes('dnf') ? 'dnf' : pmOut.includes('apt') ? 'apt' : null;
+          if (!pm) return 'ERROR: No supported package manager found (dnf/apt)';
+          const pkgList = (args.packages || []).join(' ');
+          let pkgCmd;
+          switch (args.package_action) {
+            case 'list':
+              pkgCmd = pm === 'dnf' ? 'dnf list installed 2>/dev/null | head -60' : 'dpkg -l | head -60';
+              break;
+            case 'install':
+              if (!pkgList) return 'ERROR: packages required for install';
+              pkgCmd = pm === 'dnf' ? `dnf install -y ${pkgList}` : `apt-get install -y ${pkgList}`;
+              break;
+            case 'remove':
+              if (!pkgList) return 'ERROR: packages required for remove';
+              pkgCmd = pm === 'dnf' ? `dnf remove -y ${pkgList}` : `apt-get remove -y ${pkgList}`;
+              break;
+            case 'update':
+              if (!pkgList) return 'ERROR: packages required for update (use upgrade for full system upgrade)';
+              pkgCmd = pm === 'dnf' ? `dnf update -y ${pkgList}` : `apt-get install -y --only-upgrade ${pkgList}`;
+              break;
+            case 'upgrade':
+              pkgCmd = pm === 'dnf' ? 'dnf upgrade -y' : 'DEBIAN_FRONTEND=noninteractive apt-get upgrade -y';
+              break;
+            default:
+              return `ERROR: Unknown package_action: ${args.package_action}`;
+          }
+          const { out, exitCode } = await sysRun(pkgCmd, 120000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `${args.package_action} OK`;
+        }
+
+        case 'user_manage': {
+          if (!args.user_action) return 'ERROR: user_action is required for action=user_manage';
+          switch (args.user_action) {
+            case 'list': {
+              const cmd = "awk -F: '$3 >= 1000 && $1 != \"nobody\" {print $1, \"uid=\"$3, \"gid=\"$4, \"shell=\"$7}' /etc/passwd";
+              const { out, exitCode } = await sysRun(cmd, 10000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no regular users)';
+            }
+            case 'info': {
+              if (!args.user) return 'ERROR: user is required for user_action=info';
+              const cmd = `id ${args.user} && echo '--- Groups ---' && groups ${args.user} && echo '--- Last login ---' && lastlog -u ${args.user} 2>/dev/null`;
+              const { out, exitCode } = await sysRun(cmd, 10000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'create': {
+              if (!args.user) return 'ERROR: user is required for user_action=create';
+              const groupFlags = (args.groups || []).map(g => `-G ${g}`).join(' ');
+              const cmd = `useradd -m ${groupFlags} ${args.user} && echo "User ${args.user} created"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'delete': {
+              if (!args.user) return 'ERROR: user is required for user_action=delete';
+              const cmd = `userdel -r ${args.user} && echo "User ${args.user} deleted"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'add_ssh_key': {
+              if (!args.user) return 'ERROR: user is required for user_action=add_ssh_key';
+              if (!args.ssh_key) return 'ERROR: ssh_key is required for user_action=add_ssh_key';
+              const escapedKey = args.ssh_key.replace(/'/g, "'\\''");
+              const cmd = `mkdir -p /home/${args.user}/.ssh && chmod 700 /home/${args.user}/.ssh && echo '${escapedKey}' >> /home/${args.user}/.ssh/authorized_keys && chmod 600 /home/${args.user}/.ssh/authorized_keys && chown -R ${args.user}:${args.user} /home/${args.user}/.ssh && echo "SSH key added for ${args.user}"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            default:
+              return `ERROR: Unknown user_action: ${args.user_action}`;
+          }
+        }
+
+        case 'firewall': {
+          if (!args.firewall_action) return 'ERROR: firewall_action is required for action=firewall';
+          const { out: fwDetect } = await sysRun('which firewall-cmd 2>/dev/null && echo firewalld || (which ufw 2>/dev/null && echo ufw) || echo iptables', 10000);
+          const fw = fwDetect.includes('firewalld') ? 'firewalld' : fwDetect.includes('ufw') ? 'ufw' : 'iptables';
+          let fwCmd;
+          switch (args.firewall_action) {
+            case 'status':
+              fwCmd = fw === 'firewalld'
+                ? 'firewall-cmd --state && firewall-cmd --list-all'
+                : fw === 'ufw'
+                ? 'ufw status verbose'
+                : 'iptables -L -n --line-numbers | head -60';
+              break;
+            case 'allow':
+              if (!args.port) return 'ERROR: port is required for firewall allow (e.g. "80/tcp")';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --add-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw allow ${args.port}`
+                : `iptables -A INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j ACCEPT`;
+              break;
+            case 'deny':
+              if (!args.port) return 'ERROR: port is required for firewall deny';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw deny ${args.port}`
+                : `iptables -A INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j DROP`;
+              break;
+            case 'remove':
+              if (!args.port) return 'ERROR: port is required for firewall remove';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw delete allow ${args.port}`
+                : `iptables -D INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j ACCEPT 2>/dev/null || true`;
+              break;
+            case 'reload':
+              fwCmd = fw === 'firewalld'
+                ? 'firewall-cmd --reload'
+                : fw === 'ufw'
+                ? 'ufw reload'
+                : 'iptables-restore < /etc/iptables/rules.v4 2>/dev/null || echo "iptables: manual reload not available"';
+              break;
+            default:
+              return `ERROR: Unknown firewall_action: ${args.firewall_action}`;
+          }
+          const { out, exitCode } = await sysRun(fwCmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `firewall ${args.firewall_action} OK`;
+        }
+
+        case 'cron': {
+          if (!args.cron_action) return 'ERROR: cron_action is required for action=cron';
+          const cronFlag = args.user ? `-u ${args.user}` : '';
+          switch (args.cron_action) {
+            case 'list': {
+              const cmd = `crontab ${cronFlag} -l 2>/dev/null || echo '(no crontab for ${args.user || 'current user'})'`;
+              const { out } = await sysRun(cmd, 10000);
+              return out || '(empty crontab)';
+            }
+            case 'add': {
+              if (!args.schedule) return 'ERROR: schedule is required for cron add';
+              if (!args.command) return 'ERROR: command is required for cron add';
+              const entry = `${args.schedule} ${args.command}`;
+              const cmd = `(crontab ${cronFlag} -l 2>/dev/null; echo "${entry}") | crontab ${cronFlag} - && echo "Cron entry added: ${entry}"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'remove': {
+              if (!args.command) return 'ERROR: command (substring to match) is required for cron remove';
+              const escaped = args.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const cmd = `crontab ${cronFlag} -l 2>/dev/null | grep -v "${escaped}" | crontab ${cronFlag} - && echo "Matching cron entries removed"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            default:
+              return `ERROR: Unknown cron_action: ${args.cron_action}`;
+          }
+        }
+
+        case 'ssl_check': {
+          if (!args.domain && !args.cert_path) return 'ERROR: domain or cert_path is required for ssl_check';
+          // Build a script that: 1) reads the cert (file or live TLS), 2) extracts dates, 3) calculates days remaining
+          let sslCmd;
+          if (args.cert_path) {
+            sslCmd = `
+CERT="${args.cert_path}"
+openssl x509 -in "$CERT" -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1 && \
+EXPIRY=$(openssl x509 -in "$CERT" -noout -enddate 2>/dev/null | cut -d= -f2) && \
+DAYS=$(( ( $(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %T %Y %Z" "$EXPIRY" +%s 2>/dev/null) - $(date +%s) ) / 86400 )) && \
+echo "Days until expiry: $DAYS"
+`.trim();
+          } else {
+            const domain = args.domain;
+            // 1st try: read cert directly from Let's Encrypt path on server
+            // 2nd try: live TLS probe via openssl s_client
+            sslCmd = `
+DOMAIN="${domain}"
+LECP="/etc/letsencrypt/live/$DOMAIN/cert.pem"
+if [ -f "$LECP" ]; then
+  echo "Source: Let's Encrypt $LECP"
+  openssl x509 -in "$LECP" -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1
+  EXPIRY=$(openssl x509 -in "$LECP" -noout -enddate 2>/dev/null | cut -d= -f2)
+else
+  echo "Source: live TLS probe"
+  CERT=$(echo | openssl s_client -connect "$DOMAIN":443 -servername "$DOMAIN" 2>/dev/null)
+  if [ -z "$CERT" ]; then echo "ERROR: Could not connect to $DOMAIN:443 (port closed or DNS unresolvable)"; exit 1; fi
+  echo "$CERT" | openssl x509 -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1
+  EXPIRY=$(echo "$CERT" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+fi
+if [ -n "$EXPIRY" ]; then
+  DAYS=$(( ( $(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %T %Y %Z" "$EXPIRY" +%s 2>/dev/null) - $(date +%s) ) / 86400 ))
+  echo "Days until expiry: $DAYS"
+  [ "$DAYS" -lt 14 ] && echo "WARNING: Certificate expires in less than 14 days!"
+  [ "$DAYS" -lt 0 ] && echo "CRITICAL: Certificate has EXPIRED!"
+fi
+`.trim();
+          }
+          const { out, exitCode } = await sysRun(sslCmd, 25000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
+        }
+
+        case 'log_tail': {
+          if (!args.path) return 'ERROR: path is required for log_tail';
+          const lines = args.lines || 100;
+          const cmd = `tail -n ${lines} ${args.path} 2>&1`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(empty log)';
+        }
+
+        case 'find_large': {
+          const p = args.path || '/';
+          const limit = args.limit || 20;
+          const minSize = args.min_size || '100M';
+          const cmd = `find ${p} -xdev -type f -size +${minSize} 2>/dev/null | xargs du -sh 2>/dev/null | sort -rh | head -${limit}`;
+          const { out, exitCode } = await sysRun(cmd, 60000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `(no files larger than ${minSize} in ${p})`;
+        }
+
+        case 'service': {
+          if (!args.service_action) return 'ERROR: service_action is required for action=service';
+          if (args.service_action !== 'list_failed' && !args.service_name) return 'ERROR: service_name is required (except for list_failed)';
+          const unit = args.service_name
+            ? (args.service_name.includes('.') ? args.service_name : `${args.service_name}.service`)
+            : '';
+          let svcCmd;
+          switch (args.service_action) {
+            case 'status':
+              svcCmd = `systemctl status ${unit} --no-pager -l 2>&1 | head -40`;
+              break;
+            case 'list_failed':
+              svcCmd = 'systemctl list-units --state=failed --no-legend 2>/dev/null';
+              break;
+            case 'start':
+              svcCmd = `systemctl start ${unit} && systemctl status ${unit} --no-pager -l 2>&1 | head -20`;
+              break;
+            case 'stop':
+              svcCmd = `systemctl stop ${unit} && echo "${unit} stopped"`;
+              break;
+            case 'restart':
+              svcCmd = `systemctl restart ${unit} && systemctl status ${unit} --no-pager -l 2>&1 | head -20`;
+              break;
+            case 'reload':
+              svcCmd = `systemctl reload ${unit} 2>&1 || systemctl reload-or-restart ${unit} 2>&1`;
+              break;
+            case 'enable':
+              svcCmd = `systemctl enable ${unit} && echo "${unit} enabled"`;
+              break;
+            case 'disable':
+              svcCmd = `systemctl disable ${unit} && echo "${unit} disabled"`;
+              break;
+            default:
+              return `ERROR: Unknown service_action: ${args.service_action}`;
+          }
+          const { out, exitCode } = await sysRun(svcCmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
+        }
+
+        case 'kill_process': {
+          if (!args.pid && !args.process_name) return 'ERROR: pid or process_name is required for kill_process';
+          const sig = args.signal || 'SIGTERM';
+          let killCmd;
+          if (args.pid) {
+            // Kill by PID — show process info first for context
+            killCmd = `ps -p ${args.pid} -o pid,user,%cpu,%mem,etime,cmd 2>/dev/null && kill -${sig} ${args.pid} && echo "Sent ${sig} to PID ${args.pid}"`;
+          } else {
+            // Kill by name via pkill
+            killCmd = `pgrep -a "${args.process_name}" 2>/dev/null | head -5 && pkill -${sig} "${args.process_name}" && echo "Sent ${sig} to all '${args.process_name}' processes"`;
+          }
+          const { out, exitCode } = await sysRun(killCmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'journalctl': {
+          const lines = args.lines || 100;
+          const parts = ['journalctl', '--no-pager', '-n', String(lines)];
+          if (args.unit) parts.push('-u', args.unit.includes('.') ? args.unit : `${args.unit}.service`);
+          if (args.priority) parts.push('-p', args.priority);
+          if (args.since) parts.push(`--since="${args.since}"`);
+          parts.push('2>/dev/null || echo "(journalctl not available)"');
+          const { out, exitCode } = await sysRun(parts.join(' '), 20000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no log entries)';
+        }
+
+        default:
+          return `ERROR: Unknown sysadmin action: ${args.action}`;
+      }
     }
 
     default:

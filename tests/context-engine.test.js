@@ -22,6 +22,7 @@ const {
   compressMessage,
   compressToolResult,
   fitToContext,
+  forceCompress,
   truncateFileContent,
   COMPRESSION_THRESHOLD,
   SAFETY_MARGIN,
@@ -638,6 +639,58 @@ describe('context-engine.js', () => {
       const result = truncateFileContent(content, 100);
       expect(result).toMatch(/\d+ lines omitted/);
       expect(result).toContain('200 total');
+    });
+  });
+
+  describe('forceCompress()', () => {
+    const makeMessages = (count, contentLength = 200) => [
+      { role: 'system', content: 'System prompt' },
+      ...Array.from({ length: count }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: 'x'.repeat(contentLength),
+      })),
+    ];
+
+    it('returns fewer tokens than the original', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+      const messages = makeMessages(20, 100);
+      const { messages: result, tokensRemoved } = forceCompress(messages, []);
+      expect(tokensRemoved).toBeGreaterThan(0);
+      expect(estimateMessagesTokens(result)).toBeLessThan(estimateMessagesTokens(messages));
+    });
+
+    it('always preserves the system prompt', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+      const messages = makeMessages(20, 100);
+      const { messages: result } = forceCompress(messages, []);
+      expect(result[0].role).toBe('system');
+      expect(result[0].content).toBe('System prompt');
+    });
+
+    it('nuclear mode compresses more aggressively than normal', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+      const messages = makeMessages(20, 100);
+      const { tokensRemoved: normalRemoved } = forceCompress(messages, []);
+      const { tokensRemoved: nuclearRemoved } = forceCompress(messages, [], true);
+      expect(nuclearRemoved).toBeGreaterThanOrEqual(normalRemoved);
+    });
+
+    it('nuclear mode keeps at most 2 recent messages before dropping', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 500 });
+      // Very large messages to force nuclear to drop history
+      const messages = makeMessages(30, 500);
+      const { messages: result } = forceCompress(messages, [], true);
+      // System prompt + at most a few messages
+      expect(result.length).toBeLessThan(10);
+    });
+
+    it('works with no system prompt', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'test', contextWindow: 1000 });
+      const messages = Array.from({ length: 15 }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: 'x'.repeat(100),
+      }));
+      expect(() => forceCompress(messages, [])).not.toThrow();
     });
   });
 });

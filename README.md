@@ -1,7 +1,7 @@
 ```
-▀▄ ▀▄   nex-code  v0.3.x
-█████   qwen3-coder:480b  ·  /help
-▄███▄
+ ██▄▄██   nex-code  v0.3.47
+ █▀██▀█   qwen3-coder:480b  ·  /help
+ ▀████▀
 ```
 
 <p align="center">
@@ -360,7 +360,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 
 ## Tools
 
-The agent has 39 built-in tools:
+The agent has 42 built-in tools:
 
 ### Core & File System
 | Tool | Description |
@@ -422,6 +422,7 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 | `ssh_download` | Download a file or directory via SCP |
 | `service_manage` | Start/stop/restart/reload/enable/disable a systemd service (local or remote) |
 | `service_logs` | Fetch journalctl logs (local or remote, with `--since` support) |
+| `sysadmin` | Senior sysadmin operations on any Linux server (local or SSH). Actions: `audit` (full health overview), `disk_usage`, `process_list`, `network_status`, `package` (dnf/apt auto-detect), `user_manage` (list/create/delete/add\_ssh\_key), `firewall` (firewalld/ufw/iptables auto-detect), `cron` (list/add/remove), `ssl_check` (domain or cert file), `log_tail` (any log), `find_large` (big files by size). Read-only actions run without confirmation; state-changing actions require approval. |
 
 ### Docker
 | Tool | Description |
@@ -434,7 +435,12 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 ### Deploy
 | Tool | Description |
 |------|-------------|
-| `deploy` | rsync files to a remote server + optional post-deploy script. Supports named configs from `.nex/deploy.json`. |
+| `deploy` | Deploy to a remote server via **rsync** (sync local files) or **git** (git pull on remote) + optional post-deploy script + optional health check. Supports named configs from `.nex/deploy.json`. |
+
+### Frontend Design
+| Tool | Description |
+|------|-------------|
+| `frontend_recon` | **Mandatory first step before any frontend work.** Scans the project and returns: (1) design tokens — CSS custom properties (`:root`), Tailwind theme colors/fonts, (2) main layout/index page structure, (3) a reference component of the same type (`type=` hint), (4) detected JS/CSS framework stack — Vue/React, Alpine.js v2 vs v3, HTMX, Tailwind, Django. Call this before writing any markup or styles so the agent uses the project's actual design system instead of inventing one. |
 
 **Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
 
@@ -505,10 +511,20 @@ Create `.nex/deploy.json` (or use `/init deploy`):
 {
   "prod": {
     "server": "prod",
+    "method": "rsync",
     "local_path": "dist/",
     "remote_path": "/var/www/app",
     "exclude": ["node_modules", ".env"],
-    "deploy_script": "systemctl restart gunicorn"
+    "deploy_script": "systemctl restart gunicorn",
+    "health_check": "https://myapp.example.com/health"
+  },
+  "api": {
+    "server": "prod",
+    "method": "git",
+    "remote_path": "/home/jarvis/my-api",
+    "branch": "main",
+    "deploy_script": "npm ci --omit=dev && sudo systemctl restart my-api",
+    "health_check": "systemctl is-active my-api"
   }
 }
 ```
@@ -595,9 +611,12 @@ Automatic token management with compression when the context window gets full. T
 ### Safety Layer
 Three tiers of protection:
 - **Forbidden** (blocked): `rm -rf /`, `rm -rf .`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
-- **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
+- **Critical** (always re-prompted, even after "always allow"): `rm -rf`, `sudo`, `--no-verify` (hook bypass) — every run requires explicit confirmation
+- **Notable** (confirmation on first use): `git push`, `npm publish`, `ssh`, `HUSKY=0`, `SKIP_HUSKY=1` — first-time prompt, then respects "always allow"
 - **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
+- **Loop detection**: Edit-loop abort after 4 edits to the same file (warn at 2); bash-command loop abort after 8 identical commands (warn at 5); consecutive-error abort after 10 failures (warn at 6)
+- **Stale-stream detection**: Warns after 60 s without tokens (shows retry count + seconds until auto-abort); auto-switches to the fast model on retry 1 and offers interactive recovery when all retries are exhausted
 - **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
 - **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
 
@@ -707,9 +726,12 @@ When the agent creates a task list, a **live animated display** replaces the sta
 ### Sub-Agents
 Spawn parallel sub-agents for independent tasks:
 - Up to 5 agents run simultaneously with their own conversation contexts
-- File locking prevents concurrent writes to the same file
+- File locking prevents concurrent writes to the same file (intra-process sub-agents)
 - Multi-progress display shows real-time status of each agent
 - Good for: reading multiple files, analyzing separate modules, independent research
+
+### Parallel Sessions
+Running multiple nex-code instances in the same project directory is safe. All shared state files (`.nex/memory/memory.json`, `.nex/config.json`, `NEX.md`, brain index) use advisory inter-process locking (`O_EXCL` lock files with stale-lock reclaim) and atomic writes (temp file + `rename`). A session in Terminal A and a session in Terminal B can both call `/remember`, `/allow`, or `/learn` simultaneously without data corruption.
 
 **Multi-Model Routing** — Sub-agents auto-select the best model per task based on complexity:
 - **Read/search/list** tasks → fast models (essential tier)
@@ -787,7 +809,7 @@ Four features that make Nex Code significantly more reliable with open-source mo
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (33 tools): all tools
+- **full** (43 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
@@ -932,6 +954,7 @@ cli/
 ├── context-engine.js    # Token management + context compression
 ├── session.js           # Session persistence (.nex/sessions/)
 ├── memory.js            # Project memory (.nex/memory/ + NEX.md)
+├── filelock.js          # Inter-process file locking (atomicWrite + withFileLockSync)
 ├── permissions.js       # Tool permission system
 ├── planner.js           # Plan mode, step extraction, step cursor, autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
@@ -998,7 +1021,7 @@ Project-local configuration and state (gitignored):
 
 ## Performance
 
-Nex Code v0.3.7+ includes comprehensive performance optimizations:
+Nex Code v0.3.45+ includes comprehensive performance optimizations:
 
 | Optimization | Improvement | Impact |
 |--------------|-------------|--------|
