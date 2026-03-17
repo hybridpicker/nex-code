@@ -1416,11 +1416,16 @@ async function processInput(userInput) {
         // On any 400, always try force-compress first — the most common cause is a context
         // overflow where Ollama returns a bare 400 with no useful message. Token-count
         // heuristics are too unreliable to gate this: just try and retry.
-        if (contextRetries < 2) {
+        if (contextRetries < 3) {
           contextRetries++;
-          console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/2)${C.reset}`);
+          const nuclear = contextRetries === 3;
+          if (nuclear) {
+            console.log(`${C.yellow}  ⚠ Bad request (400) — nuclear compression (attempt 3/3, dropping history)...${C.reset}`);
+          } else {
+            console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)${C.reset}`);
+          }
           const allTools = getAllToolDefinitions();
-          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
             console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
@@ -1429,16 +1434,7 @@ async function processInput(userInput) {
           continue;
         }
         // All compress retries exhausted — give up with informative message
-        const errLower = (err.message || '').toLowerCase();
-        const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
-          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
-          errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
-          errLower.includes('num_ctx') || errLower.includes('input');
-        if (isContextTooLong) {
-          userMessage = 'Context too long — force compression exhausted. Use /clear to start fresh';
-        } else {
-          userMessage = 'Bad request — compression did not help. Use /clear and retry';
-        }
+        userMessage = 'Context too large to compress — use /clear to start fresh';
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
       } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
