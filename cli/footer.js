@@ -132,7 +132,9 @@ class StickyFooter {
         if (self._cursorOnInputRow) {
           // --- streaming agent output (contains \n, longer than a readline sequence) ---
           // Move cursor back to scroll region so it renders there, not on row N.
-          if (data.includes('\n') && data.length > 4) {
+          // Exclude readline's own output: readline always includes \r (for line refresh
+          // or completion list), while agent/console output does not contain \r.
+          if (data.includes('\n') && data.length > 4 && !data.includes('\r')) {
             self._cursorOnInputRow = false;
             rawWrite(self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)));
             // fall through to normal row-tracking + write below
