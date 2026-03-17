@@ -15,9 +15,18 @@
 'use strict';
 
 const fs = require('fs');
-const { T } = require('./theme');
+const { T, isDark } = require('./theme');
 
 const C_RESET = '\x1b[0m';
+
+// Paint an entire row with spaces using default background.
+// On Apple Terminal (light mode), rows outside the scroll region appear dark
+// because the terminal renders *empty/erased* cells dark. Writing actual
+// space characters forces the terminal to render them as content with the
+// current (default = white) background — overriding the dark artifact.
+function _paintRowWhite(rawWrite, gotoSeq, cols) {
+  rawWrite(gotoSeq + C_RESET + ' '.repeat(cols) + '\r');
+}
 
 // ── Debug logger ────────────────────────────────────────────────────────────
 const DEBUG = process.env.FOOTER_DEBUG === '1';
@@ -317,9 +326,14 @@ class StickyFooter {
       if (!self._active) { return self._origPrompt(preserveCursor); }
       _dbg('PROMPT: goto rowInput=' + self._rowInput);
       rl.prevRows = 0;
-      // Reset color + erase line before drawing — prevents Apple Terminal from
-      // rendering the input row with a dark background when a scroll region is active.
-      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
+      if (!isDark) {
+        // Light terminal (Apple Terminal): write actual spaces to paint the row
+        // white — \x1b[2K alone won't override Apple Terminal's dark rendering
+        // of cells outside the scroll region.
+        _paintRowWhite(rawWrite, self._goto(self._rowInput), self._cols || 80);
+      } else {
+        rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
+      }
       self._cursorOnInputRow = true;
       self._origPrompt(preserveCursor);
     };
@@ -358,9 +372,11 @@ class StickyFooter {
       }
 
       rl.prevRows = 0;
-      // Reset color + erase before refresh — prevents dark bg on light terminals
-      // when input row is outside the active scroll region.
-      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
+      if (!isDark) {
+        _paintRowWhite(rawWrite, self._goto(self._rowInput), self._cols || 80);
+      } else {
+        rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
+      }
 
       const cols      = self._cols;
       const promptStr = rl._prompt || '';
