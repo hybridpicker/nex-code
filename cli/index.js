@@ -1574,10 +1574,16 @@ For each issue, include:
       }
       console.log(`\n${C.bold}${C.cyan}Deploy configs (${names.length}):${C.reset}`);
       for (const [n, cfg] of Object.entries(configs)) {
-        const local = cfg.local_path || '';
-        const remote = `${cfg.server}:${cfg.remote_path}`;
-        const script = cfg.deploy_script ? `  ${C.dim}→ ${cfg.deploy_script}${C.reset}` : '';
-        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${local} → ${remote}${C.reset}${script}`);
+        const method = cfg.method || 'rsync';
+        const methodLabel = `[${method}]`;
+        const target = method === 'git'
+          ? `${cfg.server}:${cfg.remote_path}${cfg.branch ? ` (${cfg.branch})` : ''}`
+          : `${cfg.local_path || ''} → ${cfg.server}:${cfg.remote_path}`;
+        const extras = [
+          cfg.deploy_script ? `script: ${cfg.deploy_script}` : null,
+          cfg.health_check ? `health: ${cfg.health_check}` : null,
+        ].filter(Boolean).map(s => `  ${C.dim}→ ${s}${C.reset}`).join('');
+        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${methodLabel} ${target}${C.reset}${extras}`);
       }
       console.log(`\n${C.dim}/deploy <name>          — run a named deploy${C.reset}`);
       console.log(`${C.dim}/deploy <name> --dry-run — preview without syncing${C.reset}\n`);
