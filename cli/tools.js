@@ -1245,8 +1245,11 @@ async function _executeToolInner(name, args, options = {}) {
       const dirExists = await fs.access(dir).then(() => true).catch(() => false);
       if (!dirExists) await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(fp, args.content, 'utf-8');
+      const needsExec = /[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || args.content.startsWith('#!');
+      if (needsExec) await fs.chmod(fp, 0o755);
       recordChange('write_file', fp, oldContent, args.content);
-      return `Written: ${fp} (${args.content.length} chars)`;
+      const execNote = needsExec ? ' [chmod +x applied]' : '';
+      return `Written: ${fp} (${args.content.length} chars)${execNote}`;
     }
 
     case 'edit_file': {
@@ -1288,6 +1291,7 @@ async function _executeToolInner(name, args, options = {}) {
               if (!ok) return 'CANCELLED: User declined to apply edit.';
             }
             await fs.writeFile(fp, fix.content, 'utf-8');
+            if (/[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || fix.content.startsWith('#!')) await fs.chmod(fp, 0o755);
             recordChange('edit_file', fp, content, fix.content);
             const matchPreview = fix.matchText.length > 80
               ? fix.matchText.substring(0, 77) + '...'
@@ -1316,6 +1320,7 @@ async function _executeToolInner(name, args, options = {}) {
       // Use split/join for literal replacement (no regex interpretation)
       const updated = content.split(matchText).join(args.new_text);
       await fs.writeFile(fp, updated, 'utf-8');
+      if (/[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || updated.startsWith('#!')) await fs.chmod(fp, 0o755);
       recordChange('edit_file', fp, content, updated);
       return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
     }
@@ -1547,9 +1552,12 @@ async function _executeToolInner(name, args, options = {}) {
 
       // Write the fully-validated preview (atomic — no partial application)
       await fs.writeFile(fp, preview, 'utf-8');
+      const needsExecP = /[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || preview.startsWith('#!');
+      if (needsExecP) await fs.chmod(fp, 0o755);
       recordChange('patch_file', fp, content, preview);
       const suffix = anyAutoFixed ? ' (auto-fixed)' : anyFuzzy ? ' (fuzzy match)' : '';
-      return `Patched: ${fp} (${patches.length} replacements)${suffix}`;
+      const execNoteP = needsExecP ? ' [chmod +x applied]' : '';
+      return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}`;
     }
 
     case 'web_fetch': {
