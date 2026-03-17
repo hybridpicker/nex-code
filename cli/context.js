@@ -311,8 +311,7 @@ async function printContext(cwd) {
     getMergeConflicts(),
   ]);
 
-  if (project) console.log(`${C.dim}  project: ${project}${C.reset}`);
-  if (branch) console.log(`${C.dim}  branch: ${branch}${C.reset}`);
+  // project and branch are shown in the sticky footer status bar — skip here
 
   if (conflicts && conflicts.length > 0) {
     console.log(`${C.red}  ⚠ ${conflicts.length} unresolved merge conflict(s):${C.reset}`);
