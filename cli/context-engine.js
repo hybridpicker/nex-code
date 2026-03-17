@@ -581,12 +581,13 @@ const FORCE_COMPRESS_KEEP_RECENT = 6;
  *
  * @param {Array} messages - Full message array (including system prompt)
  * @param {Array} tools - Tool definitions
+ * @param {boolean} nuclear - If true, also compress/drop recent messages (last resort)
  * @returns {{ messages: Array, tokensRemoved: number }}
  */
-function forceCompress(messages, tools) {
+function forceCompress(messages, tools, nuclear = false) {
   const limit = getContextWindow();
   const toolTokens = estimateToolsTokens(tools);
-  const targetMax = Math.floor(limit * 0.5) - toolTokens; // 50% of context window
+  const targetMax = Math.floor(limit * (nuclear ? 0.35 : 0.5)) - toolTokens;
   const originalTokens = estimateMessagesTokens(messages);
 
   // Split: system + old + recent
@@ -597,12 +598,18 @@ function forceCompress(messages, tools) {
     startIdx = 1;
   }
 
-  const recentStart = Math.max(startIdx, messages.length - FORCE_COMPRESS_KEEP_RECENT);
+  const keepRecent = nuclear ? 2 : FORCE_COMPRESS_KEEP_RECENT;
+  const recentStart = Math.max(startIdx, messages.length - keepRecent);
   let oldMessages = messages.slice(startIdx, recentStart);
-  const recentMessages = messages.slice(recentStart);
+  let recentMessages = messages.slice(recentStart);
 
   // Aggressive compression on all old messages
   let compressed = oldMessages.map((msg) => compressMessage(msg, 'aggressive'));
+
+  // Nuclear: also compress recent messages
+  if (nuclear) {
+    recentMessages = recentMessages.map((msg) => compressMessage(msg, 'aggressive'));
+  }
 
   // Remove oldest messages until we fit
   let result = buildResult(system, compressed, recentMessages);
@@ -613,12 +620,19 @@ function forceCompress(messages, tools) {
     tokens -= estimateMessageTokens(removed);
   }
 
+  // Nuclear: if still over budget, keep only the last user message
+  if (nuclear && tokens > targetMax) {
+    const lastUser = recentMessages.filter((m) => m.role === 'user').slice(-1);
+    recentMessages = lastUser;
+    result = buildResult(system, [], recentMessages);
+    tokens = estimateMessagesTokens(result);
+  }
+
   result = buildResult(system, compressed, recentMessages);
-  tokens = estimateMessagesTokens(result);
 
   return {
     messages: result,
-    tokensRemoved: originalTokens - tokens,
+    tokensRemoved: originalTokens - estimateMessagesTokens(result),
   };
 }
 

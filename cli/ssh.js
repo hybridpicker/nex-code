@@ -27,6 +27,7 @@ const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 
 const SERVERS_FILE = path.join('.nex', 'servers.json');
+const GLOBAL_SERVERS_FILE = path.join(os.homedir(), '.nex', 'servers.json');
 const SSH_SOCKET_DIR = path.join(os.tmpdir(), 'nex-ssh-sockets');
 
 // ─── Profile Management ───────────────────────────────────────
@@ -36,17 +37,19 @@ function getServersPath() {
 }
 
 /**
- * Load all server profiles from .nex/servers.json
+ * Load all server profiles.
+ * Merges global (~/.nex/servers.json) with project-local (.nex/servers.json).
+ * Project-local profiles override global ones with the same name.
  * @returns {Object.<string, ServerProfile>}
  */
 function loadServerProfiles() {
-  const p = getServersPath();
-  if (!fs.existsSync(p)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
-  } catch {
-    return {};
-  }
+  const readJson = (p) => {
+    if (!fs.existsSync(p)) return {};
+    try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return {}; }
+  };
+  const global = readJson(GLOBAL_SERVERS_FILE);
+  const local  = readJson(getServersPath());
+  return { ...global, ...local };
 }
 
 /**
@@ -70,7 +73,7 @@ function resolveProfile(nameOrHost) {
   const available = Object.keys(profiles);
   const hint = available.length
     ? `Available profiles: ${available.join(', ')}`
-    : 'No profiles configured. Create .nex/servers.json';
+    : 'No profiles configured. Create .nex/servers.json (project) or ~/.nex/servers.json (global)';
   throw new Error(`Unknown server: "${nameOrHost}". ${hint}`);
 }
 

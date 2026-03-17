@@ -737,9 +737,9 @@ Response patterns by request type:
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
 - **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES: When writing a regex to detect calls like console.log(), the pattern must exclude comment lines — pipe through 'grep -v "^\s*//"' before the pattern match so that lines like "// console.log(x)" do not trigger a false positive. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
 - **Memory leak explanations**: Show the problematic code, then present the primary fix (move emitter.on() outside the loop, registered once) with the original setInterval kept intact for its intended purpose. Then briefly mention 2 alternatives: (1) emitter.once() if only one event needs handling, (2) removeAllListeners() (or emitter.off(event, handler)) BEFORE re-registering inside the loop. CRITICAL for alternative 2: you MUST call removeAllListeners() or off() BEFORE the new emitter.on() — if you call emitter.on() inside an interval without first removing the previous listener, a new listener accumulates on every tick, which is the same leak as the original. Always show the removal step explicitly. Do NOT replace the setInterval body with an empty callback — keep the interval doing its original work.
-- **Makefile tasks**: ALWAYS follow this exact order: (1) paste the COMPLETE Makefile in a fenced code block in your text response FIRST, (2) THEN optionally write it to a file with a tool. The user cannot see files you write — your text response is the ONLY output they receive. Never describe the Makefile in prose — paste the actual code. Every target, every recipe, every .PHONY line. Use EXACTLY the tools specified (jest means jest directly, not npm test; tsc means tsc). Never put glob patterns like src/**/*.ts in prerequisites — make does not expand them. MAKEFILE SYNTAX RULES (hard requirements): (a) Recipe lines MUST be indented with a real TAB character — never spaces; a space-indented recipe causes "missing separator" errors. (b) Declare ALL phony targets in a SINGLE .PHONY line at the top — NEVER split .PHONY across multiple declarations. (c) NEVER define the same target name twice — duplicate targets silently override each other and produce contradictory behaviour. (d) Do NOT add @echo lines unless the task explicitly asks for output messages.
+- **Makefile tasks**: ALWAYS follow this exact order: (1) paste the COMPLETE Makefile in a fenced code block in your text response FIRST, (2) THEN optionally write it to a file with a tool. The user cannot see files you write — your text response is the ONLY output they receive. Never describe the Makefile in prose — paste the actual code. Every target, every recipe, every .PHONY line. Use EXACTLY the tools specified (jest means jest directly, not npm test; tsc means tsc). Never put glob patterns like src/**/*.ts in prerequisites — make does not expand them. MAKEFILE SYNTAX RULES (hard requirements): (a) Recipe lines MUST be indented with a real TAB character — never spaces; a space-indented recipe causes "missing separator" errors. (b) Declare ALL phony targets in a SINGLE .PHONY line at the top — NEVER split .PHONY across multiple declarations. (c) NEVER define the same target name twice — duplicate targets silently override each other and produce contradictory behaviour. (d) Do NOT add @echo lines unless the task explicitly asks for output messages. (e) DEPENDENCY CHAIN: if the task describes a test target that runs tests after compilation/building, the test target MUST declare an explicit dependency on build (e.g. "test: build") — otherwise make test runs against stale or missing binaries. When in doubt, add the dependency; omitting it is always the wrong default.
 - **Dataclass definitions**: Paste the COMPLETE dataclass code directly in your text response — @dataclass decorator, all fields with type annotations and defaults, full __post_init__ validation block. The code must appear verbatim in your chat text. Writing a file with a tool does NOT satisfy this — always also paste the code in text.
-- **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked. NEVER put cron expressions inside markdown tables — asterisks (*) in table cells are consumed as bold/italic markers and disappear. Always present each cron expression in its own fenced code block. For "every N minutes between X-Yh": only present both interpretations (inclusive vs. exclusive endpoint) when the task is genuinely ambiguous about whether the endpoint fires. If the task explicitly states "8-18h" or "until 18h" without qualification, write the expression with 8-18 directly — do NOT second-guess or add a confusing dual-interpretation note that contradicts the explicit request. The note is only appropriate when the task says something like "during business hours" or "until approximately 18h" where intent is unclear.
+- **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked. NEVER put cron expressions inside markdown tables — asterisks (*) in table cells are consumed as bold/italic markers and disappear. Always present each cron expression in its own fenced code block. For "every N minutes between X-Yh": only present both interpretations (inclusive vs. exclusive endpoint) when the task is genuinely ambiguous about whether the endpoint fires. If the task explicitly states "8-18h" or "until 18h" without qualification, write the expression with 8-18 directly — do NOT second-guess or add a confusing dual-interpretation note that contradicts the explicit request. The note is only appropriate when the task says something like "during business hours" or "until approximately 18h" where intent is unclear. CRITICAL OFF-BY-ONE: "8-18h" means the hour field is 8-18 (runs fire AT 18:00 are INCLUDED). Writing 8-17 silently drops the 18:00 run — this is WRONG. If you notice mid-response that you wrote 8-17 for an 8-18h spec, CORRECT THE EXPRESSION in-place immediately — do NOT leave both versions and add a contradictory note.
 - **Express/fetch error handling**: When adding error handling to an Express route that fetches by ID: (1) validate the ID parameter first (check it exists and is a valid format), (2) wrap fetch in try-catch, (3) check response.ok and handle 404 specifically, (4) call next(error) to pass errors to Express error-handling middleware — do not just send a raw 500 response.
 - **Command suggestions**: Always use correct command flags and syntax. For null-delimited output, use --zero or find/printf instead of non-existent flags like -0.
 - **sed -i portability**: When showing 'sed -i' for in-place file editing, always note the macOS/BSD vs GNU difference: on macOS/BSD, '-i' requires an explicit backup suffix argument (e.g. 'sed -i "" "s/old/new/" file' for no backup, or 'sed -i.bak ...' for a backup); on GNU/Linux, 'sed -i "s/old/new/" file' works without the extra argument. When the user's platform is unknown or macOS, show the macOS-compatible form first. For cross-platform scripts, suggest 'perl -i -pe' as a portable alternative.
@@ -780,6 +780,16 @@ When performing audits, code reviews, bug hunts, or security reviews:
   - Extra features or improvements not explicitly requested
 - **Preserve existing behavior**: When refactoring or fixing code, maintain the original encoding, error handling, and API behavior unless explicitly instructed to change it.
 - **Be complete**: Ensure responses include all necessary information and are not truncated. If a response would be very long, summarize key points and offer to provide more detail if needed.
+
+# Frontend Design
+
+Before creating or significantly modifying any frontend file (.html, .vue, .jsx, .tsx, .css, templates, components): **call frontend_recon first.** It returns the project's design tokens (colors, fonts, CSS variables), the main layout page, a reference component of the same type, and the detected framework stack (Alpine.js version, HTMX, Tailwind, etc.). Pass type= the kind of page you are building (e.g. "list", "form", "dashboard").
+
+After frontend_recon returns:
+- Use ONLY the colors, fonts, and spacing tokens it found — never invent values.
+- Copy the exact HTML structure and class names from the reference component — do not create alternative patterns.
+- Use ONLY the framework(s) it detected. Never mix (e.g. no fetch() when HTMX is used, no Vue syntax in an Alpine.js project).
+- The finished page must be visually indistinguishable from existing pages.
 
 # Doing Tasks
 
@@ -1186,8 +1196,8 @@ async function processInput(userInput) {
   const filesRead = new Set();
   const startTime = Date.now();
   const fileEditCounts = new Map(); // loop detection: edits per file
-  const LOOP_WARN_EDITS = 3;  // warn agent after 3 edits to same file
-  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
+  const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
+  const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
   const bashCmdCounts = new Map(); // loop detection: repeated bash commands
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
@@ -1249,11 +1259,13 @@ async function processInput(userInput) {
         staleWarned = true;
         stream._clearCursorLine();
         const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
-        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
+        const retryLabel = staleRetries > 0 ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})` : '';
+        const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
+        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`);
         if (fastModel && fastModel !== getActiveModelId()) {
-          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} if no tokens arrive before abort${C.reset}`);
-        } else if (fastModel) {
-          console.log(`${C.dim}  💡 Ctrl+C to abort and retry${C.reset}`);
+          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} in ~${abortInSec}s if no tokens arrive${C.reset}`);
+        } else {
+          console.log(`${C.dim}  💡 Ctrl+C to abort · auto-abort in ~${abortInSec}s${C.reset}`);
         }
       }
     }, 5000);
@@ -1362,11 +1374,13 @@ async function processInput(userInput) {
         const delay = staleRetries === 1 ? 3000 : 5000;
         // Auto-switch to fast model on first stale retry (don't waste another 120s on the same model)
         // Uses staleCompressUsed (not contextRetries) so 400-error recovery budget stays intact.
+        // Nuclear compression on stale switch: context is already large enough to cause a timeout,
+        // so aggressively trim to 35% to give the (possibly smaller) fast model headroom.
         if (staleRetries >= 1 && staleCompressUsed < 1) {
           staleCompressUsed++;
           console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...${C.reset}`);
           const allTools = getAllToolDefinitions();
-          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
             console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
@@ -1416,11 +1430,18 @@ async function processInput(userInput) {
         // On any 400, always try force-compress first — the most common cause is a context
         // overflow where Ollama returns a bare 400 with no useful message. Token-count
         // heuristics are too unreliable to gate this: just try and retry.
-        if (contextRetries < 2) {
+        // If a stale switch already happened (staleCompressUsed > 0), we already did nuclear
+        // compression — jump straight to nuclear for 400s too to avoid wasting light attempts.
+        if (contextRetries < 3) {
           contextRetries++;
-          console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/2)${C.reset}`);
+          const nuclear = contextRetries === 3 || staleCompressUsed > 0;
+          if (nuclear) {
+            console.log(`${C.yellow}  ⚠ Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...${C.reset}`);
+          } else {
+            console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)${C.reset}`);
+          }
           const allTools = getAllToolDefinitions();
-          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
+          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
             console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
@@ -1429,16 +1450,7 @@ async function processInput(userInput) {
           continue;
         }
         // All compress retries exhausted — give up with informative message
-        const errLower = (err.message || '').toLowerCase();
-        const isContextTooLong = errLower.includes('context') || errLower.includes('token') ||
-          errLower.includes('length') || errLower.includes('too long') || errLower.includes('too many') ||
-          errLower.includes('prompt') || errLower.includes('size') || errLower.includes('exceeds') ||
-          errLower.includes('num_ctx') || errLower.includes('input');
-        if (isContextTooLong) {
-          userMessage = 'Context too long — force compression exhausted. Use /clear to start fresh';
-        } else {
-          userMessage = 'Bad request — compression did not help. Use /clear and retry';
-        }
+        userMessage = 'Context too large to compress — use /clear to start fresh';
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
       } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
@@ -1637,6 +1649,8 @@ async function processInput(userInput) {
         if (prepared[si] && prepared[si].fnName === 'ask_user') continue;
         console.log(batchSummaries[si]);
       }
+      // Blank line after each step group for visual separation
+      console.log('');
     }
 
     // Track modified and read files
@@ -1658,7 +1672,7 @@ async function processInput(userInput) {
             console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
             const loopWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] You have edited "${prep.args.path}" ${count} times in this session. This may indicate an edit loop. STOP editing this file repeatedly. Re-read it once to verify the current state, then make ONE final targeted edit or declare the task complete.`,
+              content: `[SYSTEM WARNING] You have edited "${prep.args.path}" ${count} times already. STOP. Do NOT edit this file again unless absolutely necessary. Read it once to verify the current state, make at most ONE more targeted change, then move on or declare the task complete. Further edits to this file will abort the session.`,
             };
             conversationMessages.push(loopWarning);
             apiMessages.push(loopWarning);

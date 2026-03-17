@@ -1574,10 +1574,16 @@ For each issue, include:
       }
       console.log(`\n${C.bold}${C.cyan}Deploy configs (${names.length}):${C.reset}`);
       for (const [n, cfg] of Object.entries(configs)) {
-        const local = cfg.local_path || '';
-        const remote = `${cfg.server}:${cfg.remote_path}`;
-        const script = cfg.deploy_script ? `  ${C.dim}→ ${cfg.deploy_script}${C.reset}` : '';
-        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${local} → ${remote}${C.reset}${script}`);
+        const method = cfg.method || 'rsync';
+        const methodLabel = `[${method}]`;
+        const target = method === 'git'
+          ? `${cfg.server}:${cfg.remote_path}${cfg.branch ? ` (${cfg.branch})` : ''}`
+          : `${cfg.local_path || ''} → ${cfg.server}:${cfg.remote_path}`;
+        const extras = [
+          cfg.deploy_script ? `script: ${cfg.deploy_script}` : null,
+          cfg.health_check ? `health: ${cfg.health_check}` : null,
+        ].filter(Boolean).map(s => `  ${C.dim}→ ${s}${C.reset}`).join('');
+        console.log(`  ${C.green}${n}${C.reset}  ${C.dim}${methodLabel} ${target}${C.reset}${extras}`);
       }
       console.log(`\n${C.dim}/deploy <name>          — run a named deploy${C.reset}`);
       console.log(`${C.dim}/deploy <name> --dry-run — preview without syncing${C.reset}\n`);
@@ -1652,12 +1658,7 @@ function getPrompt() {
   const level = getAutonomyLevel();
   if (level !== 'interactive') parts.push(level);
 
-  const providerName = getActiveProviderName();
-  const model = getActiveModel();
-  // Show short model label: strip provider prefix for well-known providers
-  const modelLabel = providerName === 'ollama' ? model.id : `${providerName}:${model.id}`;
-  parts.push(modelLabel);
-
+  // Model is shown in the footer status bar — omit from prompt
   const tag = parts.length > 0 ? `${C.dim}[${parts.join(' · ')}]${C.reset} ` : '';
   return `${tag}${C.bold}${C.cyan}>${C.reset} `;
 }
@@ -1832,6 +1833,22 @@ async function startREPL() {
     ? loadInfo.model.id
     : `${loadInfo.providerName}:${loadInfo.model.id}`;
   banner(bannerModel, CWD, { yolo: getAutoConfirm() });
+
+  // Populate the status bar with model + git branch + project name
+  {
+    let _gitBranch = '';
+    try {
+      const { execSync } = require('child_process');
+      _gitBranch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', {
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch {}
+    footer.setStatusInfo({
+      model:   bannerModel,
+      branch:  _gitBranch,
+      project: path.basename(CWD),
+    });
+  }
 
   // Display version update notification if available
   if (versionInfo.hasNewVersion) {
@@ -2010,6 +2027,15 @@ async function startREPL() {
         return true;
       }
 
+      // Case 5: Fallback paste detection — terminal doesn't support bracketed paste.
+      // A single data chunk arriving with newlines and length > 40 chars is almost
+      // certainly a paste (humans can't type that fast). Capture it as a paste so
+      // newlines are preserved instead of triggering immediate readline submission.
+      if (data.includes('\n') && data.length > 40 && !_pasteActive) {
+        _pasteLines.push(...data.replace(/\r/g, '').split('\n'));
+        return _completePaste();
+      }
+
       // Normal data — pass through
       return origEmit.call(process.stdin, event, ...args);
     };
@@ -2075,6 +2101,29 @@ async function startREPL() {
   // ─── Multi-line input state ──────────────────────────────────
   let multiLineBuffer = null; // null = not in multi-line mode
   const MULTI_LINE_PROMPT = `${C.dim}...${C.reset} `;
+
+  /**
+   * Restore newlines that browsers strip when copying numbered lists.
+   * Detects collapsed "N. item" patterns glued to previous text (no space before number)
+   * and inserts newlines to restore the original structure.
+   *
+   * Examples fixed:
+   *   "checks:1. foo2. bar"  →  "checks:\n1. foo\n2. bar"
+   *   "units2. next item3."  →  "units\n2. next item\n3."
+   *
+   * False-positive guards:
+   *   - Space before number → untouched ("we have 2. options")
+   *   - Digit before number → untouched ("v1.2.3", "error 404.")
+   *   - Fewer than 2 collapsed items → untouched
+   */
+  function smartReformat(text) {
+    // [^\s\d] = non-whitespace, non-digit immediately before the list number
+    const collapsedCount = (text.match(/[^\s\d](\d{1,2})\.\s+\S/g) || []).length;
+    if (collapsedCount < 2) return text;
+    return text
+      .replace(/([^\s\d])(\d{1,2})\.\s+/g, (_, prev, num) => `${prev}\n${num}. `)
+      .trim();
+  }
 
   rl.setPrompt(getPrompt());
   rl.prompt();
@@ -2198,7 +2247,7 @@ async function startREPL() {
       return;
     }
 
-    const input = line.trim();
+    const input = smartReformat(line.trim());
     if (!input) {
       rl.setPrompt(getPrompt());
       rl.prompt();
