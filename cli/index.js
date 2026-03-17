@@ -1823,6 +1823,11 @@ async function startREPL() {
   const footer = new StickyFooter();
   footer.activate(rl);
 
+  // Clear terminal on startup so previous shell output doesn't bleed through
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1b[H\x1b[2J\x1b[3J');
+  }
+
   const bannerModel = loadInfo.providerName === 'ollama'
     ? loadInfo.model.id
     : `${loadInfo.providerName}:${loadInfo.model.id}`;
