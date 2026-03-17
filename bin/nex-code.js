@@ -22,6 +22,7 @@ Options:
   --delete-prompt-file     Delete the prompt file after reading (use with --prompt-file)
   --auto                   Skip all confirmations (implies --task / --prompt-file)
   --yolo, -yolo            Skip all confirmations (interactive YOLO mode)
+  --server                 Start JSON-lines IPC server (used by VS Code extension)
   --model <spec>           Set model (e.g. openai:gpt-4o)
   --max-turns <n>          Max agentic loop iterations (default: 50)
   --json                   Output result as JSON (for CI parsing)
@@ -129,6 +130,14 @@ function runHeadlessTask(task) {
     }
     process.exit(1);
   });
+}
+
+// ─── --server (VS Code extension IPC mode) ───────────────────
+if (args.includes('--server')) {
+  const { setAutoConfirm } = require('../cli/safety');
+  setAutoConfirm(true); // non-critical tools auto-confirm in server mode
+  require('../cli/server-mode').startServerMode();
+  return; // event loop keeps process alive — no further code should run
 }
 
 // ─── --prompt-file (headless mode from file) ─────────────────
