@@ -244,8 +244,9 @@ function autoFixEdit(content, oldText, newText) {
   const similar = findMostSimilar(content, oldText);
   if (!similar) return null;
 
-  // Auto-apply threshold: ≤ 5% of target length or ≤ 3 chars difference
-  const threshold = Math.max(3, Math.ceil(oldText.length * 0.05));
+  // Auto-apply threshold: ≤ 3% of target length or ≤ 2 chars difference
+  // More conservative to prevent edit loops
+  const threshold = Math.max(2, Math.ceil(oldText.length * 0.03));
   if (similar.distance > threshold) return null;
 
   return {

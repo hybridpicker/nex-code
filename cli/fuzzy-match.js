@@ -47,6 +47,10 @@ function fuzzyFindText(haystack, needle) {
   // Fast path: exact match
   if (haystack.includes(needle)) return needle;
 
+  // Early exit: if needle is very short (< 10 chars), don't fuzzy match
+  // This prevents false positives with common text like "//" or "const"
+  if (needle.length < 10) return null;
+
   const normHaystack = normalizeWhitespace(haystack);
   const normNeedle = normalizeWhitespace(needle);
 
