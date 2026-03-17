@@ -226,6 +226,11 @@ function enrichBashError(errorOutput, command) {
     hints.push('HINT: SSH connection timed out. Check if the host is reachable: ping <host> and verify the port with: nc -zv <host> 22');
   }
 
+  // Backup pattern warnings
+  if (/cp.*\$f.*\$f\.bak.*sed.*-i\.bak|sed.*-i\.bak.*cp.*\$f.*\$f\.bak/i.test(command)) {
+    hints.push('HINT: Using both cp with .bak and sed -i.bak creates double backups (.bak.bak). Choose one method: either cp "$f" "$f.bak" OR sed -i.bak, not both.');
+  }
+
   if (hints.length === 0) return errorOutput;
   return errorOutput + '\n\n' + hints.join('\n');
 }
