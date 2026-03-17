@@ -1058,18 +1058,18 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'sysadmin',
-      description: 'Senior sysadmin operations on a remote (or local) Linux server. Covers: system audit (disk/memory/load/processes/errors), disk_usage, process_list, network_status, package management (dnf/apt auto-detect), user management, firewall rules (firewalld/ufw/iptables), cron jobs, SSL cert expiry checks, arbitrary log tailing, and large file discovery. Read-only actions run without confirmation; state-changing actions require user approval.',
+      description: 'Senior sysadmin operations on a remote (or local) Linux server. Covers: system audit, disk_usage, process_list, network_status, package management (dnf/apt), user management, firewall (firewalld/ufw/iptables), cron, SSL cert checks, log tailing, large file discovery, systemd service management, process kill, journalctl log querying. Read-only actions run without confirmation; state-changing actions require user approval.',
       parameters: {
         type: 'object',
         properties: {
           server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
           action: {
             type: 'string',
-            enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large'],
-            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry; log_tail=tail any log; find_large=big files.',
+            enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large', 'service', 'kill_process', 'journalctl'],
+            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
           },
           path: { type: 'string', description: 'File or directory path. For disk_usage (default /), log_tail (required), find_large (default /).' },
-          lines: { type: 'number', description: 'Lines to tail for log_tail. Default: 100.' },
+          lines: { type: 'number', description: 'Lines to tail for log_tail or journalctl. Default: 100.' },
           limit: { type: 'number', description: 'Result count for process_list (default 20) or find_large (default 20).' },
           sort_by: { type: 'string', enum: ['cpu', 'mem'], description: 'Sort order for process_list. Default: cpu.' },
           min_size: { type: 'string', description: 'Minimum file size for find_large. Default: "100M". Examples: "50M", "1G".' },
@@ -1084,8 +1084,16 @@ const TOOL_DEFINITIONS = [
           cron_action: { type: 'string', enum: ['list', 'add', 'remove'], description: 'Cron sub-action for action=cron.' },
           schedule: { type: 'string', description: 'Cron schedule expression for cron add, e.g. "0 2 * * *".' },
           command: { type: 'string', description: 'Command for cron add, or substring to match for cron remove.' },
-          domain: { type: 'string', description: 'Domain for ssl_check (e.g. "example.com"). Checks live TLS cert.' },
-          cert_path: { type: 'string', description: 'Path to cert file on server for ssl_check (e.g. "/etc/letsencrypt/live/x/cert.pem").' },
+          domain: { type: 'string', description: 'Domain for ssl_check (e.g. "example.com"). Auto-detects Let\'s Encrypt cert on server; falls back to live TLS probe.' },
+          cert_path: { type: 'string', description: 'Explicit path to cert file on server for ssl_check (e.g. "/etc/letsencrypt/live/x/cert.pem").' },
+          service_name: { type: 'string', description: 'Systemd unit name for action=service (e.g. "nginx", "jarvis-api", "gunicorn"). .service suffix optional.' },
+          service_action: { type: 'string', enum: ['status', 'start', 'stop', 'restart', 'reload', 'enable', 'disable', 'list_failed'], description: 'Sub-action for action=service. list_failed shows all failed units.' },
+          pid: { type: 'number', description: 'Process ID to kill for action=kill_process.' },
+          process_name: { type: 'string', description: 'Process name to kill (uses pkill) for action=kill_process. Use with pid for safety.' },
+          signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL', 'SIGHUP', 'SIGINT'], description: 'Signal for kill_process. Default: SIGTERM.' },
+          unit: { type: 'string', description: 'Systemd unit to filter for journalctl (e.g. "nginx", "jarvis-api"). Omit for system-wide.' },
+          since: { type: 'string', description: 'Time filter for journalctl, e.g. "1 hour ago", "today", "2026-03-17 10:00". Default: last 200 lines.' },
+          priority: { type: 'string', enum: ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'], description: 'Minimum log priority for journalctl. Default: no filter.' },
         },
         required: ['action'],
       },
@@ -2609,12 +2617,13 @@ async function _executeToolInner(name, args, options = {}) {
         }
       };
 
-      const READ_ONLY_ACTIONS = ['audit', 'disk_usage', 'process_list', 'network_status', 'ssl_check', 'log_tail', 'find_large'];
+      const READ_ONLY_ACTIONS = ['audit', 'disk_usage', 'process_list', 'network_status', 'ssl_check', 'log_tail', 'find_large', 'journalctl'];
       const isReadOnly = READ_ONLY_ACTIONS.includes(args.action)
         || (args.action === 'package' && args.package_action === 'list')
         || (args.action === 'user_manage' && ['list', 'info'].includes(args.user_action))
         || (args.action === 'firewall' && args.firewall_action === 'status')
-        || (args.action === 'cron' && args.cron_action === 'list');
+        || (args.action === 'cron' && args.cron_action === 'list')
+        || (args.action === 'service' && ['status', 'list_failed'].includes(args.service_action));
 
       if (!isReadOnly && !options.autoConfirm) {
         const target = isLocal ? 'local' : args.server;
@@ -2629,14 +2638,16 @@ async function _executeToolInner(name, args, options = {}) {
             "cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION)=' || uname -a",
             "echo '=== UPTIME / LOAD ==='",
             "uptime",
-            "echo '=== MEMORY ==='",
+            "echo '=== MEMORY / SWAP ==='",
             "free -h",
             "echo '=== DISK ==='",
             "df -h --output=target,size,used,avail,pcent 2>/dev/null || df -h",
             "echo '=== TOP 10 PROCESSES (CPU) ==='",
             "ps aux --sort=-%cpu | head -11",
+            "echo '=== FAILED SYSTEMD UNITS ==='",
+            "systemctl list-units --state=failed --no-legend 2>/dev/null || echo '(systemctl not available)'",
             "echo '=== RECENT ERRORS (journalctl) ==='",
-            "journalctl -p err --no-pager -n 20 2>/dev/null || echo '(journalctl not available)'",
+            "journalctl -p err --no-pager -n 15 2>/dev/null || echo '(journalctl not available)'",
             "echo '=== LISTENING PORTS ==='",
             "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo '(ss/netstat not available)'",
           ].join(' && ');
@@ -2646,15 +2657,17 @@ async function _executeToolInner(name, args, options = {}) {
 
         case 'disk_usage': {
           const p = args.path || '/';
-          const cmd = `df -h ${p}; echo '--- Top subdirs ---'; du -sh ${p}/* 2>/dev/null | sort -rh | head -20`;
+          // Use --max-depth=1 via du -d1 for safety on large filesystems; -x to stay on same fs
+          const cmd = `df -h ${p}; echo '--- Top subdirs ---'; du -d1 -x -h ${p} 2>/dev/null | sort -rh | head -20`;
           const { out, exitCode } = await sysRun(cmd, 30000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
         }
 
         case 'process_list': {
-          const sortKey = args.sort_by === 'mem' ? '-%mem' : '-%cpu';
+          const sortCol = args.sort_by === 'mem' ? '4' : '3'; // ps aux col 3=CPU%, 4=MEM%
           const limit = (args.limit || 20) + 1;
-          const cmd = `ps aux --sort=${sortKey} | head -${limit}`;
+          // Try GNU ps --sort first (Linux), fall back to awk sort (BSD/BusyBox)
+          const cmd = `ps aux --sort=-${args.sort_by === 'mem' ? '%mem' : '%cpu'} 2>/dev/null | head -${limit} || ps aux | awk 'NR==1{print; next} {print | "sort -k${sortCol} -rn"}' | head -${limit}`;
           const { out, exitCode } = await sysRun(cmd, 15000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
         }
@@ -2820,13 +2833,43 @@ async function _executeToolInner(name, args, options = {}) {
 
         case 'ssl_check': {
           if (!args.domain && !args.cert_path) return 'ERROR: domain or cert_path is required for ssl_check';
+          // Build a script that: 1) reads the cert (file or live TLS), 2) extracts dates, 3) calculates days remaining
           let sslCmd;
           if (args.cert_path) {
-            sslCmd = `openssl x509 -in ${args.cert_path} -noout -text 2>&1 | grep -E 'Subject:|Issuer:|Not Before|Not After|DNS:'`;
+            sslCmd = `
+CERT="${args.cert_path}"
+openssl x509 -in "$CERT" -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1 && \
+EXPIRY=$(openssl x509 -in "$CERT" -noout -enddate 2>/dev/null | cut -d= -f2) && \
+DAYS=$(( ( $(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %T %Y %Z" "$EXPIRY" +%s 2>/dev/null) - $(date +%s) ) / 86400 )) && \
+echo "Days until expiry: $DAYS"
+`.trim();
           } else {
-            sslCmd = `echo | openssl s_client -connect ${args.domain}:443 -servername ${args.domain} 2>/dev/null | openssl x509 -noout -text 2>&1 | grep -E 'Subject:|Issuer:|Not Before|Not After|DNS:'`;
+            const domain = args.domain;
+            // 1st try: read cert directly from Let's Encrypt path on server
+            // 2nd try: live TLS probe via openssl s_client
+            sslCmd = `
+DOMAIN="${domain}"
+LECP="/etc/letsencrypt/live/$DOMAIN/cert.pem"
+if [ -f "$LECP" ]; then
+  echo "Source: Let's Encrypt $LECP"
+  openssl x509 -in "$LECP" -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1
+  EXPIRY=$(openssl x509 -in "$LECP" -noout -enddate 2>/dev/null | cut -d= -f2)
+else
+  echo "Source: live TLS probe"
+  CERT=$(echo | openssl s_client -connect "$DOMAIN":443 -servername "$DOMAIN" 2>/dev/null)
+  if [ -z "$CERT" ]; then echo "ERROR: Could not connect to $DOMAIN:443 (port closed or DNS unresolvable)"; exit 1; fi
+  echo "$CERT" | openssl x509 -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1
+  EXPIRY=$(echo "$CERT" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+fi
+if [ -n "$EXPIRY" ]; then
+  DAYS=$(( ( $(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %T %Y %Z" "$EXPIRY" +%s 2>/dev/null) - $(date +%s) ) / 86400 ))
+  echo "Days until expiry: $DAYS"
+  [ "$DAYS" -lt 14 ] && echo "WARNING: Certificate expires in less than 14 days!"
+  [ "$DAYS" -lt 0 ] && echo "CRITICAL: Certificate has EXPIRED!"
+fi
+`.trim();
           }
-          const { out, exitCode } = await sysRun(sslCmd, 20000);
+          const { out, exitCode } = await sysRun(sslCmd, 25000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
         }
 
@@ -2845,6 +2888,71 @@ async function _executeToolInner(name, args, options = {}) {
           const cmd = `find ${p} -xdev -type f -size +${minSize} 2>/dev/null | xargs du -sh 2>/dev/null | sort -rh | head -${limit}`;
           const { out, exitCode } = await sysRun(cmd, 60000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `(no files larger than ${minSize} in ${p})`;
+        }
+
+        case 'service': {
+          if (!args.service_action) return 'ERROR: service_action is required for action=service';
+          if (args.service_action !== 'list_failed' && !args.service_name) return 'ERROR: service_name is required (except for list_failed)';
+          const unit = args.service_name
+            ? (args.service_name.includes('.') ? args.service_name : `${args.service_name}.service`)
+            : '';
+          let svcCmd;
+          switch (args.service_action) {
+            case 'status':
+              svcCmd = `systemctl status ${unit} --no-pager -l 2>&1 | head -40`;
+              break;
+            case 'list_failed':
+              svcCmd = 'systemctl list-units --state=failed --no-legend 2>/dev/null';
+              break;
+            case 'start':
+              svcCmd = `systemctl start ${unit} && systemctl status ${unit} --no-pager -l 2>&1 | head -20`;
+              break;
+            case 'stop':
+              svcCmd = `systemctl stop ${unit} && echo "${unit} stopped"`;
+              break;
+            case 'restart':
+              svcCmd = `systemctl restart ${unit} && systemctl status ${unit} --no-pager -l 2>&1 | head -20`;
+              break;
+            case 'reload':
+              svcCmd = `systemctl reload ${unit} 2>&1 || systemctl reload-or-restart ${unit} 2>&1`;
+              break;
+            case 'enable':
+              svcCmd = `systemctl enable ${unit} && echo "${unit} enabled"`;
+              break;
+            case 'disable':
+              svcCmd = `systemctl disable ${unit} && echo "${unit} disabled"`;
+              break;
+            default:
+              return `ERROR: Unknown service_action: ${args.service_action}`;
+          }
+          const { out, exitCode } = await sysRun(svcCmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
+        }
+
+        case 'kill_process': {
+          if (!args.pid && !args.process_name) return 'ERROR: pid or process_name is required for kill_process';
+          const sig = args.signal || 'SIGTERM';
+          let killCmd;
+          if (args.pid) {
+            // Kill by PID — show process info first for context
+            killCmd = `ps -p ${args.pid} -o pid,user,%cpu,%mem,etime,cmd 2>/dev/null && kill -${sig} ${args.pid} && echo "Sent ${sig} to PID ${args.pid}"`;
+          } else {
+            // Kill by name via pkill
+            killCmd = `pgrep -a "${args.process_name}" 2>/dev/null | head -5 && pkill -${sig} "${args.process_name}" && echo "Sent ${sig} to all '${args.process_name}' processes"`;
+          }
+          const { out, exitCode } = await sysRun(killCmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'journalctl': {
+          const lines = args.lines || 100;
+          const parts = ['journalctl', '--no-pager', '-n', String(lines)];
+          if (args.unit) parts.push('-u', args.unit.includes('.') ? args.unit : `${args.unit}.service`);
+          if (args.priority) parts.push('-p', args.priority);
+          if (args.since) parts.push(`--since="${args.since}"`);
+          parts.push('2>/dev/null || echo "(journalctl not available)"');
+          const { out, exitCode } = await sysRun(parts.join(' '), 20000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no log entries)';
         }
 
         default:

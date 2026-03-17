@@ -274,6 +274,26 @@ function getToolSpinnerText(name, args) {
       return `Browser: clicking ${args.text || args.selector || 'element'}...`;
     case 'browser_fill':
       return `Browser: filling ${args.selector || 'field'}...`;
+    case 'sysadmin': {
+      const srv = args.server && args.server !== 'local' ? ` [${args.server}]` : '';
+      switch (args.action) {
+        case 'audit':        return `Sysadmin${srv}: full audit...`;
+        case 'disk_usage':   return `Sysadmin${srv}: disk usage ${args.path || '/'}...`;
+        case 'process_list': return `Sysadmin${srv}: top processes (${args.sort_by || 'cpu'})...`;
+        case 'network_status': return `Sysadmin${srv}: network status...`;
+        case 'ssl_check':    return `Sysadmin${srv}: SSL check ${args.domain || args.cert_path || ''}...`;
+        case 'log_tail':     return `Sysadmin${srv}: tail ${args.path || 'log'}...`;
+        case 'find_large':   return `Sysadmin${srv}: find large files in ${args.path || '/'}...`;
+        case 'service':      return `Sysadmin${srv}: service ${args.service_action || ''} ${args.service_name || ''}...`;
+        case 'kill_process': return `Sysadmin${srv}: kill PID ${args.pid || args.process_name || '?'}...`;
+        case 'journalctl':   return `Sysadmin${srv}: journal ${args.unit ? `[${args.unit}]` : ''}${args.since ? ` since ${args.since}` : ''}...`;
+        case 'package':      return `Sysadmin${srv}: package ${args.package_action || ''} ${(args.packages || []).join(' ')}...`;
+        case 'firewall':     return `Sysadmin${srv}: firewall ${args.firewall_action || ''}...`;
+        case 'user_manage':  return `Sysadmin${srv}: user ${args.user_action || ''} ${args.user || ''}...`;
+        case 'cron':         return `Sysadmin${srv}: cron ${args.cron_action || ''}...`;
+        default:             return `Sysadmin${srv}: ${args.action}...`;
+      }
+    }
     default:
       return `Running: ${name}`;
   }
