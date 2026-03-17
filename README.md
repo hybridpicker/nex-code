@@ -1,5 +1,5 @@
 ```
-▀▄ ▀▄   nex-code  v0.3.45x
+▀▄ ▀▄   nex-code  v0.3.47
 █████   qwen3-coder:480b  ·  /help
 ▄███▄
 ```
@@ -723,9 +723,12 @@ When the agent creates a task list, a **live animated display** replaces the sta
 ### Sub-Agents
 Spawn parallel sub-agents for independent tasks:
 - Up to 5 agents run simultaneously with their own conversation contexts
-- File locking prevents concurrent writes to the same file
+- File locking prevents concurrent writes to the same file (intra-process sub-agents)
 - Multi-progress display shows real-time status of each agent
 - Good for: reading multiple files, analyzing separate modules, independent research
+
+### Parallel Sessions
+Running multiple nex-code instances in the same project directory is safe. All shared state files (`.nex/memory/memory.json`, `.nex/config.json`, `NEX.md`, brain index) use advisory inter-process locking (`O_EXCL` lock files with stale-lock reclaim) and atomic writes (temp file + `rename`). A session in Terminal A and a session in Terminal B can both call `/remember`, `/allow`, or `/learn` simultaneously without data corruption.
 
 **Multi-Model Routing** — Sub-agents auto-select the best model per task based on complexity:
 - **Read/search/list** tasks → fast models (essential tier)
@@ -948,6 +951,7 @@ cli/
 ├── context-engine.js    # Token management + context compression
 ├── session.js           # Session persistence (.nex/sessions/)
 ├── memory.js            # Project memory (.nex/memory/ + NEX.md)
+├── filelock.js          # Inter-process file locking (atomicWrite + withFileLockSync)
 ├── permissions.js       # Tool permission system
 ├── planner.js           # Plan mode, step extraction, step cursor, autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
