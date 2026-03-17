@@ -11,7 +11,7 @@ build:
 
 # Test target - runs Jest tests
 test:
-	npx jest --coverage
+	jest --coverage
 
 # Clean target - removes dist directory
 clean:
