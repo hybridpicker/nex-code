@@ -612,7 +612,7 @@ function _buildLanguagePrompt() {
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
   lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
-  lines.push('  • For Makefiles, always display the FULL Makefile — every target, dependency, recipe, and .PHONY declaration. Never describe a Makefile without showing the complete file content. Use portable Make syntax: use $(wildcard ...) instead of ** globs, and call tools directly (e.g. jest, not npm test).');
+  lines.push('  • For Makefiles, always display the FULL Makefile — every target, dependency, recipe, and .PHONY declaration. Never describe a Makefile without showing the complete file content.');
   lines.push('  • For dataclasses, always show the COMPLETE dataclass code — all fields with types, defaults, and any __post_init__ validation. Never describe a dataclass without showing the actual implementation.');
   lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.');
   lines.push('  • When a task explicitly specifies a tool (e.g., "use tsc"), NEVER mention alternatives (e.g., "swc build") — use exactly what was requested.');
@@ -713,7 +713,7 @@ MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, g
 CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When explaining code:
   • Show the complete code snippet, not just describe it
   • Include file paths and line numbers (e.g., "src/app.js:42")
-  • For regex patterns, show both the pattern and example matches. Be precise — test the pattern mentally and do not make false claims about what it matches. When rewriting a regex for readability, use portable syntax only (no PCRE-specific features like lookaheads, named groups, atomic groups) unless the task explicitly targets a PCRE engine. Note PCRE-only features separately. NEVER claim functional equivalence if the rewritten pattern changes behavior — always verify edge cases.
+  • For regex patterns, show both the pattern and example matches. Be precise — test the pattern mentally and do not make false claims about what it matches. When rewriting a regex for readability, prefer inline comments or named constants over named groups. If you do use named groups, verify the exact syntax for the target language (JS: (?&lt;name&gt;...), Python: (?P&lt;name&gt;...)). NEVER claim functional equivalence if the rewritten pattern changes behavior — always verify edge cases like leading zeros.
   • For Makefiles, paste the COMPLETE Makefile verbatim in your text response — every target, recipe, dependency, and .PHONY line. Use EXACTLY the tools/commands specified in the task (e.g. if the task says "tsc", use tsc — do not substitute swc or any alternative). Never describe structure without showing the actual code. Even if you wrote the file with a tool, always also show the full content in text.
   • For dataclasses, show the COMPLETE implementation — all fields with types, __post_init__ validation, and any defaults. Never describe without showing the code.
   • For cron expressions, quote the exact time constraint from the task verbatim, then write the expression. Verify boundary values (e.g., "8-18h" → hours 8 through 18 inclusive).
