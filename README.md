@@ -1,10 +1,7 @@
 ```
-███╗   ██╗███████╗██╗  ██╗  ━   ██████╗ ██████╗ ██████╗ ███████╗
-████╗  ██║██╔════╝╚██╗██╔╝  ━  ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-██╔██╗ ██║█████╗   ╚███╔╝   ━  ██║     ██║   ██║██║  ██║█████╗
-██║╚██╗██║██╔══╝   ██╔██╗   ━  ██║     ██║   ██║██║  ██║██╔══╝
-██║ ╚████║███████╗██╔╝ ██╗  ━  ╚██████╗╚██████╔╝██████╔╝███████╗
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ━   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+▀▄ ▀▄   nex-code  v0.3.x
+█████   qwen3-coder:480b  ·  /help
+▄███▄
 ```
 
 <p align="center">
@@ -22,7 +19,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1944-blue.svg" alt="Tests: 1944">
+  <img src="https://img.shields.io/badge/tests-2059-blue.svg" alt="Tests: 2059">
 </p>
 
 ---
@@ -87,7 +84,7 @@ npm update -g nex-code
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
-| **Test coverage** | 1825 tests, 84% | — | — | — |
+| **Test coverage** | 2059 tests, 84% | — | — | — |
 
 ---
 
@@ -531,9 +528,9 @@ deploy the latest build to prod
 ## Features
 
 ### Compact Output
-The agent loop uses a single spinner during tool execution, then prints compact 1-line summaries:
+The agent loop uses a bouncing-ball spinner (`● · · · ·` → `· ● · · ·` → …) during tool execution, then prints compact 1-line summaries:
 ```
-  ⠋ ▸ 3 tools: read_file, grep, edit_file
+  ●     ▸ 3 tools: read_file, grep, edit_file
   ✓ read_file src/app.js (45 lines)
   ✓ grep TODO → 12 matches
   ✗ edit_file src/x.js → old_text not found
@@ -561,7 +558,7 @@ The system prompt enforces substantive responses: the model always presents find
 - **In-Memory Indexing**: A background indexing engine (using `ripgrep` or a fast fallback) keeps project file paths in RAM for instant file discovery, path auto-fixing, and glob searches.
 
 ### Streaming Output
-Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
+Tokens appear live as the model generates them. Bouncing-ball spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Paste Detection
 Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input. A `[Pasted content — N lines]` indicator is shown with a preview of the first line. The user must press Enter to send — pasted content never auto-fires. The paste handler stores the combined text and waits for explicit submission.
@@ -702,7 +699,7 @@ When the agent creates a task list, a **live animated display** replaces the sta
      ◻ Update cli/index.js
      ◻ Run tests
 ```
-- Animated spinner header with elapsed time and cumulative token count
+- Bouncing-ball spinner (`●` ping-pong across 5 positions) with elapsed time display
 - Per-task status icons: `✔` done, `◼` in progress, `◻` pending, `✗` failed
 - Automatically pauses during text streaming and resumes during tool execution
 - Falls back to the static `/tasks` view when no live display is active
@@ -1029,7 +1026,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-47 test suites, 1825 tests, 84% statement / 77% branch coverage.
+57 test suites, 2059 tests, 84% statement / 77% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 
