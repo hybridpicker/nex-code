@@ -217,6 +217,64 @@ function listPlans() {
 }
 
 /**
+ * Extract structured steps from LLM plan text output.
+ * Parses numbered lists (e.g. "1. Step description") and
+ * "**What**: ..." sub-bullets following the required plan format.
+ *
+ * @param {string} text - Raw LLM plan output
+ * @returns {PlanStep[]} Extracted steps (may be empty)
+ */
+function extractStepsFromText(text) {
+  if (!text) return [];
+
+  const steps = [];
+
+  // Strategy 1: look for a "## Steps" section and parse numbered items
+  const stepsSection = text.match(/##\s+Steps?\s*\n([\s\S]*?)(?:\n##|\s*$)/i);
+  const searchText = stepsSection ? stepsSection[1] : text;
+
+  // Match numbered items like "1. " or "1) "
+  const numberedRe = /^\s*(\d+)[.)]\s+(.+)/gm;
+  let match;
+  while ((match = numberedRe.exec(searchText)) !== null) {
+    const rawLine = match[2].trim();
+    // Strip markdown bold/italic and leading "**What**:" prefixes
+    const description = rawLine
+      .replace(/^\*\*What\*\*:\s*/i, '')
+      .replace(/^\*\*\d+\.\*\*\s*/, '')
+      .replace(/\*\*/g, '')
+      .trim();
+    if (description.length > 3) {
+      steps.push({ description, files: [], status: 'pending' });
+    }
+  }
+
+  // Strategy 2: if no numbered items found, look for bold step markers "**Step N:**"
+  if (steps.length === 0) {
+    const boldStepRe = /\*\*Step\s+\d+[:.]\*\*\s*(.+)/gi;
+    while ((match = boldStepRe.exec(text)) !== null) {
+      const description = match[1].replace(/\*\*/g, '').trim();
+      if (description.length > 3) {
+        steps.push({ description, files: [], status: 'pending' });
+      }
+    }
+  }
+
+  // Attempt to match "**Where**:" or "**Files**:" lines to enrich file lists
+  if (steps.length > 0) {
+    const whereRe = /\*\*(?:Where|Files?)\*\*:\s*(.+)/gi;
+    const fileMatches = [...text.matchAll(whereRe)];
+    for (let i = 0; i < Math.min(steps.length, fileMatches.length); i++) {
+      const raw = fileMatches[i][1];
+      // Extract file-like tokens (contain dots or slashes)
+      steps[i].files = raw.split(/[,\s]+/).filter((t) => /[./]/.test(t)).slice(0, 5);
+    }
+  }
+
+  return steps;
+}
+
+/**
  * Store the LLM's plan text output
  */
 function setPlanContent(text) { planContent = text; }
@@ -229,6 +287,7 @@ function clearPlan() {
   activePlan = null;
   planMode = false;
   planContent = null;
+  resetPlanStepCursor();
 }
 
 /**
@@ -275,6 +334,45 @@ Bullet list of potential issues and mitigations.
 - Do NOT make any file changes — your role is analysis and planning only.`;
 }
 
+// Plan execution step cursor — tracks which step of the active plan is running
+let planStepCursor = 0;
+
+/**
+ * Advance the plan step cursor to the next step and mark previous as done.
+ * Called from the agent loop each time a new LLM turn starts (new tool batch).
+ */
+function advancePlanStep() {
+  if (!activePlan || activePlan.status !== 'executing') return;
+  if (planStepCursor > 0) {
+    updateStep(planStepCursor - 1, 'done');
+  }
+  if (planStepCursor < activePlan.steps.length) {
+    updateStep(planStepCursor, 'in_progress');
+    planStepCursor++;
+  }
+}
+
+/**
+ * Get a short label for the current executing plan step (for spinner text).
+ * Returns null if no active plan or no steps.
+ * @returns {{ current: number, total: number, description: string }|null}
+ */
+function getPlanStepInfo() {
+  if (!activePlan || activePlan.status !== 'executing' || activePlan.steps.length === 0) return null;
+  const current = Math.min(planStepCursor, activePlan.steps.length);
+  const total = activePlan.steps.length;
+  const idx = Math.max(0, current - 1);
+  const description = activePlan.steps[idx]?.description || '';
+  return { current, total, description };
+}
+
+/**
+ * Reset step cursor (called on clearPlan)
+ */
+function resetPlanStepCursor() {
+  planStepCursor = 0;
+}
+
 // Autonomy levels
 const AUTONOMY_LEVELS = ['interactive', 'semi-auto', 'autonomous'];
 let autonomyLevel = 'interactive';
@@ -305,6 +403,9 @@ module.exports = {
   getPlanModePrompt,
   setPlanContent,
   getPlanContent,
+  extractStepsFromText,
+  advancePlanStep,
+  getPlanStepInfo,
   PLAN_MODE_ALLOWED_TOOLS,
   setAutonomyLevel,
   getAutonomyLevel,
