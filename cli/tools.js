@@ -1053,6 +1053,44 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  // ─── Sysadmin Tool ────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'sysadmin',
+      description: 'Senior sysadmin operations on a remote (or local) Linux server. Covers: system audit (disk/memory/load/processes/errors), disk_usage, process_list, network_status, package management (dnf/apt auto-detect), user management, firewall rules (firewalld/ufw/iptables), cron jobs, SSL cert expiry checks, arbitrary log tailing, and large file discovery. Read-only actions run without confirmation; state-changing actions require user approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name or "user@host". Omit or use "local" for local machine.' },
+          action: {
+            type: 'string',
+            enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large'],
+            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry; log_tail=tail any log; find_large=big files.',
+          },
+          path: { type: 'string', description: 'File or directory path. For disk_usage (default /), log_tail (required), find_large (default /).' },
+          lines: { type: 'number', description: 'Lines to tail for log_tail. Default: 100.' },
+          limit: { type: 'number', description: 'Result count for process_list (default 20) or find_large (default 20).' },
+          sort_by: { type: 'string', enum: ['cpu', 'mem'], description: 'Sort order for process_list. Default: cpu.' },
+          min_size: { type: 'string', description: 'Minimum file size for find_large. Default: "100M". Examples: "50M", "1G".' },
+          package_action: { type: 'string', enum: ['install', 'remove', 'update', 'list', 'upgrade'], description: 'Package sub-action for action=package.' },
+          packages: { type: 'array', items: { type: 'string' }, description: 'Package name(s) for install/remove/update.' },
+          user_action: { type: 'string', enum: ['list', 'create', 'delete', 'add_ssh_key', 'info'], description: 'User sub-action for action=user_manage.' },
+          user: { type: 'string', description: 'Linux username for user_manage or cron.' },
+          groups: { type: 'array', items: { type: 'string' }, description: 'Groups to assign on user create (e.g. ["sudo", "docker"]).' },
+          ssh_key: { type: 'string', description: 'SSH public key string to add for user_action=add_ssh_key.' },
+          firewall_action: { type: 'string', enum: ['status', 'allow', 'deny', 'remove', 'reload'], description: 'Firewall sub-action for action=firewall.' },
+          port: { type: 'string', description: 'Port/protocol for firewall rules, e.g. "80/tcp", "443", "8080/udp".' },
+          cron_action: { type: 'string', enum: ['list', 'add', 'remove'], description: 'Cron sub-action for action=cron.' },
+          schedule: { type: 'string', description: 'Cron schedule expression for cron add, e.g. "0 2 * * *".' },
+          command: { type: 'string', description: 'Command for cron add, or substring to match for cron remove.' },
+          domain: { type: 'string', description: 'Domain for ssl_check (e.g. "example.com"). Checks live TLS cert.' },
+          cert_path: { type: 'string', description: 'Path to cert file on server for ssl_check (e.g. "/etc/letsencrypt/live/x/cert.pem").' },
+        },
+        required: ['action'],
+      },
+    },
+  },
 ];
 
 // ─── Kubernetes Helper ────────────────────────────────────────
@@ -2543,6 +2581,275 @@ async function _executeToolInner(name, args, options = {}) {
 
       sections.push('\n---\n✅ Design recon complete. Now build consistently with the patterns above.');
       return sections.join('\n');
+    }
+
+    // ─── Sysadmin Tool ────────────────────────────────────────
+    case 'sysadmin': {
+      if (!args.action) return 'ERROR: action is required';
+
+      const isLocal = !args.server || args.server === 'local' || args.server === 'localhost';
+      let sysProfile;
+      if (!isLocal) {
+        try { sysProfile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
+      }
+
+      // Helper: run command locally or via SSH
+      const sysRun = async (cmd, timeout = 30000) => {
+        if (isLocal) {
+          try {
+            const { stdout, stderr } = await exec(cmd, { timeout });
+            return { out: (stdout || stderr || '').trim(), exitCode: 0 };
+          } catch (e) {
+            return { out: (e.stderr || e.message || '').toString().trim(), exitCode: e.code || 1 };
+          }
+        } else {
+          const { stdout, stderr, exitCode, error } = await sshExec(sysProfile, cmd, { timeout });
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+          return { out: error && exitCode !== 0 ? (error + '\n' + out).trim() : out, exitCode };
+        }
+      };
+
+      const READ_ONLY_ACTIONS = ['audit', 'disk_usage', 'process_list', 'network_status', 'ssl_check', 'log_tail', 'find_large'];
+      const isReadOnly = READ_ONLY_ACTIONS.includes(args.action)
+        || (args.action === 'package' && args.package_action === 'list')
+        || (args.action === 'user_manage' && ['list', 'info'].includes(args.user_action))
+        || (args.action === 'firewall' && args.firewall_action === 'status')
+        || (args.action === 'cron' && args.cron_action === 'list');
+
+      if (!isReadOnly && !options.autoConfirm) {
+        const target = isLocal ? 'local' : args.server;
+        const ok = await confirm(`sysadmin [${args.action}] on ${target} — proceed?`);
+        if (!ok) return 'Cancelled.';
+      }
+
+      switch (args.action) {
+        case 'audit': {
+          const cmd = [
+            "echo '=== OS / KERNEL ==='",
+            "cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION)=' || uname -a",
+            "echo '=== UPTIME / LOAD ==='",
+            "uptime",
+            "echo '=== MEMORY ==='",
+            "free -h",
+            "echo '=== DISK ==='",
+            "df -h --output=target,size,used,avail,pcent 2>/dev/null || df -h",
+            "echo '=== TOP 10 PROCESSES (CPU) ==='",
+            "ps aux --sort=-%cpu | head -11",
+            "echo '=== RECENT ERRORS (journalctl) ==='",
+            "journalctl -p err --no-pager -n 20 2>/dev/null || echo '(journalctl not available)'",
+            "echo '=== LISTENING PORTS ==='",
+            "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo '(ss/netstat not available)'",
+          ].join(' && ');
+          const { out, exitCode } = await sysRun(cmd, 45000);
+          return out || `EXIT ${exitCode}\n(no output)`;
+        }
+
+        case 'disk_usage': {
+          const p = args.path || '/';
+          const cmd = `df -h ${p}; echo '--- Top subdirs ---'; du -sh ${p}/* 2>/dev/null | sort -rh | head -20`;
+          const { out, exitCode } = await sysRun(cmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'process_list': {
+          const sortKey = args.sort_by === 'mem' ? '-%mem' : '-%cpu';
+          const limit = (args.limit || 20) + 1;
+          const cmd = `ps aux --sort=${sortKey} | head -${limit}`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'network_status': {
+          const cmd = `ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null; echo '--- Active connections ---'; ss -tnp 2>/dev/null | head -30`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+        }
+
+        case 'package': {
+          if (!args.package_action) return 'ERROR: package_action is required for action=package';
+          const { out: pmOut } = await sysRun('which dnf 2>/dev/null && echo dnf || (which apt-get 2>/dev/null && echo apt) || echo unknown', 10000);
+          const pm = pmOut.includes('dnf') ? 'dnf' : pmOut.includes('apt') ? 'apt' : null;
+          if (!pm) return 'ERROR: No supported package manager found (dnf/apt)';
+          const pkgList = (args.packages || []).join(' ');
+          let pkgCmd;
+          switch (args.package_action) {
+            case 'list':
+              pkgCmd = pm === 'dnf' ? 'dnf list installed 2>/dev/null | head -60' : 'dpkg -l | head -60';
+              break;
+            case 'install':
+              if (!pkgList) return 'ERROR: packages required for install';
+              pkgCmd = pm === 'dnf' ? `dnf install -y ${pkgList}` : `apt-get install -y ${pkgList}`;
+              break;
+            case 'remove':
+              if (!pkgList) return 'ERROR: packages required for remove';
+              pkgCmd = pm === 'dnf' ? `dnf remove -y ${pkgList}` : `apt-get remove -y ${pkgList}`;
+              break;
+            case 'update':
+              if (!pkgList) return 'ERROR: packages required for update (use upgrade for full system upgrade)';
+              pkgCmd = pm === 'dnf' ? `dnf update -y ${pkgList}` : `apt-get install -y --only-upgrade ${pkgList}`;
+              break;
+            case 'upgrade':
+              pkgCmd = pm === 'dnf' ? 'dnf upgrade -y' : 'DEBIAN_FRONTEND=noninteractive apt-get upgrade -y';
+              break;
+            default:
+              return `ERROR: Unknown package_action: ${args.package_action}`;
+          }
+          const { out, exitCode } = await sysRun(pkgCmd, 120000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `${args.package_action} OK`;
+        }
+
+        case 'user_manage': {
+          if (!args.user_action) return 'ERROR: user_action is required for action=user_manage';
+          switch (args.user_action) {
+            case 'list': {
+              const cmd = "awk -F: '$3 >= 1000 && $1 != \"nobody\" {print $1, \"uid=\"$3, \"gid=\"$4, \"shell=\"$7}' /etc/passwd";
+              const { out, exitCode } = await sysRun(cmd, 10000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no regular users)';
+            }
+            case 'info': {
+              if (!args.user) return 'ERROR: user is required for user_action=info';
+              const cmd = `id ${args.user} && echo '--- Groups ---' && groups ${args.user} && echo '--- Last login ---' && lastlog -u ${args.user} 2>/dev/null`;
+              const { out, exitCode } = await sysRun(cmd, 10000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'create': {
+              if (!args.user) return 'ERROR: user is required for user_action=create';
+              const groupFlags = (args.groups || []).map(g => `-G ${g}`).join(' ');
+              const cmd = `useradd -m ${groupFlags} ${args.user} && echo "User ${args.user} created"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'delete': {
+              if (!args.user) return 'ERROR: user is required for user_action=delete';
+              const cmd = `userdel -r ${args.user} && echo "User ${args.user} deleted"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'add_ssh_key': {
+              if (!args.user) return 'ERROR: user is required for user_action=add_ssh_key';
+              if (!args.ssh_key) return 'ERROR: ssh_key is required for user_action=add_ssh_key';
+              const escapedKey = args.ssh_key.replace(/'/g, "'\\''");
+              const cmd = `mkdir -p /home/${args.user}/.ssh && chmod 700 /home/${args.user}/.ssh && echo '${escapedKey}' >> /home/${args.user}/.ssh/authorized_keys && chmod 600 /home/${args.user}/.ssh/authorized_keys && chown -R ${args.user}:${args.user} /home/${args.user}/.ssh && echo "SSH key added for ${args.user}"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            default:
+              return `ERROR: Unknown user_action: ${args.user_action}`;
+          }
+        }
+
+        case 'firewall': {
+          if (!args.firewall_action) return 'ERROR: firewall_action is required for action=firewall';
+          const { out: fwDetect } = await sysRun('which firewall-cmd 2>/dev/null && echo firewalld || (which ufw 2>/dev/null && echo ufw) || echo iptables', 10000);
+          const fw = fwDetect.includes('firewalld') ? 'firewalld' : fwDetect.includes('ufw') ? 'ufw' : 'iptables';
+          let fwCmd;
+          switch (args.firewall_action) {
+            case 'status':
+              fwCmd = fw === 'firewalld'
+                ? 'firewall-cmd --state && firewall-cmd --list-all'
+                : fw === 'ufw'
+                ? 'ufw status verbose'
+                : 'iptables -L -n --line-numbers | head -60';
+              break;
+            case 'allow':
+              if (!args.port) return 'ERROR: port is required for firewall allow (e.g. "80/tcp")';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --add-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw allow ${args.port}`
+                : `iptables -A INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j ACCEPT`;
+              break;
+            case 'deny':
+              if (!args.port) return 'ERROR: port is required for firewall deny';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw deny ${args.port}`
+                : `iptables -A INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j DROP`;
+              break;
+            case 'remove':
+              if (!args.port) return 'ERROR: port is required for firewall remove';
+              fwCmd = fw === 'firewalld'
+                ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
+                : fw === 'ufw'
+                ? `ufw delete allow ${args.port}`
+                : `iptables -D INPUT -p ${args.port.includes('/') ? args.port.split('/')[1] : 'tcp'} --dport ${args.port.split('/')[0]} -j ACCEPT 2>/dev/null || true`;
+              break;
+            case 'reload':
+              fwCmd = fw === 'firewalld'
+                ? 'firewall-cmd --reload'
+                : fw === 'ufw'
+                ? 'ufw reload'
+                : 'iptables-restore < /etc/iptables/rules.v4 2>/dev/null || echo "iptables: manual reload not available"';
+              break;
+            default:
+              return `ERROR: Unknown firewall_action: ${args.firewall_action}`;
+          }
+          const { out, exitCode } = await sysRun(fwCmd, 30000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `firewall ${args.firewall_action} OK`;
+        }
+
+        case 'cron': {
+          if (!args.cron_action) return 'ERROR: cron_action is required for action=cron';
+          const cronFlag = args.user ? `-u ${args.user}` : '';
+          switch (args.cron_action) {
+            case 'list': {
+              const cmd = `crontab ${cronFlag} -l 2>/dev/null || echo '(no crontab for ${args.user || 'current user'})'`;
+              const { out } = await sysRun(cmd, 10000);
+              return out || '(empty crontab)';
+            }
+            case 'add': {
+              if (!args.schedule) return 'ERROR: schedule is required for cron add';
+              if (!args.command) return 'ERROR: command is required for cron add';
+              const entry = `${args.schedule} ${args.command}`;
+              const cmd = `(crontab ${cronFlag} -l 2>/dev/null; echo "${entry}") | crontab ${cronFlag} - && echo "Cron entry added: ${entry}"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            case 'remove': {
+              if (!args.command) return 'ERROR: command (substring to match) is required for cron remove';
+              const escaped = args.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const cmd = `crontab ${cronFlag} -l 2>/dev/null | grep -v "${escaped}" | crontab ${cronFlag} - && echo "Matching cron entries removed"`;
+              const { out, exitCode } = await sysRun(cmd, 15000);
+              return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
+            }
+            default:
+              return `ERROR: Unknown cron_action: ${args.cron_action}`;
+          }
+        }
+
+        case 'ssl_check': {
+          if (!args.domain && !args.cert_path) return 'ERROR: domain or cert_path is required for ssl_check';
+          let sslCmd;
+          if (args.cert_path) {
+            sslCmd = `openssl x509 -in ${args.cert_path} -noout -text 2>&1 | grep -E 'Subject:|Issuer:|Not Before|Not After|DNS:'`;
+          } else {
+            sslCmd = `echo | openssl s_client -connect ${args.domain}:443 -servername ${args.domain} 2>/dev/null | openssl x509 -noout -text 2>&1 | grep -E 'Subject:|Issuer:|Not Before|Not After|DNS:'`;
+          }
+          const { out, exitCode } = await sysRun(sslCmd, 20000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
+        }
+
+        case 'log_tail': {
+          if (!args.path) return 'ERROR: path is required for log_tail';
+          const lines = args.lines || 100;
+          const cmd = `tail -n ${lines} ${args.path} 2>&1`;
+          const { out, exitCode } = await sysRun(cmd, 15000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(empty log)';
+        }
+
+        case 'find_large': {
+          const p = args.path || '/';
+          const limit = args.limit || 20;
+          const minSize = args.min_size || '100M';
+          const cmd = `find ${p} -xdev -type f -size +${minSize} 2>/dev/null | xargs du -sh 2>/dev/null | sort -rh | head -${limit}`;
+          const { out, exitCode } = await sysRun(cmd, 60000);
+          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `(no files larger than ${minSize} in ${p})`;
+        }
+
+        default:
+          return `ERROR: Unknown sysadmin action: ${args.action}`;
+      }
     }
 
     default:
