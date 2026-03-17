@@ -428,6 +428,8 @@ async function executeSingleTool(prep, quiet = false) {
     }
   }
 
+  if (_serverHooks?.onToolStart) { _serverHooks.onToolStart(prep.fnName, prep.args); }
+
   const toolResult = await executeToolRouted(prep.fnName, prep.args, {
     silent: true,
     autoConfirm: prep.confirmedByUser === true,
@@ -447,6 +449,8 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(summary);
   }
 
+  if (_serverHooks?.onToolEnd) { _serverHooks.onToolEnd(prep.fnName, summary, !isError); }
+
   const postHookResults = runHooks('post-tool', { tool_name: prep.fnName });
   if (!quiet && postHookResults.length > 0) {
     for (const result of postHookResults) {
@@ -457,7 +461,7 @@ async function executeSingleTool(prep, quiet = false) {
       }
     }
   }
-  
+
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated);
   const msg = { role: 'tool', content: compressedContent, tool_call_id: prep.callId };
@@ -1099,11 +1103,17 @@ async function _staleRecoveryPrompt() {
   });
 }
 
+// Module-level server hooks — set by processInput in server mode, null in normal CLI mode.
+let _serverHooks = null;
+
 /**
  * Process a single user input through the agentic loop.
  * Maintains conversation state across calls.
+ * @param {string} userInput
+ * @param {{ onToken?: Function, onThinkingToken?: Function, onToolStart?: Function, onToolEnd?: Function } | null} [serverHooks]
  */
-async function processInput(userInput) {
+async function processInput(userInput, serverHooks = null) {
+  _serverHooks = serverHooks;
   const userContent = buildUserContent(userInput);
   conversationMessages.push({ role: 'user', content: userContent });
   trimConversationHistory();
@@ -1291,11 +1301,19 @@ async function processInput(userInput) {
           // Thinking-model reasoning tokens: reset stale timer but don't display
           lastTokenTime = Date.now();
           staleWarned = false;
+          if (_serverHooks?.onThinkingToken) { _serverHooks.onThinkingToken(); }
         },
         onToken: (text) => {
           lastTokenTime = Date.now();
           staleWarned = false;
-          
+
+          // In server mode: forward token to hook, skip all TTY handling
+          if (_serverHooks?.onToken) {
+            _serverHooks.onToken(text);
+            streamedText += text;
+            return;
+          }
+
           // In non-TTY (headless) mode: flush immediately — no buffering needed
           // In TTY mode: batch tokens for 100ms to reduce cursor flicker
           tokenBuffer += text;
@@ -1626,7 +1644,8 @@ async function processInput(userInput) {
         // the terminal handles blinking natively so it works even for sub-ms tools
         process.stdout.write(formatSectionHeader(prepared, totalSteps, false, 'blink'));
         _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
-      } else {
+      } else if (!_serverHooks) {
+        // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
         process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
       }
     } else if (_showStepHeader) {
