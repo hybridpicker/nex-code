@@ -1017,17 +1017,20 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'deploy',
-      description: 'Deploy files to a remote server via rsync + optional remote script. Can use a named config from .nex/deploy.json (e.g. deploy("prod")) or explicit params. Requires confirmation before executing.',
+      description: 'Deploy to a remote server. Supports two methods: "rsync" (sync local files) and "git" (git pull on remote). Can use a named config from .nex/deploy.json. Requires confirmation before executing.',
       parameters: {
         type: 'object',
         properties: {
           config: { type: 'string', description: 'Named deploy config from .nex/deploy.json (e.g. "prod"). Overrides all other params if provided.' },
+          method: { type: 'string', enum: ['rsync', 'git'], description: 'Deploy method: "rsync" syncs local files (default), "git" runs git pull on the remote.' },
           server: { type: 'string', description: 'Profile name or "user@host". Required if no config.' },
-          local_path: { type: 'string', description: 'Local directory or file to sync (e.g. "dist/", "./build"). Required if no config.' },
-          remote_path: { type: 'string', description: 'Remote destination path (e.g. "/var/www/app"). Required if no config.' },
-          deploy_script: { type: 'string', description: 'Shell command to run on the remote after sync. Optional.' },
-          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from sync. Optional.' },
-          dry_run: { type: 'boolean', description: 'Show what would be synced without actually syncing. Default: false.' },
+          remote_path: { type: 'string', description: 'Remote project directory. Required for git method; destination path for rsync.' },
+          local_path: { type: 'string', description: 'Local directory or file to sync. Required for rsync method.' },
+          branch: { type: 'string', description: 'Branch to pull (git method only). Defaults to current remote branch.' },
+          deploy_script: { type: 'string', description: 'Shell command(s) to run on the remote after sync/pull (e.g. "npm ci && systemctl restart myapp"). Optional.' },
+          health_check: { type: 'string', description: 'URL (HTTP GET) or shell command to verify the service is healthy after deploy. If it fails, the deploy is marked as failed. Optional.' },
+          exclude: { type: 'array', items: { type: 'string' }, description: 'Paths to exclude from rsync. Optional.' },
+          dry_run: { type: 'boolean', description: 'Show what would happen without executing. Default: false.' },
         },
         required: [],
       },
@@ -2232,50 +2235,110 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       if (!args.server) return 'ERROR: server is required (or use config: "<name>")';
-      if (!args.local_path) return 'ERROR: local_path is required';
       if (!args.remote_path) return 'ERROR: remote_path is required';
+
+      const method = args.method || 'rsync';
+      if (method === 'rsync' && !args.local_path) return 'ERROR: local_path is required for rsync method';
 
       let profile;
       try { profile = resolveProfile(args.server); } catch (e) { return `ERROR: ${e.message}`; }
 
       const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
-      const portFlag = profile.port && Number(profile.port) !== 22 ? `-e "ssh -p ${profile.port}"` : '';
-      const keyFlag = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}"` : '';
-      const sshFlags = profile.key ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}${profile.port && Number(profile.port) !== 22 ? ` -p ${profile.port}` : ''}"` : portFlag;
-      const excludeFlags = (args.exclude || []).map(e => `--exclude="${e}"`).join(' ');
-      const dryRun = args.dry_run ? '--dry-run' : '';
 
-      const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
-      const rsyncCmd = `rsync -avz --delete ${dryRun} ${excludeFlags} ${sshFlags} ${localPath} ${target}:${args.remote_path}`.trim().replace(/\s+/g, ' ');
-
+      // ── Confirmation ──────────────────────────────────────────
       if (!args.dry_run && !options.autoConfirm) {
-        console.log(`\n${C.yellow}  ⚠ Deploy: ${localPath} → ${target}:${args.remote_path}${C.reset}`);
+        if (method === 'git') {
+          const branchLabel = args.branch ? ` (branch: ${args.branch})` : '';
+          console.log(`\n${C.yellow}  ⚠ Deploy [git pull]: ${target}:${args.remote_path}${branchLabel}${C.reset}`);
+        } else {
+          const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
+          console.log(`\n${C.yellow}  ⚠ Deploy [rsync]: ${localPath} → ${target}:${args.remote_path}${C.reset}`);
+        }
         if (args.deploy_script) console.log(`${C.yellow}  Then run: ${args.deploy_script}${C.reset}`);
+        if (args.health_check) console.log(`${C.yellow}  Health check: ${args.health_check}${C.reset}`);
         const ok = await confirm('  Proceed with deployment?');
         if (!ok) return 'CANCELLED: User declined.';
       }
 
-      let output = '';
-      try {
-        const { stdout, stderr } = await exec(rsyncCmd, { timeout: 120000 });
-        output = (stdout || stderr || '').trim();
-      } catch (e) {
-        return `ERROR (rsync): ${(e.stderr || e.message || '').toString().trim()}`;
-      }
+      let syncOutput = '';
 
-      if (args.dry_run) return `DRY RUN:\n${output || '(nothing to sync)'}`;
-
-      let remoteResult = '';
-      if (args.deploy_script) {
-        const { stdout, stderr, exitCode, error } = await sshExec(profile, args.deploy_script, { timeout: 60000 });
-        const remoteOut = [stdout, stderr].filter(Boolean).join('\n').trim();
-        if (exitCode !== 0) {
-          return `rsync OK\n\nERROR (deploy_script, exit ${exitCode}):\n${error || remoteOut}`;
+      // ── Sync step ─────────────────────────────────────────────
+      if (method === 'git') {
+        const pullCmd = args.branch
+          ? `cd ${args.remote_path} && git fetch origin && git checkout ${args.branch} && git pull origin ${args.branch}`
+          : `cd ${args.remote_path} && git pull`;
+        if (args.dry_run) {
+          return `DRY RUN [git]: would run on ${target}:\n  ${pullCmd}${args.deploy_script ? `\n  ${args.deploy_script}` : ''}`;
         }
-        remoteResult = `\n\nRemote script output:\n${remoteOut || '(no output)'}`;
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, pullCmd, { timeout: 120000 });
+        syncOutput = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          return `ERROR (git pull, exit ${exitCode}):\n${error || syncOutput}`;
+        }
+      } else {
+        const sshFlags = profile.key
+          ? `-e "ssh -i ${profile.key.replace(/^~/, require('os').homedir())}${profile.port && Number(profile.port) !== 22 ? ` -p ${profile.port}` : ''}"`
+          : profile.port && Number(profile.port) !== 22 ? `-e "ssh -p ${profile.port}"` : '';
+        const excludeFlags = (args.exclude || []).map(e => `--exclude="${e}"`).join(' ');
+        const dryRunFlag = args.dry_run ? '--dry-run' : '';
+        const localPath = args.local_path.endsWith('/') ? args.local_path : `${args.local_path}/`;
+        const rsyncCmd = `rsync -avz --delete ${dryRunFlag} ${excludeFlags} ${sshFlags} ${localPath} ${target}:${args.remote_path}`.trim().replace(/\s+/g, ' ');
+        try {
+          const { stdout, stderr } = await exec(rsyncCmd, { timeout: 120000 });
+          syncOutput = (stdout || stderr || '').trim();
+        } catch (e) {
+          return `ERROR (rsync): ${(e.stderr || e.message || '').toString().trim()}`;
+        }
+        if (args.dry_run) return `DRY RUN [rsync]:\n${syncOutput || '(nothing to sync)'}`;
       }
 
-      return `Deployed ${localPath} → ${target}:${args.remote_path}\n${output}${remoteResult}`.trim();
+      // ── Post-deploy script ────────────────────────────────────
+      let scriptOutput = '';
+      if (args.deploy_script) {
+        const { stdout, stderr, exitCode, error } = await sshExec(profile, args.deploy_script, { timeout: 120000 });
+        const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+        if (exitCode !== 0) {
+          return `${method === 'git' ? 'git pull' : 'rsync'} OK\n\nERROR (deploy_script, exit ${exitCode}):\n${error || out}`;
+        }
+        scriptOutput = `\n\nDeploy script output:\n${out || '(no output)'}`;
+      }
+
+      // ── Health check ──────────────────────────────────────────
+      let healthOutput = '';
+      if (args.health_check) {
+        const hc = args.health_check.trim();
+        const isUrl = /^https?:\/\//.test(hc);
+        if (isUrl) {
+          try {
+            const fetch = require('node-fetch');
+            const res = await Promise.race([
+              fetch(hc),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000)),
+            ]);
+            if (res.ok) {
+              healthOutput = `\n\nHealth check: ✓ ${hc} → ${res.status}`;
+            } else {
+              healthOutput = `\n\nHealth check FAILED: ${hc} → HTTP ${res.status}`;
+              return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+            }
+          } catch (e) {
+            healthOutput = `\n\nHealth check FAILED: ${hc} → ${e.message}`;
+            return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+          }
+        } else {
+          // Treat as remote shell command
+          const { stdout, stderr, exitCode } = await sshExec(profile, hc, { timeout: 15000 });
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim();
+          if (exitCode !== 0) {
+            healthOutput = `\n\nHealth check FAILED (exit ${exitCode}): ${out}`;
+            return (method === 'git' ? `git pull OK` : `rsync OK`) + syncOutput + scriptOutput + healthOutput;
+          }
+          healthOutput = `\n\nHealth check: ✓ ${out || '(exit 0)'}`;
+        }
+      }
+
+      const methodLabel = method === 'git' ? `${target}:${args.remote_path}` : `${args.local_path} → ${target}:${args.remote_path}`;
+      return `Deployed [${method}] ${methodLabel}\n${syncOutput}${scriptOutput}${healthOutput}`.trim();
     }
 
     default:
