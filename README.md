@@ -1,5 +1,5 @@
 ```
-▀▄ ▀▄   nex-code  v0.3.x
+▀▄ ▀▄   nex-code  v0.3.45x
 █████   qwen3-coder:480b  ·  /help
 ▄███▄
 ```
@@ -1014,7 +1014,7 @@ Project-local configuration and state (gitignored):
 
 ## Performance
 
-Nex Code v0.3.7+ includes comprehensive performance optimizations:
+Nex Code v0.3.45+ includes comprehensive performance optimizations:
 
 | Optimization | Improvement | Impact |
 |--------------|-------------|--------|

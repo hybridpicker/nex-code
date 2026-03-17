@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 
 const PRICING = {
   'openai': {
@@ -246,19 +247,16 @@ function loadCostLimits() {
 function saveCostLimits() {
   const configDir = path.join(process.cwd(), '.nex');
   const configPath = path.join(configDir, 'config.json');
-
-  let config = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  config.costLimits = costLimits;
   if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+  withFileLockSync(configPath, () => {
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+    }
+    config.costLimits = costLimits;
+    atomicWrite(configPath, JSON.stringify(config, null, 2));
+  });
 }
 
 /**
