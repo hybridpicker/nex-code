@@ -1778,7 +1778,7 @@ async function startREPL() {
       rl.prompt();
     } else {
       // 1st Ctrl+C at prompt: warn, reset after 2s
-      process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
+      console.log(`${C.dim}  (Press Ctrl+C again to exit)${C.reset}`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
@@ -1911,11 +1911,14 @@ async function startREPL() {
 
   function _clearSug() {
     if (_sugN > 0) {
-      // Use relative cursor movement (scroll-safe, unlike \x1b[s/\x1b[u])
-      let s = '';
-      for (let i = 0; i < _sugN; i++) s += '\x1b[1B\x1b[2K';
-      s += `\x1b[${_sugN}A`;
-      process.stdout.write(s);
+      // Erase suggestion rows at bottom of scroll region using absolute positioning.
+      const scrollEnd = footer._scrollEnd;
+      let s = '\x1b7'; // DECSC: save cursor
+      for (let i = 0; i < _sugN; i++) {
+        s += `\x1b[${scrollEnd - _sugN + 1 + i};1H\x1b[2K`;
+      }
+      s += '\x1b8'; // DECRC: restore cursor
+      footer.rawWrite(s);
       _sugN = 0;
     }
   }
@@ -1923,26 +1926,29 @@ async function startREPL() {
   function _showSug(line) {
     const hits = [...SLASH_COMMANDS, ...getSkillCommands()].filter((c) => c.cmd.startsWith(line));
     if (!hits.length || (hits.length === 1 && hits[0].cmd === line)) return;
-    const maxShow = 10;
+    const scrollEnd = footer._scrollEnd;
+    const maxShow = Math.min(10, scrollEnd - 2);
+    if (maxShow < 1) return;
     const show = hits.slice(0, maxShow);
     const padLen = Math.max(...show.map((c) => c.cmd.length));
-    let buf = '';
-    for (const { cmd, desc } of show) {
+    _sugN = show.length;
+    if (hits.length > maxShow) _sugN++;
+
+    // Draw ABOVE the status bar, at bottom of scroll region.
+    const startRow = scrollEnd - _sugN + 1;
+    let buf = '\x1b7'; // DECSC: save cursor
+    for (let i = 0; i < show.length; i++) {
+      const { cmd, desc } = show[i];
       const typed = cmd.substring(0, line.length);
       const rest = cmd.substring(line.length);
       const gap = ' '.repeat(Math.max(0, padLen - cmd.length + 2));
-      buf += `\n\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+      buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
     }
-    _sugN = show.length;
     if (hits.length > maxShow) {
-      buf += `\n\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
-      _sugN++;
+      buf += `\x1b[${startRow + show.length};1H\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
     }
-    // Move back up using relative movement (scroll-safe)
-    // Then restore cursor column (prompt length + cursor position)
-    const promptVisible = rl._prompt.replace(/\x1b\[[0-9;]*m/g, '').length;
-    buf += `\x1b[${_sugN}A\x1b[${promptVisible + rl.cursor + 1}G`;
-    process.stdout.write(buf);
+    buf += '\x1b8'; // DECRC: restore cursor to input row
+    footer.rawWrite(buf);
   }
 
   if (process.stdin.isTTY) {
