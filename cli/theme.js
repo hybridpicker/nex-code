@@ -5,9 +5,11 @@
  * terminal-background-independent color palette for both modes.
  *
  * Detection priority:
- *   1. COLORFGBG env var ("fg;bg") — bg 0-6 = dark, 7+ = light
- *   2. TERM_PROGRAM = Apple_Terminal → light (macOS default white bg)
- *   3. Default → dark (iTerm2, Ghostty, WezTerm, Alacritty, Hyper, etc.)
+ *   1. NEX_THEME=light|dark   — explicit override (env var)
+ *   2. COLORFGBG env var      — "fg;bg": bg 0-6 = dark, 7+ = light
+ *   3. OSC 11 query + cache   — queries actual terminal background colour
+ *      Cached per TERM_SESSION_ID in ~/.nex-code/.theme_cache.json
+ *   4. Default → dark
  */
 
 'use strict';
@@ -18,15 +20,120 @@ const DIM   = '\x1b[2m';
 
 function rgb(r, g, b) { return `\x1b[38;2;${r};${g};${b}m`; }
 
+// ── OSC 11 background-colour query ───────────────────────────────────────────
+
+function _queryBgViaPython() {
+  if (!process.stdout.isTTY) return null;
+  try {
+    const { execFileSync } = require('child_process');
+    // Python3 script: set raw mode, send OSC 11 query, read response with 0.1 s timeout.
+    // Uses bytes() literals to avoid any escape-sequence confusion inside the -c string.
+    const script = [
+      'import sys,os,tty,termios,select',
+      "f=open('/dev/tty','r+b',buffering=0)",
+      'fd=f.fileno()',
+      's=termios.tcgetattr(fd)',
+      'try:',
+      ' tty.setraw(fd)',
+      // ESC ] 1 1 ; ? ESC \
+      ' f.write(bytes([0x1b,0x5d,0x31,0x31,0x3b,0x3f,0x1b,0x5c]))',
+      ' r=select.select([fd],[],[],0.1)[0]',
+      " d=b''",
+      ' if r:',
+      '  while True:',
+      '   r2=select.select([fd],[],[],0.05)[0]',
+      '   if not r2:break',
+      '   c=os.read(fd,1)',
+      '   d+=c',
+      // stop at BEL (0x07) or ST (ESC \)
+      '   if d[-1:]==bytes([0x07]) or d[-2:]==bytes([0x1b,0x5c]):break',
+      ' sys.stdout.buffer.write(d)',
+      'finally:',
+      ' termios.tcsetattr(fd,termios.TCSADRAIN,s)',
+      ' f.close()',
+    ].join('\n');
+
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'buffer',
+      timeout: 400,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const text = out.toString('utf8');
+    // Response format: rgb:RRRR/GGGG/BBBB  (4 hex digits each, first 2 = 8-bit value)
+    const m = text.match(/rgb:([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)/);
+    if (m) {
+      const r = parseInt(m[1].slice(0, 2), 16);
+      const g = parseInt(m[2].slice(0, 2), 16);
+      const b = parseInt(m[3].slice(0, 2), 16);
+      // Relative luminance: < 128 → dark background
+      return (0.299 * r + 0.587 * g + 0.114 * b) < 128;
+    }
+  } catch (e) { /* python3 not available or terminal doesn't support OSC 11 */ }
+  return null;
+}
+
+// ── File cache keyed by TERM_SESSION_ID ──────────────────────────────────────
+
+function _cacheFile() {
+  const os   = require('os');
+  const path = require('path');
+  return path.join(os.homedir(), '.nex-code', '.theme_cache.json');
+}
+
+function _readCache(key) {
+  try {
+    const fs  = require('fs');
+    const raw = fs.readFileSync(_cacheFile(), 'utf8');
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj[key] === 'boolean') return obj[key];
+  } catch (e) {}
+  return null;
+}
+
+function _writeCache(key, value) {
+  try {
+    const fs   = require('fs');
+    const path = require('path');
+    const file = _cacheFile();
+    const dir  = path.dirname(file);
+    let obj = {};
+    try { obj = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+    obj[key] = value;
+    // Keep the cache small — drop oldest entries when > 50 keys
+    const keys = Object.keys(obj);
+    if (keys.length > 50) keys.slice(0, keys.length - 50).forEach(k => delete obj[k]);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(obj), 'utf8');
+  } catch (e) {}
+}
+
+// ── Main detection ────────────────────────────────────────────────────────────
+
 function detectDarkBackground() {
+  // 1. Explicit user override
+  const nex = (process.env.NEX_THEME || '').toLowerCase();
+  if (nex === 'light') return false;
+  if (nex === 'dark')  return true;
+
+  // 2. COLORFGBG ("foreground;background" — last segment is bg index)
   const colorfgbg = process.env.COLORFGBG;
   if (colorfgbg) {
     const parts = colorfgbg.split(';');
     const bg = parseInt(parts[parts.length - 1], 10);
     if (!isNaN(bg)) return bg < 8;
   }
-  if (process.env.TERM_PROGRAM === 'Apple_Terminal') return false;
-  return true;
+
+  // 3. OSC 11 query — cached per terminal session (TERM_SESSION_ID is unique
+  //    per Apple Terminal window/tab; use 'default' for other terminals).
+  const sessionKey = process.env.TERM_SESSION_ID || 'default';
+  const cached = _readCache(sessionKey);
+  if (cached !== null) return cached;
+
+  // Cache miss → query the terminal directly
+  const queried = _queryBgViaPython();
+  const result  = queried !== null ? queried : true; // fallback: dark
+  _writeCache(sessionKey, result);
+  return result;
 }
 
 const isDark = detectDarkBackground();
