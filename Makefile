@@ -6,13 +6,12 @@
 all: clean build test
 
 # Build target - compiles TypeScript
-build: dist
-	dist:
+build:
 	npx tsc
 
 # Test target - runs Jest tests
 test:
-	npx jest --coverage
+	jest --coverage
 
 # Clean target - removes dist directory
 clean:
@@ -20,5 +19,3 @@ clean:
 
 # Dependency chain
 # all depends on clean, build, and test
-# build depends on dist directory being created
-# clean removes dist directory

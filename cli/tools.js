@@ -226,6 +226,11 @@ function enrichBashError(errorOutput, command) {
     hints.push('HINT: SSH connection timed out. Check if the host is reachable: ping <host> and verify the port with: nc -zv <host> 22');
   }
 
+  // Backup pattern warnings
+  if (/cp.*\$f.*\$f\.bak.*sed.*-i\.bak|sed.*-i\.bak.*cp.*\$f.*\$f\.bak/i.test(command)) {
+    hints.push('HINT: Using both cp with .bak and sed -i.bak creates double backups (.bak.bak). Choose one method: either cp "$f" "$f.bak" OR sed -i.bak, not both.');
+  }
+
   if (hints.length === 0) return errorOutput;
   return errorOutput + '\n\n' + hints.join('\n');
 }
@@ -244,8 +249,9 @@ function autoFixEdit(content, oldText, newText) {
   const similar = findMostSimilar(content, oldText);
   if (!similar) return null;
 
-  // Auto-apply threshold: ≤ 5% of target length or ≤ 3 chars difference
-  const threshold = Math.max(3, Math.ceil(oldText.length * 0.05));
+  // Auto-apply threshold: ≤ 3% of target length or ≤ 2 chars difference
+  // More conservative to prevent edit loops
+  const threshold = Math.max(2, Math.ceil(oldText.length * 0.03));
   if (similar.distance > threshold) return null;
 
   return {

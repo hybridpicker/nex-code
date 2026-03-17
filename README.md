@@ -1,10 +1,7 @@
 ```
-███╗   ██╗███████╗██╗  ██╗  ━   ██████╗ ██████╗ ██████╗ ███████╗
-████╗  ██║██╔════╝╚██╗██╔╝  ━  ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-██╔██╗ ██║█████╗   ╚███╔╝   ━  ██║     ██║   ██║██║  ██║█████╗
-██║╚██╗██║██╔══╝   ██╔██╗   ━  ██║     ██║   ██║██║  ██║██╔══╝
-██║ ╚████║███████╗██╔╝ ██╗  ━  ╚██████╗╚██████╔╝██████╔╝███████╗
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ━   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+▀▄ ▀▄   nex-code  v0.3.x
+█████   qwen3-coder:480b  ·  /help
+▄███▄
 ```
 
 <p align="center">
@@ -22,7 +19,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-1944-blue.svg" alt="Tests: 1944">
+  <img src="https://img.shields.io/badge/tests-2059-blue.svg" alt="Tests: 2059">
 </p>
 
 ---
@@ -87,7 +84,7 @@ npm update -g nex-code
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
-| **Test coverage** | 1825 tests, 84% | — | — | — |
+| **Test coverage** | 2059 tests, 84% | — | — | — |
 
 ---
 
@@ -158,6 +155,7 @@ FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
 NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
 NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
 NEX_LANGUAGE=auto              # Response language: "auto" (mirrors user's language, default) or e.g. "English", "Deutsch"
+FOOTER_DEBUG=1                 # Write terminal layout debug log to /tmp/footer-debug.log
 ```
 
 ### Verify
@@ -338,6 +336,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/allow <tool>` | Auto-allow a tool |
 | `/deny <tool>` | Block a tool |
 | `/plan [task]` | Plan mode (analyze before executing) |
+| `/plan edit` | Open current plan in `$EDITOR` for review/modification |
 | `/plans` | List saved plans |
 | `/auto [level]` | Set autonomy: interactive/semi-auto/autonomous |
 | `/commit [msg]` | Smart commit (analyze diff, suggest message) |
@@ -346,9 +345,12 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/mcp` | MCP servers and tools |
 | `/hooks` | Show configured hooks |
 | `/skills` | List, enable, disable skills |
+| `/tree [depth]` | Show project file tree (default depth 3) |
 | `/undo` | Undo last file change |
 | `/redo` | Redo last undone change |
 | `/history` | Show file change history |
+| `/snapshot [name]` | Create a named git snapshot of current changes |
+| `/restore [name\|last]` | Restore a previously created snapshot |
 | `/review [--strict] [file]` | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
 | `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
 | `/setup` | Interactive setup wizard — configure provider, API keys, web search |
@@ -526,9 +528,9 @@ deploy the latest build to prod
 ## Features
 
 ### Compact Output
-The agent loop uses a single spinner during tool execution, then prints compact 1-line summaries:
+The agent loop uses a bouncing-ball spinner (`● · · · ·` → `· ● · · ·` → …) during tool execution, then prints compact 1-line summaries:
 ```
-  ⠋ ▸ 3 tools: read_file, grep, edit_file
+  ●     ▸ 3 tools: read_file, grep, edit_file
   ✓ read_file src/app.js (45 lines)
   ✓ grep TODO → 12 matches
   ✗ edit_file src/x.js → old_text not found
@@ -556,7 +558,7 @@ The system prompt enforces substantive responses: the model always presents find
 - **In-Memory Indexing**: A background indexing engine (using `ripgrep` or a fast fallback) keeps project file paths in RAM for instant file discovery, path auto-fixing, and glob searches.
 
 ### Streaming Output
-Tokens appear live as the model generates them. Braille spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
+Tokens appear live as the model generates them. Bouncing-ball spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Paste Detection
 Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input. A `[Pasted content — N lines]` indicator is shown with a preview of the first line. The user must press Enter to send — pasted content never auto-fires. The paste handler stores the combined text and waits for explicit submission.
@@ -636,12 +638,35 @@ The agent uses the `brain_write` tool to save discoveries automatically. All wri
 ### Plan Mode
 Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made:
 ```
-/plan refactor the auth module   # enter plan mode
-/plan status                     # show plan progress
+/plan refactor the auth module   # enter plan mode with optional task
+/plan status                     # show extracted steps with status icons
+/plan edit                       # open plan in $EDITOR (nano/vim/code) to modify
 /plan approve                    # approve and exit plan mode (all tools re-enabled)
 /auto semi-auto                  # set autonomy level
 ```
-Plan mode is **hard-enforced**: only read-only tools (`read_file`, `list_directory`, `search_files`, `glob`, `grep`, `web_search`, `web_fetch`, `git_status`, `git_diff`, `git_log`, `git_show`, `ask_user`) are available. Any attempt to call a write tool is blocked at the API level — the LLM cannot make changes even if it tries. The plan text is saved to `.nex/plans/current-plan.md` for review.
+Plan mode is **hard-enforced**: only read-only tools (`read_file`, `list_directory`, `search_files`, `glob`, `grep`, `web_search`, `web_fetch`, `git_status`, `git_diff`, `git_log`, `git_show`, `ask_user`) are available. Any attempt to call a write tool is blocked at the API level.
+
+**Step extraction**: when the LLM outputs a numbered plan, steps are automatically parsed into a structured list. During execution the spinner shows `Plan step 2/4: Implement tests` and `/plan status` shows per-step progress (○ pending → → in progress → ✓ done). The plan text is saved to `.nex/plans/current-plan.md`.
+
+### Snapshots
+Named git snapshots — save and restore working-tree state at any point:
+```
+/snapshot before-refactor   # create snapshot named "before-refactor"
+/snapshot list               # list all saved snapshots
+/restore last                # restore most recent snapshot
+/restore before-refactor     # restore by name
+/restore list                # show all available snapshots
+```
+Snapshots use `git stash` internally — no extra state files. The working tree is restored immediately after stashing so your changes are preserved. Use `/restore` when you want to roll back to a known-good state.
+
+### File Tree
+Visualize the project structure:
+```
+/tree          # show tree at depth 3
+/tree 2        # shallower view
+/tree 5        # deeper view (max 8)
+```
+Automatically excludes `node_modules`, `.git`, `dist`, `build`, `coverage`, and all entries listed in `.gitignore`. Directories are sorted before files.
 
 ### Undo / Redo
 In-session undo/redo for all file changes (write, edit, patch):
@@ -651,6 +676,11 @@ In-session undo/redo for all file changes (write, edit, patch):
 /history             # show file change history
 ```
 Undo stack holds up to 50 changes. `/clear` resets the history.
+
+> **Snapshots vs Undo**: `/undo` operates on the in-memory change stack for fine-grained per-file rollback within a session. `/snapshot` + `/restore` use git stash for broader checkpoints across multiple files or sessions.
+
+### Desktop Notifications
+On macOS, nex-code fires a system notification when a task completes after ≥ 30 seconds — useful when running long autonomous tasks in the background. No configuration needed; requires macOS Notification Center access.
 
 ### Task Management
 Create structured task lists for complex multi-step operations:
@@ -669,7 +699,7 @@ When the agent creates a task list, a **live animated display** replaces the sta
      ◻ Update cli/index.js
      ◻ Run tests
 ```
-- Animated spinner header with elapsed time and cumulative token count
+- Bouncing-ball spinner (`●` ping-pong across 5 positions) with elapsed time display
 - Per-task status icons: `✔` done, `◼` in progress, `◻` pending, `✗` failed
 - Automatically pauses during text streaming and resumes during tool execution
 - Falls back to the static `/tasks` view when no live display is active
@@ -898,24 +928,25 @@ cli/
 ├── skills.js            # Skills system (prompt + script skills)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
 ├── hooks.js             # Hook system (pre/post events)
-├── context.js           # Auto-context (package.json, git, README)
+├── context.js           # Auto-context (package.json, git, README) + generateFileTree()
 ├── context-engine.js    # Token management + context compression
 ├── session.js           # Session persistence (.nex/sessions/)
 ├── memory.js            # Project memory (.nex/memory/ + NEX.md)
 ├── permissions.js       # Tool permission system
-├── planner.js           # Plan mode + autonomy levels
+├── planner.js           # Plan mode, step extraction, step cursor, autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
 ├── render.js            # Markdown + syntax highlighting + StreamRenderer + EPIPE guard
 ├── format.js            # Tool call formatting, result formatting, compact summaries
 ├── spinner.js           # Spinner, MultiProgress, TaskProgress display components
 ├── diff.js              # LCS diff (Myers + Hirschberg) + colored output + side-by-side view
 ├── fuzzy-match.js       # Fuzzy text matching for edit auto-fix (Levenshtein, whitespace normalization)
-├── file-history.js      # In-session undo/redo for file changes
+├── file-history.js      # In-session undo/redo + named git snapshots
 ├── picker.js            # Interactive terminal picker (model selection)
 ├── costs.js             # Token cost tracking + per-provider budget limits
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
 ├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
+├── footer.js            # Sticky footer (scroll region, status bar, input row, resize, FOOTER_DEBUG)
 ├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
 ├── index-engine.js      # In-memory file index (ripgrep/fallback)
 ├── auto-fix.js          # Path resolution, edit matching, bash error hints
@@ -995,7 +1026,7 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-47 test suites, 1825 tests, 84% statement / 77% branch coverage.
+57 test suites, 2059 tests, 84% statement / 77% branch coverage.
 
 CI runs on GitHub Actions (Node 18/20/22).
 

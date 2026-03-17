@@ -36,6 +36,7 @@ const SLASH_COMMANDS = [
   { cmd: '/budget', desc: 'Show/set cost limits per provider' },
   { cmd: '/clear', desc: 'Clear conversation' },
   { cmd: '/context', desc: 'Show project context' },
+  { cmd: '/tree [depth]', desc: 'Show project file tree (default depth 3)' },
   { cmd: '/autoconfirm', desc: 'Toggle auto-confirm' },
   { cmd: '/save', desc: 'Save session' },
   { cmd: '/load', desc: 'Load a saved session' },
@@ -61,6 +62,7 @@ const SLASH_COMMANDS = [
   { cmd: '/allow', desc: 'Auto-allow a tool' },
   { cmd: '/deny', desc: 'Block a tool' },
   { cmd: '/plan', desc: 'Plan mode (analyze before executing)' },
+  { cmd: '/plan edit', desc: 'Open current plan in $EDITOR' },
   { cmd: '/plans', desc: 'List saved plans' },
   { cmd: '/auto', desc: 'Set autonomy level' },
   { cmd: '/commit', desc: 'Smart commit (diff + message)' },
@@ -79,6 +81,8 @@ const SLASH_COMMANDS = [
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
+  { cmd: '/snapshot [name]', desc: 'Create a named git snapshot of current changes' },
+  { cmd: '/restore [name|last]', desc: 'Restore a previously created snapshot' },
   { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
 ];
@@ -439,6 +443,16 @@ async function handleSlashCommand(input, rl) {
     case '/context':
       await printContext(CWD);
       return true;
+
+    case '/tree': {
+      const { generateFileTree } = require('./context');
+      const depthArg = parseInt(rest.join(' ').trim(), 10);
+      const depth = !isNaN(depthArg) && depthArg > 0 ? Math.min(depthArg, 8) : 3;
+      const tree = generateFileTree(CWD, { maxDepth: depth, maxFiles: 300 });
+      console.log(`\n${C.bold}${C.cyan}Project tree${C.reset}${C.dim} (depth ${depth})${C.reset}\n`);
+      console.log(`${C.dim}${tree}${C.reset}\n`);
+      return true;
+    }
 
     case '/autoconfirm': {
       const newVal = !getAutoConfirm();
@@ -922,7 +936,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/plan': {
-      const { getActivePlan, approvePlan, startExecution, setPlanMode, getPlanContent, formatPlan } = require('./planner');
+      const { getActivePlan, approvePlan, startExecution, setPlanMode, getPlanContent, getPlanContent: getPlanText, formatPlan, extractStepsFromText, createPlan } = require('./planner');
       const { invalidateSystemPromptCache } = require('./agent');
       const arg = rest.join(' ').trim();
       if (arg === 'status') {
@@ -930,13 +944,50 @@ async function handleSlashCommand(input, rl) {
         console.log(formatPlan(plan));
         return true;
       }
+      if (arg === 'edit') {
+        // Open current plan in $EDITOR for review/modification
+        const planContent = getPlanContent();
+        if (!planContent) {
+          console.log(`${C.yellow}No plan to edit. Generate a plan first with /plan${C.reset}`);
+          return true;
+        }
+        const os = require('os');
+        const tmpPath = require('path').join(os.tmpdir(), `nex-plan-${Date.now()}.md`);
+        require('fs').writeFileSync(tmpPath, planContent, 'utf-8');
+        const editor = process.env.EDITOR || process.env.VISUAL || 'nano';
+        const { spawnSync } = require('child_process');
+        console.log(`${C.dim}Opening plan in ${editor}... (save and close to update)${C.reset}`);
+        const result = spawnSync(editor, [tmpPath], { stdio: 'inherit' });
+        if (result.status === 0) {
+          const { setPlanContent } = require('./planner');
+          const updated = require('fs').readFileSync(tmpPath, 'utf-8');
+          setPlanContent(updated);
+          // Re-extract steps from updated content
+          const newSteps = extractStepsFromText(updated);
+          if (newSteps.length > 0) {
+            const existing = getActivePlan();
+            const taskDesc = existing?.task || 'Task';
+            createPlan(taskDesc, newSteps);
+            console.log(`${C.green}Plan updated — ${newSteps.length} steps extracted.${C.reset}`);
+          } else {
+            console.log(`${C.green}Plan updated.${C.reset}`);
+          }
+        } else {
+          console.log(`${C.yellow}Editor exited with error — plan unchanged.${C.reset}`);
+        }
+        try { require('fs').unlinkSync(tmpPath); } catch { /* ignore */ }
+        return true;
+      }
       if (arg === 'approve') {
         if (approvePlan()) {
           startExecution();
           setPlanMode(false);
           invalidateSystemPromptCache();
+          const plan = getActivePlan();
+          const stepCount = plan?.steps?.length || 0;
           const hasContent = !!getPlanContent();
-          console.log(`${C.green}${C.bold}Plan approved!${C.reset} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
+          const stepLabel = stepCount > 0 ? ` (${stepCount} steps)` : '';
+          console.log(`${C.green}${C.bold}Plan approved!${C.reset}${stepLabel} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
           console.log(`${C.dim}Plan mode disabled — all tools now available.${C.reset}`);
         } else {
           console.log(`${C.red}No plan to approve. Enter plan mode first with /plan${C.reset}`);
@@ -947,10 +998,10 @@ async function handleSlashCommand(input, rl) {
       setPlanMode(true);
       invalidateSystemPromptCache();
       console.log(`
-${C.cyan}${C.bold}┌─ PLAN MODE ─────────────────────────────────────┐${C.reset}
-${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}┌─ PLAN MODE ───────────────────────────────────────┐${C.reset}
+${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved   ${C.cyan}${C.bold}│${C.reset}
 ${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · /plan approve to execute${C.reset}  ${C.cyan}${C.bold}│${C.reset}
-${C.cyan}${C.bold}└─────────────────────────────────────────────────┘${C.reset}`);
+${C.cyan}${C.bold}└───────────────────────────────────────────────────┘${C.reset}`);
       if (arg) {
         console.log(`${C.dim}Task: ${arg}${C.reset}`);
       }
@@ -1313,6 +1364,59 @@ For each issue, include:
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
+      return true;
+    }
+
+    case '/snapshot': {
+      const { createSnapshot, listSnapshots } = require('./file-history');
+      const snapshotName = rest.join(' ').trim() || undefined;
+      if (snapshotName === 'list') {
+        const snaps = listSnapshots(CWD);
+        if (snaps.length === 0) {
+          console.log(`${C.dim}No snapshots found${C.reset}`);
+        } else {
+          console.log(`\n${C.bold}${C.cyan}Snapshots:${C.reset}`);
+          for (const s of snaps) {
+            console.log(`  ${C.cyan}#${s.index}${C.reset}  ${C.bold}${s.shortName}${C.reset}`);
+          }
+          console.log();
+        }
+        return true;
+      }
+      const result = createSnapshot(snapshotName, CWD);
+      if (result.ok) {
+        console.log(`${C.green}Snapshot created:${C.reset} ${result.label}`);
+        console.log(`${C.dim}Use /restore to apply it later${C.reset}`);
+      } else {
+        console.log(`${C.yellow}${result.error}${C.reset}`);
+      }
+      return true;
+    }
+
+    case '/restore': {
+      const { restoreSnapshot, listSnapshots } = require('./file-history');
+      const restoreTarget = rest.join(' ').trim() || 'last';
+      if (restoreTarget === 'list') {
+        const snaps = listSnapshots(CWD);
+        if (snaps.length === 0) {
+          console.log(`${C.dim}No snapshots available${C.reset}`);
+        } else {
+          console.log(`\n${C.bold}${C.cyan}Available snapshots:${C.reset}`);
+          for (const s of snaps) {
+            console.log(`  ${C.cyan}#${s.index}${C.reset}  ${C.bold}${s.shortName}${C.reset}`);
+          }
+          console.log(`\n${C.dim}Usage: /restore <name|last>${C.reset}\n`);
+        }
+        return true;
+      }
+      const result = restoreSnapshot(restoreTarget, CWD);
+      if (result.ok) {
+        console.log(`${C.green}Restored snapshot:${C.reset} ${result.label}`);
+        console.log(`${C.dim}Working tree updated. Use /undo for in-session file undos.${C.reset}`);
+      } else {
+        console.log(`${C.red}Restore failed:${C.reset} ${result.error}`);
+        console.log(`${C.dim}Use /snapshot list to see available snapshots${C.reset}`);
+      }
       return true;
     }
 
@@ -1778,7 +1882,7 @@ async function startREPL() {
       rl.prompt();
     } else {
       // 1st Ctrl+C at prompt: warn, reset after 2s
-      process.stdout.write(`\n${C.dim}  (Press Ctrl+C again to exit)${C.reset}\n`);
+      console.log(`${C.dim}  (Press Ctrl+C again to exit)${C.reset}`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       if (_exitPromptTimer) clearTimeout(_exitPromptTimer);
@@ -1911,11 +2015,14 @@ async function startREPL() {
 
   function _clearSug() {
     if (_sugN > 0) {
-      // Use relative cursor movement (scroll-safe, unlike \x1b[s/\x1b[u])
-      let s = '';
-      for (let i = 0; i < _sugN; i++) s += '\x1b[1B\x1b[2K';
-      s += `\x1b[${_sugN}A`;
-      process.stdout.write(s);
+      // Erase suggestion rows at bottom of scroll region using absolute positioning.
+      const scrollEnd = footer._scrollEnd;
+      let s = '\x1b7'; // DECSC: save cursor
+      for (let i = 0; i < _sugN; i++) {
+        s += `\x1b[${scrollEnd - _sugN + 1 + i};1H\x1b[2K`;
+      }
+      s += '\x1b8'; // DECRC: restore cursor
+      footer.rawWrite(s);
       _sugN = 0;
     }
   }
@@ -1923,26 +2030,29 @@ async function startREPL() {
   function _showSug(line) {
     const hits = [...SLASH_COMMANDS, ...getSkillCommands()].filter((c) => c.cmd.startsWith(line));
     if (!hits.length || (hits.length === 1 && hits[0].cmd === line)) return;
-    const maxShow = 10;
+    const scrollEnd = footer._scrollEnd;
+    const maxShow = Math.min(10, scrollEnd - 2);
+    if (maxShow < 1) return;
     const show = hits.slice(0, maxShow);
     const padLen = Math.max(...show.map((c) => c.cmd.length));
-    let buf = '';
-    for (const { cmd, desc } of show) {
+    _sugN = show.length;
+    if (hits.length > maxShow) _sugN++;
+
+    // Draw ABOVE the status bar, at bottom of scroll region.
+    const startRow = scrollEnd - _sugN + 1;
+    let buf = '\x1b7'; // DECSC: save cursor
+    for (let i = 0; i < show.length; i++) {
+      const { cmd, desc } = show[i];
       const typed = cmd.substring(0, line.length);
       const rest = cmd.substring(line.length);
       const gap = ' '.repeat(Math.max(0, padLen - cmd.length + 2));
-      buf += `\n\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+      buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
     }
-    _sugN = show.length;
     if (hits.length > maxShow) {
-      buf += `\n\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
-      _sugN++;
+      buf += `\x1b[${startRow + show.length};1H\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
     }
-    // Move back up using relative movement (scroll-safe)
-    // Then restore cursor column (prompt length + cursor position)
-    const promptVisible = rl._prompt.replace(/\x1b\[[0-9;]*m/g, '').length;
-    buf += `\x1b[${_sugN}A\x1b[${promptVisible + rl.cursor + 1}G`;
-    process.stdout.write(buf);
+    buf += '\x1b8'; // DECRC: restore cursor to input row
+    footer.rawWrite(buf);
   }
 
   if (process.stdin.isTTY) {
@@ -1980,7 +2090,8 @@ async function startREPL() {
       if (note) {
         const { injectMidRunNote } = require('./agent');
         injectMidRunNote(note);
-        process.stdout.write(`${C.cyan}  ✎ Wird im nächsten Schritt berücksichtigt${C.reset}\n`);
+        process.stdout.write(`${C.cyan}  ✎ Queued — will be applied in the next step${C.reset}\n`);
+        rl.prompt(); // restore visible prompt so user can queue more input
       }
       return;
     }
@@ -1995,6 +2106,7 @@ async function startREPL() {
           if (input) {
             appendHistory(input.replace(/\n/g, '\\n'));
             _processing = true;
+            rl.prompt(); // keep input row visible and focusable while agent runs
             _sigintCount = 0;
             _exitPrompt = false;
             if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
@@ -2033,6 +2145,7 @@ async function startREPL() {
         if (input) {
           appendHistory(input.replace(/\n/g, '\\n'));
           _processing = true;
+          rl.prompt(); // keep input row visible and focusable while agent runs
           _sigintCount = 0;
           _exitPrompt = false;
           if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
@@ -2120,6 +2233,7 @@ async function startREPL() {
 
     // Process through agent
     _processing = true;
+    rl.prompt(); // keep input row visible and focusable while agent runs
     _sigintCount = 0;
     _exitPrompt = false;
     if (_exitPromptTimer) { clearTimeout(_exitPromptTimer); _exitPromptTimer = null; }
