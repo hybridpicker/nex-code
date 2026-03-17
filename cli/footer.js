@@ -317,7 +317,9 @@ class StickyFooter {
       if (!self._active) { return self._origPrompt(preserveCursor); }
       _dbg('PROMPT: goto rowInput=' + self._rowInput);
       rl.prevRows = 0;
-      rawWrite(self._goto(self._rowInput));
+      // Reset color + erase line before drawing — prevents Apple Terminal from
+      // rendering the input row with a dark background when a scroll region is active.
+      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
       self._cursorOnInputRow = true;
       self._origPrompt(preserveCursor);
     };
@@ -356,7 +358,9 @@ class StickyFooter {
       }
 
       rl.prevRows = 0;
-      rawWrite(self._goto(self._rowInput));
+      // Reset color + erase before refresh — prevents dark bg on light terminals
+      // when input row is outside the active scroll region.
+      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
 
       const cols      = self._cols;
       const promptStr = rl._prompt || '';
