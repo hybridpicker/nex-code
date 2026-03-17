@@ -417,7 +417,16 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(formatToolCall(prep.fnName, prep.args));
   }
 
-  runHooks('pre-tool', { tool_name: prep.fnName });
+  const preHookResults = runHooks('pre-tool', { tool_name: prep.fnName });
+  if (!quiet && preHookResults.length > 0) {
+    for (const result of preHookResults) {
+      if (result.success) {
+        console.log(`${C.dim}  [hook pre-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+      } else {
+        console.log(`${C.yellow}  [hook pre-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+      }
+    }
+  }
 
   const toolResult = await executeToolRouted(prep.fnName, prep.args, {
     silent: true,
@@ -438,7 +447,16 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(summary);
   }
 
-  runHooks('post-tool', { tool_name: prep.fnName });
+  const postHookResults = runHooks('post-tool', { tool_name: prep.fnName });
+  if (!quiet && postHookResults.length > 0) {
+    for (const result of postHookResults) {
+      if (result.success) {
+        console.log(`${C.dim}  [hook post-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+      } else {
+        console.log(`${C.yellow}  [hook post-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+      }
+    }
+  }
   
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated);
@@ -594,8 +612,8 @@ function _buildLanguagePrompt() {
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
   lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
-  lines.push('  • For Makefiles, always display the actual .PHONY declarations and dependency chains');
-  lines.push('  • For dataclasses, always show the complete class definition with field types and defaults');
+  lines.push('  • For Makefiles, always display the actual .PHONY declarations and dependency chains. Show the complete Makefile content with all targets, dependencies, and recipes. Never just describe a Makefile without showing the actual file.');
+  lines.push('  • For dataclasses, always show the complete class definition with field types and defaults. Include the full code with all fields, type annotations, and any validation logic. Never describe a dataclass without showing the actual implementation.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -693,9 +711,9 @@ MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, g
 CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When explaining code:
   • Show the complete code snippet, not just describe it
   • Include file paths and line numbers (e.g., "src/app.js:42")
-  • For regex patterns, show both the pattern and example matches. Note PCRE-only features like (?&name) backreferences
+  • For regex patterns, show both the pattern and example matches. Be precise about regex behavior - don't claim patterns don't allow leading zeros if they do. Note PCRE-only features like (?&name) backreferences and avoid making claims about universal regex support.
   • For Makefiles, display the actual .PHONY and target declarations
-  • For dataclasses, show the complete class definition with all fields
+  • For dataclasses, show the complete class definition with all fields. Always display the actual 13+ lines of dataclass code, not just usage examples.
 
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
@@ -706,7 +724,7 @@ Response patterns by request type:
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
-- **Regex explanations**: Always show the actual regex pattern and test it with examples. For named groups, use the correct syntax format (question mark open angle bracket name close angle bracket pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences.
+- **Regex explanations**: Always show the actual regex pattern and test it with examples. Be precise about what the pattern actually matches - don't make false claims about leading zeros or other behavior. For named groups, use the correct syntax format (?<name>pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences. Always test patterns with actual examples to verify behavior.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
 - **Hook implementations**: When explaining hooks, show the actual hook file content and explain how to configure it in .nex/config.json. Handle edge cases like console.log in strings vs actual code.
 - **Memory leak explanations**: When explaining memory leaks, show actual code examples of both problematic and fixed versions. Explain WHY solutions work, not just what they are.
