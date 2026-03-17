@@ -94,6 +94,7 @@ const TOOL_LABELS = {
   container_exec:     'Container exec',
   brain_write:        'Brain write',
   deploy:             'Deploy',
+  frontend_recon:     'Frontend recon',
 };
 
 // Section descriptions used in step headers (grouped action phrases)
@@ -138,6 +139,7 @@ const STEP_DESCRIPTIONS = {
   container_exec:     'Running in container',
   brain_write:        'Saving to memory',
   deploy:             'Deploying',
+  frontend_recon:     'Scanning design system',
 };
 
 /**

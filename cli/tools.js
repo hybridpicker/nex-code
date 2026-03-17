@@ -1016,6 +1016,23 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'frontend_recon',
+      description: 'MANDATORY first step before creating or significantly modifying any frontend file (HTML template, Vue/React component, CSS). Scans the project and returns: (1) design tokens — CSS variables, Tailwind theme colors/fonts, (2) main layout/index page structure, (3) a reference component of the same type, (4) detected JS/CSS framework stack. Call this BEFORE writing any markup or styles. Never skip it for frontend tasks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of frontend file you are about to create. Used to find a relevant reference component. Examples: "list", "form", "detail", "dashboard", "modal", "component". Optional but improves reference quality.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'deploy',
       description: 'Deploy to a remote server. Supports two methods: "rsync" (sync local files) and "git" (git pull on remote). Can use a named config from .nex/deploy.json. Requires confirmation before executing.',
       parameters: {
@@ -2339,6 +2356,191 @@ async function _executeToolInner(name, args, options = {}) {
 
       const methodLabel = method === 'git' ? `${target}:${args.remote_path}` : `${args.local_path} → ${target}:${args.remote_path}`;
       return `Deployed [${method}] ${methodLabel}\n${syncOutput}${scriptOutput}${healthOutput}`.trim();
+    }
+
+    case 'frontend_recon': {
+      const cwd = process.cwd();
+      const targetType = (args.type || '').toLowerCase();
+      const sections = [];
+
+      // Helper: read first N lines of a file, return null on error
+      const tryRead = async (fp, maxLines = 120) => {
+        try {
+          const abs = path.isAbsolute(fp) ? fp : path.join(cwd, fp);
+          const content = await fs.readFile(abs, 'utf8');
+          const lines = content.split('\n');
+          const preview = lines.slice(0, maxLines).join('\n');
+          return lines.length > maxLines
+            ? preview + `\n... (${lines.length - maxLines} more lines — use read_file for full content)`
+            : preview;
+        } catch { return null; }
+      };
+
+      // Helper: find files by name pattern, skip noisy dirs
+      const SKIP_DIRS = 'node_modules|.git|dist|build|vendor|.next|__pycache__|venv|.venv';
+      const findByName = async (name) => {
+        try {
+          const { stdout } = await exec(
+            `find "${cwd}" -type f -name "${name}" -not -path "*/(${SKIP_DIRS})/*" 2>/dev/null | head -10`,
+            { timeout: 8000 }
+          );
+          return stdout.trim().split('\n').filter(Boolean);
+        } catch { return []; }
+      };
+
+      // Helper: grep for pattern across file type
+      const grepForPattern = async (pattern, include) => {
+        try {
+          const { stdout } = await exec(
+            `grep -rl "${pattern}" "${cwd}" --include="${include}" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build 2>/dev/null | head -5`,
+            { timeout: 8000 }
+          );
+          return stdout.trim().split('\n').filter(Boolean);
+        } catch { return []; }
+      };
+
+      // ── STEP 1: Design Tokens ──────────────────────────────────
+      sections.push('## STEP 1: Design Tokens\n');
+
+      // Tailwind config
+      const tailwindFiles = [
+        ...await findByName('tailwind.config.js'),
+        ...await findByName('tailwind.config.ts'),
+        ...await findByName('tailwind.config.mjs'),
+      ];
+      if (tailwindFiles.length > 0) {
+        const content = await tryRead(tailwindFiles[0], 80);
+        if (content) sections.push(`### Tailwind config (${path.relative(cwd, tailwindFiles[0])})\n\`\`\`js\n${content}\n\`\`\``);
+      } else {
+        sections.push('(no tailwind.config found)');
+      }
+
+      // CSS custom properties (:root)
+      const cssCandidates = ['variables.css', '_variables.scss', 'tokens.css', 'base.css', 'global.css', 'main.css', 'index.css', 'app.css', 'style.css', 'styles.css'];
+      let foundCssVars = false;
+      for (const name of cssCandidates) {
+        const files = await findByName(name);
+        for (const fp of files) {
+          const content = await tryRead(fp, 100);
+          if (content && content.includes(':root')) {
+            sections.push(`### CSS Variables (${path.relative(cwd, fp)})\n\`\`\`css\n${content}\n\`\`\``);
+            foundCssVars = true;
+            break;
+          }
+        }
+        if (foundCssVars) break;
+      }
+      if (!foundCssVars) {
+        const rootFiles = await grepForPattern(':root', '*.css');
+        if (rootFiles.length > 0) {
+          const content = await tryRead(rootFiles[0], 100);
+          if (content) sections.push(`### CSS Variables (${path.relative(cwd, rootFiles[0])})\n\`\`\`css\n${content}\n\`\`\``);
+          foundCssVars = true;
+        }
+      }
+      if (!foundCssVars) sections.push('(no CSS custom properties / :root found)');
+
+      // ── STEP 2: Main Layout / Index Page ──────────────────────
+      sections.push('\n## STEP 2: Main Layout / Index Page\n');
+
+      const indexCandidates = ['base.html', '_base.html', 'layout.html', 'base.jinja', 'App.vue', 'App.jsx', 'App.tsx', '_app.jsx', '_app.tsx', '_app.js', 'layout.vue', 'index.html'];
+      let foundIndex = false;
+      for (const name of indexCandidates) {
+        const files = await findByName(name);
+        if (files.length > 0) {
+          const content = await tryRead(files[0], 150);
+          if (content) {
+            sections.push(`### Main layout: ${path.relative(cwd, files[0])}\n\`\`\`html\n${content}\n\`\`\``);
+            foundIndex = true;
+            break;
+          }
+        }
+      }
+      if (!foundIndex) sections.push('(no main layout/index file found — try read_file on your root template manually)');
+
+      // ── STEP 3: Reference Component ────────────────────────────
+      sections.push('\n## STEP 3: Reference Component (same type)\n');
+
+      let refFiles = [];
+      // Try to find files matching the type hint
+      if (targetType) {
+        for (const ext of ['*.html', '*.vue', '*.jsx', '*.tsx']) {
+          refFiles = await grepForPattern(targetType, ext);
+          if (refFiles.length > 0) break;
+        }
+      }
+      // Fallback: find recently modified frontend files, excluding layout/base files
+      if (refFiles.length === 0) {
+        try {
+          const { stdout } = await exec(
+            `find "${cwd}" -type f \\( -name "*.html" -o -name "*.vue" -o -name "*.jsx" -o -name "*.tsx" \\) ` +
+            `-not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" ` +
+            `-not -name "base.html" -not -name "_base.html" -not -name "layout.html" -not -name "App.vue" -not -name "App.jsx" ` +
+            `2>/dev/null | head -20`,
+            { timeout: 8000 }
+          );
+          refFiles = stdout.trim().split('\n').filter(Boolean);
+        } catch { refFiles = []; }
+      }
+
+      if (refFiles.length > 0) {
+        const fp = refFiles[0];
+        const content = await tryRead(fp, 150);
+        if (content) sections.push(`### Reference: ${path.relative(cwd, fp)}\n\`\`\`html\n${content}\n\`\`\``);
+        else sections.push('(reference file found but could not be read)');
+      } else {
+        sections.push('(no reference component found — check manually with glob or list_directory)');
+      }
+
+      // ── STEP 4: Framework Stack Detection ─────────────────────
+      sections.push('\n## STEP 4: Framework Stack\n');
+
+      const stackParts = [];
+
+      // package.json
+      const pkgContent = await tryRead(path.join(cwd, 'package.json'), 999);
+      if (pkgContent) {
+        if (pkgContent.includes('"react"') || pkgContent.includes("'react'")) stackParts.push('React');
+        if (pkgContent.includes('"vue"') || pkgContent.includes("'vue'")) {
+          const vueVer = pkgContent.match(/"vue":\s*"[\^~]?(\d+)/);
+          stackParts.push(vueVer ? `Vue.js v${vueVer[1]}` : 'Vue.js');
+        }
+        const alpineVer = pkgContent.match(/"alpinejs":\s*"[\^~]?(\d+)/);
+        if (alpineVer) stackParts.push(`Alpine.js v${alpineVer[1]} (⚠ v2 vs v3 API differs!)`);
+        if (pkgContent.includes('"htmx') || pkgContent.includes("'htmx")) stackParts.push('HTMX');
+        if (pkgContent.includes('"tailwindcss"')) stackParts.push('Tailwind CSS');
+        if (pkgContent.includes('"bootstrap"')) stackParts.push('Bootstrap');
+      }
+
+      // Django / Python detection (manage.py or requirements.txt)
+      const hasDjango = (await fs.access(path.join(cwd, 'manage.py')).then(() => true).catch(() => false)) ||
+        ((await tryRead(path.join(cwd, 'requirements.txt'), 50) || '').includes('Django'));
+      if (hasDjango) stackParts.push('Django (server-rendered templates)');
+
+      // Alpine.js / HTMX via CDN (not in package.json)
+      if (!stackParts.some(s => s.includes('Alpine'))) {
+        const alpineCdn = await grepForPattern('alpinejs', '*.html');
+        if (alpineCdn.length > 0) {
+          // Try to detect version from CDN URL
+          const sampleContent = await tryRead(alpineCdn[0], 30) || '';
+          const v = sampleContent.match(/alpinejs[@/]v?(\d)/);
+          stackParts.push(v ? `Alpine.js v${v[1]} (via CDN — ⚠ v2 vs v3 API differs!)` : 'Alpine.js (via CDN — check version!)');
+        }
+      }
+      if (!stackParts.some(s => s.includes('HTMX'))) {
+        const htmxCdn = await grepForPattern('htmx', '*.html');
+        if (htmxCdn.length > 0) stackParts.push('HTMX (via CDN)');
+      }
+
+      if (stackParts.length > 0) {
+        sections.push(stackParts.map(s => `- ${s}`).join('\n'));
+        sections.push('\n⚠ Use ONLY the frameworks listed above. Do NOT mix (e.g. no fetch() when HTMX is used for the same action).');
+      } else {
+        sections.push('(framework not detected — check package.json or script tags manually)');
+      }
+
+      sections.push('\n---\n✅ Design recon complete. Now build consistently with the patterns above.');
+      return sections.join('\n');
     }
 
     default:
