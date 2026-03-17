@@ -17,7 +17,7 @@ function saveNow(messages) { autoSave(messages); flushAutoSave(); }
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
-const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent } = require('./planner');
+const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
 const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
@@ -417,7 +417,16 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(formatToolCall(prep.fnName, prep.args));
   }
 
-  runHooks('pre-tool', { tool_name: prep.fnName });
+  const preHookResults = runHooks('pre-tool', { tool_name: prep.fnName });
+  if (!quiet && preHookResults.length > 0) {
+    for (const result of preHookResults) {
+      if (result.success) {
+        console.log(`${C.dim}  [hook pre-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+      } else {
+        console.log(`${C.yellow}  [hook pre-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+      }
+    }
+  }
 
   const toolResult = await executeToolRouted(prep.fnName, prep.args, {
     silent: true,
@@ -438,7 +447,16 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(summary);
   }
 
-  runHooks('post-tool', { tool_name: prep.fnName });
+  const postHookResults = runHooks('post-tool', { tool_name: prep.fnName });
+  if (!quiet && postHookResults.length > 0) {
+    for (const result of postHookResults) {
+      if (result.success) {
+        console.log(`${C.dim}  [hook post-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+      } else {
+        console.log(`${C.yellow}  [hook post-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+      }
+    }
+  }
   
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated);
@@ -594,8 +612,16 @@ function _buildLanguagePrompt() {
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
   lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
-  lines.push('  • For Makefiles, always display the actual .PHONY declarations and dependency chains');
-  lines.push('  • For dataclasses, always show the complete class definition with field types and defaults');
+  lines.push('  • For Makefiles, paste the COMPLETE Makefile code DIRECTLY in your text response — every target, recipe, dependency, and .PHONY line. Writing the Makefile with a tool does NOT count as showing it. The Makefile MUST appear verbatim in your chat text as a code block, even if you also wrote it to a file. Never describe structure without showing the actual code.');
+  lines.push('  • For dataclasses, paste the COMPLETE dataclass code DIRECTLY in your text response — @dataclass decorator, all fields with types and defaults, full __post_init__ validation. Writing the file with a tool does NOT count as showing the code. The code MUST appear verbatim in your chat text, even if you also wrote it to a file.');
+  lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.');
+  lines.push('  • When a task explicitly specifies a tool (e.g., "use tsc"), NEVER mention alternatives (e.g., "swc build") — use exactly what was requested.');
+  lines.push('  • In Makefile prerequisites, NEVER use shell glob patterns like src/**/*.ts — make does not expand these natively. Keep prerequisite lists explicit or omit them. When a Makefile target says "runs jest", call jest directly in the recipe (not npm test).');
+  lines.push('  • For bash in-place text replacements with backups: use ONLY ONE backup method — either sed -i.bak (let sed create the backup) OR cp file file.bak followed by sed -i (no extension). Never use both cp and sed -i.bak together — that produces redundant double backups (file.bak and file.bak.bak).');
+  lines.push('  • For iterative array-flattening (flattenDeep): use push() and reverse() at the end — NEVER unshift(). unshift is O(n) per call making the whole function O(n^2). The iterative version MUST use a loop (while/for) and an explicit stack array — zero recursive calls. If a function calls itself, it is recursive regardless of its name. Never label a recursive function as iterative.');
+  lines.push('  • FORBIDDEN: when refactoring callbacks to async/await, NEVER write try { ... } catch(e) { throw e } — this is an explicit anti-pattern. Omit the try-catch entirely and let Promise rejections propagate. Only add try-catch if you handle the error meaningfully (log, transform, fallback) — never just rethrow.');
+  lines.push('  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.');
+  lines.push('  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting and avoids the ls-in-subshell anti-pattern.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -693,9 +719,11 @@ MANDATORY RULE: After ANY tool call that gathers information (bash, read_file, g
 CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When explaining code:
   • Show the complete code snippet, not just describe it
   • Include file paths and line numbers (e.g., "src/app.js:42")
-  • For regex patterns, show both the pattern and example matches. Note PCRE-only features like (?&name) backreferences
-  • For Makefiles, display the actual .PHONY and target declarations
-  • For dataclasses, show the complete class definition with all fields
+  • For regex patterns, show both the pattern and example matches. Be precise — test the pattern mentally. When rewriting for readability, use named constants or a commented breakdown (e.g. const OCTET = ...), NOT named capture groups — named group syntax varies by engine and is a frequent source of errors. NEVER claim functional equivalence without verifying edge cases (e.g. leading zeros, boundary values).
+  • For Makefiles, paste the COMPLETE Makefile verbatim in your text response — every target, recipe, dependency, and .PHONY line. Use EXACTLY the tools/commands specified in the task (e.g. if the task says "tsc", use tsc — do not substitute swc or any alternative). Never describe structure without showing the actual code. Even if you wrote the file with a tool, always also show the full content in text.
+  • MAKEFILE ENFORCEMENT: When asked to create or show a Makefile, ALWAYS provide the complete file content in a code block. Do NOT just describe what the Makefile should contain. The user cannot see tool output, so the Makefile content MUST appear in your text response.
+  • For dataclasses, show the COMPLETE implementation — all fields with types, __post_init__ validation, and any defaults. Never describe without showing the code.
+  • For cron expressions, quote the exact time constraint from the task verbatim, then write the expression. Verify boundary values (e.g., "8-18h" → hours 8 through 18 inclusive).
 
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
@@ -706,12 +734,13 @@ Response patterns by request type:
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
-- **Regex explanations**: Always show the actual regex pattern and test it with examples. For named groups, use the correct syntax format (question mark open angle bracket name close angle bracket pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences.
+- **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
-- **Hook implementations**: When explaining hooks, show the actual hook file content and explain how to configure it in .nex/config.json. Handle edge cases like console.log in strings vs actual code.
-- **Memory leak explanations**: When explaining memory leaks, show actual code examples of both problematic and fixed versions. Explain WHY solutions work, not just what they are.
-- **Makefile tasks**: Always display the actual Makefile code with .PHONY declarations and dependency chains. Show complete target definitions.
-- **Dataclass definitions**: Always show the complete dataclass code with all field types, defaults, and validation logic. Include __post_init__ methods when relevant.
+- **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly.
+- **Memory leak explanations**: Show the problematic code, then present EXACTLY ONE fix — the single persistent listener registered once outside the loop. Do NOT present "Option 2", "Option 3", or any additional variants. Preserve the original code structure: keep the setInterval call intact, only move the emitter.on() call outside. Do NOT add placeholder setInterval callbacks or dummy arrow functions — show the minimal precise change to the original code.
+- **Makefile tasks**: Paste the COMPLETE Makefile in your text response — every line, every target, every recipe, every .PHONY. Use EXACTLY the tools specified in the task (tsc means tsc, not swc or any substitute; jest means jest directly, not npm test). Never summarise or omit parts. Never put glob patterns like src/**/*.ts in prerequisite lists — make does not expand them.
+- **Dataclass definitions**: Paste the COMPLETE dataclass code directly in your text response — @dataclass decorator, all fields with type annotations and defaults, full __post_init__ validation block. The code must appear verbatim in your chat text. Writing a file with a tool does NOT satisfy this — always also paste the code in text.
+- **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked. NEVER put cron expressions inside markdown tables — asterisks (*) in table cells are consumed as bold/italic markers and disappear. Always present each cron expression in its own fenced code block. For "every N minutes between X-Yh": acknowledge both interpretations explicitly — present '*/15 8-18 * * 1-5' (fires through 18:45, inclusive) AND note that '*/15 8-17 * * 1-5' stops at 17:45 if strictly before 18h. Let the user choose based on their intent.
 - **Command suggestions**: Always use correct command flags and syntax. For null-delimited output, use --zero or find/printf instead of non-existent flags like -0.
 
 After completing multi-step tasks, suggest logical next steps (e.g. "You can run npm test to verify" or "Consider committing with /commit").
@@ -935,21 +964,49 @@ async function _runPreScan() {
   return line;
 }
 
+/**
+ * Fire a desktop notification on macOS (non-blocking, best-effort).
+ * Only fires when terminal is not focused (background tasks) and elapsed > 30s.
+ * @param {string} message
+ */
+function _notifyDesktop(message) {
+  if (process.platform !== 'darwin') return;
+  try {
+    const { execFileSync } = require('child_process');
+    // Use osascript — no extra dependencies needed
+    execFileSync('osascript', [
+      '-e',
+      `display notification "${message.replace(/"/g, '\\"')}" with title "nex-code"`,
+    ], { timeout: 3000, stdio: 'ignore' });
+  } catch { /* ignore — notification is best-effort */ }
+}
+
 function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
   let resume = `── ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} · ${totalTools} ${totalTools === 1 ? 'tool' : 'tools'}`;
+  let elapsedSecs = 0;
+  if (startTime) {
+    const elapsed = Date.now() - startTime;
+    elapsedSecs = Math.round(elapsed / 1000);
+    resume += elapsedSecs >= 60
+      ? ` · ${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
+      : ` · ${elapsedSecs}s`;
+  }
   if (filesModified.size > 0) {
     resume += ` · ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified`;
   }
-  if (startTime) {
-    const elapsed = Date.now() - startTime;
-    const secs = Math.round(elapsed / 1000);
-    resume += secs >= 60 ? ` · ${Math.floor(secs / 60)}m ${secs % 60}s` : ` · ${secs}s`;
-  }
   resume += ' ──';
   console.log(`\n${C.dim}  ${resume}${C.reset}`);
+
+  // Desktop notification for long-running tasks (> 30s)
+  if (elapsedSecs >= 30 && process.stdout.isTTY) {
+    const summary = filesModified.size > 0
+      ? `Done — ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified in ${elapsedSecs}s`
+      : `Done — ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} in ${elapsedSecs}s`;
+    _notifyDesktop(summary);
+  }
 
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
@@ -1128,8 +1185,8 @@ async function processInput(userInput) {
   const filesRead = new Set();
   const startTime = Date.now();
   const fileEditCounts = new Map(); // loop detection: edits per file
-  const LOOP_WARN_EDITS = 5;  // warn agent after 5 edits to same file
-  const LOOP_ABORT_EDITS = 10; // abort loop after 10 edits to same file
+  const LOOP_WARN_EDITS = 3;  // warn agent after 3 edits to same file
+  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
   const bashCmdCounts = new Map(); // loop detection: repeated bash commands
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
@@ -1151,12 +1208,24 @@ async function processInput(userInput) {
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
 
+    // Advance plan step cursor when a new tool iteration starts
+    if (totalSteps > 0) advancePlanStep();
+
     let spinner = null;
     if (taskProgress && taskProgress.isActive()) {
       // Resume the live task display instead of a plain spinner
       if (taskProgress._paused) taskProgress.resume();
     } else if (!taskProgress) {
-      const spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
+      let spinnerText;
+      const planInfo = getPlanStepInfo();
+      if (planInfo && planInfo.total > 1) {
+        const label = planInfo.description.length > 40
+          ? planInfo.description.slice(0, 37) + '…'
+          : planInfo.description;
+        spinnerText = `Plan step ${planInfo.current}/${planInfo.total}: ${label}`;
+      } else {
+        spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
+      }
       spinner = new Spinner(spinnerText);
       spinner.start();
     }
@@ -1488,12 +1557,25 @@ async function processInput(userInput) {
         conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
         continue; // retry — don't count as a new step
       }
-      // In plan mode: save the plan text output to disk
+      // In plan mode: save the plan text output to disk and extract structured steps
       if (isPlanMode() && hasText) {
         const planText = (content || streamedText || '').trim();
         setPlanContent(planText);
         _savePlanToFile(planText);
-        console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+        // Extract structured steps from LLM output so they can be tracked during execution
+        const extractedSteps = extractStepsFromText(planText);
+        if (extractedSteps.length > 0) {
+          // Determine task description from first user message in this session
+          const taskMsg = conversationMessages.find((m) => m.role === 'user');
+          const taskDesc = typeof taskMsg?.content === 'string'
+            ? taskMsg.content.slice(0, 120)
+            : 'Task';
+          createPlan(taskDesc, extractedSteps);
+          const stepWord = extractedSteps.length === 1 ? 'step' : 'steps';
+          console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
+        } else {
+          console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+        }
       }
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
