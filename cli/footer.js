@@ -19,14 +19,10 @@ const { T, isDark } = require('./theme');
 
 const C_RESET = '\x1b[0m';
 
-// Paint an entire row with spaces using default background.
-// On Apple Terminal (light mode), rows outside the scroll region appear dark
-// because the terminal renders *empty/erased* cells dark. Writing actual
-// space characters forces the terminal to render them as content with the
-// current (default = white) background — overriding the dark artifact.
-function _paintRowWhite(rawWrite, gotoSeq, cols) {
-  rawWrite(gotoSeq + C_RESET + ' '.repeat(cols) + '\r');
-}
+// Apple Terminal (light mode) darkens all rows outside the DECSTBM scroll
+// region at the OS level — no ANSI escape can override this. Detect it once
+// so we can skip _setScrollRegion() on that terminal.
+const _noScrollRegion = !isDark;
 
 // ── Debug logger ────────────────────────────────────────────────────────────
 const DEBUG = process.env.FOOTER_DEBUG === '1';
@@ -127,11 +123,13 @@ class StickyFooter {
   }
 
   _setScrollRegion() {
+    if (_noScrollRegion) return; // light terminal: skip — avoids dark row artifact
     const end = Math.max(1, this._scrollEnd);
     this._origWrite(`\x1b[1;${end}r`);
   }
 
   _clearScrollRegion() {
+    if (_noScrollRegion) return;
     if (this._origWrite) this._origWrite('\x1b[r');
   }
 
@@ -326,14 +324,7 @@ class StickyFooter {
       if (!self._active) { return self._origPrompt(preserveCursor); }
       _dbg('PROMPT: goto rowInput=' + self._rowInput);
       rl.prevRows = 0;
-      if (!isDark) {
-        // Light terminal (Apple Terminal): write actual spaces to paint the row
-        // white — \x1b[2K alone won't override Apple Terminal's dark rendering
-        // of cells outside the scroll region.
-        _paintRowWhite(rawWrite, self._goto(self._rowInput), self._cols || 80);
-      } else {
-        rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
-      }
+      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
       self._cursorOnInputRow = true;
       self._origPrompt(preserveCursor);
     };
@@ -372,11 +363,7 @@ class StickyFooter {
       }
 
       rl.prevRows = 0;
-      if (!isDark) {
-        _paintRowWhite(rawWrite, self._goto(self._rowInput), self._cols || 80);
-      } else {
-        rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
-      }
+      rawWrite(self._goto(self._rowInput) + C_RESET + '\x1b[2K');
 
       const cols      = self._cols;
       const promptStr = rl._prompt || '';
