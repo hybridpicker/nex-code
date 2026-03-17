@@ -2016,6 +2016,15 @@ async function startREPL() {
         return true;
       }
 
+      // Case 5: Fallback paste detection — terminal doesn't support bracketed paste.
+      // A single data chunk arriving with newlines and length > 40 chars is almost
+      // certainly a paste (humans can't type that fast). Capture it as a paste so
+      // newlines are preserved instead of triggering immediate readline submission.
+      if (data.includes('\n') && data.length > 40 && !_pasteActive) {
+        _pasteLines.push(...data.replace(/\r/g, '').split('\n'));
+        return _completePaste();
+      }
+
       // Normal data — pass through
       return origEmit.call(process.stdin, event, ...args);
     };
