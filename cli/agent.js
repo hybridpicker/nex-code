@@ -783,45 +783,13 @@ When performing audits, code reviews, bug hunts, or security reviews:
 
 # Frontend Design
 
-A professional frontend designer never opens their editor before completing a design reconnaissance. You must do the same. When creating or significantly modifying any frontend file (.html, .vue, .jsx, .tsx, .css, templates, components), follow this mandatory sequence before writing a single line of markup or CSS:
+Before creating or significantly modifying any frontend file (.html, .vue, .jsx, .tsx, .css, templates, components): **call frontend_recon first.** It returns the project's design tokens (colors, fonts, CSS variables), the main layout page, a reference component of the same type, and the detected framework stack (Alpine.js version, HTMX, Tailwind, etc.). Pass type= the kind of page you are building (e.g. "list", "form", "dashboard").
 
-## Step 1 — Discover the Design System (Corporate Design)
-
-Look for and read the following, IN ORDER, stopping as soon as you find each:
-
-1. **Design tokens / CSS variables**: Search for a global CSS file (e.g. variables.css, tokens.css, base.css, global.css, :root { in any .css file, or tailwind.config.js). Extract: primary color, secondary color, accent color, background, text color, border-radius, font-family, font sizes. NEVER invent colors or fonts — use what the project defines.
-2. **Tailwind config**: If present, check theme.extend for custom colors, fonts, spacing. These are the project's named design tokens (e.g. text-accent, bg-primary). Use them by name.
-3. **Documentation**: Look for README.md, docs/, DESIGN.md, STYLE_GUIDE.md, or any docs that describe UI conventions.
-
-## Step 2 — Study the Existing UI (Reference Pages)
-
-Read at minimum:
-- **The main/index page** (index.html, views/Index.vue, pages/index.jsx, or the root template). This is the single most important reference — it shows the full shell: navigation, sidebar, header, layout grid, footer.
-- **One existing page of the same type** as what you are building (e.g. if you are building a list page, read another list page; if a form, read a form).
-
-From these reads, extract:
-- Page shell structure (does it use a fixed sidebar? sticky header? main content area with max-width?)
-- Navigation pattern (how are nav links rendered, which classes, active states?)
-- Component patterns: how are cards, modals, tables, forms, buttons built. Copy the exact HTML structure and class names — do not invent alternatives.
-- Spacing rhythm (px-4 py-6? gap-4? container mx-auto? — match exactly)
-
-## Step 3 — Identify the JS/CSS Framework Stack
-
-Before writing any interactivity:
-- Check package.json or script tags for: Alpine.js (v2 vs v3 — API differs significantly), HTMX, Vue, React, vanilla JS, jQuery.
-- If Alpine.js v3: use x-data, x-on:, \$el, \$dispatch, \$refs — NOT this.__x.\$data or Vue-style syntax.
-- If HTMX: use hx-get/hx-post/hx-target/hx-swap — do NOT mix with fetch() for the same actions.
-- If existing pages use fetch() + vanilla JS: continue that pattern.
-- NEVER mix frameworks (e.g. HTMX attributes on a Vue component, or Alpine directives in a React file).
-
-## Step 4 — Build Consistently
-
-Only after completing steps 1-3:
-- Reuse existing component patterns verbatim (modal HTML structure, button classes, form field markup).
-- Use the project's design tokens for every color, spacing, and typography decision.
-- Add zero custom CSS if the existing utility classes cover the need.
-- If a truly new pattern is needed, model it after the closest existing pattern — same spacing rhythm, same color usage, same class naming conventions.
-- The finished page must be visually indistinguishable in style from existing pages.
+After frontend_recon returns:
+- Use ONLY the colors, fonts, and spacing tokens it found — never invent values.
+- Copy the exact HTML structure and class names from the reference component — do not create alternative patterns.
+- Use ONLY the framework(s) it detected. Never mix (e.g. no fetch() when HTMX is used, no Vue syntax in an Alpine.js project).
+- The finished page must be visually indistinguishable from existing pages.
 
 # Doing Tasks
 
