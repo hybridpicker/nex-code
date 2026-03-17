@@ -44,6 +44,7 @@ class StickyFooter {
     this._drawing           = false;
     this._offResize         = null;
     this._cursorOnInputRow  = false;  // true when readline owns cursor (row N)
+    this._inRefreshLine     = false;  // true while origRefreshLine is executing
     this._lastOutputRow     = 1;      // cursor row after last stdout write (tracks \n)
   }
 
@@ -129,6 +130,14 @@ class StickyFooter {
     this._origWrite = rawWrite;  // low-level write that bypasses our patch
     process.stdout.write = function(data, ...rest) {
       if (self._active && typeof data === 'string') {
+        // While origRefreshLine executes, readline may write completion hints
+        // that include \n (e.g. Node.js v22+ inline completion preview).
+        // Don't redirect those to the scroll region — just strip \n and write.
+        if (self._inRefreshLine) {
+          const stripped = data.replace(/\n/g, '');
+          if (!stripped) return true;
+          return rawWrite(stripped, ...rest);
+        }
         if (self._cursorOnInputRow) {
           // --- streaming agent output (contains \n, longer than a readline sequence) ---
           // Move cursor back to scroll region so it renders there, not on row N.
@@ -311,28 +320,33 @@ class StickyFooter {
         const promptVis   = visibleLen(rl._prompt || '');
         const maxLineLen  = cols - promptVis - 1;   // chars available for line text
 
-        if (rl.line.length <= maxLineLen) {
-          // Line fits — render normally
-          return origRefreshLine();
+        self._inRefreshLine = true;
+        try {
+          if (rl.line.length <= maxLineLen) {
+            // Line fits — render normally
+            return origRefreshLine();
+          }
+
+          // Line is too long: show a horizontally-scrolled view.
+          // Keep the characters near the cursor visible; prefix with a dim «.
+          const savedLine   = rl.line;
+          const savedCursor = rl.cursor;
+
+          const viewLen   = Math.max(1, maxLineLen - 1);  // 1 char for « prefix
+          const cursorEnd = savedCursor;
+          const start     = Math.max(0, cursorEnd - viewLen);
+          const truncated = (start > 0 ? '«' : '') + savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
+
+          rl.line   = truncated;
+          rl.cursor = truncated.length;
+          origRefreshLine();
+
+          // Restore actual content (never modified for submission)
+          rl.line   = savedLine;
+          rl.cursor = savedCursor;
+        } finally {
+          self._inRefreshLine = false;
         }
-
-        // Line is too long: show a horizontally-scrolled view.
-        // Keep the characters near the cursor visible; prefix with a dim «.
-        const savedLine   = rl.line;
-        const savedCursor = rl.cursor;
-
-        const viewLen   = Math.max(1, maxLineLen - 1);  // 1 char for « prefix
-        const cursorEnd = savedCursor;
-        const start     = Math.max(0, cursorEnd - viewLen);
-        const truncated = (start > 0 ? '«' : '') + savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
-
-        rl.line   = truncated;
-        rl.cursor = truncated.length;
-        origRefreshLine();
-
-        // Restore actual content (never modified for submission)
-        rl.line   = savedLine;
-        rl.cursor = savedCursor;
       };
     }
 
@@ -354,10 +368,20 @@ class StickyFooter {
 
     // 9. Handle terminal resize
     const onResize = () => {
+      // Erase the old status and input rows before resizing the scroll region —
+      // on shrink the old rows shift and leave ghost lines behind.
+      if (this._origWrite) {
+        this._origWrite(
+          '\x1b7' +
+          this._goto(this._rowStatus) + '\x1b[2K' +
+          this._goto(this._rowInput)  + '\x1b[2K' +
+          '\x1b8'
+        );
+      }
       this._setScrollRegion();
+      this._lastOutputRow = Math.min(this._lastOutputRow, this._scrollEnd);
       this.drawFooter();
       // Re-anchor readline to the new input row (row count may have changed).
-      // _lastOutputRow is still valid — existing content rows are preserved.
       if (this._rl) this._rl.prompt();
     };
     process.stdout.on('resize', onResize);
