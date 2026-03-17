@@ -1658,12 +1658,7 @@ function getPrompt() {
   const level = getAutonomyLevel();
   if (level !== 'interactive') parts.push(level);
 
-  const providerName = getActiveProviderName();
-  const model = getActiveModel();
-  // Show short model label: strip provider prefix for well-known providers
-  const modelLabel = providerName === 'ollama' ? model.id : `${providerName}:${model.id}`;
-  parts.push(modelLabel);
-
+  // Model is shown in the footer status bar — omit from prompt
   const tag = parts.length > 0 ? `${C.dim}[${parts.join(' · ')}]${C.reset} ` : '';
   return `${tag}${C.bold}${C.cyan}>${C.reset} `;
 }
