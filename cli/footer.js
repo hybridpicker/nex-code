@@ -292,62 +292,69 @@ class StickyFooter {
       });
     };
 
-    // 8. Patch rl._refreshLine to prevent long input lines from wrapping.
-    //    When prompt + line exceeds terminal width, readline would wrap to the
-    //    next row — but row N is the last row outside the scroll region, so
-    //    wrapping corrupts the separator and prompt label via terminal auto-wrap.
-    //    Fix: always re-anchor to row N first (in case a character echo caused
-    //    an auto-wrap to row N+1), then show a truncated "scrolled" view for
-    //    lines that are too long.  The full rl.line is preserved for submission.
-    const origRefreshLine = rl._refreshLine ? rl._refreshLine.bind(rl) : null;
+    // 8. Patch readline's internal refresh via the Symbol key.
+    //    readline uses this[kRefreshLine]() (a Symbol property) internally for ALL
+    //    line redraws — cursor movement, backspace, wrap detection, prompt().
+    //    Patching only the string '_refreshLine' misses these calls.
+    //    We find the Symbol on the prototype and set an own-property on this rl
+    //    instance so it shadows the prototype method for all internal calls.
+    //
+    //    On every refresh we:
+    //      a) reset prevRows = 0  (readline uses this to move cursor UP before redraw;
+    //         a stale value from e.g. a completion preview causes drift toward row 1)
+    //      b) goto(rowInput)  (re-anchors cursor to row N regardless of where it drifted)
+    //      c) show a truncated/scrolled view when line > terminal width
+    const kRefreshLineSym = Object.getOwnPropertySymbols(Object.getPrototypeOf(rl))
+      .find(s => s.toString() === 'Symbol(_refreshLine)');
+    const origRefreshLine = kRefreshLineSym
+      ? rl[kRefreshLineSym].bind(rl)
+      : (rl._refreshLine ? rl._refreshLine.bind(rl) : null);
     this._origRefreshLine = origRefreshLine;
+
     if (origRefreshLine) {
-      rl._refreshLine = function() {
+      const patchedRefresh = function() {
         if (!self._active) { return origRefreshLine(); }
 
-        // Always re-anchor cursor to the input row before rendering.
-        // A character echo at the last column can auto-wrap the cursor to the
-        // row below row N; without this, origRefreshLine's \r would operate on
-        // the wrong row and the prompt would be drawn outside the input area.
-        // Reset _prevPos so readline doesn't try to move UP from row N —
-        // inline completion hints in Node.js v22+ can set _prevPos.rows > 0
-        // (hint renders below the line), which causes each subsequent refresh
-        // to move the cursor one row higher, drifting the input toward row 1.
-        rl._prevPos = null;
+        // Reset prevRows so readline doesn't cursor-up before rendering.
+        rl.prevRows = 0;
+        // Re-anchor cursor to input row (row N) before readline draws.
         self._origWrite(self._goto(self._rowInput));
 
-        const cols        = self._cols;
-        const promptVis   = visibleLen(rl._prompt || '');
-        const maxLineLen  = cols - promptVis - 1;   // chars available for line text
+        const cols      = self._cols;
+        const promptVis = visibleLen(rl[kRefreshLineSym ? '_prompt' : '_prompt'] || rl._prompt || '');
+        const maxLineLen = cols - promptVis - 1;
 
         self._inRefreshLine = true;
         try {
           if (rl.line.length <= maxLineLen) {
-            // Line fits — render normally
             return origRefreshLine();
           }
 
           // Line is too long: show a horizontally-scrolled view.
-          // Keep the characters near the cursor visible; prefix with a dim «.
           const savedLine   = rl.line;
           const savedCursor = rl.cursor;
-
-          const viewLen   = Math.max(1, maxLineLen - 1);  // 1 char for « prefix
-          const cursorEnd = savedCursor;
-          const start     = Math.max(0, cursorEnd - viewLen);
+          const viewLen   = Math.max(1, maxLineLen - 1);
+          const start     = Math.max(0, savedCursor - viewLen);
           const truncated = (start > 0 ? '«' : '') + savedLine.slice(start, start + viewLen + (start > 0 ? 0 : 1));
-
           rl.line   = truncated;
           rl.cursor = truncated.length;
           origRefreshLine();
-
-          // Restore actual content (never modified for submission)
           rl.line   = savedLine;
           rl.cursor = savedCursor;
         } finally {
           self._inRefreshLine = false;
         }
       };
+
+      // Patch via Symbol (intercepted by readline's internal this[kSym]() calls)
+      if (kRefreshLineSym) {
+        Object.defineProperty(rl, kRefreshLineSym, {
+          value: patchedRefresh, writable: true, configurable: true,
+        });
+      }
+      // Also patch the string property (used by our single-char intercept)
+      rl._refreshLine = patchedRefresh;
+      this._origRefreshLine = origRefreshLine;
     }
 
     // 9. After user submits input (Enter), move cursor into scroll zone.
@@ -368,13 +375,15 @@ class StickyFooter {
 
     // 9. Handle terminal resize
     const onResize = () => {
-      // Erase the old status and input rows before resizing the scroll region —
-      // on shrink the old rows shift and leave ghost lines behind.
+      // Capture OLD row positions BEFORE process.stdout.rows updates.
+      // Erase them so ghost lines don't remain after the resize.
+      const oldStatus = this._rowStatus;
+      const oldInput  = this._rowInput;
       if (this._origWrite) {
         this._origWrite(
           '\x1b7' +
-          this._goto(this._rowStatus) + '\x1b[2K' +
-          this._goto(this._rowInput)  + '\x1b[2K' +
+          this._goto(oldStatus) + '\x1b[2K' +
+          this._goto(oldInput)  + '\x1b[2K' +
           '\x1b8'
         );
       }
@@ -409,9 +418,16 @@ class StickyFooter {
 
     // Restore readline methods
     if (this._rl) {
-      if (this._origPrompt)      { this._rl.prompt        = this._origPrompt;      this._origPrompt      = null; }
-      if (this._origSetPr)       { this._rl.setPrompt     = this._origSetPr;       this._origSetPr       = null; }
-      if (this._origRefreshLine) { this._rl._refreshLine  = this._origRefreshLine; this._origRefreshLine = null; }
+      if (this._origPrompt) { this._rl.prompt    = this._origPrompt; this._origPrompt = null; }
+      if (this._origSetPr)  { this._rl.setPrompt = this._origSetPr;  this._origSetPr  = null; }
+      if (this._origRefreshLine) {
+        // Restore both the Symbol and the string property
+        const kSym = Object.getOwnPropertySymbols(Object.getPrototypeOf(this._rl))
+          .find(s => s.toString() === 'Symbol(_refreshLine)');
+        if (kSym) delete this._rl[kSym];          // remove own-property → prototype takes over
+        delete this._rl._refreshLine;             // remove string alias override
+        this._origRefreshLine = null;
+      }
     }
 
     // Clear status bar and restore full scroll region
