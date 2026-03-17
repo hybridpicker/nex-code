@@ -300,6 +300,11 @@ class StickyFooter {
         // A character echo at the last column can auto-wrap the cursor to the
         // row below row N; without this, origRefreshLine's \r would operate on
         // the wrong row and the prompt would be drawn outside the input area.
+        // Reset _prevPos so readline doesn't try to move UP from row N —
+        // inline completion hints in Node.js v22+ can set _prevPos.rows > 0
+        // (hint renders below the line), which causes each subsequent refresh
+        // to move the cursor one row higher, drifting the input toward row 1.
+        rl._prevPos = null;
         self._origWrite(self._goto(self._rowInput));
 
         const cols        = self._cols;
