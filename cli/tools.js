@@ -2377,11 +2377,13 @@ async function _executeToolInner(name, args, options = {}) {
       };
 
       // Helper: find files by name pattern, skip noisy dirs
-      const SKIP_DIRS = 'node_modules|.git|dist|build|vendor|.next|__pycache__|venv|.venv';
+      // Each dir needs its own -not -path clause; alternation (|) is not valid in find glob patterns.
+      const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build', 'vendor', '.next', '__pycache__', 'venv', '.venv'];
+      const skipFlags = SKIP_DIRS.map(d => `-not -path "*/${d}/*"`).join(' ');
       const findByName = async (name) => {
         try {
           const { stdout } = await exec(
-            `find "${cwd}" -type f -name "${name}" -not -path "*/(${SKIP_DIRS})/*" 2>/dev/null | head -10`,
+            `find "${cwd}" -type f -name "${name}" ${skipFlags} 2>/dev/null | head -10`,
             { timeout: 8000 }
           );
           return stdout.trim().split('\n').filter(Boolean);
