@@ -1,5 +1,5 @@
 ```
- ██▄▄██   nex-code  v0.3.47
+ ██▄▄██   nex-code  v0.3.49
  █▀██▀█   qwen3-coder:480b  ·  /help
  ▀████▀
 ```
@@ -155,6 +155,7 @@ FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
 NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
 NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
 NEX_LANGUAGE=auto              # Response language: "auto" (mirrors user's language, default) or e.g. "English", "Deutsch"
+NEX_THEME=dark                 # Force dark/light theme (overrides auto-detection). Use if colours look wrong for your terminal profile.
 FOOTER_DEBUG=1                 # Write terminal layout debug log to /tmp/footer-debug.log
 ```
 
@@ -596,6 +597,20 @@ Every file change is shown in a diff-style format before being applied:
 - **Context**: 3 lines of surrounding context per change, multiple hunks separated by `···`
 - OOM-safe: large diffs (>2000 lines) fall back to add/remove instead of LCS
 - All changes require `[y/n]` confirmation (toggle with `/autoconfirm` or start with `-yolo`)
+
+### Terminal Theme Detection
+Nex Code automatically adapts all colours to your terminal's background:
+
+- **Dark terminals** — bright, saturated palette with `\x1b[2m` dim for muted text
+- **Light/white terminals** — darker, high-contrast palette; dim replaced with explicit grey to stay visible on white backgrounds; command echo uses a light blue-grey highlight instead of dark grey
+
+Detection priority:
+1. `NEX_THEME=light|dark` env var — explicit override, useful if auto-detection is wrong
+2. `COLORFGBG` env var — set by iTerm2 and other terminals
+3. **OSC 11 query** — asks the terminal emulator directly for its background colour (works with Apple Terminal, iTerm2, WezTerm, Ghostty, and most xterm-compatible terminals). Result is cached per terminal session in `~/.nex-code/.theme_cache.json`, so the one-time ~100 ms startup cost only occurs on first launch in each terminal window.
+4. Default → dark
+
+If you use multiple Apple Terminal profiles (e.g. white, dark teal, dark green), each window is detected independently — no manual configuration needed.
 
 ### Auto-Context
 On startup, the CLI reads your project and injects context into the system prompt:
