@@ -5,6 +5,7 @@
 
 const path = require('path');
 const { C } = require('./ui');
+const { T, isDark } = require('./theme');
 const { confirm, getAutoConfirm } = require('./safety');
 
 /**
@@ -348,11 +349,19 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
       const lineAnnotations = op.type !== 'remove' ? annotations.filter(a => a.line === op.newLine) : [];
 
       if (op.type === 'remove') {
-        console.log(`${PAD}${C.red}${numStr} -${op.line}${C.reset}`);
+        // Gutter colored, content: muted red on dark / dim default on light
+        const content = isDark
+          ? `${T.diff_rem}${op.line}${C.reset}`
+          : `${C.dim}${op.line}${C.reset}`;
+        console.log(`${PAD}${C.red}${numStr} - ${C.reset}${content}`);
       } else if (op.type === 'add') {
-        console.log(`${PAD}${C.green}${numStr} +${op.line}${C.reset}`);
+        // Gutter colored, content: muted green on dark / default on light
+        const content = isDark
+          ? `${T.diff_add}${op.line}${C.reset}`
+          : `${op.line}`;
+        console.log(`${PAD}${C.green}${numStr} + ${C.reset}${content}`);
       } else {
-        console.log(`${PAD}${C.dim}${numStr}${C.reset} ${op.line}`);
+        console.log(`${PAD}${C.dim}${numStr}  ${C.reset}${op.line}`);
       }
 
       // Render annotations
@@ -400,7 +409,8 @@ function showClaudeNewFile(filePath, content, options = {}) {
     const lineNum = i + 1;
     const lineAnnotations = annotations.filter(a => a.line === lineNum);
 
-    console.log(`${PAD}${C.green}${numStr} +${lines[i]}${C.reset}`);
+    const content = isDark ? `${T.diff_add}${lines[i]}${C.reset}` : `${lines[i]}`;
+    console.log(`${PAD}${C.green}${numStr} + ${C.reset}${content}`);
 
     // Render annotations
     for (const ann of lineAnnotations) {
