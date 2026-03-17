@@ -1,7 +1,7 @@
 ```
-▀▄ ▀▄   nex-code  v0.3.47
-█████   qwen3-coder:480b  ·  /help
-▄███▄
+ ██▄▄██   nex-code  v0.3.47
+ █▀██▀█   qwen3-coder:480b  ·  /help
+ ▀████▀
 ```
 
 <p align="center">
