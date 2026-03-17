@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 
 function getMemoryDir() {
   return path.join(process.cwd(), '.nex', 'memory');
@@ -43,7 +44,7 @@ function readMemoryFile() {
 
 function writeMemoryFile(data) {
   ensureDir();
-  fs.writeFileSync(getMemoryFile(), JSON.stringify(data, null, 2), 'utf-8');
+  atomicWrite(getMemoryFile(), JSON.stringify(data, null, 2));
 }
 
 /**
@@ -52,12 +53,15 @@ function writeMemoryFile(data) {
  * @param {string} value
  */
 function remember(key, value) {
-  const data = readMemoryFile();
-  data[key] = {
-    value,
-    updatedAt: new Date().toISOString(),
-  };
-  writeMemoryFile(data);
+  ensureDir();
+  withFileLockSync(getMemoryFile(), () => {
+    const data = readMemoryFile();
+    data[key] = {
+      value,
+      updatedAt: new Date().toISOString(),
+    };
+    writeMemoryFile(data);
+  });
 }
 
 /**
@@ -77,11 +81,14 @@ function recall(key) {
  * @returns {boolean}
  */
 function forget(key) {
-  const data = readMemoryFile();
-  if (!(key in data)) return false;
-  delete data[key];
-  writeMemoryFile(data);
-  return true;
+  ensureDir();
+  return withFileLockSync(getMemoryFile(), () => {
+    const data = readMemoryFile();
+    if (!(key in data)) return false;
+    delete data[key];
+    writeMemoryFile(data);
+    return true;
+  });
 }
 
 /**

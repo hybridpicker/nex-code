@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 
 // Loaded skills registry
 let loadedSkills = [];
@@ -52,19 +53,18 @@ function getDisabledSkills() {
  */
 function saveDisabledSkills(disabled) {
   const configPath = getConfigPath();
-  let config = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-  if (!config.skills) config.skills = {};
-  config.skills.disabled = disabled;
   const dir = path.dirname(configPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+  withFileLockSync(configPath, () => {
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+    }
+    if (!config.skills) config.skills = {};
+    config.skills.disabled = disabled;
+    atomicWrite(configPath, JSON.stringify(config, null, 2));
+  });
 }
 
 /**

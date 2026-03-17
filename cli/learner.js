@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 const { callChat } = require('./providers/registry');
 const { remember, listMemories, recall } = require('./memory');
 
@@ -132,35 +133,38 @@ function applyNexAdditions(additions) {
   if (!additions || additions.length === 0) return [];
 
   const nexPath = path.join(process.cwd(), 'NEX.md');
-  let existing = '';
-  try {
-    if (fs.existsSync(nexPath)) existing = fs.readFileSync(nexPath, 'utf-8');
-  } catch { /* ignore */ }
 
-  const added = [];
-  let newContent = existing;
+  return withFileLockSync(nexPath, () => {
+    let existing = '';
+    try {
+      if (fs.existsSync(nexPath)) existing = fs.readFileSync(nexPath, 'utf-8');
+    } catch { /* ignore */ }
 
-  for (const line of additions) {
-    if (!line || typeof line !== 'string') continue;
-    const clean = line.trim();
-    if (!clean) continue;
+    const added = [];
+    let newContent = existing;
 
-    // Fuzzy deduplicate: skip if first 35 chars already appear in file
-    const snippet = clean.substring(0, 35).toLowerCase();
-    if (existing.toLowerCase().includes(snippet)) continue;
+    for (const line of additions) {
+      if (!line || typeof line !== 'string') continue;
+      const clean = line.trim();
+      if (!clean) continue;
 
-    added.push(clean);
-    newContent = newContent
-      ? (newContent.endsWith('\n') ? newContent + clean : newContent + '\n' + clean)
-      : clean;
-  }
+      // Fuzzy deduplicate: skip if first 35 chars already appear in file
+      const snippet = clean.substring(0, 35).toLowerCase();
+      if (existing.toLowerCase().includes(snippet)) continue;
 
-  if (added.length > 0) {
-    if (!newContent.endsWith('\n')) newContent += '\n';
-    fs.writeFileSync(nexPath, newContent, 'utf-8');
-  }
+      added.push(clean);
+      newContent = newContent
+        ? (newContent.endsWith('\n') ? newContent + clean : newContent + '\n' + clean)
+        : clean;
+    }
 
-  return added;
+    if (added.length > 0) {
+      if (!newContent.endsWith('\n')) newContent += '\n';
+      atomicWrite(nexPath, newContent);
+    }
+
+    return added;
+  });
 }
 
 /**

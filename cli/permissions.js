@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { C } = require('./ui');
+const { atomicWrite, withFileLockSync } = require('./filelock');
 
 // Default permissions: read ops auto, write/bash ask
 const DEFAULT_PERMISSIONS = {
@@ -49,19 +50,16 @@ function loadPermissions() {
 function savePermissions() {
   const configDir = path.join(process.cwd(), '.nex');
   const configPath = path.join(configDir, 'config.json');
-
-  let config = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-      config = {};
-    }
-  }
-
-  config.permissions = permissions;
   if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+  withFileLockSync(configPath, () => {
+    let config = {};
+    if (fs.existsSync(configPath)) {
+      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+    }
+    config.permissions = permissions;
+    atomicWrite(configPath, JSON.stringify(config, null, 2));
+  });
 }
 
 /**
