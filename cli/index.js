@@ -2091,6 +2091,29 @@ async function startREPL() {
   let multiLineBuffer = null; // null = not in multi-line mode
   const MULTI_LINE_PROMPT = `${C.dim}...${C.reset} `;
 
+  /**
+   * Restore newlines that browsers strip when copying numbered lists.
+   * Detects collapsed "N. item" patterns glued to previous text (no space before number)
+   * and inserts newlines to restore the original structure.
+   *
+   * Examples fixed:
+   *   "checks:1. foo2. bar"  →  "checks:\n1. foo\n2. bar"
+   *   "units2. next item3."  →  "units\n2. next item\n3."
+   *
+   * False-positive guards:
+   *   - Space before number → untouched ("we have 2. options")
+   *   - Digit before number → untouched ("v1.2.3", "error 404.")
+   *   - Fewer than 2 collapsed items → untouched
+   */
+  function smartReformat(text) {
+    // [^\s\d] = non-whitespace, non-digit immediately before the list number
+    const collapsedCount = (text.match(/[^\s\d](\d{1,2})\.\s+\S/g) || []).length;
+    if (collapsedCount < 2) return text;
+    return text
+      .replace(/([^\s\d])(\d{1,2})\.\s+/g, (_, prev, num) => `${prev}\n${num}. `)
+      .trim();
+  }
+
   rl.setPrompt(getPrompt());
   rl.prompt();
 
@@ -2213,7 +2236,7 @@ async function startREPL() {
       return;
     }
 
-    const input = line.trim();
+    const input = smartReformat(line.trim());
     if (!input) {
       rl.setPrompt(getPrompt());
       rl.prompt();
