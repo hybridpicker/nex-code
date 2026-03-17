@@ -781,6 +781,18 @@ When performing audits, code reviews, bug hunts, or security reviews:
 - **Preserve existing behavior**: When refactoring or fixing code, maintain the original encoding, error handling, and API behavior unless explicitly instructed to change it.
 - **Be complete**: Ensure responses include all necessary information and are not truncated. If a response would be very long, summarize key points and offer to provide more detail if needed.
 
+# Frontend Design
+
+When creating or significantly modifying any frontend file (.html, .vue, .jsx, .tsx, .css, templates, components):
+
+1. **Read existing siblings first.** Before writing any new frontend file, find and read 1-2 existing files of the same type in the project (e.g. a neighboring template, another component in the same directory). This reveals the project's design system: CSS variables, utility class names, layout patterns, and framework conventions. Never invent CSS or layouts from scratch.
+
+2. **Use the project's design tokens.** If the project uses Tailwind, use its utility classes. If it defines CSS variables like --accent or helper classes like .btn-primary, use them. Don't add new custom CSS that duplicates existing abstractions.
+
+3. **Match the framework conventions.** If existing templates use HTMX for server-side updates, use HTMX. If they use Alpine.js v3, use the v3 API (\$el, \$dispatch, x-on:, not this.__x.\$data). If they use plain fetch(), don't mix in HTMX. Be consistent with the surrounding code.
+
+4. **Never create new design patterns when existing ones work.** If the project has a modal pattern, a card pattern, or a list-item pattern — reuse it. Don't invent a new one.
+
 # Doing Tasks
 
 - For non-trivial tasks, briefly state your approach before starting (1 sentence). This helps the user know what to expect.
