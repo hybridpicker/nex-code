@@ -1197,7 +1197,7 @@ async function processInput(userInput) {
   const startTime = Date.now();
   const fileEditCounts = new Map(); // loop detection: edits per file
   const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
-  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
+  const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
   const bashCmdCounts = new Map(); // loop detection: repeated bash commands
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
@@ -1259,11 +1259,13 @@ async function processInput(userInput) {
         staleWarned = true;
         stream._clearCursorLine();
         const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
-        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`);
+        const retryLabel = staleRetries > 0 ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})` : '';
+        const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
+        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`);
         if (fastModel && fastModel !== getActiveModelId()) {
-          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} if no tokens arrive before abort${C.reset}`);
-        } else if (fastModel) {
-          console.log(`${C.dim}  💡 Ctrl+C to abort and retry${C.reset}`);
+          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} in ~${abortInSec}s if no tokens arrive${C.reset}`);
+        } else {
+          console.log(`${C.dim}  💡 Ctrl+C to abort · auto-abort in ~${abortInSec}s${C.reset}`);
         }
       }
     }, 5000);
