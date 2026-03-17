@@ -611,9 +611,12 @@ Automatic token management with compression when the context window gets full. T
 ### Safety Layer
 Three tiers of protection:
 - **Forbidden** (blocked): `rm -rf /`, `rm -rf .`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
-- **Dangerous** (requires confirmation): `git push`, `npm publish`, `rm -rf`, `docker rm`, `sudo`, `ssh` — 14 patterns
+- **Critical** (always re-prompted, even after "always allow"): `rm -rf`, `sudo`, `--no-verify` (hook bypass) — every run requires explicit confirmation
+- **Notable** (confirmation on first use): `git push`, `npm publish`, `ssh`, `HUSKY=0`, `SKIP_HUSKY=1` — first-time prompt, then respects "always allow"
 - **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
+- **Loop detection**: Edit-loop abort after 4 edits to the same file (warn at 2); bash-command loop abort after 8 identical commands (warn at 5); consecutive-error abort after 10 failures (warn at 6)
+- **Stale-stream detection**: Warns after 60 s without tokens (shows retry count + seconds until auto-abort); auto-switches to the fast model on retry 1 and offers interactive recovery when all retries are exhausted
 - **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
 - **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
 
