@@ -37,7 +37,18 @@ jest.mock('../cli/context-engine', () => ({
 jest.mock('../cli/session', () => ({ autoSave: jest.fn(), flushAutoSave: jest.fn() }));
 jest.mock('../cli/memory', () => ({ getMemoryContext: jest.fn().mockReturnValue('') }));
 jest.mock('../cli/permissions', () => ({ checkPermission: jest.fn().mockReturnValue('allow'), setPermission: jest.fn(), savePermissions: jest.fn() }));
-jest.mock('../cli/planner', () => ({ isPlanMode: jest.fn().mockReturnValue(false), getPlanModePrompt: jest.fn().mockReturnValue('') }));
+jest.mock('../cli/planner', () => ({
+  isPlanMode: jest.fn().mockReturnValue(false),
+  getPlanModePrompt: jest.fn().mockReturnValue(''),
+  PLAN_MODE_ALLOWED_TOOLS: new Set(),
+  setPlanContent: jest.fn(),
+  extractStepsFromText: jest.fn().mockReturnValue([]),
+  createPlan: jest.fn(),
+  getActivePlan: jest.fn().mockReturnValue(null),
+  startExecution: jest.fn(),
+  advancePlanStep: jest.fn(),
+  getPlanStepInfo: jest.fn().mockReturnValue(null),
+}));
 jest.mock('../cli/render', () => ({
   renderMarkdown: jest.fn().mockImplementation((t) => t || ''),
   StreamRenderer: jest.fn().mockImplementation(() => ({ push: jest.fn(), flush: jest.fn(), startCursor: jest.fn(), stopCursor: jest.fn() })),

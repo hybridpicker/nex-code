@@ -36,6 +36,7 @@ const SLASH_COMMANDS = [
   { cmd: '/budget', desc: 'Show/set cost limits per provider' },
   { cmd: '/clear', desc: 'Clear conversation' },
   { cmd: '/context', desc: 'Show project context' },
+  { cmd: '/tree [depth]', desc: 'Show project file tree (default depth 3)' },
   { cmd: '/autoconfirm', desc: 'Toggle auto-confirm' },
   { cmd: '/save', desc: 'Save session' },
   { cmd: '/load', desc: 'Load a saved session' },
@@ -61,6 +62,7 @@ const SLASH_COMMANDS = [
   { cmd: '/allow', desc: 'Auto-allow a tool' },
   { cmd: '/deny', desc: 'Block a tool' },
   { cmd: '/plan', desc: 'Plan mode (analyze before executing)' },
+  { cmd: '/plan edit', desc: 'Open current plan in $EDITOR' },
   { cmd: '/plans', desc: 'List saved plans' },
   { cmd: '/auto', desc: 'Set autonomy level' },
   { cmd: '/commit', desc: 'Smart commit (diff + message)' },
@@ -79,6 +81,8 @@ const SLASH_COMMANDS = [
   { cmd: '/undo', desc: 'Undo last file change' },
   { cmd: '/redo', desc: 'Redo last undone change' },
   { cmd: '/history', desc: 'Show file change history' },
+  { cmd: '/snapshot [name]', desc: 'Create a named git snapshot of current changes' },
+  { cmd: '/restore [name|last]', desc: 'Restore a previously created snapshot' },
   { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
 ];
@@ -439,6 +443,16 @@ async function handleSlashCommand(input, rl) {
     case '/context':
       await printContext(CWD);
       return true;
+
+    case '/tree': {
+      const { generateFileTree } = require('./context');
+      const depthArg = parseInt(rest.join(' ').trim(), 10);
+      const depth = !isNaN(depthArg) && depthArg > 0 ? Math.min(depthArg, 8) : 3;
+      const tree = generateFileTree(CWD, { maxDepth: depth, maxFiles: 300 });
+      console.log(`\n${C.bold}${C.cyan}Project tree${C.reset}${C.dim} (depth ${depth})${C.reset}\n`);
+      console.log(`${C.dim}${tree}${C.reset}\n`);
+      return true;
+    }
 
     case '/autoconfirm': {
       const newVal = !getAutoConfirm();
@@ -922,7 +936,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case '/plan': {
-      const { getActivePlan, approvePlan, startExecution, setPlanMode, getPlanContent, formatPlan } = require('./planner');
+      const { getActivePlan, approvePlan, startExecution, setPlanMode, getPlanContent, getPlanContent: getPlanText, formatPlan, extractStepsFromText, createPlan } = require('./planner');
       const { invalidateSystemPromptCache } = require('./agent');
       const arg = rest.join(' ').trim();
       if (arg === 'status') {
@@ -930,13 +944,50 @@ async function handleSlashCommand(input, rl) {
         console.log(formatPlan(plan));
         return true;
       }
+      if (arg === 'edit') {
+        // Open current plan in $EDITOR for review/modification
+        const planContent = getPlanContent();
+        if (!planContent) {
+          console.log(`${C.yellow}No plan to edit. Generate a plan first with /plan${C.reset}`);
+          return true;
+        }
+        const os = require('os');
+        const tmpPath = require('path').join(os.tmpdir(), `nex-plan-${Date.now()}.md`);
+        require('fs').writeFileSync(tmpPath, planContent, 'utf-8');
+        const editor = process.env.EDITOR || process.env.VISUAL || 'nano';
+        const { spawnSync } = require('child_process');
+        console.log(`${C.dim}Opening plan in ${editor}... (save and close to update)${C.reset}`);
+        const result = spawnSync(editor, [tmpPath], { stdio: 'inherit' });
+        if (result.status === 0) {
+          const { setPlanContent } = require('./planner');
+          const updated = require('fs').readFileSync(tmpPath, 'utf-8');
+          setPlanContent(updated);
+          // Re-extract steps from updated content
+          const newSteps = extractStepsFromText(updated);
+          if (newSteps.length > 0) {
+            const existing = getActivePlan();
+            const taskDesc = existing?.task || 'Task';
+            createPlan(taskDesc, newSteps);
+            console.log(`${C.green}Plan updated — ${newSteps.length} steps extracted.${C.reset}`);
+          } else {
+            console.log(`${C.green}Plan updated.${C.reset}`);
+          }
+        } else {
+          console.log(`${C.yellow}Editor exited with error — plan unchanged.${C.reset}`);
+        }
+        try { require('fs').unlinkSync(tmpPath); } catch { /* ignore */ }
+        return true;
+      }
       if (arg === 'approve') {
         if (approvePlan()) {
           startExecution();
           setPlanMode(false);
           invalidateSystemPromptCache();
+          const plan = getActivePlan();
+          const stepCount = plan?.steps?.length || 0;
           const hasContent = !!getPlanContent();
-          console.log(`${C.green}${C.bold}Plan approved!${C.reset} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
+          const stepLabel = stepCount > 0 ? ` (${stepCount} steps)` : '';
+          console.log(`${C.green}${C.bold}Plan approved!${C.reset}${stepLabel} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
           console.log(`${C.dim}Plan mode disabled — all tools now available.${C.reset}`);
         } else {
           console.log(`${C.red}No plan to approve. Enter plan mode first with /plan${C.reset}`);
@@ -947,10 +998,10 @@ async function handleSlashCommand(input, rl) {
       setPlanMode(true);
       invalidateSystemPromptCache();
       console.log(`
-${C.cyan}${C.bold}┌─ PLAN MODE ─────────────────────────────────────┐${C.reset}
-${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}┌─ PLAN MODE ───────────────────────────────────────┐${C.reset}
+${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved   ${C.cyan}${C.bold}│${C.reset}
 ${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · /plan approve to execute${C.reset}  ${C.cyan}${C.bold}│${C.reset}
-${C.cyan}${C.bold}└─────────────────────────────────────────────────┘${C.reset}`);
+${C.cyan}${C.bold}└───────────────────────────────────────────────────┘${C.reset}`);
       if (arg) {
         console.log(`${C.dim}Task: ${arg}${C.reset}`);
       }
@@ -1313,6 +1364,59 @@ For each issue, include:
         console.log(`  ${C.dim}${time}${C.reset} ${C.yellow}${entry.tool}${C.reset} ${entry.filePath}`);
       }
       console.log(`\n${C.dim}${getUndoCount()} undo / ${getRedoCount()} redo available${C.reset}\n`);
+      return true;
+    }
+
+    case '/snapshot': {
+      const { createSnapshot, listSnapshots } = require('./file-history');
+      const snapshotName = rest.join(' ').trim() || undefined;
+      if (snapshotName === 'list') {
+        const snaps = listSnapshots(CWD);
+        if (snaps.length === 0) {
+          console.log(`${C.dim}No snapshots found${C.reset}`);
+        } else {
+          console.log(`\n${C.bold}${C.cyan}Snapshots:${C.reset}`);
+          for (const s of snaps) {
+            console.log(`  ${C.cyan}#${s.index}${C.reset}  ${C.bold}${s.shortName}${C.reset}`);
+          }
+          console.log();
+        }
+        return true;
+      }
+      const result = createSnapshot(snapshotName, CWD);
+      if (result.ok) {
+        console.log(`${C.green}Snapshot created:${C.reset} ${result.label}`);
+        console.log(`${C.dim}Use /restore to apply it later${C.reset}`);
+      } else {
+        console.log(`${C.yellow}${result.error}${C.reset}`);
+      }
+      return true;
+    }
+
+    case '/restore': {
+      const { restoreSnapshot, listSnapshots } = require('./file-history');
+      const restoreTarget = rest.join(' ').trim() || 'last';
+      if (restoreTarget === 'list') {
+        const snaps = listSnapshots(CWD);
+        if (snaps.length === 0) {
+          console.log(`${C.dim}No snapshots available${C.reset}`);
+        } else {
+          console.log(`\n${C.bold}${C.cyan}Available snapshots:${C.reset}`);
+          for (const s of snaps) {
+            console.log(`  ${C.cyan}#${s.index}${C.reset}  ${C.bold}${s.shortName}${C.reset}`);
+          }
+          console.log(`\n${C.dim}Usage: /restore <name|last>${C.reset}\n`);
+        }
+        return true;
+      }
+      const result = restoreSnapshot(restoreTarget, CWD);
+      if (result.ok) {
+        console.log(`${C.green}Restored snapshot:${C.reset} ${result.label}`);
+        console.log(`${C.dim}Working tree updated. Use /undo for in-session file undos.${C.reset}`);
+      } else {
+        console.log(`${C.red}Restore failed:${C.reset} ${result.error}`);
+        console.log(`${C.dim}Use /snapshot list to see available snapshots${C.reset}`);
+      }
       return true;
     }
 

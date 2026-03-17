@@ -17,7 +17,7 @@ function saveNow(messages) { autoSave(messages); flushAutoSave(); }
 const { getMemoryContext } = require('./memory');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
-const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent } = require('./planner');
+const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
 const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
 const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
@@ -935,21 +935,49 @@ async function _runPreScan() {
   return line;
 }
 
+/**
+ * Fire a desktop notification on macOS (non-blocking, best-effort).
+ * Only fires when terminal is not focused (background tasks) and elapsed > 30s.
+ * @param {string} message
+ */
+function _notifyDesktop(message) {
+  if (process.platform !== 'darwin') return;
+  try {
+    const { execFileSync } = require('child_process');
+    // Use osascript — no extra dependencies needed
+    execFileSync('osascript', [
+      '-e',
+      `display notification "${message.replace(/"/g, '\\"')}" with title "nex-code"`,
+    ], { timeout: 3000, stdio: 'ignore' });
+  } catch { /* ignore — notification is best-effort */ }
+}
+
 function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
   let resume = `── ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} · ${totalTools} ${totalTools === 1 ? 'tool' : 'tools'}`;
+  let elapsedSecs = 0;
+  if (startTime) {
+    const elapsed = Date.now() - startTime;
+    elapsedSecs = Math.round(elapsed / 1000);
+    resume += elapsedSecs >= 60
+      ? ` · ${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
+      : ` · ${elapsedSecs}s`;
+  }
   if (filesModified.size > 0) {
     resume += ` · ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified`;
   }
-  if (startTime) {
-    const elapsed = Date.now() - startTime;
-    const secs = Math.round(elapsed / 1000);
-    resume += secs >= 60 ? ` · ${Math.floor(secs / 60)}m ${secs % 60}s` : ` · ${secs}s`;
-  }
   resume += ' ──';
   console.log(`\n${C.dim}  ${resume}${C.reset}`);
+
+  // Desktop notification for long-running tasks (> 30s)
+  if (elapsedSecs >= 30 && process.stdout.isTTY) {
+    const summary = filesModified.size > 0
+      ? `Done — ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified in ${elapsedSecs}s`
+      : `Done — ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} in ${elapsedSecs}s`;
+    _notifyDesktop(summary);
+  }
 
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
@@ -1151,12 +1179,24 @@ async function processInput(userInput) {
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
 
+    // Advance plan step cursor when a new tool iteration starts
+    if (totalSteps > 0) advancePlanStep();
+
     let spinner = null;
     if (taskProgress && taskProgress.isActive()) {
       // Resume the live task display instead of a plain spinner
       if (taskProgress._paused) taskProgress.resume();
     } else if (!taskProgress) {
-      const spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
+      let spinnerText;
+      const planInfo = getPlanStepInfo();
+      if (planInfo && planInfo.total > 1) {
+        const label = planInfo.description.length > 40
+          ? planInfo.description.slice(0, 37) + '…'
+          : planInfo.description;
+        spinnerText = `Plan step ${planInfo.current}/${planInfo.total}: ${label}`;
+      } else {
+        spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
+      }
       spinner = new Spinner(spinnerText);
       spinner.start();
     }
@@ -1488,12 +1528,25 @@ async function processInput(userInput) {
         conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
         continue; // retry — don't count as a new step
       }
-      // In plan mode: save the plan text output to disk
+      // In plan mode: save the plan text output to disk and extract structured steps
       if (isPlanMode() && hasText) {
         const planText = (content || streamedText || '').trim();
         setPlanContent(planText);
         _savePlanToFile(planText);
-        console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+        // Extract structured steps from LLM output so they can be tracked during execution
+        const extractedSteps = extractStepsFromText(planText);
+        if (extractedSteps.length > 0) {
+          // Determine task description from first user message in this session
+          const taskMsg = conversationMessages.find((m) => m.role === 'user');
+          const taskDesc = typeof taskMsg?.content === 'string'
+            ? taskMsg.content.slice(0, 120)
+            : 'Task';
+          createPlan(taskDesc, extractedSteps);
+          const stepWord = extractedSteps.length === 1 ? 'step' : 'steps';
+          console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
+        } else {
+          console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+        }
       }
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
       setOnChange(null);
