@@ -57,10 +57,46 @@ If merge conflicts occur during the merge from `devel` to `main`:
 **Project Structure & Indexing**
 - `bin/nex-code.js`: CLI entrypoint (wrapper)
 - `cli/`: All source code
+- `cli/agent.js`: Core agentic loop (`processInput`)
+- `cli/server-mode.js`: JSON-lines IPC server for the VS Code extension
+- `cli/safety.js`: Confirmation logic (`confirm`, `setConfirmHook`)
 - `cli/index-engine.js`: Fast file indexing (ripgrep/fallback)
 - `cli/providers/`: Provider implementations
 - `dist/`: Final bundled CLI scripts
 - `tests/`: Jest test files
+
+## VS Code Extension IPC (`--server` mode)
+
+The VS Code extension at `~/Coding/nex-code-vscode/` spawns nex-code as `nex-code --server`. Communication uses newline-delimited JSON over stdin/stdout. stderr is forwarded to VS Code's Output channel.
+
+### Protocol
+
+**Extension → nex-code (stdin):**
+```json
+{ "type": "chat",    "id": "msg-001", "text": "fix the bug" }
+{ "type": "confirm", "id": "cfm-001", "answer": true }
+{ "type": "cancel" }
+{ "type": "clear" }
+```
+
+**nex-code → Extension (stdout):**
+```json
+{ "type": "ready" }
+{ "type": "token",           "id": "msg-001", "text": "Here is" }
+{ "type": "tool_start",      "id": "msg-001", "tool": "read_file", "args": {"path": "src/auth.js"} }
+{ "type": "tool_end",        "id": "msg-001", "tool": "read_file", "summary": "✓ 142 lines", "ok": true }
+{ "type": "confirm_request", "id": "cfm-001", "question": "Run git push?", "tool": "bash", "critical": true }
+{ "type": "done",            "id": "msg-001" }
+{ "type": "error",           "id": "msg-001", "message": "Provider not configured" }
+```
+
+### Key implementation points
+
+- `cli/server-mode.js` redirects `console.log`/`warn`/`info` to stderr to keep stdout clean for JSON
+- `cli/agent.js` `processInput(input, serverHooks)` accepts hooks for `onToken`, `onToolStart`, `onToolEnd`
+- `cli/safety.js` `setConfirmHook(fn)` overrides `confirm()` so critical tool confirmations are routed through the extension's Yes/No dialog instead of blocking on TTY input
+- `setAutoConfirm(true)` is called before `startServerMode()` so non-critical tools run without interruption
+- The `--server` branch in `bin/nex-code.js` uses `return` after `startServerMode()` to prevent the REPL from starting
 
 ## Git Hooks
 

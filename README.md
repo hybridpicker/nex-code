@@ -265,9 +265,28 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 | `--delete-prompt-file` | Delete the prompt file after reading (use with `--prompt-file`) |
 | `--auto` | Skip confirmations (non-interactive, no REPL banner) |
 | `--yolo` | Skip all confirmations including dangerous commands |
+| `--server` | Start JSON-lines IPC server (used by the VS Code extension) |
 | `--json` | Output `{"success":true,"response":"..."}` to stdout |
 | `--max-turns <n>` | Override the agentic loop iteration limit |
 | `--model <spec>` | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`) |
+
+---
+
+## VS Code Extension
+
+A companion extension at [`nex-code-vscode`](https://github.com/hybridpicker/nex-code-vscode) brings the full nex-code agent into a VS Code sidebar panel — streaming chat bubbles, collapsible tool cards, and confirmation dialogs, all using VS Code's native theme variables.
+
+**Architecture:** The extension spawns `nex-code --server` as a child process. The two communicate over a JSON-lines protocol on stdin/stdout (stderr is forwarded to VS Code's Output channel). No modules are copied — nex-code stays the single source of truth.
+
+**Quick install:**
+```bash
+cd ~/Coding/nex-code-vscode
+npm install && npm run build
+vsce package
+code --install-extension nex-code-0.1.0.vsix
+```
+
+Configure API keys via `Settings → Extensions → Nex Code`. The extension spawns one agent per workspace folder and restarts it via **Nex Code: Restart Agent** if it crashes.
 
 ---
 
