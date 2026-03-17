@@ -614,7 +614,8 @@ function _buildLanguagePrompt() {
   lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
   lines.push('  • For Makefiles, always display the FULL Makefile — every target, dependency, recipe, and .PHONY declaration. Never describe a Makefile without showing the complete file content.');
   lines.push('  • For dataclasses, always show the COMPLETE dataclass code — all fields with types, defaults, and any __post_init__ validation. Never describe a dataclass without showing the actual implementation.');
-  lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.');
+  lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.
+  • When a task explicitly specifies a tool (e.g., "use tsc"), NEVER mention alternatives (e.g., "swc build") — use exactly what was requested.');
 
   const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
   if (effectiveCodeLang) {
@@ -726,7 +727,7 @@ Response patterns by request type:
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
-- **Regex explanations**: Always show the actual regex pattern and test it with examples. Be precise about what the pattern actually matches - don't make false claims about leading zeros or other behavior. For named groups, use the correct syntax format (?<name>pattern), not incorrect variants. Note PCRE-only features like (?&name) backreferences. Always test patterns with actual examples to verify behavior.
+- **Regex explanations**: Always show the actual regex pattern and test it with examples. Be precise about what the pattern actually matches - don't make false claims about leading zeros or other behavior. Use portable regex features (JavaScript/ECMAScript compatible) unless specifically required. Avoid PCRE-only features like (?&name) backreferences, (?|...) branch reset, or atomic groups. Always test patterns with actual examples to verify behavior.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
 - **Hook implementations (Git, bash scripts)**: Write the complete, correct solution in a SINGLE attempt. Think through the logic before writing — do NOT iterate with bash trial-and-error. The hook file must be shown in full. Handle edge cases (console.log in strings vs real calls) in the initial implementation, not through repeated fix attempts. Show how to install the hook (chmod +x, .git/hooks/ path).
 - **Memory leak explanations**: When explaining memory leaks, show actual code examples of both problematic and fixed versions. Explain WHY solutions work, not just what they are.
@@ -1177,8 +1178,8 @@ async function processInput(userInput) {
   const filesRead = new Set();
   const startTime = Date.now();
   const fileEditCounts = new Map(); // loop detection: edits per file
-  const LOOP_WARN_EDITS = 5;  // warn agent after 5 edits to same file
-  const LOOP_ABORT_EDITS = 10; // abort loop after 10 edits to same file
+  const LOOP_WARN_EDITS = 3;  // warn agent after 3 edits to same file
+  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
   const bashCmdCounts = new Map(); // loop detection: repeated bash commands
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
