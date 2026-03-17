@@ -3,11 +3,112 @@
  */
 
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const exec = require('util').promisify(require('child_process').exec);
 const { C } = require('./ui');
 const { getMergeConflicts } = require('./git');
 const { getServerContext } = require('./server-context');
+
+// Directories/files always excluded from the file tree
+const TREE_EXCLUDE = new Set([
+  'node_modules', '.git', '.svn', 'dist', 'build', 'coverage',
+  '.nyc_output', '__pycache__', '.DS_Store', '.next', '.nuxt',
+  '.turbo', '.cache', 'vendor', 'tmp', 'temp',
+]);
+
+/**
+ * Parse a .gitignore file and return a list of simple pattern strings.
+ * Only handles the most common patterns (no complex glob negations).
+ */
+function parseGitignorePatterns(giPath) {
+  try {
+    const content = fsSync.readFileSync(giPath, 'utf-8');
+    return content
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith('!'))
+      .map((l) => l.replace(/\/$/, '')); // strip trailing slash
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check if a name matches any gitignore pattern (basic wildcard support).
+ */
+function matchesGitignore(name, patterns) {
+  for (const pattern of patterns) {
+    if (pattern === name) return true;
+    if (pattern.includes('*')) {
+      // Simple glob: *.ext → matches any name ending with .ext
+      const re = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+      if (re.test(name)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Generate an ASCII file tree for the given directory.
+ *
+ * @param {string} rootDir - Absolute path to root
+ * @param {object} [opts]
+ * @param {number} [opts.maxDepth=3] - Maximum folder depth
+ * @param {number} [opts.maxFiles=200] - Hard cap on total entries
+ * @param {string[]} [opts.giPatterns=[]] - Extra gitignore patterns
+ * @returns {string} Rendered tree (multi-line string)
+ */
+function generateFileTree(rootDir, { maxDepth = 3, maxFiles = 200, giPatterns = [] } = {}) {
+  const giPath = path.join(rootDir, '.gitignore');
+  const patterns = [...giPatterns, ...parseGitignorePatterns(giPath)];
+
+  let totalEntries = 0;
+  const lines = [path.basename(rootDir) + '/'];
+
+  function walk(dir, prefix, depth) {
+    if (depth > maxDepth || totalEntries >= maxFiles) return;
+    let entries;
+    try {
+      entries = fsSync.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    // Sort: dirs first, then files, both alphabetically
+    entries.sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    // Filter excluded
+    const visible = entries.filter((e) => {
+      if (TREE_EXCLUDE.has(e.name)) return false;
+      if (e.name.startsWith('.') && e.name !== '.env.example') return false;
+      if (matchesGitignore(e.name, patterns)) return false;
+      return true;
+    });
+
+    for (let i = 0; i < visible.length; i++) {
+      if (totalEntries >= maxFiles) {
+        lines.push(`${prefix}└── … (truncated)`);
+        break;
+      }
+      const entry = visible[i];
+      const isLast = i === visible.length - 1;
+      const connector = isLast ? '└── ' : '├── ';
+      const childPrefix = prefix + (isLast ? '    ' : '│   ');
+      const name = entry.isDirectory() ? entry.name + '/' : entry.name;
+      lines.push(`${prefix}${connector}${name}`);
+      totalEntries++;
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), childPrefix, depth + 1);
+      }
+    }
+  }
+
+  walk(rootDir, '', 1);
+  return lines.join('\n');
+}
 
 // Context cache to avoid redundant file I/O on every turn
 const contextCache = new Map();
@@ -224,9 +325,10 @@ async function printContext(cwd) {
   console.log();
 }
 
-module.exports = { 
-  gatherProjectContext, 
+module.exports = {
+  gatherProjectContext,
   printContext,
+  generateFileTree,
   // Export for testing
   _clearContextCache: () => {
     contextCache.clear();
