@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWrite } = require('./filelock');
 
 function getSessionsDir() {
   return path.join(process.cwd(), '.nex', 'sessions');
@@ -44,7 +45,7 @@ function saveSession(name, messages, meta = {}) {
     provider: meta.provider || null,
     messages,
   };
-  fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf-8');
+  atomicWrite(filePath, JSON.stringify(session, null, 2));
   return { path: filePath, name };
 }
 

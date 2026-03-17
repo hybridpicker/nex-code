@@ -150,12 +150,18 @@ const CRITICAL_BASH = [
   /docker\s+system\s+prune/,
   /kubectl\s+delete/,
   /sudo\s/,
+  // Hook bypass — CLAUDE.md: NEVER use --no-verify
+  /--no-verify\b/,
 ];
 
 // Show in first-confirmation preview only — no second blocking prompt
 const NOTABLE_BASH = [
   /git\s+push/,
   /npm\s+publish/,
+  // Hook bypass via env — equivalent to --no-verify
+  /\bHUSKY=0\b/,
+  /\bSKIP_HUSKY=1\b/,
+  /\bSKIP_PREFLIGHT_CHECK=true\b/,
   /npx\s+.*publish/,
   /docker\s+rm/,
   /ssh\s/,

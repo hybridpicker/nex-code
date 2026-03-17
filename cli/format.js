@@ -3,24 +3,8 @@
  * Tool summaries, result formatting, and color utilities
  */
 
-const C = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  white: '\x1b[37m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  magenta: '\x1b[35m',
-  cyan: '\x1b[36m',
-  gray: '\x1b[90m',
-  bgRed: '\x1b[41m',
-  bgGreen: '\x1b[42m',
-  brightCyan: '\x1b[96m',
-  brightMagenta: '\x1b[95m',
-  brightBlue: '\x1b[94m',
-};
+const { T } = require('./theme');
+const C = T;
 
 // Last 1-2 path segments for compact display: "src/utils/helper.js"
 function _shortPath(p) {
@@ -29,27 +13,32 @@ function _shortPath(p) {
   return parts.length > 1 ? parts.slice(-2).join('/') : parts[0];
 }
 
-// Bullet color per tool category
+// Bullet color per tool category — uses theme RGB values for terminal-bg independence
 const TOOL_DOT_COLOR = {
-  read_file:    '\x1b[36m',  // cyan
-  list_directory:'\x1b[36m', // cyan
-  write_file:   '\x1b[33m',  // yellow
-  edit_file:    '\x1b[33m',  // yellow
-  patch_file:   '\x1b[33m',  // yellow
-  bash:         '\x1b[35m',  // magenta
-  grep:         '\x1b[34m',  // blue
-  search_files: '\x1b[34m',  // blue
-  glob:         '\x1b[34m',  // blue
-  git_commit:   '\x1b[32m',  // green
-  git_push:     '\x1b[32m',  // green
-  git_pull:     '\x1b[32m',  // green
-  git_status:   '\x1b[32m',  // green
-  git_diff:     '\x1b[32m',  // green
-  git_log:      '\x1b[32m',  // green
-  git_branch:   '\x1b[32m',  // green
-  git_stash:    '\x1b[32m',  // green
-  web_fetch:    '\x1b[96m',  // bright cyan
-  web_search:   '\x1b[96m',  // bright cyan
+  read_file:      T.tool_read,
+  list_directory: T.tool_read,
+  write_file:     T.tool_write,
+  edit_file:      T.tool_write,
+  patch_file:     T.tool_write,
+  bash:           T.tool_exec,
+  grep:           T.tool_search,
+  search_files:   T.tool_search,
+  glob:           T.tool_search,
+  git_commit:     T.tool_git,
+  git_push:       T.tool_git,
+  git_pull:       T.tool_git,
+  git_status:     T.tool_git,
+  git_diff:       T.tool_git,
+  git_log:        T.tool_git,
+  git_branch:     T.tool_git,
+  git_stash:      T.tool_git,
+  web_fetch:      T.tool_web,
+  web_search:     T.tool_web,
+  sysadmin:       T.tool_sysadmin,
+  ssh_exec:       T.tool_sysadmin,
+  ssh_upload:     T.tool_sysadmin,
+  ssh_download:   T.tool_sysadmin,
+  deploy:         T.tool_sysadmin,
 };
 
 // Human-readable labels for tool names
@@ -94,6 +83,7 @@ const TOOL_LABELS = {
   container_exec:     'Container exec',
   brain_write:        'Brain write',
   deploy:             'Deploy',
+  frontend_recon:     'Frontend recon',
 };
 
 // Section descriptions used in step headers (grouped action phrases)
@@ -138,6 +128,7 @@ const STEP_DESCRIPTIONS = {
   container_exec:     'Running in container',
   brain_write:        'Saving to memory',
   deploy:             'Deploying',
+  frontend_recon:     'Scanning design system',
 };
 
 /**
@@ -145,11 +136,11 @@ const STEP_DESCRIPTIONS = {
  * Falls back to "Step N" if no tools or no mapping found.
  */
 function _dot(fnName, isError = false, frame = null) {
-  if (isError) return `${C.red}●${C.reset}`;
-  const col = TOOL_DOT_COLOR[fnName] || C.green;
-  if (frame === 'blink') return `${col}\x1b[5m●\x1b[25m${C.reset}`;
+  if (isError) return `${T.error}●${T.reset}`;
+  const col = TOOL_DOT_COLOR[fnName] || T.tool_default;
+  if (frame === 'blink') return `${col}\x1b[5m●\x1b[25m${T.reset}`;
   const char = frame !== null ? frame : '●';
-  return `${col}${char}${C.reset}`;
+  return `${col}${char}${T.reset}`;
 }
 
 function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
@@ -215,10 +206,10 @@ function formatResult(text, maxLines = 8) {
   const lines = text.split('\n');
   const shown = lines.slice(0, maxLines);
   const more = lines.length - maxLines;
-  const prefix0 = `${C.dim}  └  ${C.reset}`;
+  const prefix0 = `${T.muted}  └  ${T.reset}`;
   const prefixN = `     `;
-  let out = shown.map((l, i) => `${i === 0 ? prefix0 : prefixN}${C.green}${l}${C.reset}`).join('\n');
-  if (more > 0) out += `\n${C.gray}     … +${more} lines${C.reset}`;
+  let out = shown.map((l, i) => `${i === 0 ? prefix0 : prefixN}${T.success}${l}${T.reset}`).join('\n');
+  if (more > 0) out += `\n${T.subtle}     … +${more} lines${T.reset}`;
   return out;
 }
 
@@ -272,6 +263,26 @@ function getToolSpinnerText(name, args) {
       return `Browser: clicking ${args.text || args.selector || 'element'}...`;
     case 'browser_fill':
       return `Browser: filling ${args.selector || 'field'}...`;
+    case 'sysadmin': {
+      const srv = args.server && args.server !== 'local' ? ` [${args.server}]` : '';
+      switch (args.action) {
+        case 'audit':        return `Sysadmin${srv}: full audit...`;
+        case 'disk_usage':   return `Sysadmin${srv}: disk usage ${args.path || '/'}...`;
+        case 'process_list': return `Sysadmin${srv}: top processes (${args.sort_by || 'cpu'})...`;
+        case 'network_status': return `Sysadmin${srv}: network status...`;
+        case 'ssl_check':    return `Sysadmin${srv}: SSL check ${args.domain || args.cert_path || ''}...`;
+        case 'log_tail':     return `Sysadmin${srv}: tail ${args.path || 'log'}...`;
+        case 'find_large':   return `Sysadmin${srv}: find large files in ${args.path || '/'}...`;
+        case 'service':      return `Sysadmin${srv}: service ${args.service_action || ''} ${args.service_name || ''}...`;
+        case 'kill_process': return `Sysadmin${srv}: kill PID ${args.pid || args.process_name || '?'}...`;
+        case 'journalctl':   return `Sysadmin${srv}: journal ${args.unit ? `[${args.unit}]` : ''}${args.since ? ` since ${args.since}` : ''}...`;
+        case 'package':      return `Sysadmin${srv}: package ${args.package_action || ''} ${(args.packages || []).join(' ')}...`;
+        case 'firewall':     return `Sysadmin${srv}: firewall ${args.firewall_action || ''}...`;
+        case 'user_manage':  return `Sysadmin${srv}: user ${args.user_action || ''} ${args.user || ''}...`;
+        case 'cron':         return `Sysadmin${srv}: cron ${args.cron_action || ''}...`;
+        default:             return `Sysadmin${srv}: ${args.action}...`;
+      }
+    }
     default:
       return `Running: ${name}`;
   }
@@ -287,8 +298,8 @@ function formatToolSummary(name, args, result, isError) {
   if (isError) {
     const errMsg = r.split('\n')[0].replace(/^ERROR:\s*/i, '').substring(0, 80);
     const hintMatch = r.match(/\nHINT: (.+)/);
-    const hintStr = hintMatch ? `\n     ${C.dim}${hintMatch[1].substring(0, 100)}${C.reset}` : '';
-    return `  ${C.red}└ ${errMsg}${C.reset}${hintStr}`;
+    const hintStr = hintMatch ? `\n     ${T.muted}${hintMatch[1].substring(0, 100)}${T.reset}` : '';
+    return `  ${T.error}└ ${errMsg}${T.reset}${hintStr}`;
   }
 
   let summary;
@@ -323,11 +334,11 @@ function formatToolSummary(name, args, result, isError) {
       const showOld = oldLines.slice(0, PREVIEW).filter(l => l.trim());
       const showNew = newLines.slice(0, PREVIEW).filter(l => l.trim());
       const diffLines = [];
-      for (const l of showOld) diffLines.push(`${C.red}     - ${C.reset}${C.dim}${l.trimEnd().substring(0, 72)}${C.reset}`);
-      if (oldLines.length > PREVIEW) diffLines.push(`${C.dim}     … +${oldLines.length - PREVIEW}${C.reset}`);
-      for (const l of showNew) diffLines.push(`${C.green}     + ${C.reset}${C.dim}${l.trimEnd().substring(0, 72)}${C.reset}`);
-      if (newLines.length > PREVIEW) diffLines.push(`${C.dim}     … +${newLines.length - PREVIEW}${C.reset}`);
-      summary = `${C.reset}${C.red}−${removed}${C.reset}  ${C.green}+${added}${C.reset}` +
+      for (const l of showOld) diffLines.push(`${T.diff_rem}     - ${T.reset}${T.muted}${l.trimEnd().substring(0, 72)}${T.reset}`);
+      if (oldLines.length > PREVIEW) diffLines.push(`${T.muted}     … +${oldLines.length - PREVIEW}${T.reset}`);
+      for (const l of showNew) diffLines.push(`${T.diff_add}     + ${T.reset}${T.muted}${l.trimEnd().substring(0, 72)}${T.reset}`);
+      if (newLines.length > PREVIEW) diffLines.push(`${T.muted}     … +${newLines.length - PREVIEW}${T.reset}`);
+      summary = `${T.reset}${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}` +
         (diffLines.length > 0 ? '\n' + diffLines.join('\n') : '');
       break;
     }
@@ -335,7 +346,7 @@ function formatToolSummary(name, args, result, isError) {
       const patches = args.patches || [];
       const totalRemoved = patches.reduce((s, p) => s + (p.old_text || '').split('\n').length, 0);
       const totalAdded = patches.reduce((s, p) => s + (p.new_text || '').split('\n').length, 0);
-      summary = `${C.reset}${patches.length} patch${patches.length !== 1 ? 'es' : ''}  ${C.red}−${totalRemoved}${C.reset}  ${C.green}+${totalAdded}${C.reset}`;
+      summary = `${T.reset}${patches.length} patch${patches.length !== 1 ? 'es' : ''}  ${T.diff_rem}−${totalRemoved}${T.reset}  ${T.diff_add}+${totalAdded}${T.reset}`;
       break;
     }
     case 'bash': {
@@ -344,13 +355,13 @@ function formatToolSummary(name, args, result, isError) {
         const code = exitMatch[1];
         const hintMatch = r.match(/\nHINT: (.+)/);
         if (hintMatch) {
-          const icon2 = code === '0' ? `${C.green}✓${C.reset}` : `${C.red}✗ Exit ${code}${C.reset}`;
-          summary = `${icon2} ${C.dim}— ${hintMatch[1].substring(0, 60)}${C.reset}`;
+          const icon2 = code === '0' ? `${T.success}✓${T.reset}` : `${T.error}✗ Exit ${code}${T.reset}`;
+          summary = `${icon2} ${T.muted}— ${hintMatch[1].substring(0, 60)}${T.reset}`;
         } else {
           const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && l.trim());
-          const firstOut = outputLines[0] ? ` ${C.dim}· ${outputLines[0].substring(0, 70)}${C.reset}` : '';
-          const moreCount = outputLines.length > 1 ? ` ${C.dim}+${outputLines.length - 1}${C.reset}` : '';
-          const icon = code === '0' ? `${C.green}✓${C.reset}` : `${C.red}✗ Exit ${code}${C.reset}`;
+          const firstOut = outputLines[0] ? ` ${T.muted}· ${outputLines[0].substring(0, 70)}${T.reset}` : '';
+          const moreCount = outputLines.length > 1 ? ` ${T.muted}+${outputLines.length - 1}${T.reset}` : '';
+          const icon = code === '0' ? `${T.success}✓${T.reset}` : `${T.error}✗ Exit ${code}${T.reset}`;
           summary = `${icon}${firstOut}${moreCount}`;
         }
       } else {
@@ -459,7 +470,7 @@ function formatToolSummary(name, args, result, isError) {
       summary = 'Done';
   }
 
-  return `  ${C.dim}└ ${summary}${C.reset}`;
+  return `  ${T.muted}└ ${summary}${T.reset}`;
 }
 
 module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader };
