@@ -1,6 +1,6 @@
 {
   "name": "nex-code",
-  "version": "0.3.49",
+  "version": "0.3.50",
   "description": "The open-source agentic coding CLI. Free with Ollama Cloud — switch to OpenAI, Anthropic or Gemini anytime. Alternative to Claude Code & Gemini CLI.",
   "bin": {
     "nex-code": "./dist/nex-code.js"
@@ -16,7 +16,7 @@
   "scripts": {
     "start": "node dist/nex-code.js",
     "build": "esbuild bin/nex-code.js --bundle --platform=node --target=node18 --outfile=dist/nex-code.js --minify --external:axios --external:dotenv --external:playwright",
-    "test": "jest --coverage",
+    "test": "jest --coverage --forceExit",
     "test:watch": "jest --watch",
     "format": "prettier --write .",
     "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && ln -sf ../../hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge && echo 'Hooks installed (pre-push, post-merge).'",
