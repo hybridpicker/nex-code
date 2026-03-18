@@ -1,0 +1,124 @@
+{
+  "name": "nex-code",
+  "displayName": "Nex Code",
+  "description": "Agentic AI coding assistant powered by nex-code",
+  "version": "0.1.0",
+  "publisher": "hybridpicker",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "AI"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "vsce package"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nex-code-sidebar",
+          "title": "Nex Code",
+          "icon": "images/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "nex-code-sidebar": [
+        {
+          "type": "webview",
+          "id": "nex-code.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nex-code.clearChat",
+        "title": "Nex Code: Clear Chat"
+      },
+      {
+        "command": "nex-code.switchModel",
+        "title": "Nex Code: Switch Model"
+      },
+      {
+        "command": "nex-code.restart",
+        "title": "Nex Code: Restart Agent"
+      }
+    ],
+    "configuration": {
+      "title": "Nex Code",
+      "properties": {
+        "nexCode.executablePath": {
+          "type": "string",
+          "default": "nex-code",
+          "description": "Path to nex-code executable"
+        },
+        "nexCode.defaultProvider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "anthropic",
+            "openai",
+            "gemini"
+          ],
+          "default": "ollama",
+          "description": "LLM provider"
+        },
+        "nexCode.defaultModel": {
+          "type": "string",
+          "default": "qwen3-coder:480b",
+          "description": "Model name"
+        },
+        "nexCode.ollamaBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama base URL (leave empty for default)"
+        },
+        "nexCode.ollamaApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama API key"
+        },
+        "nexCode.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key"
+        },
+        "nexCode.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key"
+        },
+        "nexCode.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API key"
+        },
+        "nexCode.maxTurns": {
+          "type": "number",
+          "default": 50,
+          "description": "Max agentic loop iterations"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "highlight.js": "^11.9.0",
+    "marked": "^11.0.0"
+  }
+}
