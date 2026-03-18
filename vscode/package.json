@@ -2,7 +2,7 @@
   "name": "nex-code",
   "displayName": "Nex Code",
   "description": "Agentic AI coding assistant powered by nex-code",
-  "version": "0.1.0",
+  "version": "0.3.51",
   "publisher": "hybridpicker",
   "engines": {
     "vscode": "^1.85.0"
@@ -16,9 +16,11 @@
   ],
   "main": "./out/extension.js",
   "scripts": {
+    "sync-version": "node -e \"const fs=require('fs');const root=JSON.parse(fs.readFileSync('../package.json','utf8'));const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));pkg.version=root.version;fs.writeFileSync('package.json',JSON.stringify(pkg,null,2)+'\\n');console.log('version synced to '+root.version)\"",
+    "prebuild": "npm run sync-version",
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "package": "vsce package"
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
   },
   "contributes": {
     "viewsContainers": {
