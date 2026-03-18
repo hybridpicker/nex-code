@@ -5,17 +5,14 @@
 # Default target
 all: clean build test
 
-# Build target - compiles TypeScript
+# Build target - uses esbuild directly as defined in package.json
 build:
-	npx tsc
+	npm run build
 
 # Test target - runs Jest tests
 test:
-	jest --coverage
+	npx jest --coverage
 
 # Clean target - removes dist directory
 clean:
 	rm -rf dist
-
-# Dependency chain
-# all depends on clean, build, and test
