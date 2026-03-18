@@ -909,6 +909,23 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'remote_agent',
+      description: 'Delegate a coding task to nex-code running on a remote server. Use this when the task involves server-side projects (musikschule, stadtkapelle, cahill, schoensgibl, jarvis) that live on almalinux9/jarvis. Runs nex-code --auto on the server and streams output. Server is a profile name from .nex/servers.json or "user@host".',
+      parameters: {
+        type: 'object',
+        properties: {
+          server: { type: 'string', description: 'Profile name from .nex/servers.json (e.g. "almalinux9") or "user@host"' },
+          task: { type: 'string', description: 'The full task description to run on the remote nex-code' },
+          project_path: { type: 'string', description: 'Working directory on the remote server (e.g. /home/jarvis/jarvis-agent). Defaults to home directory.' },
+          model: { type: 'string', description: 'Model to use on remote nex-code (e.g. qwen3-coder:480b). Defaults to server default.' },
+        },
+        required: ['server', 'task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'service_manage',
       description: 'Manage a systemd service on a remote (or local) server. Uses systemctl. Status is read-only; start/stop/restart/reload/enable/disable require confirmation. For AlmaLinux 9: runs via SSH with sudo if configured.',
       parameters: {
@@ -2078,6 +2095,48 @@ async function _executeToolInner(name, args, options = {}) {
       } catch (e) {
         return `ERROR: ${e.message}`;
       }
+    }
+
+    case 'remote_agent': {
+      // Read SSH profile from servers.json
+      const serversPath = require('path').join(process.cwd(), '.nex', 'servers.json');
+      let profile = null;
+      try {
+        const servers = JSON.parse(require('fs').readFileSync(serversPath, 'utf-8'));
+        profile = servers[args.server] || null;
+      } catch { /* file not found */ }
+
+      // Support "user@host" format directly
+      const target = profile ? `${profile.user || 'root'}@${profile.host}` : args.server;
+      const sshKey = profile?.key ? ['-i', profile.key] : [];
+      const workDir = args.project_path || (profile?.home || '~');
+      const model = args.model || '';
+
+      // Write task to temp file on remote, run nex-code, stream output
+      const taskB64 = Buffer.from(args.task).toString('base64');
+      const remoteScript = [
+        `TMPFILE=$(mktemp /tmp/nexcode-XXXXXX.txt)`,
+        `echo "${taskB64}" | base64 -d > "$TMPFILE"`,
+        `cd "${workDir}" 2>/dev/null || true`,
+        model ? `nex-code --prompt-file "$TMPFILE" --auto --model "${model}" 2>&1` : `nex-code --prompt-file "$TMPFILE" --auto 2>&1`,
+        `EXIT_CODE=$?`,
+        `rm -f "$TMPFILE"`,
+        `exit $EXIT_CODE`,
+      ].join(' && ');
+
+      const { spawnSync } = require('child_process');
+      const result = spawnSync('ssh', [
+        ...sshKey,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ConnectTimeout=10',
+        target,
+        `bash -c '${remoteScript}'`,
+      ], { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
+
+      if (result.error) return `ERROR: SSH connection failed: ${result.error.message}`;
+      const output = (result.stdout || '') + (result.stderr || '');
+      if (result.status !== 0) return `Remote nex-code exited with code ${result.status}.\n${output.slice(-2000)}`;
+      return output.slice(-5000) || 'Remote nex-code completed (no output)';
     }
 
     case 'service_manage': {
