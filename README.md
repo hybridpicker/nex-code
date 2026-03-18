@@ -274,19 +274,41 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 
 ## VS Code Extension
 
-A companion extension at [`nex-code-vscode`](https://github.com/hybridpicker/nex-code-vscode) brings the full nex-code agent into a VS Code sidebar panel — streaming chat bubbles, collapsible tool cards, and confirmation dialogs, all using VS Code's native theme variables.
+A companion extension brings the full nex-code agent into a VS Code sidebar panel — streaming chat bubbles, collapsible tool cards, and confirmation dialogs, all using VS Code's native theme variables. The activity bar shows the nex-code pixel-art logo.
 
 **Architecture:** The extension spawns `nex-code --server` as a child process. The two communicate over a JSON-lines protocol on stdin/stdout (stderr is forwarded to VS Code's Output channel). No modules are copied — nex-code stays the single source of truth.
 
-**Quick install:**
+**Requirements:** nex-code must be installed globally (`npm install -g nex-code`) or linked from source (`npm link` in the repo).
+
+**Install from source:**
 ```bash
-cd ~/Coding/nex-code-vscode
-npm install && npm run build
-vsce package
-code --install-extension nex-code-0.1.0.vsix
+cd nex-code-vscode   # companion repo
+npm install
+npm run build
+npx vsce package --no-dependencies --allow-missing-repository
+# then: Cmd+Shift+P → Install from VSIX...
 ```
 
-Configure API keys via `Settings → Extensions → Nex Code`. The extension spawns one agent per workspace folder and restarts it via **Nex Code: Restart Agent** if it crashes.
+**Settings** (`Settings → Extensions → Nex Code`):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `nexCode.executablePath` | `nex-code` | Path to the nex-code binary |
+| `nexCode.defaultProvider` | `ollama` | LLM provider |
+| `nexCode.defaultModel` | `qwen3-coder:480b` | Model name |
+| `nexCode.anthropicApiKey` | — | Anthropic API key |
+| `nexCode.openaiApiKey` | — | OpenAI API key |
+| `nexCode.ollamaApiKey` | — | Ollama Cloud API key |
+| `nexCode.geminiApiKey` | — | Google Gemini API key |
+| `nexCode.maxTurns` | `50` | Max agentic loop iterations |
+
+**Commands** (`Cmd+Shift+P`):
+
+| Command | Description |
+|---------|-------------|
+| `Nex Code: Clear Chat` | Clear conversation history |
+| `Nex Code: Switch Model` | Pick a different model |
+| `Nex Code: Restart Agent` | Restart the child process (e.g. after source changes) |
 
 ---
 
