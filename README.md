@@ -1,5 +1,5 @@
 ```
- ██▄▄██   nex-code  v0.3.49
+ ██▄▄██   nex-code  v0.3.51
  █▀██▀█   qwen3-coder:480b  ·  /help
  ▀████▀
 ```
@@ -286,9 +286,8 @@ nex-code ships with a built-in VS Code extension (`vscode/`) — no separate rep
 ```bash
 cd vscode
 npm install
-npm run build
-npx vsce package --no-dependencies --allow-missing-repository
-# Cmd+Shift+P → Install from VSIX...
+npm run package        # syncs version, builds, and creates .vsix
+# Cmd+Shift+P → Extensions: Install from VSIX...
 ```
 
 **Settings** (`Settings → Extensions → Nex Code`):
