@@ -175,9 +175,18 @@ const DANGEROUS_BASH = [...CRITICAL_BASH, ...NOTABLE_BASH];
 
 let autoConfirm = false;
 let _rl = null;
+let _confirmHook = null;
 
 function setAutoConfirm(val) {
   autoConfirm = val;
+}
+
+/**
+ * Override the confirm() function with a custom hook (used by server mode).
+ * @param {((question: string, opts: object) => Promise<boolean>) | null} fn
+ */
+function setConfirmHook(fn) {
+  _confirmHook = fn;
 }
 
 function getAutoConfirm() {
@@ -221,6 +230,7 @@ function isCritical(command) {
  */
 function confirm(question, opts = {}) {
   if (autoConfirm) return Promise.resolve(true);
+  if (_confirmHook) return _confirmHook(question, opts);
 
   // Non-TTY fallback (piped input, test environment)
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
@@ -330,6 +340,7 @@ module.exports = {
   confirm,
   setAutoConfirm,
   getAutoConfirm,
+  setConfirmHook,
   setReadlineInterface,
   setAllowAlwaysHandler,
 };
