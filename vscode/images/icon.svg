@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect width="128" height="128" rx="20" fill="#1a1a2e"/>
+  <!--
+    Dog face scaled to 128×128:
+    6 cols × 6 rows, each cell ≈ 16px, with 16px margin each side
+    origin x=16, y=16, cell=16px
+  -->
+  <!-- ears -->
+  <rect x="16" y="16" width="32" height="16" rx="2" fill="#50C8FF"/>
+  <rect x="80" y="16" width="32" height="16" rx="2" fill="#50C8FF"/>
+  <!-- forehead -->
+  <rect x="16" y="32" width="96" height="16" fill="#50C8FF"/>
+  <!-- brow -->
+  <rect x="16" y="48" width="96" height="16" fill="#50C8FF"/>
+  <!-- cheeks (eyes = gaps at x=32 and x=80) -->
+  <rect x="16" y="64" width="16" height="16" fill="#50C8FF"/>
+  <rect x="48" y="64" width="32" height="16" fill="#50C8FF"/>
+  <rect x="96" y="64" width="16" height="16" fill="#50C8FF"/>
+  <!-- eyes (dark, slightly lighter than bg for depth) -->
+  <rect x="32" y="64" width="16" height="16" rx="3" fill="#0d0d1f"/>
+  <rect x="80" y="64" width="16" height="16" rx="3" fill="#0d0d1f"/>
+  <!-- muzzle -->
+  <rect x="16" y="80" width="96" height="16" fill="#50C8FF"/>
+  <!-- chin (rounded) -->
+  <rect x="32" y="96" width="64" height="16" rx="2" fill="#50C8FF"/>
+</svg>

@@ -5,9 +5,9 @@
 ```
 
 <p align="center">
-  <b>The open-source coding CLI for Ollama Cloud — and every other provider.</b><br>
-  Free by default with Ollama. Switch to OpenAI, Anthropic, or Gemini anytime.<br>
-  A lightweight, powerful alternative to Claude Code and Gemini CLI.
+  <b>The open-source agentic coding assistant for Ollama Cloud — and every other provider.</b><br>
+  Use it in the terminal or install the built-in <b>VS Code extension</b> for a sidebar chat panel.<br>
+  Free by default with Ollama. Switch to OpenAI, Anthropic, or Gemini anytime.
 </p>
 
 <p align="center">
@@ -20,6 +20,7 @@
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
   <img src="https://img.shields.io/badge/tests-2059-blue.svg" alt="Tests: 2059">
+  <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
 ---
@@ -67,6 +68,7 @@ npm update -g nex-code
 
 | | **nex-code** | Claude Code | Gemini CLI | Aider |
 |---|---|---|---|---|
+| **VS Code extension** | ✅ Built-in sidebar panel | ✅ | ❌ | ❌ |
 | **Free with Ollama** | ✅ Native, first-class | ⚠️ Workaround | ❌ | ✅ |
 | **Ollama Cloud support** | ✅ 47+ models, native | ⚠️ API-compat only | ❌ | ✅ |
 | **Multi-provider runtime swap** | ✅ 5 providers, no restart | ❌ Claude-only | ❌ Gemini-only | ✅ |
@@ -274,19 +276,19 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 
 ## VS Code Extension
 
-A companion extension brings the full nex-code agent into a VS Code sidebar panel — streaming chat bubbles, collapsible tool cards, and confirmation dialogs, all using VS Code's native theme variables. The activity bar shows the nex-code pixel-art logo.
+nex-code ships with a built-in VS Code extension (`vscode/`) — no separate repo needed. It adds a sidebar chat panel with streaming output, collapsible tool cards, and confirmation dialogs, all styled with VS Code's native theme variables.
 
-**Architecture:** The extension spawns `nex-code --server` as a child process. The two communicate over a JSON-lines protocol on stdin/stdout (stderr is forwarded to VS Code's Output channel). No modules are copied — nex-code stays the single source of truth.
+**Architecture:** The extension spawns `nex-code --server` as a child process and communicates over a JSON-lines protocol on stdin/stdout. No agent logic is duplicated — the CLI is the single source of truth.
 
-**Requirements:** nex-code must be installed globally (`npm install -g nex-code`) or linked from source (`npm link` in the repo).
+**Requirements:** nex-code must be in `$PATH` — either `npm install -g nex-code` or `npm link` for local development.
 
-**Install from source:**
+**Install:**
 ```bash
-cd nex-code-vscode   # companion repo
+cd vscode
 npm install
 npm run build
 npx vsce package --no-dependencies --allow-missing-repository
-# then: Cmd+Shift+P → Install from VSIX...
+# Cmd+Shift+P → Install from VSIX...
 ```
 
 **Settings** (`Settings → Extensions → Nex Code`):
