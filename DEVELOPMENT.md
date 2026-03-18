@@ -98,6 +98,20 @@ The VS Code extension at `~/Coding/nex-code-vscode/` spawns nex-code as `nex-cod
 - `setAutoConfirm(true)` is called before `startServerMode()` so non-critical tools run without interruption
 - The `--server` branch in `bin/nex-code.js` uses `return` after `startServerMode()` to prevent the REPL from starting
 
+## Remote Agent (`remote_agent` tool)
+
+The `remote_agent` tool (in `cli/tools.js`) delegates a coding task to a nex-code instance running on a remote server via SSH:
+
+1. Reads server config from `.nex/servers.json` (same file used by `ssh_exec`)
+2. Base64-encodes the task to avoid shell-escaping issues
+3. SSH-executes: `nex-code --prompt-file /tmp/nexcode-XXXX.txt --auto` on the remote
+4. Returns the last 5000 characters of stdout
+5. 5-minute timeout; temp file is cleaned up on the remote after execution
+
+**Server-side requirement:** nex-code must be installed globally on the target server (`npm install -g nex-code`) and the server must have an Ollama-compatible `.env` at `~/.nex-code/.env` (or use `~/.nex-code/models.env`).
+
+**Mac↔Server workflow:** Use the global skill `~/.nex-code/skills/server-agent.md` to teach the Mac agent which project names map to which server paths. The skill instructs the agent to use `remote_agent` for server-side project work automatically.
+
 ## Git Hooks
 
 Install all hooks with:

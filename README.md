@@ -443,6 +443,7 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 | `service_manage` | Start/stop/restart/reload/enable/disable a systemd service (local or remote) |
 | `service_logs` | Fetch journalctl logs (local or remote, with `--since` support) |
 | `sysadmin` | Senior sysadmin operations on any Linux server (local or SSH). Actions: `audit` (full health overview), `disk_usage`, `process_list`, `network_status`, `package` (dnf/apt auto-detect), `user_manage` (list/create/delete/add\_ssh\_key), `firewall` (firewalld/ufw/iptables auto-detect), `cron` (list/add/remove), `ssl_check` (domain or cert file), `log_tail` (any log), `find_large` (big files by size). Read-only actions run without confirmation; state-changing actions require approval. |
+| `remote_agent` | Delegate a full coding task to a **nex-code instance running on a remote server** via SSH. Writes the task to a temp file, executes `nex-code --prompt-file ... --auto` on the remote, and streams back the result. Requires `.nex/servers.json`. Optional `project_path` (defaults to remote home dir) and `model` override. Timeout: 5 minutes. |
 
 ### Docker
 | Tool | Description |
@@ -843,7 +844,7 @@ Four features that make Nex Code significantly more reliable with open-source mo
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (43 tools): all tools
+- **full** (44 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
@@ -909,6 +910,12 @@ module.exports = {
 ```
 
 Skills are loaded on startup. All enabled by default. Disabled skills tracked in `.nex/config.json`.
+
+### Global Skills (`~/.nex-code/skills/`)
+
+Skills placed in `~/.nex-code/skills/` are loaded globally across all projects. Useful for cross-project workflows.
+
+**Example: `server-agent.md`** — instructs nex-code on your Mac to delegate tasks to a nex-code instance on a remote server using the `remote_agent` tool. Define a project→server mapping table in the skill so the agent knows which path to use for each project name.
 
 ---
 
