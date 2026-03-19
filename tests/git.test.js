@@ -176,13 +176,12 @@ describe('git.js', () => {
        fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'line1\n', 'utf-8');
        execSync('git add conflict.txt && git commit -m "add conflict.txt"', { cwd: tmpDir });
 
+       const defaultBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: tmpDir }).toString().trim();
        execSync('git checkout -b feature', { cwd: tmpDir });
        fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'feature-change\n', 'utf-8');
        execSync('git add conflict.txt && git commit -m "feature change"', { cwd: tmpDir });
 
-       // Use 'git checkout -' to return to the default branch regardless of its name
-       // (may be 'main' or 'master' depending on git version / OS config)
-       execSync('git checkout -', { cwd: tmpDir });
+       execSync(`git checkout ${defaultBranch}`, { cwd: tmpDir });
        fs.writeFileSync(path.join(tmpDir, 'conflict.txt'), 'main-change\n', 'utf-8');
        execSync('git add conflict.txt && git commit -m "main change"', { cwd: tmpDir });
 
