@@ -684,8 +684,8 @@ Three tiers of protection:
 - **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
 - **Loop detection**: Edit-loop abort after 4 edits to the same file (warn at 2); bash-command loop abort after 8 identical commands (warn at 5); consecutive-error abort after 10 failures (warn at 6)
 - **Stale-stream detection**: Warns after 60 s without tokens (shows retry count + seconds until auto-abort); auto-switches to the fast model on retry 1 and offers interactive recovery when all retries are exhausted
-- **Analyze before acting**: For any task that modifies files or changes system state, the agent must first read the current state and describe what will change — no silent jumps to writes or destructive commands
-- **Search before implementing**: Before writing any new function, route, or module, the agent searches the codebase first (`grep`, `search_files`). If it already exists, it reports the location and stops — no duplicate implementations
+- **Auto Plan Mode**: Implementation tasks (`implement`, `refactor`, `create`, `build`, `add`, `write`, …) automatically activate plan mode — read-only analysis first, approve before any writes. Disable with `NEX_AUTO_PLAN=0`
+- **Intent-first behavior**: Before executing, the agent understands why you asked. If it finds something that contradicts or already satisfies the task, it asks instead of proceeding blindly
 - **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
 - **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
 
@@ -742,9 +742,18 @@ A project-scoped knowledge base stored in `.nex/brain/`. The agent automatically
 The agent uses the `brain_write` tool to save discoveries automatically. All writes are tracked in git so you can review, revert, or audit what the agent has stored.
 
 ### Plan Mode
-Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made:
+Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made.
+
+**Auto Plan Mode** — nex-code automatically activates plan mode when it detects an implementation task (prompts containing `implement`, `refactor`, `create`, `build`, `add`, `write`, etc.). No manual `/plan` needed:
 ```
-/plan refactor the auth module   # enter plan mode with optional task
+> implement a search endpoint    # → Auto Plan Mode activates immediately
+> refactor the auth module       # → Auto Plan Mode activates immediately
+> how does auth work?            # → normal mode (question, not implementation)
+```
+Disable with `NEX_AUTO_PLAN=0` if you prefer manual control.
+
+```
+/plan refactor the auth module   # manual: enter plan mode with optional task
 /plan status                     # show extracted steps with status icons
 /plan edit                       # open plan in $EDITOR (nano/vim/code) to modify
 /plan approve                    # approve and exit plan mode (all tools re-enabled)
