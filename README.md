@@ -627,7 +627,7 @@ The system prompt enforces substantive responses: the model always presents find
 - **In-Memory Indexing**: A background indexing engine (using `ripgrep` or a fast fallback) keeps project file paths in RAM for instant file discovery, path auto-fixing, and glob searches.
 
 ### Streaming Output
-Tokens appear live as the model generates them. Bouncing-ball spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with markdown formatting and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
+Tokens appear live as the model generates them. Bouncing-ball spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with terminal width-aware word wrapping, markdown formatting, and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
 
 ### Paste Detection
 Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input. A `[Pasted content — N lines]` indicator is shown with a preview of the first line. The user must press Enter to send — pasted content never auto-fires. The paste handler stores the combined text and waits for explicit submission.
