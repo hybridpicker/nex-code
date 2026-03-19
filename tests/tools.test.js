@@ -2949,13 +2949,13 @@ describe('tools.js', () => {
 
   // ─── frontend_recon ───────────────────────────────────────────
   describe('frontend_recon', () => {
-    (process.env.CI ? it.skip : it)('runs frontend_recon in cwd', async () => {
+    (process.env.RUN_INTEGRATION ? it : it.skip)('runs frontend_recon in cwd', async () => {
       const result = await executeTool('frontend_recon', {});
       expect(typeof result).toBe('string');
       expect(result).toContain('Design recon complete');
     }, 30000);
 
-    (process.env.CI ? it.skip : it)('frontend_recon with type hint', async () => {
+    (process.env.RUN_INTEGRATION ? it : it.skip)('frontend_recon with type hint', async () => {
       const result = await executeTool('frontend_recon', { type: 'button' });
       expect(typeof result).toBe('string');
       expect(result).toContain('STEP 1');
