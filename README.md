@@ -694,7 +694,8 @@ Save and restore conversations:
 /load my-feature
 /resume              # resume last session
 ```
-Auto-save after every turn.
+Auto-save runs quietly in the background after every turn.
+**Auto-Resume**: If `nex-code` crashes or is closed, and an autosaved session from the last 24 hours exists, it will automatically prompt you to resume it on the next startup.
 
 ### Memory
 Persistent project memory that survives across sessions:
