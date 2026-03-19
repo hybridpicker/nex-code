@@ -153,4 +153,40 @@ describe('permissions.js', () => {
       expect(config.permissions.bash).toBe('allow');
     });
   });
+
+  describe('PERMISSION_PRESETS', () => {
+    it('readonly blocks write operations', () => {
+      const preset = permissions.PERMISSION_PRESETS.readonly;
+      expect(preset.blockedTools).toContain('bash');
+      expect(preset.blockedTools).toContain('write_file');
+      expect(preset.allowedTools).toContain('read_file');
+      expect(preset.allowedTools).toContain('grep');
+    });
+
+    it('developer blocks deployment tools', () => {
+      const preset = permissions.PERMISSION_PRESETS.developer;
+      expect(preset.blockedTools).toContain('deploy');
+      expect(preset.allowedTools).toBeNull(); // all allowed except blocked
+    });
+
+    it('admin has no blocked tools', () => {
+      const preset = permissions.PERMISSION_PRESETS.admin;
+      expect(preset.blockedTools).toHaveLength(0);
+    });
+  });
+
+  describe('listPresets()', () => {
+    it('returns all presets', () => {
+      const presets = permissions.listPresets();
+      expect(presets).toHaveLength(3);
+      expect(presets.map(p => p.name)).toEqual(['readonly', 'developer', 'admin']);
+    });
+  });
+
+  describe('isToolAllowed()', () => {
+    it('allows tools by default (admin preset)', () => {
+      const result = permissions.isToolAllowed('bash');
+      expect(result.allowed).toBe(true);
+    });
+  });
 });

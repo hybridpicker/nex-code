@@ -151,6 +151,8 @@ jest.mock('../cli/file-history', () => ({
   getUndoCount: jest.fn().mockReturnValue(0),
   getRedoCount: jest.fn().mockReturnValue(0),
   clearHistory: jest.fn(),
+  loadPersistedHistory: jest.fn().mockResolvedValue(0),
+  pruneHistory: jest.fn().mockResolvedValue(0),
 }));
 
 jest.mock('../cli/skills', () => ({
@@ -1492,9 +1494,7 @@ describe('index.js (REPL commands)', () => {
 
       const { getPrompt } = require('../cli/index');
       const prompt = getPrompt();
-      // ollama: prefix is intentionally stripped for ollama provider (cleaner display)
-      expect(prompt).not.toContain('ollama:');
-      expect(prompt).toContain('kimi-k2.5');
+      // Model is now shown in footer status bar, not in prompt
       expect(prompt).toContain('>');
     });
   });

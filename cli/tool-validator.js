@@ -6,6 +6,7 @@
 
 const { getSkillToolDefinitions } = require('./skills');
 const { getMCPToolDefinitions } = require('./mcp');
+const { getPluginToolDefinitions } = require('./plugins');
 
 // Schema cache to avoid repeated lookups (saves 5-20ms per tool call)
 const schemaCache = new Map();
@@ -17,7 +18,7 @@ const toolDefsCache = { value: null };
 function getAllToolDefinitions() {
   const { TOOL_DEFINITIONS } = require('./tools');
   // Always get fresh skill and MCP definitions as they can change
-  return [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions()];
+  return [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions(), ...getPluginToolDefinitions()];
 }
 
 /**
@@ -175,4 +176,76 @@ function validateToolArgs(toolName, args) {
   return { valid: true, corrected: wasCorrected ? corrected : null };
 }
 
-module.exports = { validateToolArgs, closestMatch, levenshtein, getCachedSchema, clearSchemaCache };
+/**
+ * Validate and normalize a raw tool call object from any provider.
+ * Handles provider-specific quirks:
+ *   - OpenAI/Ollama: arguments may be a JSON string instead of an object
+ *   - Gemini: uses "args" instead of "arguments"
+ *   - Missing arguments: defaults to {}
+ *
+ * @param {object} toolCall - Raw tool call from provider
+ * @param {string} [providerName] - Provider name for context in error messages
+ * @returns {{ valid: boolean, normalized: object, errors: string[] }}
+ */
+function validateToolCallFormat(toolCall, providerName) {
+  const errors = [];
+  const normalized = { ...toolCall };
+
+  // Ensure we have a function name
+  if (!normalized.function && !normalized.name) {
+    errors.push('Tool call missing both "function" and "name" fields');
+    return { valid: false, normalized, errors };
+  }
+
+  // Normalize flat format (name + args/arguments) into nested function format
+  if (!normalized.function && normalized.name) {
+    normalized.function = {
+      name: normalized.name,
+      arguments: normalized.arguments || normalized.args || {},
+    };
+    delete normalized.name;
+    delete normalized.args;
+  }
+
+  // Gemini: normalize "args" to "arguments" at function level
+  if (normalized.function && normalized.function.args !== undefined && normalized.function.arguments === undefined) {
+    normalized.function.arguments = normalized.function.args;
+    delete normalized.function.args;
+  }
+
+  // Handle missing arguments — default to empty object
+  if (normalized.function && (normalized.function.arguments === undefined || normalized.function.arguments === null)) {
+    normalized.function.arguments = {};
+  }
+
+  // OpenAI/Ollama: parse JSON string arguments
+  if (normalized.function && typeof normalized.function.arguments === 'string') {
+    const raw = normalized.function.arguments;
+    if (raw.trim() === '') {
+      normalized.function.arguments = {};
+    } else {
+      try {
+        normalized.function.arguments = JSON.parse(raw);
+      } catch (e) {
+        errors.push(`Invalid JSON in arguments${providerName ? ` (${providerName})` : ''}: ${e.message}`);
+        return { valid: false, normalized, errors };
+      }
+    }
+  }
+
+  // Ensure arguments is a plain object
+  if (normalized.function && typeof normalized.function.arguments !== 'object') {
+    errors.push(`Arguments must be an object, got ${typeof normalized.function.arguments}`);
+    return { valid: false, normalized, errors };
+  }
+
+  // Ensure function name is a non-empty string
+  if (!normalized.function.name || typeof normalized.function.name !== 'string') {
+    errors.push('Tool call function name must be a non-empty string');
+    return { valid: false, normalized, errors };
+  }
+
+  return { valid: errors.length === 0, normalized, errors };
+}
+
+module.exports = { validateToolArgs, validateToolCallFormat, closestMatch, levenshtein, getCachedSchema, clearSchemaCache };

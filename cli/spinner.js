@@ -349,6 +349,84 @@ class TaskProgress {
   }
 }
 
+// ─── ToolProgress ────────────────────────────────────────────
+// Single-line progress indicator for tool execution
+
+class ToolProgress {
+  /**
+   * @param {string} toolName - e.g. 'grep', 'glob', 'bash'
+   * @param {string} [initialMessage] - e.g. 'Searching...'
+   */
+  constructor(toolName, initialMessage) {
+    this.toolName = toolName;
+    this.message = initialMessage || `Running ${toolName}...`;
+    this.count = 0;
+    this.total = null;
+    this.detail = '';
+    this.frame = 0;
+    this.interval = null;
+    this.startTime = null;
+    this._stopped = false;
+  }
+
+  _render() {
+    if (this._stopped) return;
+    if (!process.stderr.isTTY) return;
+    const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    let track = '';
+    for (let i = 0; i < BOUNCE_WIDTH; i++) {
+      track += i === pos ? `${C.cyan}●${C.reset}` : ' ';
+    }
+
+    let info = this.message;
+    if (this.count > 0) {
+      info += ` ${C.cyan}${this.count}${C.reset}`;
+      if (this.total) info += `/${this.total}`;
+      if (this.detail) info += ` ${C.dim}${this.detail}${C.reset}`;
+    }
+
+    let elapsed = '';
+    if (this.startTime) {
+      const secs = Math.floor((Date.now() - this.startTime) / 1000);
+      if (secs >= 1) elapsed = ` ${C.dim}${secs}s${C.reset}`;
+    }
+
+    process.stderr.write(`\x1b[2K\r${track} ${C.dim}${info}${C.reset}${elapsed}`);
+    this.frame++;
+  }
+
+  start() {
+    this._stopped = false;
+    this.startTime = Date.now();
+    if (!process.stderr.isTTY) return;
+    process.stderr.write('\x1b[?25l');
+    this._render();
+    this.interval = setInterval(() => this._render(), 100);
+  }
+
+  /**
+   * Update progress.
+   * @param {{ count?: number, total?: number, detail?: string, message?: string }} update
+   */
+  update(update) {
+    if (update.count !== undefined) this.count = update.count;
+    if (update.total !== undefined) this.total = update.total;
+    if (update.detail !== undefined) this.detail = update.detail;
+    if (update.message !== undefined) this.message = update.message;
+  }
+
+  stop() {
+    this._stopped = true;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    if (process.stderr.isTTY) {
+      process.stderr.write('\x1b[2K\r\x1b[?25h');
+    }
+  }
+}
+
 function setActiveTaskProgress(tp) {
   _activeTaskProgress = tp;
 }
@@ -373,4 +451,4 @@ function cleanupTerminal() {
   process.stderr.write('\x1b[?25h\x1b[2K\r');
 }
 
-module.exports = { C, Spinner, MultiProgress, TaskProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal };
+module.exports = { C, Spinner, MultiProgress, TaskProgress, ToolProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal };

@@ -7,6 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+jest.mock('../cli/tool-tiers', () => ({
+  ...jest.requireActual('../cli/tool-tiers'),
+  getEditMode: jest.fn().mockReturnValue('fuzzy'),
+}));
+
 let tmpDir;
 
 beforeAll(() => {

@@ -73,10 +73,14 @@ const SLASH_COMMANDS = [
   { cmd: '/mcp', desc: 'MCP servers and tools' },
   { cmd: '/hooks', desc: 'Show configured hooks' },
   { cmd: '/skills', desc: 'List, enable, disable skills' },
+  { cmd: '/install-skill <url>', desc: 'Install a skill from git URL or user/repo' },
+  { cmd: '/search-skill <query>', desc: 'Search for skills on GitHub' },
+  { cmd: '/remove-skill <name>', desc: 'Remove an installed skill' },
   { cmd: '/tasks', desc: 'Show task list' },
   { cmd: '/servers', desc: 'List server profiles / ping' },
   { cmd: '/docker', desc: 'List containers across all servers' },
   { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
+  { cmd: '/benchmark', desc: 'Show model benchmark results (7-day trend)' },
   { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/setup', desc: 'Configure provider and API keys' },
   { cmd: '/undo', desc: 'Undo last file change' },
@@ -84,6 +88,7 @@ const SLASH_COMMANDS = [
   { cmd: '/history', desc: 'Show file change history' },
   { cmd: '/snapshot [name]', desc: 'Create a named git snapshot of current changes' },
   { cmd: '/restore [name|last]', desc: 'Restore a previously created snapshot' },
+  { cmd: '/audit', desc: 'Show tool execution audit log' },
   { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
 ];
@@ -1079,6 +1084,34 @@ ${C.cyan}${C.bold}└───────────────────�
       return true;
     }
 
+    case '/audit': {
+      const { getAuditSummary, isAuditEnabled } = require('./audit');
+
+      if (!isAuditEnabled()) {
+        console.log(`${C.yellow}Audit logging is disabled (set NEX_AUDIT=true to enable)${C.reset}`);
+        return true;
+      }
+
+      const days = parseInt(rest.join(' ').trim()) || 1;
+      const summary = getAuditSummary(days);
+
+      console.log(`\n${C.bold}${C.cyan}Audit Summary (${days} day${days > 1 ? 's' : ''})${C.reset}\n`);
+      console.log(`  Total tool calls: ${C.bold}${summary.totalCalls}${C.reset}`);
+      console.log(`  Avg duration: ${C.dim}${summary.avgDuration}ms${C.reset}`);
+      console.log(`  Success rate: ${summary.successRate >= 0.95 ? C.green : C.yellow}${Math.round(summary.successRate * 100)}%${C.reset}`);
+
+      if (Object.keys(summary.byTool).length > 0) {
+        console.log(`\n  ${C.dim}Tool${' '.repeat(25)}Count${C.reset}`);
+        console.log(`  ${C.dim}${'─'.repeat(35)}${C.reset}`);
+        const sorted = Object.entries(summary.byTool).sort((a, b) => b[1] - a[1]);
+        for (const [tool, count] of sorted.slice(0, 15)) {
+          console.log(`  ${tool.padEnd(30)}${count}`);
+        }
+      }
+      console.log();
+      return true;
+    }
+
     case '/commit': {
       const { isGitRepo, commit, analyzeDiff, formatDiffSummary } = require('./git');
       const { confirm } = require('./safety');
@@ -1307,6 +1340,66 @@ For each issue, include:
         console.log(`  ${status} ${C.bold}${s.name}${C.reset} ${tag}${info}`);
       }
       console.log(`\n${C.dim}Use /skills enable <name> or /skills disable <name>${C.reset}\n`);
+      return true;
+    }
+
+    case '/install-skill': {
+      const url = rest.join(' ').trim();
+      if (!url) {
+        console.log(`${C.yellow}Usage: /install-skill <git-url-or-user/repo>${C.reset}`);
+        return true;
+      }
+      const { installSkill } = require('./skills');
+      console.log(`${C.dim}Installing skill from ${url}...${C.reset}`);
+      const result = await installSkill(url);
+      if (result.ok) {
+        console.log(`${C.green}Skill "${result.name}" installed successfully${C.reset}`);
+        console.log(`${C.dim}Reload with /skills to see it${C.reset}`);
+      } else {
+        console.log(`${C.red}Failed: ${result.error}${C.reset}`);
+      }
+      return true;
+    }
+
+    case '/search-skill': {
+      const query = rest.join(' ').trim();
+      if (!query) {
+        console.log(`${C.yellow}Usage: /search-skill <query>${C.reset}`);
+        return true;
+      }
+      const { searchSkills } = require('./skills');
+      console.log(`${C.dim}Searching for "${query}"...${C.reset}`);
+      const results = await searchSkills(query);
+      if (results.length === 0) {
+        console.log(`${C.yellow}No skills found matching "${query}"${C.reset}`);
+      } else {
+        console.log(`\n${C.bold}Skills matching "${query}":${C.reset}\n`);
+        for (const r of results) {
+          if (r.name === 'error') {
+            console.log(`  ${C.red}${r.description}${C.reset}`);
+          } else {
+            console.log(`  ${C.cyan}${r.owner}/${r.name}${C.reset} ${C.dim}★${r.stars}${C.reset}`);
+            console.log(`    ${r.description}`);
+            console.log(`    ${C.dim}/install-skill ${r.url}${C.reset}\n`);
+          }
+        }
+      }
+      return true;
+    }
+
+    case '/remove-skill': {
+      const name = rest.join(' ').trim();
+      if (!name) {
+        console.log(`${C.yellow}Usage: /remove-skill <name>${C.reset}`);
+        return true;
+      }
+      const { removeSkill } = require('./skills');
+      const result = removeSkill(name);
+      if (result.ok) {
+        console.log(`${C.green}Skill "${name}" removed${C.reset}`);
+      } else {
+        console.log(`${C.red}${result.error}${C.reset}`);
+      }
       return true;
     }
 
@@ -1591,6 +1684,86 @@ For each issue, include:
       return true;
     }
 
+    case '/benchmark': {
+      const os = require('os');
+      const resultsDir = path.join(os.homedir(), 'Coding', 'nex-code-benchmarks', 'results');
+
+      if (!fs.existsSync(resultsDir)) {
+        console.log(`${C.yellow}No benchmark results found at ${resultsDir}${C.reset}`);
+        console.log(`${C.dim}Run the benchmark system first: ~/Coding/nex-code-benchmarks/run.sh${C.reset}`);
+        break;
+      }
+
+      // Read last 7 days of results
+      const files = fs.readdirSync(resultsDir)
+        .filter(f => f.endsWith('.json'))
+        .sort()
+        .slice(-7);
+
+      if (files.length === 0) {
+        console.log(`${C.yellow}No benchmark results found${C.reset}`);
+        break;
+      }
+
+      console.log(`\n${C.bold}${C.cyan}Model Benchmark Results (${files.length}-day trend)${C.reset}\n`);
+
+      // Parse results and show table
+      const rows = [];
+      for (const file of files) {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(resultsDir, file), 'utf-8'));
+          const date = file.replace('.json', '');
+
+          // Extract metrics — adapt to actual result format
+          const totalTasks = data.tasks?.length || data.total || 0;
+          const passed = data.tasks?.filter(t => t.passed || t.score >= 0.7)?.length || data.passed || 0;
+          const toolCallSuccess = data.tool_call_success ?? data.metrics?.tool_call_success ?? 'N/A';
+          const editAccuracy = data.edit_accuracy ?? data.metrics?.edit_accuracy ?? 'N/A';
+          const avgTime = data.avg_response_time ?? data.metrics?.avg_response_time ?? 'N/A';
+          const score = data.score ?? data.overall_score ?? (totalTasks > 0 ? Math.round(passed / totalTasks * 100) : 'N/A');
+          const model = data.model || data.config?.model || 'unknown';
+
+          rows.push({ date, model, totalTasks, passed, toolCallSuccess, editAccuracy, avgTime, score });
+        } catch {
+          // Skip corrupt files
+        }
+      }
+
+      if (rows.length === 0) {
+        console.log(`${C.yellow}Could not parse any benchmark results${C.reset}`);
+        break;
+      }
+
+      // Header
+      console.log(`  ${C.dim}${'Date'.padEnd(12)} ${'Model'.padEnd(25)} ${'Score'.padEnd(8)} ${'Pass'.padEnd(8)} ${'Tool OK'.padEnd(10)} ${'Edit Acc'.padEnd(10)} ${'Avg Time'.padEnd(10)}${C.reset}`);
+      console.log(`  ${C.dim}${'─'.repeat(85)}${C.reset}`);
+
+      for (const r of rows) {
+        const scoreColor = typeof r.score === 'number' ? (r.score >= 80 ? C.green : r.score >= 60 ? C.yellow : C.red) : C.dim;
+        const scoreStr = typeof r.score === 'number' ? `${r.score}%` : String(r.score);
+        const passStr = `${r.passed}/${r.totalTasks}`;
+        const toolStr = typeof r.toolCallSuccess === 'number' ? `${Math.round(r.toolCallSuccess * 100)}%` : String(r.toolCallSuccess);
+        const editStr = typeof r.editAccuracy === 'number' ? `${Math.round(r.editAccuracy * 100)}%` : String(r.editAccuracy);
+        const timeStr = typeof r.avgTime === 'number' ? `${r.avgTime.toFixed(1)}s` : String(r.avgTime);
+
+        console.log(`  ${r.date.padEnd(12)} ${r.model.substring(0, 24).padEnd(25)} ${scoreColor}${scoreStr.padEnd(8)}${C.reset} ${passStr.padEnd(8)} ${toolStr.padEnd(10)} ${editStr.padEnd(10)} ${timeStr.padEnd(10)}`);
+      }
+
+      // Show trend arrow
+      if (rows.length >= 2) {
+        const first = rows[0].score;
+        const last = rows[rows.length - 1].score;
+        if (typeof first === 'number' && typeof last === 'number') {
+          const diff = last - first;
+          const arrow = diff > 0 ? `${C.green}▲ +${diff}%` : diff < 0 ? `${C.red}▼ ${diff}%` : `${C.dim}→ stable`;
+          console.log(`\n  ${C.bold}Trend:${C.reset} ${arrow}${C.reset} over ${rows.length} days`);
+        }
+      }
+
+      console.log();
+      break;
+    }
+
     case '/init': {
       const { runServerWizard, runDeployWizard, setWizardRL } = require('./wizard');
       setWizardRL(rl);
@@ -1749,6 +1922,13 @@ async function startREPL() {
     // ... (rest of error message)
     process.exit(1);
   }
+
+  // Load persistent undo history from previous sessions
+  const { loadPersistedHistory, pruneHistory: pruneUndoHistory } = require('./file-history');
+  loadPersistedHistory().then(count => {
+    if (count > 0) console.log(`${C.dim}Loaded ${count} undo entries from previous session${C.reset}`);
+  });
+  pruneUndoHistory().catch(() => {});
 
   // Create readline + activate sticky footer BEFORE banner so all output
   // (including the banner) flows through wrappedLog and is tracked from row 1.

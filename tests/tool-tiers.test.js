@@ -17,13 +17,14 @@ jest.mock('fs', () => mockFs);
 const { getActiveModel, getActiveProviderName } = require('../cli/providers/registry');
 
 // We need to require tool-tiers after mocks are set up
-let filterToolsForModel, getActiveTier, getModelTier, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides;
+let filterToolsForModel, getActiveTier, getModelTier, getEditMode, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides;
 
 beforeAll(() => {
   const tiers = require('../cli/tool-tiers');
   filterToolsForModel = tiers.filterToolsForModel;
   getActiveTier = tiers.getActiveTier;
   getModelTier = tiers.getModelTier;
+  getEditMode = tiers.getEditMode;
   getTierInfo = tiers.getTierInfo;
   TIERS = tiers.TIERS;
   MODEL_TIERS = tiers.MODEL_TIERS;
@@ -334,6 +335,57 @@ describe('filterToolsForModel() with overrideTier', () => {
 
     const filtered = filterToolsForModel(SAMPLE_TOOLS, 'full');
     expect(filtered).toHaveLength(12);
+  });
+});
+
+// ─── getEditMode() ──────────────────────────────────────────────
+
+describe('getEditMode()', () => {
+  it('returns strict for Claude models', () => {
+    expect(getEditMode('claude-sonnet-4', 'anthropic')).toBe('strict');
+    expect(getEditMode('claude-opus', 'anthropic')).toBe('strict');
+    expect(getEditMode('claude-haiku', 'anthropic')).toBe('strict');
+  });
+
+  it('returns strict for claude-* prefix variants', () => {
+    expect(getEditMode('claude-sonnet-4-5-20251001', 'anthropic')).toBe('strict');
+    expect(getEditMode('claude-unknown-future', 'anthropic')).toBe('strict');
+  });
+
+  it('returns strict for GPT-4o', () => {
+    expect(getEditMode('gpt-4o', 'openai')).toBe('strict');
+  });
+
+  it('returns strict for other strong OpenAI models', () => {
+    expect(getEditMode('gpt-4.1', 'openai')).toBe('strict');
+    expect(getEditMode('o1', 'openai')).toBe('strict');
+    expect(getEditMode('o3', 'openai')).toBe('strict');
+    expect(getEditMode('o4-mini', 'openai')).toBe('strict');
+  });
+
+  it('returns strict for qwen3-coder:480b', () => {
+    expect(getEditMode('qwen3-coder:480b', 'ollama')).toBe('strict');
+  });
+
+  it('returns strict for other strong ollama models', () => {
+    expect(getEditMode('kimi-k2:1t', 'ollama')).toBe('strict');
+    expect(getEditMode('deepseek-v3.2', 'ollama')).toBe('strict');
+  });
+
+  it('returns fuzzy for unknown ollama model', () => {
+    expect(getEditMode('some-random-model', 'ollama')).toBe('fuzzy');
+  });
+
+  it('returns fuzzy for local provider', () => {
+    expect(getEditMode('llama3', 'local')).toBe('fuzzy');
+  });
+
+  it('returns strict for gemini provider default', () => {
+    expect(getEditMode('gemini-2.5-pro', 'gemini')).toBe('strict');
+  });
+
+  it('returns fuzzy for completely unknown provider', () => {
+    expect(getEditMode('unknown-model', 'unknown-provider')).toBe('fuzzy');
   });
 });
 

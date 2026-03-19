@@ -8,6 +8,14 @@ const os = require('os');
 
 let tmpDir;
 
+beforeAll(() => {
+  process.env.NEX_SKIP_BUILTIN_SKILLS = '1';
+});
+
+afterAll(() => {
+  delete process.env.NEX_SKIP_BUILTIN_SKILLS;
+});
+
 beforeEach(() => {
   jest.resetModules();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-skills-'));
@@ -771,6 +779,117 @@ describe('skills.js', () => {
       expect(config.permissions).toEqual({ bash: 'allow' });
       expect(config.mcpServers).toEqual({});
       expect(config.skills.disabled).toContain('style');
+    });
+  });
+
+  // ─── installSkill ───────────────────────────────────────
+  describe('installSkill()', () => {
+    it('returns error for invalid git URL', async () => {
+      const skills = getSkills();
+      const result = await skills.installSkill('https://invalid.example.com/nonexistent-repo.git');
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Git clone failed');
+    });
+
+    it('returns error if skill directory already exists', async () => {
+      const dir = mkSkillsDir();
+      fs.mkdirSync(path.join(dir, 'my-skill'), { recursive: true });
+      const skills = getSkills();
+      const result = await skills.installSkill('https://github.com/user/my-skill.git');
+      expect(result.ok).toBe(false);
+      expect(result.name).toBe('my-skill');
+      expect(result.error).toContain('already installed');
+    });
+
+    it('normalizes user/repo shorthand to GitHub URL', async () => {
+      const skills = getSkills();
+      // This will fail at clone (repo does not exist), but we verify
+      // the name is derived correctly from the shorthand
+      const result = await skills.installSkill('someuser/nex-skill-test');
+      expect(result.ok).toBe(false);
+      expect(result.name).toBe('test'); // nex-skill- prefix stripped
+      expect(result.error).toContain('Git clone failed');
+    });
+  });
+
+  // ─── removeSkill ────────────────────────────────────────
+  describe('removeSkill()', () => {
+    it('returns error for non-existent skill', () => {
+      mkSkillsDir();
+      const skills = getSkills();
+      const result = skills.removeSkill('nonexistent');
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('not found');
+    });
+
+    it('removes an installed skill directory', () => {
+      const dir = mkSkillsDir();
+      const skillDir = path.join(dir, 'my-skill');
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(path.join(skillDir, 'index.md'), '# My Skill');
+      const skills = getSkills();
+      skills.loadAllSkills();
+      const result = skills.removeSkill('my-skill');
+      expect(result.ok).toBe(true);
+      expect(fs.existsSync(skillDir)).toBe(false);
+    });
+  });
+
+  // ─── searchSkills ───────────────────────────────────────
+  describe('searchSkills()', () => {
+    let origAxios;
+
+    beforeEach(() => {
+      // Save original axios module from cache if present
+      origAxios = undefined;
+      try { origAxios = require.resolve('axios'); } catch {}
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('returns an array (with mocked axios)', async () => {
+      const skills = getSkills();
+
+      // Mock axios by temporarily replacing require
+      const mockGet = jest.fn().mockResolvedValue({
+        data: {
+          items: [
+            {
+              name: 'nex-skill-deploy',
+              description: 'Deploy helper skill',
+              clone_url: 'https://github.com/user/nex-skill-deploy.git',
+              stargazers_count: 42,
+              owner: { login: 'user' },
+            },
+          ],
+        },
+      });
+      jest.doMock('axios', () => ({ get: mockGet }), { virtual: true });
+
+      // Clear cached axios so searchSkills picks up the mock
+      delete require.cache[require.resolve('axios')];
+
+      const results = await skills.searchSkills('deploy');
+      expect(Array.isArray(results)).toBe(true);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('deploy'); // nex-skill- prefix stripped
+      expect(results[0].stars).toBe(42);
+      expect(results[0].owner).toBe('user');
+    });
+
+    it('returns error entry on network failure', async () => {
+      const skills = getSkills();
+
+      const mockGet = jest.fn().mockRejectedValue(new Error('Network error'));
+      jest.doMock('axios', () => ({ get: mockGet }), { virtual: true });
+      delete require.cache[require.resolve('axios')];
+
+      const results = await skills.searchSkills('anything');
+      expect(Array.isArray(results)).toBe(true);
+      expect(results[0].name).toBe('error');
+      expect(results[0].description).toContain('Network error');
     });
   });
 });

@@ -1,0 +1,18 @@
+title: "[Show] "
+labels: ["show-and-tell"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Show & Tell\nShare what you've built with nex-code!"
+  - type: textarea
+    id: description
+    attributes:
+      label: What did you build?
+      description: Share your project, skill, or workflow
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: How does it work? Any tips for others?
