@@ -152,6 +152,11 @@ const CRITICAL_BASH = [
   /sudo\s/,
   // Hook bypass — CLAUDE.md: NEVER use --no-verify
   /--no-verify\b/,
+  // Destructive git operations — discard local work
+  /git\s+reset\s+--hard\b/,
+  /git\s+clean\s+-[a-z]*f/,      // git clean -f, -fd, -ffd, etc.
+  /git\s+checkout\s+--\s/,        // git checkout -- <path> (discard changes)
+  /git\s+push\s+(?:--force\b|-f\b)/, // force push (overwrites remote history)
 ];
 
 // Show in first-confirmation preview only — no second blocking prompt
