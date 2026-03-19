@@ -596,8 +596,8 @@ function _buildLanguagePrompt() {
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
-  // Treat unset and "auto" the same: respond in user's language
-  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
+  // Default to English. Use NEX_LANGUAGE=auto to mirror the user's language.
+  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? 'English' : uiLangRaw;
 
   const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
 

@@ -710,7 +710,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'spawn_agents',
-      description: 'Run multiple independent sub-agents in parallel (max 5). Each agent has its own conversation context. Use when 2+ tasks can run simultaneously — e.g. reading multiple files, analyzing separate modules, independent research. Do NOT use for tasks that depend on each other or modify the same file. Keep task descriptions specific and self-contained.',
+      description: 'Run multiple independent sub-agents in parallel (max 5 at top level, max 2 when called from within a sub-agent). Each agent has its own conversation context. Use when 2+ tasks can run simultaneously — e.g. reading multiple files, analyzing separate modules, independent research. Do NOT use for tasks that depend on each other or modify the same file. Keep task descriptions specific and self-contained. SWARM PATTERN: Sub-agents can call spawn_agents once (max nesting depth 2) to enable Architect→Coder→Reviewer pipelines: a coder agent spawns 1-2 reviewer agents that validate and fix its own output before returning results to the parent.',
       parameters: {
         type: 'object',
         properties: {
