@@ -638,7 +638,7 @@ function _buildLanguagePrompt() {
   }
 
   if (uiLang) {
-    lines.push(`\nThis is a hard requirement. Do NOT fall back to English or any other language for your responses, even if the user writes in a different language first.`);
+    lines.push(`\nThis is a hard requirement. Always respond in ${uiLang}. Do NOT switch to any other language — even if the user writes to you in German, French, or any other language, your reply MUST be in ${uiLang}.`);
   }
 
   return lines.join('\n') + '\n\n';
