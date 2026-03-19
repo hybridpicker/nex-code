@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-2100+-blue.svg" alt="Tests: 2059">
+  <img src="https://img.shields.io/badge/tests-3074-blue.svg" alt="Tests: 3074">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -89,7 +89,7 @@ npm update -g nex-code
 | **Plugin API** | ✅ registerTool + hooks | ❌ | ❌ | ❌ |
 | **Skill marketplace** | ✅ Install from git | ❌ | ❌ | ❌ |
 | **Audit logging** | ✅ JSONL + sanitization | ❌ | ❌ | ❌ |
-| **Test coverage** | 2100+ tests, 84% | — | — | — |
+| **Test coverage** | 3074 tests, 85% | — | — | — |
 
 ---
 
