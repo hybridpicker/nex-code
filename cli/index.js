@@ -2494,8 +2494,8 @@ async function startREPL() {
       const STRONG_IMPL = /\b(implement|refactor|migrate|redesign)\b/i;
       const WEAK_IMPL = /\b(create|build|add|write|introduce|develop|set\s+up)\b/i;
       const IS_QUESTION = /^(how|what|why|when|where|which|explain|show|list|tell|describe|can\s+you|could\s+you|do\s+you)\b/i;
-      // Don't auto-plan when the user explicitly invokes spawn_agents — it manages its own execution flow
-      const EXPLICIT_SPAWN = /\bspawn[_\s]?agents?\b/i;
+      // Don't auto-plan when the user explicitly invokes spawn_agents or a swarm pattern
+      const EXPLICIT_SPAWN = /\b(spawn[_\s]?agents?|swarm)\b/i;
       const isImplTask = !IS_QUESTION.test(input) && !EXPLICIT_SPAWN.test(input) && (
         STRONG_IMPL.test(input) ||
         (WEAK_IMPL.test(input) && input.split(/\s+/).length >= 5)
