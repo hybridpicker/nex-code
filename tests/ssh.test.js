@@ -13,15 +13,18 @@ const fs = require('fs');
 
 let tmpDir;
 let cwdSpy;
+let homeSpy;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-ssh-test-'));
   cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+  homeSpy = jest.spyOn(os, 'homedir').mockReturnValue(tmpDir);
   jest.resetModules();
 });
 
 afterEach(() => {
   cwdSpy.mockRestore();
+  homeSpy.mockRestore();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
