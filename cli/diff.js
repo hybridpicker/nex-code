@@ -287,10 +287,10 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
   }
 
   // Header
-  console.log(`\n${C.cyan}⏺${C.reset} ${C.bold}${label}(${relPath})${C.reset}`);
+  console.log(`\n${C.green}●${C.reset} ${C.bold}${label}(${relPath})${C.reset}`);
 
   if (added === 0 && removed === 0) {
-    console.log(`  ${C.dim}⎿  (no changes)${C.reset}\n`);
+    console.log(`  ${C.dim}└  (no changes)${C.reset}\n`);
     return;
   }
 
@@ -311,7 +311,7 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
     parts.push(`found ${issueParts.join(', ')}`);
   }
 
-  console.log(`  ${C.dim}⎿  ${parts.join(', ')}${C.reset}`);
+  console.log(`  ${C.dim}└  ${parts.join(', ')}${C.reset}`);
 
   // Build hunks: groups of changes with surrounding context
   const changeIndices = [];
@@ -336,6 +336,14 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
   if (hunkStart !== null) hunks.push([hunkStart, hunkEnd]);
 
   const PAD = '      '; // 6-char left padding
+  const termWidth = process.stdout.columns || 120;
+
+  // Pad a plain-text string (no ANSI) to terminal width, then wrap with bg+fg
+  function diffLine(bg, fg, text) {
+    const visible = text.replace(/\x1b\[[0-9;]*m/g, '');
+    const padded = text + ' '.repeat(Math.max(0, termWidth - visible.length));
+    return `${bg}${fg}${padded}${C.reset}`;
+  }
 
   for (let h = 0; h < hunks.length; h++) {
     if (h > 0) console.log(`${PAD}${C.dim}···${C.reset}`);
@@ -349,17 +357,9 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
       const lineAnnotations = op.type !== 'remove' ? annotations.filter(a => a.line === op.newLine) : [];
 
       if (op.type === 'remove') {
-        // Gutter colored, content: muted red on dark / dim default on light
-        const content = isDark
-          ? `${T.diff_rem}${op.line}${C.reset}`
-          : `${C.dim}${op.line}${C.reset}`;
-        console.log(`${PAD}${C.red}${numStr} - ${C.reset}${content}`);
+        console.log(diffLine(T.diff_rem_bg, C.red, `${PAD}${numStr} - ${op.line}`));
       } else if (op.type === 'add') {
-        // Gutter colored, content: muted green on dark / default on light
-        const content = isDark
-          ? `${T.diff_add}${op.line}${C.reset}`
-          : `${op.line}`;
-        console.log(`${PAD}${C.green}${numStr} + ${C.reset}${content}`);
+        console.log(diffLine(T.diff_add_bg, C.green, `${PAD}${numStr} + ${op.line}`));
       } else {
         console.log(`${PAD}${C.dim}${numStr}  ${C.reset}${op.line}`);
       }
@@ -386,7 +386,7 @@ function showClaudeNewFile(filePath, content, options = {}) {
   const lines = content.split('\n');
   const annotations = options.annotations || [];
 
-  console.log(`\n${C.cyan}⏺${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
+  console.log(`\n${C.green}●${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
 
   const parts = [`${lines.length} line${lines.length !== 1 ? 's' : ''}`];
   const issueCount = annotations.length;
@@ -400,17 +400,20 @@ function showClaudeNewFile(filePath, content, options = {}) {
     if (info > 0) issueParts.push(`${C.cyan}${info} info${info !== 1 ? 's' : ''}${C.dim}`);
     parts.push(`found ${issueParts.join(', ')}`);
   }
-  console.log(`  ${C.dim}⎿  ${parts.join(', ')}${C.reset}`);
+  console.log(`  ${C.dim}└  ${parts.join(', ')}${C.reset}`);
 
   const PAD = '      ';
+  const termWidth = process.stdout.columns || 120;
   const show = Math.min(lines.length, 20);
   for (let i = 0; i < show; i++) {
     const numStr = String(i + 1).padStart(4);
     const lineNum = i + 1;
     const lineAnnotations = annotations.filter(a => a.line === lineNum);
 
-    const content = isDark ? `${T.diff_add}${lines[i]}${C.reset}` : `${lines[i]}`;
-    console.log(`${PAD}${C.green}${numStr} + ${C.reset}${content}`);
+    const text = `${PAD}${numStr} + ${lines[i]}`;
+    const visible = text.replace(/\x1b\[[0-9;]*m/g, '');
+    const padded = text + ' '.repeat(Math.max(0, termWidth - visible.length));
+    console.log(`${T.diff_add_bg}${C.green}${padded}${C.reset}`);
 
     // Render annotations
     for (const ann of lineAnnotations) {
