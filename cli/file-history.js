@@ -3,7 +3,12 @@
  */
 
 const fs = require('fs').promises;
+const fsSync = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { execSync } = require('child_process');
+
+const BLOB_THRESHOLD = 100 * 1024; // 100 KB
 
 const MAX_HISTORY = 50;
 
@@ -29,6 +34,8 @@ function recordChange(tool, filePath, oldContent, newContent) {
   while (undoStack.length > MAX_HISTORY) undoStack.shift();
   // New edit clears redo stack
   redoStack.length = 0;
+  // Persist to disk (fire-and-forget)
+  persistEntry(undoStack[undoStack.length - 1]).catch(() => {});
 }
 
 /**
@@ -90,6 +97,171 @@ function getRedoCount() { return redoStack.length; }
 function clearHistory() {
   undoStack.length = 0;
   redoStack.length = 0;
+}
+
+// ─── Persistent History ───────────────────────────────────────────────────────
+
+function historyDir() {
+  return path.join(process.cwd(), '.nex', 'history');
+}
+
+function blobDir() {
+  return path.join(historyDir(), 'blobs');
+}
+
+/**
+ * Store content as a blob if it exceeds BLOB_THRESHOLD.
+ * Returns { inline: true, content } or { inline: false, hash }.
+ */
+async function maybeStoreBlob(content, dir) {
+  if (content === null || content === undefined) return { inline: true, content };
+  if (Buffer.byteLength(content, 'utf-8') <= BLOB_THRESHOLD) {
+    return { inline: true, content };
+  }
+  const hash = crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
+  const bDir = path.join(dir, 'blobs');
+  await fs.mkdir(bDir, { recursive: true });
+  await fs.writeFile(path.join(bDir, hash), content, 'utf-8');
+  return { inline: false, hash };
+}
+
+/**
+ * Persist a single undo entry to .nex/history/{timestamp}-{basename}.json.
+ * Fire-and-forget — errors are silently ignored by the caller.
+ */
+async function persistEntry(entry) {
+  const dir = historyDir();
+  await fs.mkdir(dir, { recursive: true });
+
+  const safeName = path.basename(entry.filePath).replace(/[^a-zA-Z0-9]/g, '-');
+  const filename = `${entry.timestamp}-${safeName}.json`;
+
+  const oldRef = await maybeStoreBlob(entry.oldContent, dir);
+  const newRef = await maybeStoreBlob(entry.newContent, dir);
+
+  const record = {
+    tool: entry.tool,
+    filePath: entry.filePath,
+    timestamp: entry.timestamp,
+    oldContent: oldRef.inline ? { inline: true, content: oldRef.content } : { inline: false, hash: oldRef.hash },
+    newContent: newRef.inline ? { inline: true, content: newRef.content } : { inline: false, hash: newRef.hash },
+  };
+
+  await fs.writeFile(path.join(dir, filename), JSON.stringify(record), 'utf-8');
+}
+
+/**
+ * Resolve a content reference — inline or blob.
+ */
+async function resolveContent(ref, dir) {
+  if (!ref) return null;
+  if (ref.inline) return ref.content;
+  // Read from blob
+  const blobPath = path.join(dir, 'blobs', ref.hash);
+  return fs.readFile(blobPath, 'utf-8');
+}
+
+/**
+ * Load persisted history entries from .nex/history/*.json into undoStack.
+ * @returns {Promise<number>} Number of entries loaded.
+ */
+async function loadPersistedHistory() {
+  const dir = historyDir();
+  let files;
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return 0; // directory doesn't exist yet
+  }
+
+  const jsonFiles = files.filter(f => f.endsWith('.json')).sort(); // ascending by timestamp prefix
+  let count = 0;
+
+  for (const file of jsonFiles) {
+    try {
+      const raw = await fs.readFile(path.join(dir, file), 'utf-8');
+      const record = JSON.parse(raw);
+      const oldContent = await resolveContent(record.oldContent, dir);
+      const newContent = await resolveContent(record.newContent, dir);
+      undoStack.push({
+        tool: record.tool,
+        filePath: record.filePath,
+        timestamp: record.timestamp,
+        oldContent,
+        newContent,
+      });
+      count++;
+    } catch {
+      // skip corrupt entries
+    }
+  }
+
+  // Trim to MAX_HISTORY
+  while (undoStack.length > MAX_HISTORY) undoStack.shift();
+  return count;
+}
+
+/**
+ * Prune history entries older than maxAgeDays.
+ * Also removes orphaned blobs no longer referenced by any entry.
+ * @param {number} [maxAgeDays=7]
+ * @returns {Promise<number>} Number of pruned entries.
+ */
+async function pruneHistory(maxAgeDays = 7) {
+  const dir = historyDir();
+  let files;
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return 0;
+  }
+
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const jsonFiles = files.filter(f => f.endsWith('.json'));
+  let pruned = 0;
+  const referencedHashes = new Set();
+  const toDelete = [];
+
+  for (const file of jsonFiles) {
+    try {
+      const raw = await fs.readFile(path.join(dir, file), 'utf-8');
+      const record = JSON.parse(raw);
+      if (record.timestamp < cutoff) {
+        toDelete.push(file);
+        pruned++;
+      } else {
+        // Track referenced blobs
+        if (record.oldContent && !record.oldContent.inline && record.oldContent.hash) {
+          referencedHashes.add(record.oldContent.hash);
+        }
+        if (record.newContent && !record.newContent.inline && record.newContent.hash) {
+          referencedHashes.add(record.newContent.hash);
+        }
+      }
+    } catch {
+      // skip corrupt
+    }
+  }
+
+  // Delete old entries
+  for (const file of toDelete) {
+    try { await fs.unlink(path.join(dir, file)); } catch { /* ignore */ }
+  }
+
+  // Delete orphaned blobs
+  const bDir = path.join(dir, 'blobs');
+  try {
+    const blobs = await fs.readdir(bDir);
+    for (const blob of blobs) {
+      if (!referencedHashes.has(blob)) {
+        try { await fs.unlink(path.join(bDir, blob)); } catch { /* ignore */ }
+      }
+    }
+  } catch {
+    // blobs dir doesn't exist
+  }
+
+  return pruned;
 }
 
 // ─── Named Git Snapshots ──────────────────────────────────────────────────────
@@ -193,5 +365,6 @@ function restoreSnapshot(target, cwd = process.cwd()) {
 
 module.exports = {
   recordChange, undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory,
+  persistEntry, loadPersistedHistory, pruneHistory,
   createSnapshot, listSnapshots, restoreSnapshot,
 };

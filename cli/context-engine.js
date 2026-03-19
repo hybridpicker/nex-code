@@ -5,6 +5,8 @@
  * when approaching context window limits, and provides smart file truncation.
  */
 
+const path = require('path');
+
 function getActiveModel() {
   return require('./providers/registry').getActiveModel();
 }
@@ -233,9 +235,9 @@ function getUsage(messages, tools) {
 
 // ─── Auto-Compression ──────────────────────────────────────────
 
-const COMPRESSION_THRESHOLD = 0.75; // Compress when >75% full
-const SAFETY_MARGIN = 0.10;         // 10% reserve for token estimation errors
-const KEEP_RECENT = 10; // Always keep last N messages intact
+const COMPRESSION_THRESHOLD = parseFloat(process.env.NEX_COMPRESSION_THRESHOLD) || 0.75;
+const SAFETY_MARGIN = parseFloat(process.env.NEX_SAFETY_MARGIN) || 0.10;
+const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
 const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
 const TRUNCATE_ASSISTANT = 500; // Truncate old assistant content to N chars
 
@@ -382,6 +384,71 @@ function compressMessage(msg, level = 'light') {
 }
 
 /**
+ * Score a message's relevance to the current working context.
+ * Higher score = more relevant = keep longer.
+ *
+ * Scoring factors:
+ * - Message type: user messages > tool results with errors > tool results > assistant reasoning
+ * - Recency: newer messages score higher (but this is secondary to type)
+ * - File overlap: messages mentioning files in the active working set score higher
+ *
+ * @param {object} msg - Message object
+ * @param {number} index - Position in the message array (0 = oldest)
+ * @param {number} totalMessages - Total number of messages
+ * @param {Set<string>} activeFiles - Set of recently mentioned file paths
+ * @returns {number} Relevance score (0-100)
+ */
+function scoreMessageRelevance(msg, index, totalMessages, activeFiles) {
+  let score = 0;
+
+  // Type scoring (0-40)
+  if (msg.role === 'system') return 100; // never drop system
+  if (msg.role === 'user') score += 35;
+  else if (msg.role === 'tool') {
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    if (/^(ERROR|BLOCKED|CANCELLED)/i.test(content)) score += 30; // errors are valuable
+    else score += 15;
+  }
+  else if (msg.role === 'assistant') {
+    score += msg.tool_calls ? 20 : 10; // tool-calling responses > plain text
+  }
+
+  // Recency scoring (0-30)
+  const recencyRatio = totalMessages > 1 ? index / (totalMessages - 1) : 1;
+  score += Math.round(recencyRatio * 30);
+
+  // File overlap scoring (0-30)
+  if (activeFiles && activeFiles.size > 0) {
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    let fileHits = 0;
+    for (const f of activeFiles) {
+      if (content.includes(f) || content.includes(path.basename(f))) fileHits++;
+    }
+    score += Math.min(30, fileHits * 10);
+  }
+
+  return Math.min(100, score);
+}
+
+/**
+ * Extract file paths mentioned in recent messages to determine the active working set.
+ * @param {Array} messages - All messages
+ * @param {number} recentCount - How many recent messages to scan
+ * @returns {Set<string>} File paths mentioned
+ */
+function extractActiveFiles(messages, recentCount = 10) {
+  const files = new Set();
+  const recent = messages.slice(-recentCount);
+  const filePattern = /(?:\/[\w.-]+)+\.\w+/g;
+  for (const msg of recent) {
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    const matches = content.match(filePattern);
+    if (matches) matches.forEach(m => files.add(m));
+  }
+  return files;
+}
+
+/**
  * Fit messages into the context window.
  * Compresses older messages if the conversation exceeds the threshold.
  *
@@ -496,14 +563,25 @@ async function fitToContext(messages, tools, options = {}) {
     };
   }
 
-  // Phase 4: Remove oldest messages until we fit.
-  // `tokens` tracks message tokens only; `available = targetMax - toolTokens`,
-  // so the correct stop condition is `tokens > available` — not `tokens + toolTokens > available`
-  // (the latter would target targetMax - 2*toolTokens, over-removing by one toolTokens worth).
-  while (compressed.length > 0 && tokens > available) {
-    const removed = compressed.shift();
-    tokens -= estimateMessageTokens(removed);
+  // Phase 4: Remove lowest-relevance messages until we fit.
+  const activeFiles = extractActiveFiles([...compressed, ...recentMessages]);
+  const scored = compressed.map((msg, i) => ({
+    msg,
+    score: scoreMessageRelevance(msg, i, compressed.length, activeFiles),
+    tokens: estimateMessageTokens(msg),
+  }));
+
+  while (scored.length > 0 && tokens > available) {
+    // Find lowest-scoring message
+    let minIdx = 0;
+    for (let i = 1; i < scored.length; i++) {
+      if (scored[i].score < scored[minIdx].score) minIdx = i;
+    }
+    tokens -= scored[minIdx].tokens;
+    scored.splice(minIdx, 1);
   }
+
+  compressed = scored.map(s => s.msg);
 
   result = buildResult(system, compressed, recentMessages);
   // Re-verify: recentMessages and system are not tracked by the running `tokens` subtraction above.
@@ -649,6 +727,8 @@ module.exports = {
   getUsage,
   compressMessage,
   compressToolResult,
+  scoreMessageRelevance,
+  extractActiveFiles,
   fitToContext,
   forceCompress,
   truncateFileContent,

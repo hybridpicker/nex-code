@@ -16,6 +16,11 @@ jest.mock('../cli/file-history', () => ({
   recordChange: jest.fn(),
 }));
 
+jest.mock('../cli/tool-tiers', () => ({
+  ...jest.requireActual('../cli/tool-tiers'),
+  getEditMode: jest.fn().mockReturnValue('fuzzy'),
+}));
+
 jest.mock('../cli/diff', () => ({
   showClaudeDiff: jest.fn(),
   showClaudeNewFile: jest.fn(),
@@ -751,12 +756,12 @@ describe('tools.js', () => {
       writeSpy.mockRestore();
     });
 
-    it('does not show spinner for bash (has own)', async () => {
+    it('bash uses its own progress indicator', async () => {
       const writeSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
       await executeTool('bash', { command: 'echo hi' });
       const output = writeSpy.mock.calls.map((c) => c[0]).join('');
-      // bash has its own spinner with "Running:" prefix, not our wrapper
-      expect(output).toContain('Running:');
+      // bash has its own ToolProgress that shows command text
+      expect(output).toContain('echo hi');
       writeSpy.mockRestore();
     });
   });

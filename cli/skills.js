@@ -197,15 +197,16 @@ function loadScriptSkill(filePath) {
  */
 function loadAllSkills() {
   loadedSkills = [];
-  const dir = getSkillsDir();
-  if (!fs.existsSync(dir)) return loadedSkills;
-
   const disabled = getDisabledSkills();
-  let entries;
-  try {
-    entries = fs.readdirSync(dir);
-  } catch {
-    return loadedSkills;
+  const dir = getSkillsDir();
+
+  let entries = [];
+  if (fs.existsSync(dir)) {
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      entries = [];
+    }
   }
 
   for (const entry of entries) {
@@ -228,6 +229,34 @@ function loadAllSkills() {
     if (skill) {
       skill.enabled = !disabled.includes(skill.name);
       loadedSkills.push(skill);
+    }
+  }
+
+  // Load built-in skills from cli/skills/ (skip in test environments)
+  const builtinDir = path.join(__dirname, 'skills');
+  if (!process.env.NEX_SKIP_BUILTIN_SKILLS && fs.existsSync(builtinDir)) {
+    let builtinFiles;
+    try {
+      builtinFiles = fs.readdirSync(builtinDir).filter(f => f.endsWith('.md') || f.endsWith('.js'));
+    } catch {
+      builtinFiles = [];
+    }
+    for (const file of builtinFiles) {
+      const filePath = path.join(builtinDir, file);
+      // Don't load if user has a skill with the same name (user overrides built-in)
+      const name = path.basename(file, path.extname(file));
+      if (loadedSkills.some(s => s.name === name)) continue;
+
+      let stat;
+      try { stat = fs.statSync(filePath); } catch { continue; }
+      if (!stat.isFile()) continue;
+
+      const skill = file.endsWith('.md') ? loadMarkdownSkill(filePath) : loadScriptSkill(filePath);
+      if (skill) {
+        skill._builtin = true;
+        skill.enabled = !disabled.includes(skill.name);
+        loadedSkills.push(skill);
+      }
     }
   }
 
@@ -392,6 +421,120 @@ function getLoadedSkills() {
   return loadedSkills;
 }
 
+/**
+ * Install a skill from a git URL.
+ * Clones into .nex/skills/{name}/ and validates the skill manifest.
+ *
+ * @param {string} url - Git URL or shorthand (user/repo)
+ * @param {object} [options] - { name: string }
+ * @returns {Promise<{ ok: boolean, name: string, error?: string }>}
+ */
+async function installSkill(url, options = {}) {
+  const { execSync } = require('child_process');
+  const dir = initSkillsDir();
+
+  // Normalize URL: support shorthand "user/repo" → GitHub URL
+  let gitUrl = url;
+  if (/^[\w-]+\/[\w.-]+$/.test(url)) {
+    gitUrl = `https://github.com/${url}.git`;
+  }
+
+  // Determine skill name from URL or options
+  const name = options.name || path.basename(gitUrl, '.git').replace(/^nex-skill-/, '');
+  const targetDir = path.join(dir, name);
+
+  // Check if already installed
+  if (fs.existsSync(targetDir)) {
+    return { ok: false, name, error: `Skill "${name}" is already installed at ${targetDir}. Remove it first to reinstall.` };
+  }
+
+  // Clone
+  try {
+    execSync(`git clone --depth 1 ${gitUrl} ${targetDir}`, {
+      timeout: 30000,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    return { ok: false, name, error: `Git clone failed: ${err.stderr?.toString().trim() || err.message}` };
+  }
+
+  // Validate: check for skill.json manifest or .md/.js skill file
+  const manifestPath = path.join(targetDir, 'skill.json');
+  const hasManifest = fs.existsSync(manifestPath);
+  const hasSkillFile = fs.readdirSync(targetDir).some(f =>
+    (f.endsWith('.md') || f.endsWith('.js')) && !f.startsWith('.')
+  );
+
+  if (!hasManifest && !hasSkillFile) {
+    // Clean up invalid skill
+    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
+    return { ok: false, name, error: 'No skill.json manifest or .md/.js skill file found in repository' };
+  }
+
+  // If manifest exists, validate it
+  if (hasManifest) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      if (!manifest.name) manifest.name = name;
+    } catch {
+      try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
+      return { ok: false, name, error: 'Invalid skill.json — not valid JSON' };
+    }
+  }
+
+  // Reload skills
+  loadAllSkills();
+
+  return { ok: true, name };
+}
+
+/**
+ * Search for skills in the registry (GitHub-based).
+ * Searches GitHub for repositories matching "nex-skill-{query}" or tagged "nex-code-skill".
+ *
+ * @param {string} query - Search term
+ * @returns {Promise<Array<{ name: string, description: string, url: string, stars: number }>>}
+ */
+async function searchSkills(query) {
+  const axios = require('axios');
+  try {
+    const searchQuery = encodeURIComponent(`nex-skill ${query} OR nex-code-skill ${query}`);
+    const resp = await axios.get(`https://api.github.com/search/repositories?q=${searchQuery}&sort=stars&per_page=10`, {
+      timeout: 10000,
+      headers: { 'Accept': 'application/vnd.github.v3+json' },
+    });
+
+    return (resp.data.items || []).map(repo => ({
+      name: repo.name.replace(/^nex-skill-/, ''),
+      description: repo.description || '(no description)',
+      url: repo.clone_url,
+      stars: repo.stargazers_count,
+      owner: repo.owner.login,
+    }));
+  } catch (err) {
+    return [{ name: 'error', description: `Search failed: ${err.message}`, url: '', stars: 0, owner: '' }];
+  }
+}
+
+/**
+ * Remove an installed skill.
+ * @param {string} name - Skill name
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function removeSkill(name) {
+  const dir = path.join(getSkillsDir(), name);
+  if (!fs.existsSync(dir)) {
+    return { ok: false, error: `Skill "${name}" not found in ${getSkillsDir()}` };
+  }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    loadAllSkills(); // Reload
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 module.exports = {
   initSkillsDir,
   loadAllSkills,
@@ -404,6 +547,9 @@ module.exports = {
   enableSkill,
   disableSkill,
   getLoadedSkills,
+  installSkill,
+  searchSkills,
+  removeSkill,
   // exported for testing
   _getSkillsDir: getSkillsDir,
   _validateScriptSkill: validateScriptSkill,

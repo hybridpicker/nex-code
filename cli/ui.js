@@ -84,7 +84,7 @@ function banner(modelName, cwd, opts = {}) {
 }
 
 // Re-exports from spinner.js and format.js for backward compatibility
-const { Spinner, MultiProgress, TaskProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal } = require('./spinner');
+const { Spinner, MultiProgress, TaskProgress, ToolProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal } = require('./spinner');
 const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader } = require('./format');
 
 module.exports = {
@@ -94,6 +94,7 @@ module.exports = {
   Spinner,
   MultiProgress,
   TaskProgress,
+  ToolProgress,
   setActiveTaskProgress,
   getActiveTaskProgress,
   cleanupTerminal,
