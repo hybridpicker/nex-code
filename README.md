@@ -1,5 +1,5 @@
 ```
- ██▄▄██   nex-code  v0.3.51
+ ██▄▄██   nex-code  v0.3.53
  █▀██▀█   qwen3-coder:480b  ·  /help
  ▀████▀
 ```
@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-2059-blue.svg" alt="Tests: 2059">
+  <img src="https://img.shields.io/badge/tests-2100+-blue.svg" alt="Tests: 2059">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -74,7 +74,7 @@ npm update -g nex-code
 | **Multi-provider runtime swap** | ✅ 5 providers, no restart | ❌ Claude-only | ❌ Gemini-only | ✅ |
 | **Tool tiers (adapts to model)** | ✅ essential/standard/full | ❌ | ❌ | ❌ |
 | **5-layer open-model auto-fix** | ✅ | ❌ | ❌ | ⚠️ |
-| **Undo / Redo** | ✅ | ❌ | ❌ | ❌ |
+| **Undo / Redo (persistent)** | ✅ Survives restart | ❌ | ❌ | ❌ |
 | **Cost tracking + budgets** | ✅ | ❌ | ❌ | ❌ |
 | **Pre-push secret detection** | ✅ | ❌ | ❌ | ❌ |
 | **Browser agent (headless)** | ✅ Playwright-based | ❌ | ⚠️ Experimental | ❌ |
@@ -86,7 +86,10 @@ npm update -g nex-code
 | **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
 | **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
 | **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
-| **Test coverage** | 2059 tests, 84% | — | — | — |
+| **Plugin API** | ✅ registerTool + hooks | ❌ | ❌ | ❌ |
+| **Skill marketplace** | ✅ Install from git | ❌ | ❌ | ❌ |
+| **Audit logging** | ✅ JSONL + sanitization | ❌ | ❌ | ❌ |
+| **Test coverage** | 2100+ tests, 84% | — | — | — |
 
 ---
 
@@ -397,13 +400,18 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/review [--strict] [file]` | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
 | `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
 | `/setup` | Interactive setup wizard — configure provider, API keys, web search |
+| `/benchmark` | Show model benchmark results (7-day trend) |
+| `/install-skill <url>` | Install a skill from a git repo |
+| `/search-skill <query>` | Search GitHub for nex-code skills |
+| `/remove-skill <name>` | Remove an installed skill |
+| `/audit` | Show tool execution audit summary |
 | `/exit` | Quit |
 
 ---
 
 ## Tools
 
-The agent has 42 built-in tools:
+The agent has 45 built-in tools:
 
 ### Core & File System
 | Tool | Description |
@@ -480,6 +488,7 @@ Requires `.nex/servers.json` — run `/init` to configure. See [Server Managemen
 | Tool | Description |
 |------|-------------|
 | `deploy` | Deploy to a remote server via **rsync** (sync local files) or **git** (git pull on remote) + optional post-deploy script + optional health check. Supports named configs from `.nex/deploy.json`. |
+| `deployment_status` | Check deployment health across all configured servers — server reachability, service status, health checks. Reads `.nex/deploy.json`. |
 
 ### Frontend Design
 | Tool | Description |
@@ -745,16 +754,16 @@ Visualize the project structure:
 ```
 Automatically excludes `node_modules`, `.git`, `dist`, `build`, `coverage`, and all entries listed in `.gitignore`. Directories are sorted before files.
 
-### Undo / Redo
-In-session undo/redo for all file changes (write, edit, patch):
+### Undo / Redo (Persistent)
+Undo/redo for all file changes (write, edit, patch) — **survives restart**:
 ```
 /undo                # undo last file change
 /redo                # redo last undone change
 /history             # show file change history
 ```
-Undo stack holds up to 50 changes. `/clear` resets the history.
+Undo stack holds up to 50 changes, persisted to `.nex/history/`. Large files (>100KB) are deduplicated via SHA-256 blob storage. History is auto-pruned after 7 days. `/clear` resets the in-memory stack.
 
-> **Snapshots vs Undo**: `/undo` operates on the in-memory change stack for fine-grained per-file rollback within a session. `/snapshot` + `/restore` use git stash for broader checkpoints across multiple files or sessions.
+> **Snapshots vs Undo**: `/undo` operates on the persistent change stack for fine-grained per-file rollback across sessions. `/snapshot` + `/restore` use git stash for broader checkpoints across multiple files.
 
 ### Desktop Notifications
 On macOS, nex-code fires a system notification when a task completes after ≥ 30 seconds — useful when running long autonomous tasks in the background. No configuration needed; requires macOS Notification Center access.
@@ -867,7 +876,7 @@ Four features that make Nex Code significantly more reliable with open-source mo
 **Tool Tiers** — Dynamically reduces the tool set based on model capability:
 - **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
 - **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (44 tools): all tools
+- **full** (45 tools): all tools
 
 Models are auto-classified, or override per-model in `.nex/config.json`:
 ```json
@@ -940,6 +949,86 @@ Skills placed in `~/.nex-code/skills/` are loaded globally across all projects. 
 
 **Example: `server-agent.md`** — instructs nex-code on your Mac to delegate tasks to a nex-code instance on a remote server using the `remote_agent` tool. Define a project→server mapping table in the skill so the agent knows which path to use for each project name.
 
+### Skill Marketplace
+
+Install community skills directly from git:
+
+```
+/install-skill https://github.com/user/nex-skill-deploy
+/install-skill user/nex-skill-deploy       # shorthand
+/search-skill kubernetes                    # search GitHub
+/remove-skill deploy                        # uninstall
+```
+
+Skills are cloned to `.nex/skills/{name}/` and validated (must contain `skill.json`, `.md`, or `.js` files).
+
+### Built-in Skills
+
+nex-code ships with built-in skills in `cli/skills/`:
+- **devops** — DevOps agent instructions for SSH, Docker, deploy, and infrastructure tools
+
+Built-in skills are loaded automatically. Project skills with the same name override built-ins.
+
+---
+
+## Plugins
+
+Extend nex-code with custom tools and lifecycle hooks via `.nex/plugins/`:
+
+```javascript
+// .nex/plugins/my-plugin.js
+module.exports = function setup(api) {
+  api.registerTool({
+    type: 'function',
+    function: { name: 'my_tool', description: 'Custom tool', parameters: { type: 'object', properties: {} } }
+  }, async (args) => {
+    return 'result';
+  });
+
+  api.registerHook('onToolResult', (data) => {
+    console.log(`Tool ${data.tool} completed`);
+    return data;
+  });
+};
+```
+
+**Events:** `onToolResult`, `onModelResponse`, `onSessionStart`, `onSessionEnd`, `onFileChange`, `beforeToolExec`, `afterToolExec`
+
+Plugins are loaded automatically on startup. Hook handlers can modify event data (return the modified object).
+
+---
+
+## Audit Logging
+
+When `NEX_AUDIT=1` is set, all tool executions are logged to `.nex/audit/YYYY-MM-DD.jsonl`:
+
+```
+/audit                # show summary (total calls, success rate, per-tool breakdown)
+```
+
+Arguments are automatically sanitized — keys matching `key`, `token`, `password`, `secret`, or `credential` are masked. Long values (>500 chars) are truncated.
+
+---
+
+## Team Permissions
+
+Permission presets for team environments:
+
+| Preset | Description |
+|--------|-------------|
+| `readonly` | Search and read tools only — no writes, no deploys |
+| `developer` | All tools except deploy, ssh_exec, service_manage |
+| `admin` | Full access to all tools |
+
+Configure in `.nex/config.json`:
+```json
+{
+  "permissionPreset": "developer"
+}
+```
+
+Works alongside the existing per-tool `/allow` and `/deny` system.
+
 ---
 
 ## MCP
@@ -998,7 +1087,7 @@ Or place executable scripts in `.nex/hooks/`:
 ```
 bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
 cli/
-├── index.js             # REPL + ~39 slash commands + history persistence + AbortController
+├── index.js             # REPL + ~45 slash commands + history persistence + AbortController
 ├── agent.js             # Agentic loop + conversation state + compact output + résumé + abort handling
 ├── providers/           # Multi-provider abstraction
 │   ├── base.js          # Abstract provider interface
@@ -1008,34 +1097,37 @@ cli/
 │   ├── gemini.js        # Google Gemini provider
 │   ├── local.js         # Local Ollama server
 │   └── registry.js      # Provider registry + model resolution + provider routing
-├── tools.js             # 17 tool definitions + implementations + auto-fix engine
+├── tools.js             # 45 tool definitions + implementations + auto-fix engine
 ├── sub-agent.js         # Parallel sub-agent runner with file locking + model routing
 ├── tasks.js             # Task list management (create, update, render, onChange callbacks)
-├── skills.js            # Skills system (prompt + script skills)
+├── skills.js            # Skills system (prompt + script + marketplace)
+├── plugins.js           # Plugin API (registerTool, registerHook, event system)
+├── audit.js             # Tool execution audit logging (JSONL + sanitization)
 ├── mcp.js               # MCP client (JSON-RPC over stdio)
 ├── hooks.js             # Hook system (pre/post events)
 ├── context.js           # Auto-context (package.json, git, README) + generateFileTree()
-├── context-engine.js    # Token management + context compression
+├── context-engine.js    # Token management + relevance-based context compression
 ├── session.js           # Session persistence (.nex/sessions/)
 ├── memory.js            # Project memory (.nex/memory/ + NEX.md)
 ├── filelock.js          # Inter-process file locking (atomicWrite + withFileLockSync)
-├── permissions.js       # Tool permission system
+├── permissions.js       # Tool permission system + team presets (readonly/developer/admin)
 ├── planner.js           # Plan mode, step extraction, step cursor, autonomy levels
 ├── git.js               # Git intelligence (commit, diff, branch)
 ├── render.js            # Markdown + syntax highlighting + StreamRenderer + EPIPE guard
 ├── format.js            # Tool call formatting, result formatting, compact summaries
-├── spinner.js           # Spinner, MultiProgress, TaskProgress display components
+├── spinner.js           # Spinner, MultiProgress, TaskProgress, ToolProgress display components
 ├── diff.js              # LCS diff (Myers + Hirschberg) + colored output + side-by-side view
 ├── fuzzy-match.js       # Fuzzy text matching for edit auto-fix (Levenshtein, whitespace normalization)
-├── file-history.js      # In-session undo/redo + named git snapshots
+├── file-history.js      # Persistent undo/redo + named git snapshots + blob storage
 ├── picker.js            # Interactive terminal picker (model selection)
 ├── costs.js             # Token cost tracking + per-provider budget limits
 ├── safety.js            # Forbidden/dangerous pattern detection
 ├── tool-validator.js    # Tool argument validation + auto-correction
-├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup
+├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup + edit mode
 ├── footer.js            # Sticky footer (scroll region, status bar, input row, resize, FOOTER_DEBUG)
 ├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
-├── index-engine.js      # In-memory file index (ripgrep/fallback)
+├── index-engine.js      # In-memory file index (ripgrep/fallback) + semantic content index
+├── skills/devops.md     # Built-in DevOps agent skill
 ├── auto-fix.js          # Path resolution, edit matching, bash error hints
 ├── tool-retry.js        # Malformed argument retry with schema hints
 └── ollama.js            # Backward-compatible wrapper
