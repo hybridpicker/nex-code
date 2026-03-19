@@ -77,6 +77,59 @@ jest.mock('../cli/tools', () => ({
   TOOL_DEFINITIONS: [],
   setAskUserHandler: jest.fn(),
   cancelPendingAskUser: jest.fn(),
+  executeTool: jest.fn().mockResolvedValue('Deploy output'),
+}));
+
+jest.mock('../cli/audit', () => ({
+  getAuditSummary: jest.fn().mockReturnValue({
+    totalCalls: 42,
+    avgDuration: 150,
+    successRate: 0.97,
+    byTool: { bash: 20, read_file: 15, write_file: 7 },
+  }),
+  isAuditEnabled: jest.fn().mockReturnValue(true),
+}));
+
+jest.mock('../cli/ssh', () => ({
+  loadServerProfiles: jest.fn().mockReturnValue({}),
+  resolveProfile: jest.fn(),
+  sshExec: jest.fn().mockResolvedValue({ stdout: 'ok', stderr: '', exitCode: 0 }),
+  formatProfile: jest.fn().mockReturnValue('user@host:22'),
+}));
+
+jest.mock('../cli/deploy-config', () => ({
+  loadDeployConfigs: jest.fn().mockReturnValue({}),
+}));
+
+jest.mock('../cli/wizard', () => ({
+  runServerWizard: jest.fn().mockResolvedValue(undefined),
+  runDeployWizard: jest.fn().mockResolvedValue(undefined),
+  setWizardRL: jest.fn(),
+}));
+
+jest.mock('../cli/setup', () => ({
+  runSetupWizard: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../cli/tasks', () => ({
+  renderTaskList: jest.fn().mockReturnValue('No tasks'),
+  clearTasks: jest.fn(),
+}));
+
+jest.mock('../cli/learner', () => ({
+  learnFromSession: jest.fn().mockResolvedValue({ skipped: true, applied: [], nexAdded: [] }),
+  learnBrainFromSession: jest.fn().mockResolvedValue({ written: [] }),
+}));
+
+jest.mock('../cli/brain', () => ({
+  listDocuments: jest.fn().mockReturnValue([]),
+  readDocument: jest.fn().mockReturnValue({ content: '', frontmatter: {} }),
+  writeDocument: jest.fn(),
+  removeDocument: jest.fn().mockReturnValue(false),
+  buildIndex: jest.fn().mockReturnValue({ documents: {} }),
+  buildEmbeddingIndex: jest.fn().mockResolvedValue({ documents: {} }),
+  isEmbeddingAvailable: jest.fn().mockResolvedValue(false),
+  query: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('../cli/session', () => ({
@@ -116,6 +169,8 @@ jest.mock('../cli/planner', () => ({
   getAutonomyLevel: jest.fn().mockReturnValue('interactive'),
   AUTONOMY_LEVELS: ['interactive', 'semi-auto', 'autonomous'],
   getPlanContent: jest.fn().mockReturnValue(null),
+  setPlanContent: jest.fn(),
+  extractStepsFromText: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock('../cli/git', () => ({
@@ -125,6 +180,7 @@ jest.mock('../cli/git', () => ({
   analyzeDiff: jest.fn().mockReturnValue(null),
   commit: jest.fn().mockReturnValue(null),
   createBranch: jest.fn().mockReturnValue('feat/test-branch'),
+  getDiff: jest.fn().mockResolvedValue(''),
 }));
 
 jest.mock('../cli/mcp', () => ({
@@ -142,6 +198,12 @@ jest.mock('../cli/hooks', () => ({
 jest.mock('../cli/costs', () => ({
   formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
   resetCosts: jest.fn(),
+  getCostLimits: jest.fn().mockReturnValue({}),
+  getProviderSpend: jest.fn().mockReturnValue(0),
+  checkBudget: jest.fn().mockReturnValue({ limit: null, spent: 0, remaining: 0 }),
+  removeCostLimit: jest.fn(),
+  saveCostLimits: jest.fn(),
+  setCostLimit: jest.fn(),
 }));
 
 jest.mock('../cli/file-history', () => ({
@@ -153,6 +215,9 @@ jest.mock('../cli/file-history', () => ({
   clearHistory: jest.fn(),
   loadPersistedHistory: jest.fn().mockResolvedValue(0),
   pruneHistory: jest.fn().mockResolvedValue(0),
+  createSnapshot: jest.fn().mockReturnValue({ ok: true, label: 'snap-001' }),
+  restoreSnapshot: jest.fn().mockReturnValue({ ok: true, label: 'snap-001' }),
+  listSnapshots: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock('../cli/skills', () => ({
@@ -162,9 +227,12 @@ jest.mock('../cli/skills', () => ({
   disableSkill: jest.fn().mockReturnValue(false),
   getSkillCommands: jest.fn().mockReturnValue([]),
   handleSkillCommand: jest.fn().mockReturnValue(false),
+  installSkill: jest.fn().mockResolvedValue({ ok: true, name: 'test-skill' }),
+  searchSkills: jest.fn().mockResolvedValue([]),
+  removeSkill: jest.fn().mockReturnValue({ ok: true }),
 }));
 
-const { showCommandList, completer, completeFilePath, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences } = require('../cli/index');
+const { showCommandList, completer, completeFilePath, showProviders, showHelp, renderBar, hasPasteStart, hasPasteEnd, stripPasteSequences, handleSlashCommand, getPrompt, loadHistory, appendHistory, getHistoryPath, getAbortSignal } = require('../cli/index');
 
 describe('index.js (REPL commands)', () => {
   let logSpy, writeSpy, exitSpy;
@@ -1560,6 +1628,921 @@ describe('index.js (REPL commands)', () => {
     it('handles multiple paste sequences', () => {
       const input = '\x1b[200~line1\x1b[201~\x1b[200~line2\x1b[201~';
       expect(stripPasteSequences(input)).toBe('line1line2');
+    });
+  });
+
+  // ─── handleSlashCommand direct tests ──────────────────────────
+  describe('handleSlashCommand() — direct', () => {
+    let logSpy2, writeSpy2;
+
+    beforeEach(() => {
+      logSpy2 = jest.spyOn(console, 'log').mockImplementation(() => {});
+      writeSpy2 = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+
+      // After jest.resetModules() in previous test blocks, module caches are cleared.
+      // Patch missing functions directly on lazy-required mock modules.
+      const costs = require('../cli/costs');
+      costs.getCostLimits = costs.getCostLimits || jest.fn().mockReturnValue({});
+      costs.getProviderSpend = costs.getProviderSpend || jest.fn().mockReturnValue(0);
+      costs.checkBudget = costs.checkBudget || jest.fn().mockReturnValue({ limit: null, spent: 0, remaining: 0 });
+      costs.removeCostLimit = costs.removeCostLimit || jest.fn();
+      costs.saveCostLimits = costs.saveCostLimits || jest.fn();
+      costs.setCostLimit = costs.setCostLimit || jest.fn();
+      if (costs.getCostLimits.mockReturnValue) costs.getCostLimits.mockReturnValue({});
+      if (costs.getProviderSpend.mockReturnValue) costs.getProviderSpend.mockReturnValue(0);
+      if (costs.checkBudget.mockReturnValue) costs.checkBudget.mockReturnValue({ limit: null, spent: 0, remaining: 0 });
+
+      const skills = require('../cli/skills');
+      skills.installSkill = skills.installSkill || jest.fn().mockResolvedValue({ ok: true, name: 'test-skill' });
+      skills.searchSkills = skills.searchSkills || jest.fn().mockResolvedValue([]);
+      skills.removeSkill = skills.removeSkill || jest.fn().mockReturnValue({ ok: true });
+      if (skills.installSkill.mockResolvedValue) skills.installSkill.mockResolvedValue({ ok: true, name: 'test-skill' });
+      if (skills.searchSkills.mockResolvedValue) skills.searchSkills.mockResolvedValue([]);
+      if (skills.removeSkill.mockReturnValue) skills.removeSkill.mockReturnValue({ ok: true });
+
+      const planner = require('../cli/planner');
+      planner.setPlanContent = planner.setPlanContent || jest.fn();
+      planner.getPlanContent = planner.getPlanContent || jest.fn().mockReturnValue(null);
+      planner.extractStepsFromText = planner.extractStepsFromText || jest.fn().mockReturnValue([]);
+
+      const contextEngine = require('../cli/context-engine');
+      contextEngine.getUsage = contextEngine.getUsage || jest.fn();
+      contextEngine.getUsage.mockReturnValue({
+        used: 1500, limit: 128000, percentage: 1.2,
+        breakdown: { system: 500, conversation: 800, toolResults: 100, toolDefinitions: 100 },
+        messageCount: 5,
+      });
+
+      const git = require('../cli/git');
+      git.getDiff = git.getDiff || jest.fn().mockResolvedValue('');
+      if (git.getDiff.mockResolvedValue) git.getDiff.mockResolvedValue('');
+
+      const tools = require('../cli/tools');
+      tools.executeTool = tools.executeTool || jest.fn().mockResolvedValue('Deploy output');
+
+      const context = require('../cli/context');
+      context.generateFileTree = context.generateFileTree || jest.fn().mockReturnValue('src/\n  index.js\n  app.js');
+
+      const memory = require('../cli/memory');
+      memory.listMemories = memory.listMemories || jest.fn().mockReturnValue([]);
+      if (memory.listMemories.mockReturnValue) memory.listMemories.mockReturnValue([]);
+    });
+
+    afterEach(() => {
+      logSpy2.mockRestore();
+      writeSpy2.mockRestore();
+      jest.clearAllMocks();
+    });
+
+    // ─── /audit ───────────────────────────────────────────
+    it('/audit shows audit summary when enabled', async () => {
+      await handleSlashCommand('/audit');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Audit Summary');
+      expect(output).toContain('42');
+      expect(output).toContain('150');
+      expect(output).toContain('bash');
+    });
+
+    it('/audit with days argument', async () => {
+      await handleSlashCommand('/audit 7');
+      const { getAuditSummary } = require('../cli/audit');
+      expect(getAuditSummary).toHaveBeenCalledWith(7);
+    });
+
+    it('/audit shows disabled message when audit is off', async () => {
+      const audit = require('../cli/audit');
+      audit.isAuditEnabled.mockReturnValueOnce(false);
+      await handleSlashCommand('/audit');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('disabled');
+    });
+
+    // ─── /benchmark ───────────────────────────────────────
+    it('/benchmark shows no results when dir does not exist', async () => {
+      await handleSlashCommand('/benchmark');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No benchmark results');
+    });
+
+    // ─── /install-skill ───────────────────────────────────
+    it('/install-skill without URL shows usage', async () => {
+      await handleSlashCommand('/install-skill');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/install-skill with URL installs skill', async () => {
+      await handleSlashCommand('/install-skill https://github.com/user/skill');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('installed successfully');
+      expect(output).toContain('test-skill');
+    });
+
+    it('/install-skill shows error on failure', async () => {
+      const skills = require('../cli/skills');
+      skills.installSkill.mockResolvedValueOnce({ ok: false, error: 'clone failed' });
+      await handleSlashCommand('/install-skill bad-url');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Failed');
+      expect(output).toContain('clone failed');
+    });
+
+    // ─── /search-skill ────────────────────────────────────
+    it('/search-skill without query shows usage', async () => {
+      await handleSlashCommand('/search-skill');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/search-skill with no results', async () => {
+      await handleSlashCommand('/search-skill foobar');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No skills found');
+    });
+
+    it('/search-skill with results', async () => {
+      const skills = require('../cli/skills');
+      skills.searchSkills.mockResolvedValueOnce([
+        { name: 'cool-skill', owner: 'user1', stars: 42, description: 'A cool skill', url: 'https://github.com/user1/cool-skill' },
+      ]);
+      await handleSlashCommand('/search-skill cool');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('cool-skill');
+      expect(output).toContain('user1');
+      expect(output).toContain('42');
+    });
+
+    it('/search-skill with error result', async () => {
+      const skills = require('../cli/skills');
+      skills.searchSkills.mockResolvedValueOnce([
+        { name: 'error', description: 'GitHub API rate limit exceeded' },
+      ]);
+      await handleSlashCommand('/search-skill test');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('GitHub API rate limit exceeded');
+    });
+
+    // ─── /remove-skill ────────────────────────────────────
+    it('/remove-skill without name shows usage', async () => {
+      await handleSlashCommand('/remove-skill');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/remove-skill with valid name', async () => {
+      await handleSlashCommand('/remove-skill my-skill');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('removed');
+    });
+
+    it('/remove-skill with invalid name', async () => {
+      const skills = require('../cli/skills');
+      skills.removeSkill.mockReturnValueOnce({ ok: false, error: 'Skill not found' });
+      await handleSlashCommand('/remove-skill nonexist');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Skill not found');
+    });
+
+    // ─── /servers ─────────────────────────────────────────
+    it('/servers with no servers configured', async () => {
+      await handleSlashCommand('/servers');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No servers configured');
+    });
+
+    it('/servers lists configured servers', async () => {
+      const ssh = require('../cli/ssh');
+      ssh.loadServerProfiles.mockReturnValueOnce({
+        prod: { host: '1.2.3.4', user: 'admin', os: 'ubuntu' },
+      });
+      await handleSlashCommand('/servers');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('prod');
+      expect(output).toContain('Configured servers');
+    });
+
+    it('/servers ping checks connectivity', async () => {
+      const ssh = require('../cli/ssh');
+      ssh.loadServerProfiles.mockReturnValueOnce({
+        prod: { host: '1.2.3.4', user: 'admin' },
+      });
+      ssh.sshExec.mockResolvedValueOnce({ stdout: 'ok', stderr: '', exitCode: 0 });
+      await handleSlashCommand('/servers ping');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Server connectivity');
+    });
+
+    it('/servers ping with unknown profile', async () => {
+      const ssh = require('../cli/ssh');
+      ssh.loadServerProfiles.mockReturnValueOnce({
+        prod: { host: '1.2.3.4', user: 'admin' },
+      });
+      await handleSlashCommand('/servers ping unknown');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('unknown profile');
+    });
+
+    it('/servers ping with SSH failure', async () => {
+      const ssh = require('../cli/ssh');
+      ssh.loadServerProfiles.mockReturnValueOnce({
+        prod: { host: '1.2.3.4', user: 'admin' },
+      });
+      ssh.sshExec.mockResolvedValueOnce({ stdout: '', stderr: 'err', exitCode: 1 });
+      await handleSlashCommand('/servers ping prod');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('SSH failed');
+    });
+
+    it('/servers ping with SSH exception', async () => {
+      const ssh = require('../cli/ssh');
+      ssh.loadServerProfiles.mockReturnValueOnce({
+        prod: { host: '1.2.3.4', user: 'admin' },
+      });
+      ssh.sshExec.mockRejectedValueOnce(new Error('Connection refused'));
+      await handleSlashCommand('/servers ping prod');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Connection refused');
+    });
+
+    // ─── /deploy ──────────────────────────────────────────
+    it('/deploy with no configs', async () => {
+      await handleSlashCommand('/deploy');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No deploy configs');
+    });
+
+    it('/deploy lists configs', async () => {
+      const dc = require('../cli/deploy-config');
+      dc.loadDeployConfigs.mockReturnValueOnce({
+        staging: { method: 'rsync', server: 'prod', remote_path: '/app', local_path: './dist' },
+        production: { method: 'git', server: 'prod', remote_path: '/app', branch: 'main' },
+      });
+      await handleSlashCommand('/deploy');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('staging');
+      expect(output).toContain('production');
+      expect(output).toContain('Deploy configs');
+    });
+
+    it('/deploy runs named deploy', async () => {
+      const dc = require('../cli/deploy-config');
+      dc.loadDeployConfigs.mockReturnValueOnce({
+        staging: { method: 'rsync', server: 'prod', remote_path: '/app', local_path: './dist' },
+      });
+      await handleSlashCommand('/deploy staging');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Running deploy');
+    });
+
+    it('/deploy runs named deploy with --dry-run', async () => {
+      const dc = require('../cli/deploy-config');
+      dc.loadDeployConfigs.mockReturnValueOnce({
+        staging: { method: 'rsync', server: 'prod', remote_path: '/app' },
+      });
+      const tools = require('../cli/tools');
+      await handleSlashCommand('/deploy staging --dry-run');
+      expect(tools.executeTool).toHaveBeenCalledWith('deploy', expect.objectContaining({ dry_run: true }));
+    });
+
+    it('/deploy with deploy_script and health_check', async () => {
+      const dc = require('../cli/deploy-config');
+      dc.loadDeployConfigs.mockReturnValueOnce({
+        staging: { method: 'rsync', server: 'prod', remote_path: '/app', deploy_script: 'restart.sh', health_check: 'https://example.com/health' },
+      });
+      await handleSlashCommand('/deploy');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('restart.sh');
+      expect(output).toContain('health');
+    });
+
+    // ─── /docker ──────────────────────────────────────────
+    it('/docker lists containers', async () => {
+      // This uses child_process exec internally, which we can't easily mock
+      // when called via require. The handler catches errors, so it should not throw.
+      await handleSlashCommand('/docker');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Docker Containers');
+    });
+
+    // ─── /init ────────────────────────────────────────────
+    it('/init runs server wizard', async () => {
+      const wizard = require('../cli/wizard');
+      await handleSlashCommand('/init', null);
+      expect(wizard.setWizardRL).toHaveBeenCalled();
+      expect(wizard.runServerWizard).toHaveBeenCalled();
+    });
+
+    it('/init deploy runs deploy wizard', async () => {
+      const wizard = require('../cli/wizard');
+      await handleSlashCommand('/init deploy', null);
+      expect(wizard.runDeployWizard).toHaveBeenCalled();
+    });
+
+    // ─── /setup ───────────────────────────────────────────
+    it('/setup runs setup wizard', async () => {
+      const setup = require('../cli/setup');
+      await handleSlashCommand('/setup', null);
+      expect(setup.runSetupWizard).toHaveBeenCalled();
+    });
+
+    // ─── /tasks ───────────────────────────────────────────
+    it('/tasks renders task list', async () => {
+      await handleSlashCommand('/tasks');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No tasks');
+    });
+
+    it('/tasks clear clears tasks', async () => {
+      const tasks = require('../cli/tasks');
+      await handleSlashCommand('/tasks clear');
+      expect(tasks.clearTasks).toHaveBeenCalled();
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Tasks cleared');
+    });
+
+    // ─── /snapshot ────────────────────────────────────────
+    it('/snapshot creates a snapshot', async () => {
+      await handleSlashCommand('/snapshot my-snap');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Snapshot created');
+      expect(output).toContain('snap-001');
+    });
+
+    it('/snapshot without name creates unnamed snapshot', async () => {
+      const fh = require('../cli/file-history');
+      await handleSlashCommand('/snapshot');
+      expect(fh.createSnapshot).toHaveBeenCalledWith(undefined, expect.any(String));
+    });
+
+    it('/snapshot handles failure', async () => {
+      const fh = require('../cli/file-history');
+      fh.createSnapshot.mockReturnValueOnce({ ok: false, error: 'No changes to snapshot' });
+      await handleSlashCommand('/snapshot');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No changes to snapshot');
+    });
+
+    it('/snapshot list shows snapshots', async () => {
+      const fh = require('../cli/file-history');
+      fh.listSnapshots.mockReturnValueOnce([
+        { index: 1, shortName: 'snap-001' },
+        { index: 2, shortName: 'snap-002' },
+      ]);
+      await handleSlashCommand('/snapshot list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('snap-001');
+      expect(output).toContain('snap-002');
+    });
+
+    it('/snapshot list with no snapshots', async () => {
+      await handleSlashCommand('/snapshot list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No snapshots found');
+    });
+
+    // ─── /restore ─────────────────────────────────────────
+    it('/restore restores last snapshot', async () => {
+      await handleSlashCommand('/restore');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Restored snapshot');
+    });
+
+    it('/restore with named snapshot', async () => {
+      const fh = require('../cli/file-history');
+      await handleSlashCommand('/restore my-snap');
+      expect(fh.restoreSnapshot).toHaveBeenCalledWith('my-snap', expect.any(String));
+    });
+
+    it('/restore handles failure', async () => {
+      const fh = require('../cli/file-history');
+      fh.restoreSnapshot.mockReturnValueOnce({ ok: false, error: 'Snapshot not found' });
+      await handleSlashCommand('/restore nonexistent');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Restore failed');
+      expect(output).toContain('Snapshot not found');
+    });
+
+    it('/restore list shows available snapshots', async () => {
+      const fh = require('../cli/file-history');
+      fh.listSnapshots.mockReturnValueOnce([
+        { index: 1, shortName: 'snap-001' },
+      ]);
+      await handleSlashCommand('/restore list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Available snapshots');
+      expect(output).toContain('snap-001');
+    });
+
+    it('/restore list with no snapshots', async () => {
+      await handleSlashCommand('/restore list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No snapshots available');
+    });
+
+    // ─── /budget ──────────────────────────────────────────
+    it('/budget with no limits shows overview', async () => {
+      await handleSlashCommand('/budget');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Cost Limits');
+    });
+
+    it('/budget with provider shows single budget', async () => {
+      const costs = require('../cli/costs');
+      costs.checkBudget.mockReturnValueOnce({ limit: 10, spent: 2.5, remaining: 7.5 });
+      await handleSlashCommand('/budget openai');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('openai');
+      expect(output).toContain('remaining');
+    });
+
+    it('/budget with provider and no limit', async () => {
+      const costs = require('../cli/costs');
+      costs.checkBudget.mockReturnValueOnce({ limit: null, spent: 1.5, remaining: 0 });
+      await handleSlashCommand('/budget openai');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('no limit');
+    });
+
+    it('/budget sets limit', async () => {
+      const costs = require('../cli/costs');
+      await handleSlashCommand('/budget openai 50');
+      expect(costs.setCostLimit).toHaveBeenCalledWith('openai', 50);
+      expect(costs.saveCostLimits).toHaveBeenCalled();
+    });
+
+    it('/budget with invalid amount', async () => {
+      await handleSlashCommand('/budget openai abc');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Invalid amount');
+    });
+
+    it('/budget off removes limit', async () => {
+      const costs = require('../cli/costs');
+      await handleSlashCommand('/budget openai off');
+      expect(costs.removeCostLimit).toHaveBeenCalledWith('openai');
+    });
+
+    it('/budget remove removes limit', async () => {
+      const costs = require('../cli/costs');
+      await handleSlashCommand('/budget openai remove');
+      expect(costs.removeCostLimit).toHaveBeenCalledWith('openai');
+    });
+
+    it('/budget clear removes limit', async () => {
+      const costs = require('../cli/costs');
+      await handleSlashCommand('/budget openai clear');
+      expect(costs.removeCostLimit).toHaveBeenCalledWith('openai');
+    });
+
+    it('/budget with negative amount is invalid', async () => {
+      await handleSlashCommand('/budget openai -5');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Invalid amount');
+    });
+
+    it('/budget shows limits with spend', async () => {
+      const costs = require('../cli/costs');
+      costs.getCostLimits.mockReturnValueOnce({ anthropic: 20 });
+      costs.getProviderSpend.mockReturnValue(5);
+      await handleSlashCommand('/budget');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Cost Limits');
+    });
+
+    // ─── /plan edit ───────────────────────────────────────
+    it('/plan edit with no plan shows message', async () => {
+      await handleSlashCommand('/plan edit');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No plan to edit');
+    });
+
+    // ─── /tree ────────────────────────────────────────────
+    it('/tree shows project tree', async () => {
+      await handleSlashCommand('/tree');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Project tree');
+    });
+
+    it('/tree with depth argument', async () => {
+      await handleSlashCommand('/tree 5');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('depth 5');
+    });
+
+    // ─── /review ──────────────────────────────────────────
+    it('/review with file argument', async () => {
+      const agent = require('../cli/agent');
+      await handleSlashCommand('/review src/index.js');
+      expect(agent.processInput).toHaveBeenCalledWith(expect.stringContaining('src/index.js'));
+    });
+
+    it('/review not in git repo without file', async () => {
+      const git = require('../cli/git');
+      git.isGitRepo.mockReturnValueOnce(false);
+      await handleSlashCommand('/review');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Not a git repository');
+    });
+
+    it('/review with no changes', async () => {
+      const git = require('../cli/git');
+      git.isGitRepo.mockReturnValue(true);
+      git.getDiff.mockResolvedValue('');
+      await handleSlashCommand('/review');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No changes to review');
+    });
+
+    it('/review with --strict flag', async () => {
+      const agent = require('../cli/agent');
+      await handleSlashCommand('/review --strict src/app.js');
+      expect(agent.processInput).toHaveBeenCalledWith(expect.stringContaining('STRICT MODE'));
+    });
+
+    it('/review with diff available', async () => {
+      const git = require('../cli/git');
+      const agent = require('../cli/agent');
+      git.isGitRepo.mockReturnValue(true);
+      git.getDiff.mockImplementation((staged) => {
+        return staged ? Promise.resolve('+ new line') : Promise.resolve('');
+      });
+      await handleSlashCommand('/review');
+      expect(agent.processInput).toHaveBeenCalledWith(expect.stringContaining('Review'));
+    });
+
+    // ─── /brain ───────────────────────────────────────────
+    it('/brain shows empty brain', async () => {
+      await handleSlashCommand('/brain');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Brain Knowledge Base');
+      expect(output).toContain('No documents yet');
+    });
+
+    it('/brain with documents', async () => {
+      const brain = require('../cli/brain');
+      brain.listDocuments.mockReturnValueOnce([
+        { name: 'api-notes', size: 512, modified: new Date() },
+      ]);
+      brain.readDocument.mockReturnValueOnce({ content: '# API', frontmatter: { tags: ['api'] } });
+      await handleSlashCommand('/brain');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('api-notes');
+      expect(output).toContain('api');
+    });
+
+    it('/brain add without arg shows usage', async () => {
+      await handleSlashCommand('/brain add');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/brain add creates empty doc', async () => {
+      const brain = require('../cli/brain');
+      await handleSlashCommand('/brain add api-notes');
+      expect(brain.writeDocument).toHaveBeenCalledWith('api-notes', expect.stringContaining('# api-notes'));
+    });
+
+    it('/brain add with content writes content', async () => {
+      const brain = require('../cli/brain');
+      await handleSlashCommand('/brain add api-notes Some content here');
+      expect(brain.writeDocument).toHaveBeenCalledWith('api-notes', 'Some content here');
+    });
+
+    it('/brain list with no docs', async () => {
+      await handleSlashCommand('/brain list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No brain documents yet');
+    });
+
+    it('/brain list with docs', async () => {
+      const brain = require('../cli/brain');
+      brain.listDocuments.mockReturnValueOnce([
+        { name: 'api-notes', size: 512, modified: new Date() },
+      ]);
+      brain.readDocument.mockReturnValueOnce({ content: '# API', frontmatter: { tags: ['api', 'rest'] } });
+      await handleSlashCommand('/brain list');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Brain Documents');
+      expect(output).toContain('api-notes');
+    });
+
+    it('/brain search without query shows usage', async () => {
+      await handleSlashCommand('/brain search');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/brain search with no results', async () => {
+      await handleSlashCommand('/brain search foobar');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No matching');
+    });
+
+    it('/brain search with results', async () => {
+      const brain = require('../cli/brain');
+      brain.query.mockResolvedValueOnce([
+        { name: 'api-notes', score: 0.85, excerpt: 'REST API documentation...' },
+      ]);
+      await handleSlashCommand('/brain search api');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('api-notes');
+      expect(output).toContain('0.85');
+    });
+
+    it('/brain show without arg shows usage', async () => {
+      await handleSlashCommand('/brain show');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/brain show with valid doc', async () => {
+      const brain = require('../cli/brain');
+      brain.readDocument.mockReturnValueOnce({ content: '# My Doc\nSome content', frontmatter: {} });
+      await handleSlashCommand('/brain show my-doc');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('my-doc.md');
+      expect(output).toContain('# My Doc');
+    });
+
+    it('/brain show with missing doc', async () => {
+      const brain = require('../cli/brain');
+      brain.readDocument.mockReturnValueOnce({ content: '', frontmatter: {} });
+      await handleSlashCommand('/brain show nonexist');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Document not found');
+    });
+
+    it('/brain remove without arg shows usage', async () => {
+      await handleSlashCommand('/brain remove');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Usage');
+    });
+
+    it('/brain rebuild rebuilds index', async () => {
+      const brain = require('../cli/brain');
+      brain.buildIndex.mockReturnValueOnce({ documents: { 'doc1': {}, 'doc2': {} } });
+      await handleSlashCommand('/brain rebuild');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Index rebuilt');
+      expect(output).toContain('2');
+    });
+
+    it('/brain embed when not available', async () => {
+      await handleSlashCommand('/brain embed');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('not available');
+    });
+
+    it('/brain embed when available', async () => {
+      const brain = require('../cli/brain');
+      brain.isEmbeddingAvailable.mockResolvedValueOnce(true);
+      brain.buildEmbeddingIndex.mockResolvedValueOnce({ documents: { 'doc1': {} } });
+      await handleSlashCommand('/brain embed');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Embedding index built');
+    });
+
+    it('/brain embed catches errors', async () => {
+      const brain = require('../cli/brain');
+      brain.isEmbeddingAvailable.mockResolvedValueOnce(true);
+      brain.buildEmbeddingIndex.mockRejectedValueOnce(new Error('Model not found'));
+      await handleSlashCommand('/brain embed');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Embedding failed');
+      expect(output).toContain('Model not found');
+    });
+
+    // ─── /learn ───────────────────────────────────────────
+    it('/learn with too short session', async () => {
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('too short');
+    });
+
+    it('/learn with enough messages', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockResolvedValueOnce({
+        skipped: false, applied: [{ key: 'test', value: 'val', action: 'added' }],
+        nexAdded: ['Some rule'], summary: 'Tested learning',
+      });
+      learner.learnBrainFromSession.mockResolvedValueOnce({
+        written: [{ name: 'api', reason: 'new findings', action: 'created' }],
+      });
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Memory updates');
+      expect(output).toContain('Added to NEX.md');
+      expect(output).toContain('Brain documents');
+    });
+
+    it('/learn with error', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockRejectedValueOnce(new Error('API failure'));
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Learn failed');
+    });
+
+    it('/learn with skipped result and no brain', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockResolvedValueOnce({ skipped: true, applied: [], nexAdded: [] });
+      learner.learnBrainFromSession.mockResolvedValueOnce({ written: [] });
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('too short');
+    });
+
+    it('/learn with error in result', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockResolvedValueOnce({
+        skipped: false, error: 'Parse error', applied: [], nexAdded: [],
+      });
+      learner.learnBrainFromSession.mockResolvedValueOnce({ written: [] });
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Reflection error');
+    });
+
+    it('/learn with no new learnings', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockResolvedValueOnce({
+        skipped: false, applied: [], nexAdded: [], summary: 'Nothing much',
+      });
+      learner.learnBrainFromSession.mockResolvedValueOnce({ written: [] });
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('No new learnings');
+    });
+
+    it('/learn with updated memory entry', async () => {
+      const agent = require('../cli/agent');
+      agent.getConversationMessages.mockReturnValueOnce([
+        { role: 'user', content: '1' }, { role: 'assistant', content: '2' },
+        { role: 'user', content: '3' }, { role: 'assistant', content: '4' },
+        { role: 'user', content: '5' }, { role: 'assistant', content: '6' },
+        { role: 'user', content: '7' }, { role: 'assistant', content: '8' },
+      ]);
+      const learner = require('../cli/learner');
+      learner.learnFromSession.mockResolvedValueOnce({
+        skipped: false, applied: [{ key: 'pref', value: 'dark', action: 'updated' }],
+        nexAdded: [],
+      });
+      learner.learnBrainFromSession.mockResolvedValueOnce({
+        written: [{ name: 'config', reason: 'update', action: 'updated' }],
+      });
+      await handleSlashCommand('/learn');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Memory updates');
+    });
+
+    // ─── /optimize ────────────────────────────────────────
+    it('/optimize shows report', async () => {
+      await handleSlashCommand('/optimize');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Optimization Report');
+      expect(output).toContain('Context Window');
+      expect(output).toContain('Memory');
+      expect(output).toContain('Session');
+    });
+
+    // ─── /model without rl ────────────────────────────────
+    it('/model without rl shows current model', async () => {
+      await handleSlashCommand('/model');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Active model');
+    });
+
+    // ─── getPrompt ────────────────────────────────────────
+    it('getPrompt shows plan mode', () => {
+      const planner = require('../cli/planner');
+      planner.isPlanMode.mockReturnValueOnce(true);
+      const prompt = getPrompt();
+      expect(prompt).toContain('plan');
+    });
+
+    it('getPrompt shows autonomy level', () => {
+      const planner = require('../cli/planner');
+      planner.getAutonomyLevel.mockReturnValueOnce('semi-auto');
+      const prompt = getPrompt();
+      expect(prompt).toContain('semi-auto');
+    });
+
+    it('getPrompt shows both plan and autonomy', () => {
+      const planner = require('../cli/planner');
+      planner.isPlanMode.mockReturnValueOnce(true);
+      planner.getAutonomyLevel.mockReturnValueOnce('autonomous');
+      const prompt = getPrompt();
+      expect(prompt).toContain('plan');
+      expect(prompt).toContain('autonomous');
+    });
+
+    // ─── getAbortSignal ───────────────────────────────────
+    it('getAbortSignal returns null when no controller', () => {
+      expect(getAbortSignal()).toBeNull();
+    });
+
+    // ─── loadHistory / appendHistory / getHistoryPath ─────
+    it('getHistoryPath returns path in .nex', () => {
+      const histPath = getHistoryPath();
+      expect(histPath).toContain('.nex');
+      expect(histPath).toContain('repl_history');
+    });
+
+    it('loadHistory returns empty array for non-existent file', () => {
+      const history = loadHistory();
+      // May or may not exist depending on test env, but should not throw
+      expect(Array.isArray(history)).toBe(true);
+    });
+
+    // ─── /brain status ────────────────────────────────────
+    it('/brain status shows status', async () => {
+      await handleSlashCommand('/brain status');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Brain Status');
+      expect(output).toContain('Documents');
+    });
+
+    // ─── /brain remove with confirm ───────────────────────
+    it('/brain remove with confirm=true and found doc', async () => {
+      const safety = require('../cli/safety');
+      const brain = require('../cli/brain');
+      safety.confirm.mockResolvedValueOnce(true);
+      brain.removeDocument.mockReturnValueOnce(true);
+      await handleSlashCommand('/brain remove old-doc');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Removed');
+    });
+
+    it('/brain remove with confirm=false', async () => {
+      const safety = require('../cli/safety');
+      safety.confirm.mockResolvedValueOnce(false);
+      await handleSlashCommand('/brain remove old-doc');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Cancelled');
+    });
+
+    it('/brain remove with confirm=true and not found', async () => {
+      const safety = require('../cli/safety');
+      const brain = require('../cli/brain');
+      safety.confirm.mockResolvedValueOnce(true);
+      brain.removeDocument.mockReturnValueOnce(false);
+      await handleSlashCommand('/brain remove nonexist');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Document not found');
+    });
+
+    // ─── /k8s ─────────────────────────────────────────────
+    it('/k8s shows kubernetes overview header', async () => {
+      await handleSlashCommand('/k8s');
+      const output = logSpy2.mock.calls.map(c => c[0]).join('\n');
+      expect(output).toContain('Kubernetes Overview');
+    });
+
+    // ─── slash command that returns true ───────────────────
+    it('handleSlashCommand returns true for known commands', async () => {
+      const result = await handleSlashCommand('/help');
+      expect(result).toBe(true);
+    });
+
+    it('handleSlashCommand returns true for unknown commands', async () => {
+      const result = await handleSlashCommand('/unknowncmd');
+      expect(result).toBe(true);
     });
   });
 });
