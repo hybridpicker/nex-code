@@ -2306,6 +2306,25 @@ async function startREPL() {
       .trim();
   }
 
+  // Check for an autosave from the previous session before starting
+  const { loadSession } = require('./session');
+  const { setConversationMessages } = require('./agent');
+  if (getConversationLength() === 0) {
+    const lastSession = loadSession('_autosave');
+    if (lastSession && lastSession.messages && lastSession.messages.length > 0) {
+      const ageMs = Date.now() - new Date(lastSession.updatedAt).getTime();
+      // Only prompt if the session is younger than 24 hours
+      if (ageMs < 24 * 60 * 60 * 1000) {
+        const { confirm } = require('./safety');
+        const resume = await confirm(`Absturz oder vorherige Sitzung erkannt. Möchtest du sie fortsetzen? / Previous session found. Resume?`);
+        if (resume) {
+          setConversationMessages(lastSession.messages);
+          console.log(`${C.green}Sitzung fortgesetzt (${lastSession.messages.length} Nachrichten)${C.reset}\n`);
+        }
+      }
+    }
+  }
+
   rl.setPrompt(getPrompt());
   rl.prompt();
 
