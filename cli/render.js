@@ -6,6 +6,10 @@
 
 const { C } = require('./ui');
 
+function getTerminalWidth() {
+  return Math.max(10, (process.stdout.columns || 80) - 2);
+}
+
 /**
  * Render markdown-like text for terminal output
  * Supports: headers, bold, italic, code, code blocks, lists, links
@@ -21,6 +25,7 @@ function renderMarkdown(text) {
   let codeBlockLang = '';
 
   for (const line of lines) {
+    const cols = getTerminalWidth();
     // Code block toggle
     if (line.trim().startsWith('```')) {
       if (inCodeBlock) {
@@ -59,7 +64,8 @@ function renderMarkdown(text) {
     if (/^\s*[-*]\s/.test(line)) {
       const indent = line.match(/^(\s*)/)[1];
       const content = line.replace(/^\s*[-*]\s/, '');
-      rendered.push(`${indent}${C.cyan}•${C.reset} ${renderInline(content)}`);
+      const formatted = `${indent}${C.cyan}•${C.reset} ${renderInline(content)}`;
+      rendered.push(wrapAnsi(formatted, cols, indent + '  '));
       continue;
     }
 
@@ -67,13 +73,18 @@ function renderMarkdown(text) {
     if (/^\s*\d+\.\s/.test(line)) {
       const match = line.match(/^(\s*)(\d+)\.\s(.*)/);
       if (match) {
-        rendered.push(`${match[1]}${C.cyan}${match[2]}.${C.reset} ${renderInline(match[3])}`);
+        const indent = match[1];
+        const num = match[2];
+        const content = match[3];
+        const formatted = `${indent}${C.cyan}${num}.${C.reset} ${renderInline(content)}`;
+        const hang = indent + ' '.repeat(num.length + 2);
+        rendered.push(wrapAnsi(formatted, cols, hang));
         continue;
       }
     }
 
     // Regular line
-    rendered.push(renderInline(line));
+    rendered.push(wrapAnsi(renderInline(line), cols));
   }
 
   return rendered.join('\n');
@@ -286,6 +297,64 @@ function highlightHTML(line) {
 }
 
 /**
+ * Word-wrap a string containing ANSI escape codes.
+ * Respects terminal width.
+ * @param {string} str
+ * @param {number} cols
+ * @param {string} hangingIndent
+ * @returns {string}
+ */
+function wrapAnsi(str, cols, hangingIndent = '') {
+  if (!cols || cols < 10) return str;
+  let out = '';
+  let lineLen = 0;
+  let lastSpaceIdx = -1;
+  let i = 0;
+  let lineStart = 0;
+  const len = str.length;
+
+  while (i < len) {
+    if (str[i] === '\x1b') {
+      let j = i + 1;
+      if (j < len && str[j] === '[') {
+        j++;
+        while (j < len && !/[a-zA-Z]/.test(str[j])) j++;
+        if (j < len) j++;
+      }
+      i = j;
+      continue;
+    }
+
+    if (str[i] === ' ') {
+      lastSpaceIdx = i;
+    }
+
+    lineLen++;
+
+    if (lineLen > cols && lastSpaceIdx !== -1) {
+      out += str.slice(lineStart, lastSpaceIdx) + '\n' + hangingIndent;
+      lineStart = lastSpaceIdx + 1; // skip space
+      i = lineStart;
+      lineLen = hangingIndent.length;
+      lastSpaceIdx = -1;
+      continue;
+    }
+    
+    // Hard wrap if a single word is longer than cols
+    if (lineLen > cols && lastSpaceIdx === -1) {
+      out += str.slice(lineStart, i) + '\n' + hangingIndent;
+      lineStart = i;
+      lineLen = hangingIndent.length + 1;
+    }
+
+    i++;
+  }
+
+  out += str.slice(lineStart);
+  return out;
+}
+
+/**
  * Render a table in the terminal
  * @param {string[]} headers
  * @param {string[][]} rows
@@ -442,6 +511,8 @@ class StreamRenderer {
   }
 
   _renderLine(line) {
+    const cols = getTerminalWidth();
+    
     // Code block toggle
     if (line.trim().startsWith('```')) {
       if (this.inCodeBlock) {
@@ -480,7 +551,9 @@ class StreamRenderer {
     if (/^\s*[-*]\s/.test(line)) {
       const indent = line.match(/^(\s*)/)[1];
       const content = line.replace(/^\s*[-*]\s/, '');
-      this._safeWrite(`${indent}${C.cyan}•${C.reset} ${renderInline(content)}\n`);
+      const formatted = `${indent}${C.cyan}•${C.reset} ${renderInline(content)}`;
+      const wrapped = wrapAnsi(formatted, cols, indent + '  ');
+      this._safeWrite(`${wrapped}\n`);
       return;
     }
 
@@ -488,13 +561,20 @@ class StreamRenderer {
     if (/^\s*\d+\.\s/.test(line)) {
       const match = line.match(/^(\s*)(\d+)\.\s(.*)/);
       if (match) {
-        this._safeWrite(`${match[1]}${C.cyan}${match[2]}.${C.reset} ${renderInline(match[3])}\n`);
+        const indent = match[1];
+        const num = match[2];
+        const content = match[3];
+        const formatted = `${indent}${C.cyan}${num}.${C.reset} ${renderInline(content)}`;
+        const hang = indent + ' '.repeat(num.length + 2);
+        const wrapped = wrapAnsi(formatted, cols, hang);
+        this._safeWrite(`${wrapped}\n`);
         return;
       }
     }
 
     // Regular line
-    this._safeWrite(`${renderInline(line)}\n`);
+    const wrapped = wrapAnsi(renderInline(line), cols);
+    this._safeWrite(`${wrapped}\n`);
   }
 }
 
@@ -513,5 +593,6 @@ module.exports = {
   highlightHTML,
   renderTable,
   renderProgress,
+  wrapAnsi,
   StreamRenderer,
 };
