@@ -1196,7 +1196,9 @@ async function processInput(userInput, serverHooks = null) {
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
-  let contextRetries = 0;    // budget for 400-error context-overflow recovery
+  let contextRetries = 0;       // budget for 400-error context-overflow recovery (per inner loop)
+  let totalContextRetries = 0;  // lifetime cap across all auto-extend cycles
+  const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
 
   // ─── Stats tracking for résumé ───
@@ -1218,7 +1220,7 @@ async function processInput(userInput, serverHooks = null) {
   let i;
   let iterLimit = MAX_ITERATIONS;
   let autoExtensions = 0;
-  const MAX_AUTO_EXTENSIONS = 10; // hard cap: max 10×20 = 200 extra turns
+  const MAX_AUTO_EXTENSIONS = 3;  // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
   for (i = 0; i < iterLimit; i++) {
@@ -1383,8 +1385,10 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`);
           }
           // 'retry' or 'switch': reset counters and retry
+          // NOTE: do NOT reset contextRetries here — the stale-retry and 400-error
+          // budgets are independent. Resetting contextRetries here would allow the
+          // 400-compress path to loop indefinitely after a stale recovery.
           staleRetries = 0;
-          contextRetries = 0;
           i--;
           continue;
         }
@@ -1450,8 +1454,9 @@ async function processInput(userInput, serverHooks = null) {
         // heuristics are too unreliable to gate this: just try and retry.
         // If a stale switch already happened (staleCompressUsed > 0), we already did nuclear
         // compression — jump straight to nuclear for 400s too to avoid wasting light attempts.
-        if (contextRetries < 3) {
+        if (contextRetries < 3 && totalContextRetries < MAX_TOTAL_CONTEXT_RETRIES) {
           contextRetries++;
+          totalContextRetries++;
           const nuclear = contextRetries === 3 || staleCompressUsed > 0;
           if (nuclear) {
             console.log(`${C.yellow}  ⚠ Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...${C.reset}`);
