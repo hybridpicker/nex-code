@@ -12,6 +12,9 @@ const { MultiProgress, C } = require('./ui');
 const MAX_SUB_ITERATIONS = 15;
 const MAX_PARALLEL_AGENTS = 5;
 const MAX_CHAT_RETRIES = 3;
+// Depth-1 agents (reviewers) get fewer iterations to stay lightweight
+const MAX_REVIEWER_ITERATIONS = 8;
+const MAX_REVIEWER_AGENTS = 2;
 
 // ─── File Locking ─────────────────────────────────────────────
 // Map<filePath, agentId> — allows same agent to re-lock its own files
@@ -71,8 +74,15 @@ async function callWithRetry(messages, tools, options) {
   throw lastError;
 }
 
-// Tools that sub-agents should NOT have access to
-const EXCLUDED_TOOLS = new Set(['ask_user', 'task_list', 'spawn_agents']);
+// Tools that sub-agents should NOT have access to.
+// At depth 0-1, spawn_agents is allowed so coders can spawn reviewers.
+// At depth >= 2, spawn_agents is blocked to prevent unbounded nesting.
+const BASE_EXCLUDED = new Set(['ask_user', 'task_list']);
+
+function getExcludedTools(depth) {
+  if (depth >= 2) return new Set([...BASE_EXCLUDED, 'spawn_agents']);
+  return BASE_EXCLUDED;
+}
 
 // Tools that need file locking
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'patch_file']);
@@ -177,8 +187,9 @@ function resolveSubAgentModel(agentDef) {
  * @param {{ onUpdate?: (status: string) => void }} callbacks
  * @returns {{ task: string, status: 'done'|'failed', result: string, toolsUsed: string[], tokensUsed: { input: number, output: number } }}
  */
-async function runSubAgent(agentDef, callbacks = {}) {
-  const maxIter = Math.min(agentDef.max_iterations || 10, MAX_SUB_ITERATIONS);
+async function runSubAgent(agentDef, callbacks = {}, _depth = 0) {
+  const depthMaxIter = _depth === 0 ? MAX_SUB_ITERATIONS : MAX_REVIEWER_ITERATIONS;
+  const maxIter = Math.min(agentDef.max_iterations || 10, depthMaxIter);
   const agentId = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const toolsUsed = [];
   const tokensUsed = { input: 0, output: 0 };
@@ -219,9 +230,10 @@ ERROR RECOVERY:
   // Lazy require to avoid circular dependency (tools.js ↔ sub-agent.js)
   const { TOOL_DEFINITIONS, executeTool } = require('./tools');
 
-  // Filter tools: exclude interactive/meta tools, apply tier override
+  // Filter tools: exclude interactive/meta tools (depth-aware), apply tier override
+  const excludedTools = getExcludedTools(_depth);
   const availableTools = filterToolsForModel(
-    TOOL_DEFINITIONS.filter(t => !EXCLUDED_TOOLS.has(t.function.name)),
+    TOOL_DEFINITIONS.filter(t => !excludedTools.has(t.function.name)),
     agentTier
   );
 
@@ -319,7 +331,13 @@ ERROR RECOVERY:
 
         toolsUsed.push(fnName);
 
-        return executeTool(fnName, args, { autoConfirm: true, silent: true })
+        // Intercept nested spawn_agents: call executeSpawnAgents with depth+1
+        // instead of going through the generic executeTool dispatch.
+        const execToolOrNested = fnName === 'spawn_agents'
+          ? executeSpawnAgents(args, _depth + 1)
+          : executeTool(fnName, args, { autoConfirm: true, silent: true });
+
+        return execToolOrNested
           .then(toolResult => {
             // Release lock immediately after write completes — don't hold until
             // end-of-iteration so other tool calls in subsequent iterations can proceed.
@@ -374,37 +392,50 @@ ERROR RECOVERY:
 /**
  * Execute spawn_agents tool: run multiple sub-agents in parallel.
  * @param {{ agents: Array<{ task: string, context?: string, max_iterations?: number }> }} args
+ * @param {number} _depth - current nesting depth (0 = top-level, 1 = reviewer level)
  * @returns {string} Formatted results for the parent LLM
  */
-async function executeSpawnAgents(args) {
-  const agents = args.agents || [];
+async function executeSpawnAgents(args, _depth = 0) {
+  // Hard block: no spawning beyond depth 1
+  if (_depth >= 2) {
+    return 'ERROR: max agent nesting depth (2) reached — reviewer agents cannot spawn further agents.';
+  }
+
+  const maxAgents = _depth === 0 ? MAX_PARALLEL_AGENTS : MAX_REVIEWER_AGENTS;
+  const maxIter = _depth === 0 ? MAX_SUB_ITERATIONS : MAX_REVIEWER_ITERATIONS;
+
+  // Defensive copy so we can trim without mutating caller args
+  let agents = (args.agents || []).slice(0, maxAgents);
 
   if (agents.length === 0) return 'ERROR: No agents specified';
-  if (agents.length > MAX_PARALLEL_AGENTS) {
-    return `ERROR: Max ${MAX_PARALLEL_AGENTS} parallel agents allowed, got ${agents.length}`;
-  }
+
+  // Visual: depth-1 agents are indented with ↳ to show hierarchy in the terminal
+  const labelPrefix = _depth > 0 ? '  \u21b3 ' : '';  // '  ↳ '
+  const maxTaskLen = _depth > 0 ? 38 : 44;
 
   // Resolve models upfront so labels can include model info (avoids interleaving with spinner)
   const routings = agents.map(a => resolveSubAgentModel(a));
   const labels = agents.map((a, i) => {
     const r = routings[i];
     const modelTag = r.model ? ` [${r.model}]` : '';
-    const task = a.task.substring(0, 44 - modelTag.length);
-    return `Agent ${i + 1}${modelTag}: ${task}${a.task.length > task.length ? '...' : ''}`;
+    const task = a.task.substring(0, maxTaskLen - modelTag.length);
+    return `${labelPrefix}Agent ${i + 1}${modelTag}: ${task}${a.task.length > task.length ? '...' : ''}`;
   });
   const progress = new MultiProgress(labels);
   progress.start();
 
   try {
     const promises = agents.map((agentDef, idx) => {
-      // Pass pre-resolved model and suppress per-agent stderr log (shown in label already)
+      // Pass pre-resolved model, suppress per-agent stderr log (shown in label already),
+      // and cap iterations at the depth-appropriate limit.
       const r = routings[idx];
+      const cappedIterations = Math.min(agentDef.max_iterations || maxIter, maxIter);
       const defWithRouting = r.model
-        ? { ...agentDef, model: `${r.provider}:${r.model}`, _skipLog: true }
-        : { ...agentDef, _skipLog: true };
+        ? { ...agentDef, model: `${r.provider}:${r.model}`, _skipLog: true, max_iterations: cappedIterations }
+        : { ...agentDef, _skipLog: true, max_iterations: cappedIterations };
       return runSubAgent(defWithRouting, {
         onUpdate: () => {}, // progress is already showing spinner
-      }).then(result => {
+      }, _depth).then(result => {
         progress.update(idx, result.status === 'failed' ? 'error' : 'done');
         return result;
       }).catch(err => {
@@ -453,4 +484,4 @@ async function executeSpawnAgents(args) {
   }
 }
 
-module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry };
+module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry, getExcludedTools };

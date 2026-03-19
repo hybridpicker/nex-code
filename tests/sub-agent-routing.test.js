@@ -51,6 +51,7 @@ const {
   runSubAgent,
   executeSpawnAgents,
   isRetryableError,
+  getExcludedTools,
 } = require('../cli/sub-agent');
 
 const {
@@ -363,5 +364,127 @@ describe('runSubAgent() retry', () => {
     const result = await runSubAgent({ task: 'Refactor the module' });
     expect(result.status).toBe('failed');
     expect(result.result).toContain('Empty or invalid response');
+  });
+});
+
+// ─── getExcludedTools() — depth-aware tool exclusion ──────────
+
+describe('getExcludedTools()', () => {
+  it('at depth 0 does NOT exclude spawn_agents', () => {
+    const excluded = getExcludedTools(0);
+    expect(excluded.has('spawn_agents')).toBe(false);
+    expect(excluded.has('ask_user')).toBe(true);
+    expect(excluded.has('task_list')).toBe(true);
+  });
+
+  it('at depth 1 does NOT exclude spawn_agents', () => {
+    const excluded = getExcludedTools(1);
+    expect(excluded.has('spawn_agents')).toBe(false);
+  });
+
+  it('at depth 2 DOES exclude spawn_agents', () => {
+    const excluded = getExcludedTools(2);
+    expect(excluded.has('spawn_agents')).toBe(true);
+    expect(excluded.has('ask_user')).toBe(true);
+  });
+
+  it('at depth 3 (beyond max) also excludes spawn_agents', () => {
+    const excluded = getExcludedTools(3);
+    expect(excluded.has('spawn_agents')).toBe(true);
+  });
+});
+
+// ─── executeSpawnAgents() — depth guard + limits ───────────────
+
+describe('executeSpawnAgents() depth guard', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    getActiveProviderName.mockReturnValue('ollama');
+    getConfiguredProviders.mockReturnValue([
+      { name: 'ollama', models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5' }] },
+    ]);
+  });
+
+  it('returns error at depth >= 2', async () => {
+    const result = await executeSpawnAgents(
+      { agents: [{ task: 'Refactor module' }] },
+      2
+    );
+    expect(result).toContain('max agent nesting depth');
+    expect(result).toContain('2');
+  });
+
+  it('returns error at depth 3 as well', async () => {
+    const result = await executeSpawnAgents(
+      { agents: [{ task: 'Review code' }] },
+      3
+    );
+    expect(result).toContain('max agent nesting depth');
+  });
+
+  it('at depth 1 trims agents to max 2', async () => {
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
+
+    const result = await executeSpawnAgents(
+      {
+        agents: [
+          { task: 'Review module A' },
+          { task: 'Review module B' },
+          { task: 'Review module C' }, // should be trimmed
+        ],
+      },
+      1
+    );
+
+    // Only 2 agents ran — result lists at most 2 agent entries
+    const agentMatches = (result.match(/Agent \d+/g) || []);
+    expect(agentMatches.length).toBeLessThanOrEqual(2);
+  });
+
+  it('at depth 0 allows up to 5 agents', async () => {
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
+
+    const result = await executeSpawnAgents({
+      agents: [
+        { task: 'Task 1' }, { task: 'Task 2' }, { task: 'Task 3' },
+        { task: 'Task 4' }, { task: 'Task 5' },
+      ],
+    });
+
+    expect(result).not.toContain('max agent nesting depth');
+    expect(result).toContain('Agent 5');
+  });
+
+  it('at depth 1 uses ↳ prefix in labels', async () => {
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
+
+    const { MultiProgress: MP } = require('../cli/ui');
+    MP.mockClear();
+
+    await executeSpawnAgents(
+      { agents: [{ task: 'Review auth module' }] },
+      1
+    );
+
+    // The label passed to MultiProgress should contain the ↳ prefix
+    const constructorCall = MP.mock.calls[0];
+    const labels = constructorCall[0];
+    expect(labels[0]).toMatch(/↳/);
+  });
+
+  it('at depth 0 does NOT use ↳ prefix in labels', async () => {
+    callStream.mockResolvedValue({ content: 'Done', tool_calls: [] });
+
+    const { MultiProgress: MP } = require('../cli/ui');
+    MP.mockClear();
+
+    await executeSpawnAgents(
+      { agents: [{ task: 'Implement auth module' }] },
+      0
+    );
+
+    const constructorCall = MP.mock.calls[0];
+    const labels = constructorCall[0];
+    expect(labels[0]).not.toMatch(/↳/);
   });
 });

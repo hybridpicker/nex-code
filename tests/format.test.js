@@ -423,7 +423,8 @@ describe('formatToolSummary()', () => {
 
   it('formats glob with files', () => {
     const out = formatToolSummary('glob', {}, 'src/a.js\nsrc/b.js', false);
-    expect(out).toContain('2 files found');
+    expect(out).toContain('2 files');
+    expect(out).toContain('a.js');
   });
 
   it('formats list_directory', () => {
@@ -454,7 +455,7 @@ describe('formatToolSummary()', () => {
 
   it('formats git_log', () => {
     const out = formatToolSummary('git_log', {}, 'commit abc1234 msg\ncommit def5678 msg2', false);
-    expect(out).toContain('2 commits');
+    expect(out).toContain('abc1234');
   });
 
   it('formats git_commit', () => {
@@ -504,8 +505,13 @@ describe('formatToolSummary()', () => {
     expect(out).toContain('gpt-4');
   });
 
-  it('formats unknown tool as Done', () => {
+  it('formats unknown tool — shows first result line', () => {
     const out = formatToolSummary('custom_tool', {}, 'any result', false);
+    expect(out).toContain('any result');
+  });
+
+  it('formats unknown tool with empty result as Done', () => {
+    const out = formatToolSummary('custom_tool', {}, '', false);
     expect(out).toContain('Done');
   });
 });

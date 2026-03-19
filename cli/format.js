@@ -310,19 +310,25 @@ function formatToolSummary(name, args, result, isError) {
       const lastLine = resultLines[resultLines.length - 1];
       const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
       const isPartial = args.line_start || args.line_end;
-      // First content line, strip line-number prefix (e.g. "42: code")
-      const firstContent = (resultLines[0] || '').replace(/^\d+:\s*/, '').trim();
-      const hint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 60)}${firstContent.length > 60 ? '…' : ''}${C.reset}` : '';
+      const fname = args.path ? require('path').basename(args.path) : null;
+      const fileHint = fname ? ` ${T.muted}from ${fname}${T.reset}` : '';
+      // First actual code line — skip the tool metadata header ("File: path (N lines, N bytes)")
+      const codeLines = resultLines.filter(l => !/^File:\s/.test(l));
+      const firstContent = (codeLines[0] || '').replace(/^\d+:\s*/, '').trim();
+      const contentHint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 70)}${firstContent.length > 70 ? '…' : ''}${C.reset}` : '';
       if (isPartial && lastLineNum > count) {
-        summary = `Read lines ${args.line_start || 1}–${lastLineNum}${hint}`;
+        summary = `Read lines ${args.line_start || 1}–${lastLineNum}${fileHint}${contentHint}`;
       } else {
-        summary = `Read ${count} line${count !== 1 ? 's' : ''}${hint}`;
+        summary = `Read ${count} line${count !== 1 ? 's' : ''}${fileHint}${contentHint}`;
       }
       break;
     }
     case 'write_file': {
       const lines = (args.content || '').split('\n').length;
-      summary = `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
+      const fname = args.path ? require('path').basename(args.path) : null;
+      summary = fname
+        ? `Wrote ${fname} · ${lines} line${lines !== 1 ? 's' : ''}`
+        : `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
       break;
     }
     case 'edit_file': {
@@ -350,55 +356,81 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'bash': {
+      const BASH_PREVIEW = 6;
       const exitMatch = r.match(/^EXIT (\d+)/);
-      if (exitMatch) {
-        const code = exitMatch[1];
-        const hintMatch = r.match(/\nHINT: (.+)/);
-        if (hintMatch) {
-          const icon2 = code === '0' ? `${T.success}✓${T.reset}` : `${T.error}✗ Exit ${code}${T.reset}`;
-          summary = `${icon2} ${T.muted}— ${hintMatch[1].substring(0, 60)}${T.reset}`;
-        } else {
-          const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && l.trim());
-          const firstOut = outputLines[0] ? ` ${T.muted}· ${outputLines[0].substring(0, 70)}${T.reset}` : '';
-          const moreCount = outputLines.length > 1 ? ` ${T.muted}+${outputLines.length - 1}${T.reset}` : '';
-          const icon = code === '0' ? `${T.success}✓${T.reset}` : `${T.error}✗ Exit ${code}${T.reset}`;
-          summary = `${icon}${firstOut}${moreCount}`;
-        }
+      const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && !l.startsWith('HINT:') && l.trim());
+      const icon = exitMatch
+        ? (exitMatch[1] === '0' ? `${T.success}✓${T.reset}` : `${T.error}✗ Exit ${exitMatch[1]}${T.reset}`)
+        : `${T.success}✓${T.reset}`;
+      const hintMatch = r.match(/\nHINT: (.+)/);
+      if (hintMatch) {
+        summary = `${icon} ${T.muted}— ${hintMatch[1].substring(0, 100)}${T.reset}`;
+      } else if (outputLines.length === 0) {
+        summary = icon;
       } else {
-        const lines = r.split('\n').filter(Boolean);
-        summary = lines.length > 1
-          ? `${lines[0].substring(0, 60)} ${C.dim}+${lines.length - 1} more${C.reset}`
-          : (lines[0] || '').substring(0, 70) || 'Done';
+        const shown = outputLines.slice(0, BASH_PREVIEW);
+        const more = outputLines.length - BASH_PREVIEW;
+        const lines = shown.map((l, i) =>
+          i === 0
+            ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
+            : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
+        );
+        if (more > 0) lines.push(`     ${T.subtle}… +${more} lines${T.reset}`);
+        summary = lines.join('\n');
       }
       break;
     }
     case 'grep':
     case 'search_files': {
       if (r.includes('(no matches)') || r === 'no matches') {
-        summary = 'No matches';
+        const patternHint = args.pattern ? ` ${T.muted}"${String(args.pattern).substring(0, 40)}"${T.reset}` : '';
+        summary = `No matches${patternHint}`;
       } else {
         const lines = r.split('\n').filter(Boolean);
         const matchCount = lines.length;
         const files = new Set(lines.map(l => l.split(':')[0]).filter(Boolean));
         const fileCount = files.size;
-        summary = fileCount > 1
-          ? `${matchCount} match${matchCount !== 1 ? 'es' : ''} in ${fileCount} files`
-          : `${matchCount} match${matchCount !== 1 ? 'es' : ''}`;
+        const patternHint = args.pattern ? ` ${T.muted}"${String(args.pattern).substring(0, 40)}"${T.reset}` : '';
+        const header = fileCount > 1
+          ? `${matchCount} match${matchCount !== 1 ? 'es' : ''} in ${fileCount} files${patternHint}`
+          : `${matchCount} match${matchCount !== 1 ? 'es' : ''}${patternHint}`;
+        const preview = lines.slice(0, 4).map((l, i) =>
+          i === 0 ? `${header}\n     ${T.muted}${l.substring(0, 110)}${T.reset}`
+                  : `     ${T.muted}${l.substring(0, 110)}${T.reset}`
+        );
+        const more = lines.length - 4;
+        if (more > 0) preview.push(`     ${T.subtle}… +${more} lines${T.reset}`);
+        summary = preview.join('\n');
       }
       break;
     }
     case 'glob': {
+      const globPatternHint = args.pattern ? ` ${T.muted}${String(args.pattern).substring(0, 50)}${T.reset}` : '';
       if (r === '(no matches)') {
-        summary = 'No files found';
+        summary = `No files found${globPatternHint}`;
       } else {
-        const count = r.split('\n').filter(Boolean).length;
-        summary = `${count} file${count !== 1 ? 's' : ''} found`;
+        const path = require('path');
+        const allFiles = r.split('\n').filter(Boolean);
+        const count = allFiles.length;
+        const shown = allFiles.slice(0, 5).map(f => path.basename(f));
+        const more = count - shown.length;
+        const names = shown.join(', ') + (more > 0 ? `, +${more} more` : '');
+        summary = `${count} file${count !== 1 ? 's' : ''}${globPatternHint} — ${T.muted}${names}${T.reset}`;
       }
       break;
     }
     case 'list_directory': {
-      const count = r === '(empty)' ? 0 : r.split('\n').filter(Boolean).length;
-      summary = `${count} entr${count !== 1 ? 'ies' : 'y'}`;
+      if (r === '(empty)') {
+        summary = '0 entries';
+      } else {
+        const entries = r.split('\n').filter(Boolean);
+        const count = entries.length;
+        const shown = entries.slice(0, 6).join(', ');
+        const more = count - 6;
+        summary = more > 0
+          ? `${count} entries — ${T.muted}${shown}, +${more} more${T.reset}`
+          : `${count} entr${count !== 1 ? 'ies' : 'y'} — ${T.muted}${shown}${T.reset}`;
+      }
       break;
     }
     case 'git_status': {
@@ -416,8 +448,24 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'git_log': {
-      const commits = r.split('\n').filter(l => /^commit\s+[0-9a-f]{7}/.test(l)).length;
-      summary = commits > 0 ? `${commits} commit${commits !== 1 ? 's' : ''}` : 'Log retrieved';
+      const commitLines = r.split('\n').filter(l => /^commit\s+[0-9a-f]{7}/.test(l));
+      const commits = commitLines.length;
+      const firstHash = commitLines[0] ? commitLines[0].replace(/^commit\s+/, '').substring(0, 7) : null;
+      // Find the subject line of the first commit (first non-empty line after "commit <hash>")
+      const firstSubject = (() => {
+        const idx = r.indexOf(commitLines[0] || '\0');
+        if (idx === -1) return null;
+        const after = r.substring(idx).split('\n');
+        return after.find((l, i) => i > 0 && l.trim() && !l.startsWith('Author:') && !l.startsWith('Date:') && !l.startsWith('Merge:'));
+      })();
+      if (commits === 0) {
+        summary = 'Log retrieved';
+      } else if (firstHash && firstSubject) {
+        const more = commits > 1 ? ` ${T.muted}+${commits - 1} more${T.reset}` : '';
+        summary = `${firstHash} ${T.muted}${firstSubject.trim().substring(0, 60)}${T.reset}${more}`;
+      } else {
+        summary = `${commits} commit${commits !== 1 ? 's' : ''}`;
+      }
       break;
     }
     case 'git_commit': {
@@ -442,12 +490,24 @@ function formatToolSummary(name, args, result, isError) {
       }
       break;
     }
-    case 'web_fetch':
-      summary = 'Fetched';
+    case 'web_fetch': {
+      const titleMatch = r.match(/<title[^>]*>([^<]{1,80})<\/title>/i);
+      const h1Match = r.match(/^#\s+(.{1,80})/m);
+      const url = args.url || '';
+      let fetchDesc = '';
+      try { fetchDesc = new URL(url).hostname; } catch (_) { fetchDesc = url.substring(0, 60); }
+      const pageTitle = titleMatch ? titleMatch[1].trim() : (h1Match ? h1Match[1].trim() : null);
+      summary = pageTitle
+        ? `${fetchDesc} — ${T.muted}${pageTitle.substring(0, 70)}${T.reset}`
+        : `Fetched ${fetchDesc}`;
       break;
+    }
     case 'web_search': {
-      const count = r.split('\n\n').filter(Boolean).length;
-      summary = `${count} result${count !== 1 ? 's' : ''}`;
+      const blocks = r.split('\n\n').filter(Boolean);
+      const count = blocks.length;
+      const firstTitle = blocks[0] ? blocks[0].split('\n')[0].replace(/^\d+\.\s*/, '').trim() : null;
+      const titleHint = firstTitle ? ` ${T.muted}— ${firstTitle.substring(0, 70)}${T.reset}` : '';
+      summary = `${count} result${count !== 1 ? 's' : ''}${titleHint}`;
       break;
     }
     case 'task_list':
@@ -466,8 +526,17 @@ function formatToolSummary(name, args, result, isError) {
       summary = switchMatch ? `→ ${switchMatch[1]}` : 'Done';
       break;
     }
-    default:
-      summary = 'Done';
+    default: {
+      // Show first meaningful output line instead of generic "Done"
+      const meaningfulLines = r.split('\n').filter(l => l.trim() && !l.startsWith('EXIT ') && !l.startsWith('HINT:'));
+      if (meaningfulLines.length > 0) {
+        const first = meaningfulLines[0].trim().substring(0, 90);
+        const more = meaningfulLines.length > 1 ? ` ${T.subtle}+${meaningfulLines.length - 1}${T.reset}` : '';
+        summary = `${T.muted}${first}${T.reset}${more}`;
+      } else {
+        summary = 'Done';
+      }
+    }
   }
 
   return `  ${T.muted}└ ${summary}${T.reset}`;
