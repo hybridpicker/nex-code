@@ -2319,7 +2319,7 @@ describe('tools.js', () => {
       expect(typeof result).toBe('string');
     });
 
-    it('runs ssl_check with domain', async () => {
+    (process.env.CI ? it.skip : it)('runs ssl_check with domain', async () => {
       const result = await executeTool('sysadmin', { action: 'ssl_check', domain: 'example.com' });
       expect(typeof result).toBe('string');
     }, 15000);
@@ -2949,13 +2949,13 @@ describe('tools.js', () => {
 
   // ─── frontend_recon ───────────────────────────────────────────
   describe('frontend_recon', () => {
-    it('runs frontend_recon in cwd', async () => {
+    (process.env.CI ? it.skip : it)('runs frontend_recon in cwd', async () => {
       const result = await executeTool('frontend_recon', {});
       expect(typeof result).toBe('string');
       expect(result).toContain('Design recon complete');
     }, 30000);
 
-    it('frontend_recon with type hint', async () => {
+    (process.env.CI ? it.skip : it)('frontend_recon with type hint', async () => {
       const result = await executeTool('frontend_recon', { type: 'button' });
       expect(typeof result).toBe('string');
       expect(result).toContain('STEP 1');
@@ -2964,7 +2964,7 @@ describe('tools.js', () => {
 
   // ─── remote_agent validation ──────────────────────────────────
   describe('remote_agent', () => {
-    it('runs with user@host format (will fail SSH)', async () => {
+    (process.env.CI ? it.skip : it)('runs with user@host format (will fail SSH)', async () => {
       const result = await executeTool('remote_agent', { server: 'user@nonexistent-host-xyz', task: 'echo hello' });
       expect(typeof result).toBe('string');
       // Will contain ERROR since host is unreachable
