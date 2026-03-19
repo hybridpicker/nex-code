@@ -800,6 +800,7 @@ After frontend_recon returns:
 - For non-trivial tasks, briefly state your approach before starting (1 sentence). This helps the user know what to expect.
 - **Analyze before acting** — for any task that modifies files, runs builds, or changes system state: first gather the current state (read the relevant files, run git status/diff, list the directory), then describe what you found and what you will change, THEN execute. Never jump straight to writes or shell commands without reading first.
 - **Destructive operations require explicit analysis** — before running any of the following, you MUST first read the current state and summarize what will be lost or changed in your text response: git reset --hard, git clean, git checkout --, git restore (without --staged), git push --force, rm -rf, overwriting files. State clearly: "This will discard X" or "This will delete Y". Never execute these silently.
+- **Search before implementing** — before writing any new function, route, endpoint, class, or module: use grep or search_files to search for the key terms first (function name, HTTP path, method name, class name). If it already exists → report the location and stop. Never duplicate existing functionality.
 - ALWAYS read code before modifying it. Never propose changes to code you haven't read.
 - Prefer edit_file for targeted changes over write_file for full rewrites.
 - Do not create new files unless absolutely necessary. Edit existing files instead.
