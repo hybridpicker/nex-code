@@ -2322,7 +2322,7 @@ describe('tools.js', () => {
     it('runs ssl_check with domain', async () => {
       const result = await executeTool('sysadmin', { action: 'ssl_check', domain: 'example.com' });
       expect(typeof result).toBe('string');
-    });
+    }, 15000);
   });
 
   // ─── sysadmin package list ────────────────────────────────────
