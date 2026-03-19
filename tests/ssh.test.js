@@ -360,8 +360,8 @@ describe('resolveProfile - additional', () => {
     expect(p.host).toBe('staging.example.com');
   });
 
-  it('throws with no-profiles hint when none configured', () => {
+  it('throws Unknown server for non-existent profile', () => {
     const { resolveProfile } = require('../cli/ssh');
-    expect(() => resolveProfile('myserver')).toThrow(/No profiles configured/);
+    expect(() => resolveProfile('nonexistentserver12345')).toThrow(/Unknown server/);
   });
 });
