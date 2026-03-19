@@ -324,7 +324,7 @@ describe('ui.js', () => {
     });
 
     it('shows multi-line output count for bash with many lines', () => {
-      const output = Array.from({ length: 5 }, (_, i) => `line${i}`).join('\n');
+      const output = Array.from({ length: 10 }, (_, i) => `line${i}`).join('\n');
       const result = formatToolSummary('bash', { command: 'ls' }, output, false);
       expect(result).toMatch(/\+\d+/); // shows +N more
     });
@@ -421,9 +421,9 @@ describe('ui.js', () => {
     });
 
     // default
-    it('shows Done for unknown tools', () => {
+    it('shows output for unknown tools', () => {
       const result = formatToolSummary('custom_tool', {}, 'some result', false);
-      expect(result).toMatch(/done/i);
+      expect(result).toMatch(/some result/);
     });
 
     // edge cases
