@@ -489,7 +489,7 @@ describe('diff.js', () => {
     it('shows the header icon', () => {
       showClaudeDiff('test.js', 'old', 'new');
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain(C.cyan);
+      expect(output).toContain(C.green);
     });
   });
 
@@ -566,7 +566,7 @@ describe('diff.js', () => {
     it('shows the header icon', () => {
       showClaudeNewFile('test.js', 'content');
       const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
-      expect(output).toContain(C.cyan);
+      expect(output).toContain(C.green);
     });
   });
 });
