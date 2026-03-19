@@ -665,8 +665,16 @@ const FORCE_COMPRESS_KEEP_RECENT = 6;
 function forceCompress(messages, tools, nuclear = false) {
   const limit = getContextWindow();
   const toolTokens = estimateToolsTokens(tools);
-  const targetMax = Math.floor(limit * (nuclear ? 0.35 : 0.5)) - toolTokens;
+  let targetMax = Math.floor(limit * (nuclear ? 0.35 : 0.5)) - toolTokens;
   const originalTokens = estimateMessagesTokens(messages);
+
+  // CRITICAL FIX: Ensure targetMax is strictly less than what we just failed with.
+  // If the API context window is actually smaller than our 32k fallback,
+  // targetMax might be too large and completely bypass the message drop loop.
+  const strictMax = Math.floor(originalTokens * (nuclear ? 0.5 : 0.8));
+  if (targetMax > strictMax) {
+    targetMax = strictMax;
+  }
 
   // Split: system + old + recent
   let system = null;
