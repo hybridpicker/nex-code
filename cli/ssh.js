@@ -26,14 +26,13 @@ const { promisify } = require('util');
 
 const execFileAsync = promisify(execFile);
 
-const SERVERS_FILE = path.join(process.cwd(), '.nex', 'servers.json');
 const GLOBAL_SERVERS_FILE = path.join(os.homedir(), '.nex', 'servers.json');
 const SSH_SOCKET_DIR = path.join(os.tmpdir(), 'nex-ssh-sockets');
 
 // ─── Profile Management ───────────────────────────────────────
 
 function getServersPath() {
-  return path.join(process.cwd(), SERVERS_FILE);
+  return path.join(process.cwd(), '.nex', 'servers.json');
 }
 
 /**
