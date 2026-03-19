@@ -688,14 +688,31 @@ Three tiers of protection:
 - **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
 
 ### Sessions
-Save and restore conversations:
+nex-code automatically saves your conversation after every turn. If the process crashes or is closed unexpectedly, the next startup will detect the autosave and offer to restore it:
+
 ```
-/save my-feature
-/load my-feature
-/resume              # resume last session
+Previous session found. Resume? (y/n)
 ```
-Auto-save runs quietly in the background after every turn.
-**Auto-Resume**: If `nex-code` crashes or is closed, and an autosaved session from the last 24 hours exists, it will automatically prompt you to resume it on the next startup.
+
+Only sessions from the last 24 hours are offered for auto-resume. Older autosaves are silently skipped.
+
+**Session commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/save <name>` | Save current conversation under a named slot |
+| `/load <name>` | Restore a previously saved session |
+| `/sessions` | List all saved sessions with message count and timestamp |
+| `/resume` | Resume the most recently saved session |
+
+```
+/save my-feature        # save with name
+/load my-feature        # restore by name
+/sessions               # list all saved sessions
+/resume                 # restore the latest session
+```
+
+Sessions are stored in `.nex/sessions/` as JSON files. Auto-saves always write to `_autosave` (overwritten each turn). Writes are atomic — a temp file is written and renamed, so a crash mid-write never corrupts the saved state.
 
 ### Memory
 Persistent project memory that survives across sessions:
