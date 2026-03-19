@@ -2316,10 +2316,10 @@ async function startREPL() {
       // Only prompt if the session is younger than 24 hours
       if (ageMs < 24 * 60 * 60 * 1000) {
         const { confirm } = require('./safety');
-        const resume = await confirm(`Absturz oder vorherige Sitzung erkannt. Möchtest du sie fortsetzen? / Previous session found. Resume?`);
+        const resume = await confirm(`Previous session found. Resume?`);
         if (resume) {
           setConversationMessages(lastSession.messages);
-          console.log(`${C.green}Sitzung fortgesetzt (${lastSession.messages.length} Nachrichten)${C.reset}\n`);
+          console.log(`${C.green}Session restored (${lastSession.messages.length} messages)${C.reset}\n`);
         }
       }
     }
