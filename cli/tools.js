@@ -1187,8 +1187,12 @@ async function _executeToolInner(name, args, options = {}) {
 
       // Resolve a safe working directory: if the current directory was deleted during the session,
       // exec() would fail with a confusing "spawn /bin/sh ENOENT" error. Fall back to $HOME.
-      let safeCwd = process.cwd();
-      try { fsSync.accessSync(safeCwd); } catch {
+      // process.cwd() itself throws ENOENT when the directory has been deleted, so wrap both calls.
+      let safeCwd;
+      try {
+        safeCwd = process.cwd();
+        fsSync.accessSync(safeCwd);
+      } catch {
         safeCwd = require('os').homedir();
         if (!options.silent) console.log(`${C.yellow}  ⚠ Working directory no longer exists — running in ${safeCwd}${C.reset}`);
       }
