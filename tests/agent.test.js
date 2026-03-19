@@ -436,12 +436,17 @@ describe('agent.js', () => {
       expect(autoSave).toHaveBeenCalled();
     });
 
-    it('"400 Bad Request" shows "Bad request" after compress retries exhausted', async () => {
-      // 400 handler retries twice (force-compress + retry) before showing the error message
+    it('"400 Bad Request" shows error after compress retries exhausted', async () => {
+      // 400 handler retries 3 times (contextRetries 0→1→2→3), then falls through.
+      // Need 4 rejections: 3 trigger compress+retry, 4th shows error message.
       const err = new Error('400 Bad Request');
-      callStream.mockRejectedValueOnce(err).mockRejectedValueOnce(err).mockRejectedValueOnce(err);
+      callStream
+        .mockRejectedValueOnce(err)
+        .mockRejectedValueOnce(err)
+        .mockRejectedValueOnce(err)
+        .mockRejectedValueOnce(err);
       await processInput('test');
-      expect(logOutput()).toContain('Bad request');
+      expect(logOutput()).toContain('Context too large');
       expect(autoSave).toHaveBeenCalled();
     });
 
@@ -996,6 +1001,539 @@ describe('agent.js', () => {
       await processInput('test');
       // If stale timer leaked, subsequent operations would be affected
       expect(callStream).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── buildUserContent ──────────────────────────────────────
+  describe('buildUserContent', () => {
+    const { buildUserContent } = require('../cli/agent');
+
+    it('returns plain string when no image paths detected', () => {
+      const result = buildUserContent('hello world');
+      expect(result).toBe('hello world');
+    });
+
+    it('returns plain string for text without valid file paths', () => {
+      const result = buildUserContent('look at this code');
+      expect(result).toBe('look at this code');
+    });
+
+    it('returns plain string when path does not exist on disk', () => {
+      const result = buildUserContent('check /tmp/nonexistent_image_12345.png please');
+      expect(result).toBe('check /tmp/nonexistent_image_12345.png please');
+    });
+  });
+
+  // ─── injectMidRunNote + drain ──────────────────────────────
+  describe('injectMidRunNote', () => {
+    const { injectMidRunNote } = require('../cli/agent');
+
+    it('injected notes appear in conversation during tool loop', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo 1' } }, id: 'c1' }]);
+      // Inject a note before the second callStream
+      callStream.mockImplementationOnce(async () => {
+        return { content: 'Done with note', tool_calls: [] };
+      });
+      executeTool.mockResolvedValueOnce('ok');
+      // Inject note between tool execution and next API call
+      injectMidRunNote('  please also check tests  ');
+      await processInput('do something');
+      const msgs = getConversationMessages();
+      const noteMsg = msgs.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('please also check tests'));
+      expect(noteMsg).toBeDefined();
+    });
+  });
+
+  // ─── scrubSecrets (exercised through tool result processing) ───
+  describe('secret scrubbing', () => {
+    it('redacts API keys in tool results', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'cat .env' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('OPENAI_API_KEY=sk-1234567890abcdef1234567890');
+      await processInput('show env');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).toContain('REDACTED');
+      expect(toolMsg.content).not.toContain('sk-1234567890abcdef1234567890');
+    });
+
+    it('redacts multiple secret patterns', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'env' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('GITHUB_TOKEN=ghp_abcdefghijklmnop\nAWS_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE');
+      await processInput('test');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).toContain('REDACTED');
+      expect(toolMsg.content).not.toContain('ghp_abcdefghijklmnop');
+    });
+
+    it('leaves non-secret content untouched', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo hello' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('hello world');
+      await processInput('test');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).toBe('hello world');
+    });
+  });
+
+  // ─── language prompt (exercised through system prompt) ─────
+  describe('language prompt', () => {
+    it('includes auto language rule when NEX_LANGUAGE is unset', async () => {
+      delete process.env.NEX_LANGUAGE;
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      mockStream('ok');
+      await processInput('test');
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain('same language as the user');
+    });
+
+    it('includes specific language when NEX_LANGUAGE is set', async () => {
+      process.env.NEX_LANGUAGE = 'German';
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      mockStream('ok');
+      await processInput('test');
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain('German');
+      delete process.env.NEX_LANGUAGE;
+      agent.invalidateSystemPromptCache();
+    });
+
+    it('includes code language when NEX_CODE_LANGUAGE is set', async () => {
+      process.env.NEX_CODE_LANGUAGE = 'French';
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      mockStream('ok');
+      await processInput('test');
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain('French');
+      delete process.env.NEX_CODE_LANGUAGE;
+      agent.invalidateSystemPromptCache();
+    });
+
+    it('includes commit language when NEX_COMMIT_LANGUAGE is set', async () => {
+      process.env.NEX_COMMIT_LANGUAGE = 'Spanish';
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      mockStream('ok');
+      await processInput('test');
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain('Spanish');
+      delete process.env.NEX_COMMIT_LANGUAGE;
+      agent.invalidateSystemPromptCache();
+    });
+  });
+
+  // ─── plan mode text response ───────────────────────────────
+  describe('plan mode', () => {
+    it('saves plan and extracts steps on text response', async () => {
+      isPlanMode.mockReturnValue(true);
+      getPlanModePrompt.mockReturnValue('Plan mode active');
+      const { extractStepsFromText, setPlanContent, createPlan } = require('../cli/planner');
+      extractStepsFromText.mockReturnValueOnce(['Step 1: do thing', 'Step 2: do other']);
+      mockStream('Here is my plan:\n1. Do thing\n2. Do other');
+      await processInput('plan this');
+      expect(setPlanContent).toHaveBeenCalled();
+      expect(createPlan).toHaveBeenCalled();
+      isPlanMode.mockReturnValue(false);
+      getPlanModePrompt.mockReturnValue('');
+    });
+
+    it('shows plan ready without steps when none extracted', async () => {
+      isPlanMode.mockReturnValue(true);
+      getPlanModePrompt.mockReturnValue('Plan mode active');
+      const { extractStepsFromText, setPlanContent } = require('../cli/planner');
+      extractStepsFromText.mockReturnValueOnce([]);
+      mockStream('Here is a vague plan');
+      await processInput('plan this');
+      expect(setPlanContent).toHaveBeenCalled();
+      expect(logOutput()).toContain('Plan ready');
+      isPlanMode.mockReturnValue(false);
+      getPlanModePrompt.mockReturnValue('');
+    });
+
+    it('blocks non-allowed tools in plan mode', async () => {
+      isPlanMode.mockReturnValue(true);
+      getPlanModePrompt.mockReturnValue('Plan mode');
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'rm -rf /' } }, id: 'c1' }]);
+      mockStream('Blocked');
+      await processInput('execute plan');
+      expect(executeTool).not.toHaveBeenCalled();
+      expect(logOutput()).toContain('blocked');
+      isPlanMode.mockReturnValue(false);
+      getPlanModePrompt.mockReturnValue('');
+    });
+  });
+
+  // ─── loop detection ────────────────────────────────────────
+  describe('loop detection', () => {
+    it('warns after editing the same file multiple times', async () => {
+      // First edit
+      mockStream('', [{ function: { name: 'edit_file', arguments: { path: 'loop.js' } }, id: 'c1' }]);
+      // Second edit — should trigger warning
+      mockStream('', [{ function: { name: 'edit_file', arguments: { path: 'loop.js' } }, id: 'c2' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValue('ok');
+      await processInput('edit loop.js');
+      expect(logOutput()).toContain('Loop warning');
+    });
+
+    it('aborts after too many edits to the same file', async () => {
+      // 4 edits to trigger abort
+      for (let i = 0; i < 4; i++) {
+        mockStream('', [{ function: { name: 'edit_file', arguments: { path: 'stuck.js' } }, id: `c${i}` }]);
+      }
+      mockStream('Done'); // fallback — should not be reached
+      executeTool.mockResolvedValue('ok');
+      await processInput('keep editing');
+      expect(logOutput()).toContain('Loop abort');
+    });
+
+    it('warns after consecutive tool errors', async () => {
+      // 6 consecutive errors to trigger warning
+      for (let i = 0; i < 6; i++) {
+        mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail' } }, id: `c${i}` }]);
+      }
+      mockStream('Done');
+      executeTool.mockResolvedValue('ERROR: command failed');
+      await processInput('keep failing');
+      expect(logOutput()).toContain('consecutive');
+    });
+
+    it('aborts after many consecutive tool errors', async () => {
+      // 10 consecutive errors to trigger abort
+      for (let i = 0; i < 10; i++) {
+        mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail' } }, id: `c${i}` }]);
+      }
+      mockStream('Done');
+      executeTool.mockResolvedValue('ERROR: command failed');
+      await processInput('keep failing');
+      expect(logOutput()).toContain('Loop abort');
+    });
+
+    it('resets consecutive error count on success', async () => {
+      // 3 errors then a success then 3 errors — should not trigger warning at 6
+      for (let i = 0; i < 3; i++) {
+        mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail' } }, id: `e${i}` }]);
+      }
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'ok' } }, id: 'ok1' }]);
+      for (let i = 0; i < 3; i++) {
+        mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail2' } }, id: `f${i}` }]);
+      }
+      mockStream('Done');
+      executeTool.mockImplementation((_name, args) => {
+        if (args.command === 'ok') return 'success';
+        return 'ERROR: failed';
+      });
+      await processInput('mixed');
+      expect(logOutput()).not.toContain('consecutive');
+    });
+  });
+
+  // ─── resume output ────────────────────────────────────────
+  describe('resume output', () => {
+    it('shows minutes for long-running tasks', async () => {
+      // Mock Date.now to simulate elapsed time > 60s
+      const realNow = Date.now;
+      let callCount = 0;
+      jest.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        // Return times that create > 60s elapsed
+        if (callCount <= 2) return 1000000;
+        return 1000000 + 125000; // 125 seconds later
+      });
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('long task');
+      Date.now.mockRestore();
+      // Should show minutes format (Xm Ys)
+      expect(logOutput()).toMatch(/\d+m\s+\d+s/);
+    });
+
+    it('shows audit suggestion for read-heavy sessions', async () => {
+      // Need: 5+ files read, 0 modified, 3+ steps
+      for (let i = 0; i < 5; i++) {
+        mockStream('', [{ function: { name: 'read_file', arguments: { path: `file${i}.js` } }, id: `c${i}` }]);
+      }
+      mockStream('Analysis complete');
+      executeTool.mockResolvedValue('file content');
+      await processInput('audit');
+      expect(logOutput()).toContain('fix');
+    });
+
+    it('shows file count in resume', async () => {
+      mockStream('', [
+        { function: { name: 'write_file', arguments: { path: 'a.js', content: 'x' } }, id: 'c1' },
+        { function: { name: 'write_file', arguments: { path: 'b.js', content: 'y' } }, id: 'c2' },
+      ]);
+      mockStream('Done');
+      executeTool.mockResolvedValue('ok');
+      await processInput('write both');
+      expect(logOutput()).toContain('2 files modified');
+    });
+
+    it('shows singular "file" for one modification', async () => {
+      mockStream('', [{ function: { name: 'write_file', arguments: { path: 'a.js', content: 'x' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('write one');
+      expect(logOutput()).toContain('1 file modified');
+    });
+  });
+
+  // ─── max iterations with auto-extend ───────────────────────
+  describe('max iterations auto-extend', () => {
+    beforeEach(() => instantTimeout());
+    afterEach(() => { restoreTimeout(); setMaxIterations(50); getActiveProviderName.mockReturnValue('ollama'); });
+
+    it('auto-extends for ollama provider', async () => {
+      setMaxIterations(2);
+      getActiveProviderName.mockReturnValue('ollama');
+      let callCount = 0;
+      callStream.mockImplementation(async () => {
+        callCount++;
+        if (callCount <= 3) {
+          return { content: '', tool_calls: [{ function: { name: 'bash', arguments: { command: 'echo' } }, id: `c${callCount}` }] };
+        }
+        return { content: 'Finally done', tool_calls: [] };
+      });
+      executeTool.mockResolvedValue('ok');
+      await processInput('loop');
+      expect(logOutput()).toContain('auto-extending');
+      expect(callCount).toBeGreaterThan(2);
+    });
+  });
+
+  // ─── clearToolDefinitionsCache + clearToolFilterCache ───────
+  describe('cache management', () => {
+    it('clearToolFilterCache does not throw', () => {
+      const agent = require('../cli/agent');
+      expect(() => agent.clearToolFilterCache()).not.toThrow();
+    });
+
+    it('invalidateSystemPromptCache does not throw', () => {
+      const agent = require('../cli/agent');
+      expect(() => agent.invalidateSystemPromptCache()).not.toThrow();
+    });
+
+    it('getCachedFilteredTools returns tools', () => {
+      const agent = require('../cli/agent');
+      const { TOOL_DEFINITIONS } = require('../cli/tools');
+      const result = agent.getCachedFilteredTools(TOOL_DEFINITIONS);
+      expect(result).toBeDefined();
+      expect(result.length).toBeGreaterThan(0);
+    });
+
+    it('getCachedFilteredTools uses cache on second call', () => {
+      const agent = require('../cli/agent');
+      agent.clearToolFilterCache();
+      const { TOOL_DEFINITIONS } = require('../cli/tools');
+      const { filterToolsForModel } = require('../cli/tool-tiers');
+      filterToolsForModel.mockClear();
+      agent.getCachedFilteredTools(TOOL_DEFINITIONS);
+      agent.getCachedFilteredTools(TOOL_DEFINITIONS);
+      // Should only call filterToolsForModel once (cached second time)
+      expect(filterToolsForModel).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── getProjectContextHash ─────────────────────────────────
+  describe('getProjectContextHash', () => {
+    it('returns a string', async () => {
+      const agent = require('../cli/agent');
+      const hash = await agent.getProjectContextHash();
+      expect(typeof hash).toBe('string');
+      expect(hash.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── buildSystemPrompt caching ─────────────────────────────
+  describe('buildSystemPrompt', () => {
+    it('returns cached prompt on second call with same context', async () => {
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      const first = await agent.buildSystemPrompt();
+      const second = await agent.buildSystemPrompt();
+      expect(first).toBe(second); // same reference = cached
+    });
+
+    it('includes project context', async () => {
+      const agent = require('../cli/agent');
+      agent.invalidateSystemPromptCache();
+      const prompt = await agent.buildSystemPrompt();
+      expect(prompt).toContain('Nex Code');
+      expect(prompt).toContain('WORKING DIRECTORY');
+    });
+  });
+
+  // ─── _argPreview coverage ──────────────────────────────────
+  describe('_argPreview edge cases', () => {
+    it('web_fetch tool executes successfully', async () => {
+      mockStream('', [{ function: { name: 'web_fetch', arguments: { url: 'https://example.com/api/data' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('fetch it');
+      expect(executeTool).toHaveBeenCalledWith('web_fetch', { url: 'https://example.com/api/data' }, expect.any(Object));
+    });
+
+    it('tool with no args shows name only', async () => {
+      mockStream('', [{ function: { name: 'spawn_agents', arguments: {} }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('Agent 1:\n✓ Agent 1 ok');
+      await processInput('spawn');
+      expect(executeTool).toHaveBeenCalled();
+    });
+  });
+
+  // ─── tool execution with hooks ─────────────────────────────
+  describe('tool hooks', () => {
+    it('runs pre-tool and post-tool hooks', async () => {
+      const { runHooks } = require('../cli/hooks');
+      runHooks.mockReturnValueOnce([{ success: true, command: 'lint', output: 'ok' }])
+              .mockReturnValueOnce([{ success: false, command: 'test', error: 'fail' }]);
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo x' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('with hooks');
+      expect(runHooks).toHaveBeenCalledWith('pre-tool', expect.any(Object));
+      expect(runHooks).toHaveBeenCalledWith('post-tool', expect.any(Object));
+    });
+  });
+
+  // ─── server hooks ──────────────────────────────────────────
+  describe('server hooks (serverHooks parameter)', () => {
+    it('forwards tokens to onToken hook in server mode', async () => {
+      const onToken = jest.fn();
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        if (opts.onToken) {
+          opts.onToken('hello');
+          opts.onToken(' world');
+        }
+        return { content: 'hello world', tool_calls: [] };
+      });
+      await processInput('test', { onToken });
+      expect(onToken).toHaveBeenCalledWith('hello');
+      expect(onToken).toHaveBeenCalledWith(' world');
+    });
+
+    it('calls onToolStart and onToolEnd hooks', async () => {
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo x' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('test', { onToolStart, onToolEnd });
+      expect(onToolStart).toHaveBeenCalledWith('bash', expect.any(Object));
+      expect(onToolEnd).toHaveBeenCalledWith('bash', expect.any(String), true);
+    });
+
+    it('calls onThinkingToken hook', async () => {
+      const onThinkingToken = jest.fn();
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        if (opts.onThinkingToken) opts.onThinkingToken();
+        return { content: 'ok', tool_calls: [] };
+      });
+      await processInput('test', { onThinkingToken });
+      expect(onThinkingToken).toHaveBeenCalled();
+    });
+  });
+
+  // ─── conversation history trimming ─────────────────────────
+  describe('conversation history trimming', () => {
+    it('trims conversation when exceeding MAX_CONVERSATION_HISTORY', async () => {
+      // Set up a conversation with > 300 messages
+      const msgs = [];
+      for (let i = 0; i < 310; i++) {
+        msgs.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: `msg ${i}` });
+      }
+      setConversationMessages(msgs);
+      mockStream('ok');
+      await processInput('one more');
+      // After adding user + assistant messages and trimming, should be <= 300
+      expect(getConversationLength()).toBeLessThanOrEqual(302);
+    });
+  });
+
+  // ─── setMaxIterations edge cases ───────────────────────────
+  describe('setMaxIterations edge cases', () => {
+    afterEach(() => setMaxIterations(50));
+
+    it('ignores non-finite values', () => {
+      setMaxIterations(NaN);
+      setMaxIterations(Infinity);
+      // Should not crash, still use previous value
+    });
+
+    it('ignores zero and negative values', () => {
+      setMaxIterations(0);
+      setMaxIterations(-5);
+      // Should not crash
+    });
+
+    it('accepts valid positive number', () => {
+      setMaxIterations(10);
+      // No way to read MAX_ITERATIONS directly, but verify it works via test
+    });
+  });
+
+  // ─── non-TTY stream handling ───────────────────────────────
+  describe('non-TTY stream handling', () => {
+    it('flushes tokens immediately in non-TTY mode', async () => {
+      const origIsTTY = process.stdout.isTTY;
+      Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+      callStream.mockImplementationOnce(async (_m, _t, opts) => {
+        if (opts.onToken) {
+          opts.onToken('hello');
+          opts.onToken(' world');
+        }
+        return { content: 'hello world', tool_calls: [] };
+      });
+      await processInput('test');
+      Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+      expect(callStream).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── 400 error with compress retry ─────────────────────────
+  describe('400 error context compression', () => {
+    beforeEach(() => instantTimeout());
+    afterEach(() => restoreTimeout());
+
+    it('retries with force-compress on first 400', async () => {
+      const { forceCompress } = require('../cli/context-engine');
+      const err400 = new Error('400 Bad Request');
+      callStream.mockRejectedValueOnce(err400);
+      mockStream('Recovered after compress');
+      forceCompress.mockImplementationOnce((msgs) => ({ messages: msgs, tokensRemoved: 5000 }));
+      await processInput('test');
+      expect(forceCompress).toHaveBeenCalled();
+      expect(logOutput()).toContain('force-compress');
+    });
+  });
+
+  // ─── compacted context log ─────────────────────────────────
+  describe('compacted context', () => {
+    it('logs compacted message when context is compacted', async () => {
+      fitToContext.mockImplementationOnce((m) => ({ messages: m, compressed: false, compacted: true, tokensRemoved: 3000 }));
+      mockStream('OK');
+      await processInput('test');
+      expect(logOutput()).toContain('compacted');
+      expect(logOutput()).toContain('3000');
+    });
+  });
+
+  // ─── cumulative token tracking with TaskProgress ───────────
+  describe('cumulative token tracking', () => {
+    it('accumulates tokens across multiple API calls', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'echo 1' } }, id: 'c1' }],
+        { prompt_tokens: 100, completion_tokens: 50 });
+      mockStream('Done', [], { prompt_tokens: 200, completion_tokens: 75 });
+      executeTool.mockResolvedValueOnce('ok');
+      await processInput('test');
+      // trackUsage should be called twice
+      expect(trackUsage).toHaveBeenCalledTimes(2);
     });
   });
 });

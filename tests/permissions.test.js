@@ -188,5 +188,155 @@ describe('permissions.js', () => {
       const result = permissions.isToolAllowed('bash');
       expect(result.allowed).toBe(true);
     });
+
+    it('blocks tools in readonly preset', () => {
+      // Write a config with readonly preset
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
+        'utf-8'
+      );
+
+      const result = permissions.isToolAllowed('bash');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('blocked');
+    });
+
+    it('blocks tools not in allowedTools list for readonly', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
+        'utf-8'
+      );
+
+      // write_file is in blockedTools, but a custom tool would fail on allowedTools check
+      const result = permissions.isToolAllowed('custom_not_allowed');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('not in the allowed list');
+    });
+
+    it('allows read tools in readonly preset', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
+        'utf-8'
+      );
+
+      const result = permissions.isToolAllowed('read_file');
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  // ─── getEffectivePreset ────────────────────────────────────
+  describe('getEffectivePreset()', () => {
+    it('returns admin by default when no config', () => {
+      const preset = permissions.getEffectivePreset();
+      expect(preset.blockedTools).toEqual([]);
+    });
+
+    it('returns correct preset for developer role', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ teamPermissions: { role: 'developer' } }),
+        'utf-8'
+      );
+
+      const preset = permissions.getEffectivePreset();
+      expect(preset.blockedTools).toContain('deploy');
+      expect(preset.allowedTools).toBeNull();
+    });
+
+    it('merges overrides with preset', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({
+          teamPermissions: {
+            role: 'admin',
+            overrides: { blockedTools: ['custom_blocked'] },
+          },
+        }),
+        'utf-8'
+      );
+
+      const preset = permissions.getEffectivePreset();
+      expect(preset.blockedTools).toContain('custom_blocked');
+    });
+
+    it('falls back to admin for unknown role', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ teamPermissions: { role: 'nonexistent' } }),
+        'utf-8'
+      );
+
+      const preset = permissions.getEffectivePreset();
+      expect(preset.blockedTools).toEqual([]);
+    });
+  });
+
+  // ─── savePresetConfig / loadPresetConfig ───────────────────
+  describe('savePresetConfig / loadPresetConfig', () => {
+    it('saves and loads team permissions', () => {
+      permissions.savePresetConfig({ role: 'developer' });
+
+      const loaded = permissions.loadPresetConfig();
+      expect(loaded.role).toBe('developer');
+    });
+
+    it('returns null when no config file', () => {
+      expect(permissions.loadPresetConfig()).toBeNull();
+    });
+
+    it('returns null on corrupt config', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'config.json'), '{corrupt', 'utf-8');
+      expect(permissions.loadPresetConfig()).toBeNull();
+    });
+
+    it('preserves existing config keys when saving', () => {
+      const configDir = path.join(tmpDir, '.nex');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ existing: true }),
+        'utf-8'
+      );
+
+      permissions.savePresetConfig({ role: 'readonly' });
+
+      const config = JSON.parse(fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8'));
+      expect(config.existing).toBe(true);
+      expect(config.teamPermissions.role).toBe('readonly');
+    });
+  });
+
+  // ─── listPresets additional ────────────────────────────────
+  describe('listPresets() - additional', () => {
+    it('readonly preset shows allowed tool count', () => {
+      const presets = permissions.listPresets();
+      const readonly = presets.find(p => p.name === 'readonly');
+      expect(readonly.toolCount).toContain('allowed');
+      expect(readonly.blockedCount).toBeGreaterThan(0);
+    });
+
+    it('admin preset shows all allowed', () => {
+      const presets = permissions.listPresets();
+      const admin = presets.find(p => p.name === 'admin');
+      expect(admin.toolCount).toBe('all allowed');
+      expect(admin.blockedCount).toBe(0);
+    });
   });
 });
