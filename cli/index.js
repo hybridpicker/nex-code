@@ -2487,6 +2487,24 @@ async function startREPL() {
       });
     }
 
+    // Auto-activate plan mode for implementation tasks (interactive only, opt-out: NEX_AUTO_PLAN=0)
+    if (process.env.NEX_AUTO_PLAN !== '0') {
+      const { isPlanMode: _isPM, setPlanMode: _setPM } = require('./planner');
+      const { invalidateSystemPromptCache: _inv } = require('./agent');
+      const STRONG_IMPL = /\b(implement|refactor|migrate|redesign)\b/i;
+      const WEAK_IMPL = /\b(create|build|add|write|introduce|develop|set\s+up)\b/i;
+      const IS_QUESTION = /^(how|what|why|when|where|which|explain|show|list|tell|describe|can\s+you|could\s+you|do\s+you)\b/i;
+      const isImplTask = !IS_QUESTION.test(input) && (
+        STRONG_IMPL.test(input) ||
+        (WEAK_IMPL.test(input) && input.split(/\s+/).length >= 5)
+      );
+      if (isImplTask && !_isPM()) {
+        _setPM(true);
+        _inv();
+        console.log(`${C.cyan}${C.bold}⎇  Auto Plan Mode${C.reset}${C.dim} — implementation task detected · read-only until /plan approve${C.reset}`);
+      }
+    }
+
     // Process through agent
     _processing = true;
     rl.prompt(); // keep input row visible and focusable while agent runs
