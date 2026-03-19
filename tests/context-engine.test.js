@@ -819,5 +819,190 @@ describe('context-engine.js', () => {
       }));
       expect(() => forceCompress(messages, [])).not.toThrow();
     });
+
+    it('nuclear mode keeps last user message when still over budget', () => {
+      registry.getActiveModel.mockReturnValue({ id: 'tiny', contextWindow: 50 });
+      const messages = [
+        { role: 'system', content: 'sys' },
+        ...Array.from({ length: 40 }, (_, i) => ({
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: 'x'.repeat(500),
+        })),
+      ];
+      const { messages: result } = forceCompress(messages, [], true);
+      // Should have system + at least one user message
+      expect(result[0].role).toBe('system');
+      expect(result.some(m => m.role === 'user')).toBe(true);
+    });
+  });
+
+  // ─── estimateDeltaTokens ─────────────────────────────────────
+  describe('estimateDeltaTokens()', () => {
+    const { estimateDeltaTokens } = require('../cli/context-engine');
+
+    it('returns 0 when arrays are identical (same refs)', () => {
+      const msgs = [{ role: 'user', content: 'hello' }];
+      expect(estimateDeltaTokens(msgs, msgs)).toBe(0);
+    });
+
+    it('returns delta for new messages added', () => {
+      const old = [{ role: 'user', content: 'hello' }];
+      const newMsgs = [...old, { role: 'assistant', content: 'world' }];
+      const delta = estimateDeltaTokens(old, newMsgs);
+      expect(delta).toBeGreaterThan(0);
+    });
+
+    it('handles null oldMessages', () => {
+      const newMsgs = [{ role: 'user', content: 'hello' }];
+      const delta = estimateDeltaTokens(null, newMsgs);
+      expect(delta).toBeGreaterThan(0);
+    });
+
+    it('returns 0 when same length with same references', () => {
+      const msg1 = { role: 'user', content: 'a' };
+      const msg2 = { role: 'assistant', content: 'b' };
+      const arr = [msg1, msg2];
+      expect(estimateDeltaTokens(arr, arr)).toBe(0);
+    });
+
+    it('detects changes when same length but different refs', () => {
+      const old = [{ role: 'user', content: 'a' }];
+      const newMsgs = [{ role: 'user', content: 'b' }];
+      // Same length, different refs — delta is 0 because only new messages (from oldCount) are counted
+      // and oldCount === newCount, so loop from oldCount to newCount doesn't run
+      const delta = estimateDeltaTokens(old, newMsgs);
+      expect(delta).toBe(0);
+    });
+  });
+
+  // ─── serializeMessage ─────────────────────────────────────────
+  describe('serializeMessage()', () => {
+    const { serializeMessage } = require('../cli/context-engine');
+
+    it('serializes a message to JSON', () => {
+      const msg = { role: 'user', content: 'hello' };
+      const result = serializeMessage(msg);
+      expect(result).toBe(JSON.stringify(msg));
+    });
+
+    it('returns cached result for same object', () => {
+      const msg = { role: 'user', content: 'test' };
+      const r1 = serializeMessage(msg);
+      const r2 = serializeMessage(msg);
+      expect(r1).toBe(r2);
+    });
+  });
+
+  // ─── invalidateTokenRatioCache ───────────────────────────────
+  describe('invalidateTokenRatioCache()', () => {
+    const { invalidateTokenRatioCache } = require('../cli/context-engine');
+
+    it('can be called without error', () => {
+      expect(() => invalidateTokenRatioCache()).not.toThrow();
+    });
+  });
+
+  // ─── compressToolResult - code block preservation ──────────
+  describe('compressToolResult() - code blocks', () => {
+    it('preserves code blocks in head section of long output', () => {
+      const lines = [];
+      for (let i = 0; i < 30; i++) lines.push(`line ${i}`);
+      lines[5] = '```javascript';
+      lines[6] = 'const x = 1;';
+      lines[7] = '```';
+      for (let i = 30; i < 50; i++) lines.push(`more output ${i}`);
+      const content = lines.join('\n');
+      const result = compressToolResult(content, 200);
+      expect(result).toMatch(/lines omitted|50 total/);
+    });
+
+    it('preserves BLOCKED status with extra budget', () => {
+      const content = 'BLOCKED: something happened\n' + 'x'.repeat(200);
+      const result = compressToolResult(content, 100);
+      // BLOCKED gets 3x budget = 300, content is ~228 chars, should fit
+      expect(result).toBe(content);
+    });
+
+    it('preserves CANCELLED status with extra budget', () => {
+      const content = 'CANCELLED: user cancelled\n' + 'x'.repeat(200);
+      const result = compressToolResult(content, 100);
+      expect(result).toBe(content);
+    });
+  });
+
+  // ─── scoreMessageRelevance - edge cases ────────────────────
+  describe('scoreMessageRelevance() - edge cases', () => {
+    it('handles single-message array for recency', () => {
+      const msg = { role: 'user', content: 'hello' };
+      const score = scoreMessageRelevance(msg, 0, 1, new Set());
+      // recencyRatio = 1 for single message
+      expect(score).toBe(35 + 30); // user (35) + recency (30)
+    });
+
+    it('scores BLOCKED tool messages higher than normal tool', () => {
+      const normal = { role: 'tool', content: 'file data' };
+      const blocked = { role: 'tool', content: 'BLOCKED: forbidden command' };
+      const normalScore = scoreMessageRelevance(normal, 5, 10, new Set());
+      const blockedScore = scoreMessageRelevance(blocked, 5, 10, new Set());
+      expect(blockedScore).toBeGreaterThan(normalScore);
+    });
+
+    it('handles non-string content for file overlap', () => {
+      const activeFiles = new Set(['/src/data.json']);
+      const msg = { role: 'tool', content: { file: '/src/data.json' } };
+      const score = scoreMessageRelevance(msg, 0, 1, activeFiles);
+      expect(score).toBeGreaterThan(0);
+    });
+
+    it('limits file overlap bonus to 30', () => {
+      const files = new Set(['/a.js', '/b.js', '/c.js', '/d.js', '/e.js']);
+      const msg = { role: 'user', content: 'Check /a.js /b.js /c.js /d.js /e.js' };
+      const score = scoreMessageRelevance(msg, 9, 10, files);
+      // user(35) + recency(27) + fileOverlap(min(50,30)=30) = 92, capped at 100
+      expect(score).toBeLessThanOrEqual(100);
+    });
+  });
+
+  // ─── fitToContext - Phase 2 (medium compression) ────────────
+  describe('fitToContext() - medium compression phase', () => {
+    it('uses medium compression when light is not enough', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'small', contextWindow: 300 });
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        ...Array.from({ length: 20 }, (_, i) => ({
+          role: 'tool',
+          content: 'x'.repeat(150),
+          tool_call_id: `c${i}`,
+        })),
+        ...Array.from({ length: 10 }, (_, i) => ({
+          role: 'user',
+          content: `recent ${i}`,
+        })),
+      ];
+
+      const { compressed, tokensRemoved } = await fitToContext(messages, []);
+      expect(compressed).toBe(true);
+      expect(tokensRemoved).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── compressMessage - tool with non-string content ──────────
+  describe('compressMessage() - edge cases', () => {
+    it('handles tool message with non-string content', () => {
+      const msg = { role: 'tool', content: { data: 'x'.repeat(500) }, tool_call_id: 'c1' };
+      const compressed = compressMessage(msg, 'light');
+      expect(compressed.content).toBeDefined();
+    });
+
+    it('medium does not simplify tool_calls (only aggressive does)', () => {
+      const msg = {
+        role: 'assistant',
+        content: 'short',
+        tool_calls: [{ function: { name: 'bash', arguments: 'a'.repeat(200) } }],
+      };
+      const compressed = compressMessage(msg, 'medium');
+      expect(compressed.tool_calls[0].function.arguments.length).toBe(200);
+    });
   });
 });

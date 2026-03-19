@@ -219,4 +219,149 @@ describe('formatProfile', () => {
     const str = formatProfile('prod', { host: '1.2.3.4', port: 22 });
     expect(str).not.toContain(':22');
   });
+
+  it('includes key when set', () => {
+    const { formatProfile } = require('../cli/ssh');
+    const str = formatProfile('prod', { host: '1.2.3.4', user: 'jarvis', key: '~/.ssh/id_ed25519' });
+    expect(str).toContain('key:~/.ssh/id_ed25519');
+  });
+
+  it('includes sudo flag when set', () => {
+    const { formatProfile } = require('../cli/ssh');
+    const str = formatProfile('prod', { host: '1.2.3.4', user: 'jarvis', sudo: true });
+    expect(str).toContain('sudo:yes');
+  });
+
+  it('omits sudo when false', () => {
+    const { formatProfile } = require('../cli/ssh');
+    const str = formatProfile('prod', { host: '1.2.3.4', user: 'jarvis', sudo: false });
+    expect(str).not.toContain('sudo');
+  });
+
+  it('handles host-only (no user)', () => {
+    const { formatProfile } = require('../cli/ssh');
+    const str = formatProfile('dev', { host: '10.0.0.1' });
+    expect(str).toContain('10.0.0.1');
+    expect(str).not.toContain('@');
+  });
+});
+
+// ─── enrichSSHError - additional patterns ─────────────────────
+describe('enrichSSHError - additional', () => {
+  it('enriches timed out error', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Connection timed out', { host: '1.2.3.4' });
+    expect(msg).toContain('HINT');
+    expect(msg).toContain('timed out');
+  });
+
+  it('enriches too many auth failures', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Too many authentication failures', { host: '1.2.3.4', key: '~/.ssh/id_rsa' });
+    expect(msg).toContain('HINT');
+    expect(msg).toContain('IdentitiesOnly');
+  });
+
+  it('enriches network unreachable', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Network unreachable', { host: '1.2.3.4' });
+    expect(msg).toContain('HINT');
+    expect(msg).toContain('network');
+  });
+
+  it('enriches name or service not known', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Name or service not known', { host: 'bad.host' });
+    expect(msg).toContain('HINT');
+    expect(msg).toContain('DNS');
+  });
+
+  it('enriches permission denied without key (SSH agent)', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Permission denied', { host: '1.2.3.4', user: 'admin' });
+    expect(msg).toContain('SSH agent');
+  });
+});
+
+// ─── resolveProfile - localhost ───────────────────────────────
+describe('resolveProfile - localhost', () => {
+  it('resolves localhost directly', () => {
+    const { resolveProfile } = require('../cli/ssh');
+    const p = resolveProfile('localhost');
+    expect(p.host).toBe('localhost');
+  });
+});
+
+// ─── buildSSHArgs - additional ─────────────────────────────────
+describe('buildSSHArgs - additional', () => {
+  it('does not include -i when no key set', () => {
+    const { buildSSHArgs } = require('../cli/ssh');
+    const { args } = buildSSHArgs({ host: '1.2.3.4' });
+    expect(args).not.toContain('-i');
+  });
+
+  it('handles absolute key path without tilde expansion', () => {
+    const { buildSSHArgs } = require('../cli/ssh');
+    const { args } = buildSSHArgs({ host: '1.2.3.4', key: '/root/.ssh/id_rsa' });
+    const iIdx = args.indexOf('-i');
+    expect(args[iIdx + 1]).toBe('/root/.ssh/id_rsa');
+  });
+
+  it('includes ServerAliveInterval', () => {
+    const { buildSSHArgs } = require('../cli/ssh');
+    const { args } = buildSSHArgs({ host: '1.2.3.4' });
+    expect(args.some(a => a.includes('ServerAliveInterval'))).toBe(true);
+  });
+});
+
+// ─── enrichSSHError - additional ───────────────────────────────
+describe('enrichSSHError - additional patterns', () => {
+  it('suggests default key in too-many-auth hint when no key configured', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Too many authentication failures', { host: '1.2.3.4' });
+    expect(msg).toContain('~/.ssh/id_rsa');
+  });
+
+  it('enriches connection refused with custom port', () => {
+    const { enrichSSHError } = require('../cli/ssh');
+    const msg = enrichSSHError('Connection refused', { host: '1.2.3.4', port: 2222 });
+    expect(msg).toContain('2222');
+  });
+});
+
+// ─── formatProfile - combined ──────────────────────────────────
+describe('formatProfile - combined', () => {
+  it('shows all fields when all set', () => {
+    const { formatProfile } = require('../cli/ssh');
+    const str = formatProfile('full', {
+      host: '10.0.0.1', user: 'admin', port: 2222,
+      os: 'ubuntu', key: '~/.ssh/id_ed25519', sudo: true,
+    });
+    expect(str).toContain('admin@10.0.0.1');
+    expect(str).toContain(':2222');
+    expect(str).toContain('[ubuntu]');
+    expect(str).toContain('key:');
+    expect(str).toContain('sudo:yes');
+  });
+});
+
+// ─── resolveProfile - additional ───────────────────────────────
+describe('resolveProfile - additional', () => {
+  it('resolves IP with user', () => {
+    const { resolveProfile } = require('../cli/ssh');
+    const p = resolveProfile('deploy@192.168.1.100');
+    expect(p.host).toBe('192.168.1.100');
+    expect(p.user).toBe('deploy');
+  });
+
+  it('resolves subdomain hostname', () => {
+    const { resolveProfile } = require('../cli/ssh');
+    const p = resolveProfile('staging.example.com');
+    expect(p.host).toBe('staging.example.com');
+  });
+
+  it('throws with no-profiles hint when none configured', () => {
+    const { resolveProfile } = require('../cli/ssh');
+    expect(() => resolveProfile('myserver')).toThrow(/No profiles configured/);
+  });
 });
