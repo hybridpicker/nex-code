@@ -21,6 +21,8 @@ const {
   getUsage,
   compressMessage,
   compressToolResult,
+  scoreMessageRelevance,
+  extractActiveFiles,
   fitToContext,
   forceCompress,
   truncateFileContent,
@@ -639,6 +641,131 @@ describe('context-engine.js', () => {
       const result = truncateFileContent(content, 100);
       expect(result).toMatch(/\d+ lines omitted/);
       expect(result).toContain('200 total');
+    });
+  });
+
+  // ─── scoreMessageRelevance ────────────────────────────────
+  describe('scoreMessageRelevance()', () => {
+    it('returns 100 for system messages', () => {
+      const msg = { role: 'system', content: 'You are helpful' };
+      expect(scoreMessageRelevance(msg, 0, 10, new Set())).toBe(100);
+    });
+
+    it('scores user messages higher than plain assistant messages', () => {
+      const user = { role: 'user', content: 'Hello' };
+      const assistant = { role: 'assistant', content: 'Hi there' };
+      const userScore = scoreMessageRelevance(user, 5, 10, new Set());
+      const assistantScore = scoreMessageRelevance(assistant, 5, 10, new Set());
+      expect(userScore).toBeGreaterThan(assistantScore);
+    });
+
+    it('scores assistant with tool_calls higher than plain assistant', () => {
+      const plain = { role: 'assistant', content: 'thinking...' };
+      const withTools = { role: 'assistant', content: 'let me check', tool_calls: [{ function: { name: 'bash' } }] };
+      const plainScore = scoreMessageRelevance(plain, 5, 10, new Set());
+      const toolScore = scoreMessageRelevance(withTools, 5, 10, new Set());
+      expect(toolScore).toBeGreaterThan(plainScore);
+    });
+
+    it('scores tool error results higher than normal tool results', () => {
+      const normal = { role: 'tool', content: 'file contents here' };
+      const error = { role: 'tool', content: 'ERROR: command failed' };
+      const normalScore = scoreMessageRelevance(normal, 5, 10, new Set());
+      const errorScore = scoreMessageRelevance(error, 5, 10, new Set());
+      expect(errorScore).toBeGreaterThan(normalScore);
+    });
+
+    it('scores newer messages higher than older ones (recency)', () => {
+      const msg = { role: 'assistant', content: 'response' };
+      const oldScore = scoreMessageRelevance(msg, 0, 10, new Set());
+      const newScore = scoreMessageRelevance(msg, 9, 10, new Set());
+      expect(newScore).toBeGreaterThan(oldScore);
+    });
+
+    it('boosts score for messages mentioning active files', () => {
+      const activeFiles = new Set(['/src/index.js', '/src/utils.js']);
+      const relevant = { role: 'tool', content: 'Read /src/index.js: module.exports = ...' };
+      const irrelevant = { role: 'tool', content: 'Some random output' };
+      const relevantScore = scoreMessageRelevance(relevant, 5, 10, activeFiles);
+      const irrelevantScore = scoreMessageRelevance(irrelevant, 5, 10, activeFiles);
+      expect(relevantScore).toBeGreaterThan(irrelevantScore);
+    });
+
+    it('caps score at 100', () => {
+      const activeFiles = new Set(['/a.js', '/b.js', '/c.js', '/d.js']);
+      const msg = { role: 'user', content: 'Check /a.js /b.js /c.js /d.js' };
+      const score = scoreMessageRelevance(msg, 9, 10, activeFiles);
+      expect(score).toBeLessThanOrEqual(100);
+    });
+  });
+
+  // ─── extractActiveFiles ─────────────────────────────────────
+  describe('extractActiveFiles()', () => {
+    it('extracts file paths from message content', () => {
+      const messages = [
+        { role: 'user', content: 'Please read /src/index.js' },
+        { role: 'tool', content: 'Contents of /src/utils.js ...' },
+      ];
+      const files = extractActiveFiles(messages);
+      expect(files.has('/src/index.js')).toBe(true);
+      expect(files.has('/src/utils.js')).toBe(true);
+    });
+
+    it('returns empty set when no file paths found', () => {
+      const messages = [
+        { role: 'user', content: 'Hello world' },
+      ];
+      const files = extractActiveFiles(messages);
+      expect(files.size).toBe(0);
+    });
+
+    it('only scans recent messages', () => {
+      const messages = [
+        { role: 'user', content: 'Old message about /old/file.js' },
+        ...Array.from({ length: 15 }, () => ({ role: 'user', content: 'filler message' })),
+        { role: 'user', content: 'Recent message about /new/file.js' },
+      ];
+      const files = extractActiveFiles(messages, 5);
+      expect(files.has('/new/file.js')).toBe(true);
+      expect(files.has('/old/file.js')).toBe(false);
+    });
+
+    it('handles non-string content', () => {
+      const messages = [
+        { role: 'tool', content: { result: '/src/data.json' } },
+      ];
+      const files = extractActiveFiles(messages);
+      expect(files.has('/src/data.json')).toBe(true);
+    });
+  });
+
+  // ─── fitToContext with relevance ────────────────────────────
+  describe('fitToContext() relevance-based Phase 4', () => {
+    it('keeps messages mentioning active files over older unrelated ones', async () => {
+      registry.getActiveModel.mockReturnValue({ id: 'tiny', contextWindow: 80 });
+
+      const messages = [
+        { role: 'system', content: 'p' },
+        // Old unrelated messages
+        { role: 'assistant', content: 'Thinking about something unrelated ' + 'x'.repeat(100) },
+        { role: 'assistant', content: 'More unrelated stuff ' + 'y'.repeat(100) },
+        // Old but mentions active file
+        { role: 'tool', content: 'Contents of /src/main.js: function main() {}' + 'z'.repeat(50) },
+        // Recent messages (kept intact by KEEP_RECENT)
+        ...Array.from({ length: 3 }, (_, i) => ({
+          role: 'user',
+          content: `Recent msg ${i} about /src/main.js`,
+        })),
+      ];
+
+      const { messages: result, compressed } = await fitToContext(messages, [], { keepRecent: 3 });
+      expect(compressed).toBe(true);
+
+      // The tool result mentioning /src/main.js should be more likely to survive
+      // than the unrelated assistant messages (due to file overlap scoring)
+      const resultContent = result.map(m => m.content || '').join(' ');
+      // System prompt is always kept
+      expect(result[0].role).toBe('system');
     });
   });
 

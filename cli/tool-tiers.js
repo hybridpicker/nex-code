@@ -133,6 +133,55 @@ function getActiveTier() {
   return 'full';
 }
 
+// ─── Edit Mode (strict vs fuzzy) ──────────────────────────────
+
+/**
+ * Strong models that use strict (exact-match only) edit mode.
+ * Weak/unknown models fall back to fuzzy matching.
+ */
+const STRICT_EDIT_MODELS = new Set([
+  // Anthropic
+  'claude-sonnet', 'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-opus', 'claude-haiku',
+  // OpenAI
+  'gpt-4o', 'gpt-4.1', 'o1', 'o3', 'o4-mini',
+  // Ollama (strong models)
+  'kimi-k2:1t', 'kimi-k2.5', 'kimi-k2-thinking',
+  'qwen3-coder:480b', 'qwen3-coder-next',
+  'deepseek-v3.2', 'deepseek-v3.1:671b',
+]);
+
+/**
+ * Default edit mode per provider (for models not in STRICT_EDIT_MODELS).
+ */
+const PROVIDER_DEFAULT_EDIT_MODE = {
+  anthropic: 'strict',
+  openai: 'strict',
+  gemini: 'strict',
+  ollama: 'fuzzy',
+  local: 'fuzzy',
+};
+
+/**
+ * Determine the edit mode for a model.
+ * Strong models get 'strict' (exact match only), weak models get 'fuzzy' (whitespace + auto-fix fallback).
+ * @param {string} modelId
+ * @param {string} providerName
+ * @returns {'strict'|'fuzzy'}
+ */
+function getEditMode(modelId, providerName) {
+  // Check explicit model list first (prefix match for claude-* variants)
+  if (modelId) {
+    if (STRICT_EDIT_MODELS.has(modelId)) return 'strict';
+    // Match claude-* prefix for any Anthropic model variant
+    if (modelId.startsWith('claude-')) return 'strict';
+  }
+  // Provider default
+  if (providerName && PROVIDER_DEFAULT_EDIT_MODE[providerName]) {
+    return PROVIDER_DEFAULT_EDIT_MODE[providerName];
+  }
+  return 'fuzzy';
+}
+
 /**
  * Get the tool tier for a specific model.
  * Priority: config override > MODEL_TIERS > PROVIDER_DEFAULT_TIER > 'full'
@@ -171,4 +220,4 @@ function getTierInfo() {
   return { tier, toolCount };
 }
 
-module.exports = { filterToolsForModel, getActiveTier, getModelTier, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides };
+module.exports = { filterToolsForModel, getActiveTier, getModelTier, getEditMode, getTierInfo, TIERS, MODEL_TIERS, PROVIDER_DEFAULT_TIER, loadConfigOverrides };

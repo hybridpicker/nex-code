@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { recordChange, undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory } = require('../cli/file-history');
+const { recordChange, undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory, persistEntry, loadPersistedHistory, pruneHistory } = require('../cli/file-history');
 
 describe('file-history.js', () => {
   let tmpDir;
@@ -193,6 +193,202 @@ describe('file-history.js', () => {
       expect(getRedoCount()).toBe(0);
       await undo();
       expect(getRedoCount()).toBe(1);
+    });
+  });
+
+  // ─── Persistent History ──────────────────────────────────
+  describe('persistEntry()', () => {
+    let cwdSpy;
+
+    beforeEach(() => {
+      cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    });
+
+    afterEach(() => {
+      cwdSpy.mockRestore();
+    });
+
+    it('writes JSON to .nex/history/', async () => {
+      const entry = {
+        tool: 'write_file',
+        filePath: '/tmp/test.js',
+        oldContent: null,
+        newContent: 'console.log("hi")',
+        timestamp: 1700000000000,
+      };
+      await persistEntry(entry);
+
+      const histDir = path.join(tmpDir, '.nex', 'history');
+      const files = fs.readdirSync(histDir).filter(f => f.endsWith('.json'));
+      expect(files.length).toBe(1);
+      expect(files[0]).toBe('1700000000000-test-js.json');
+
+      const record = JSON.parse(fs.readFileSync(path.join(histDir, files[0]), 'utf-8'));
+      expect(record.tool).toBe('write_file');
+      expect(record.filePath).toBe('/tmp/test.js');
+      expect(record.newContent.inline).toBe(true);
+      expect(record.newContent.content).toBe('console.log("hi")');
+    });
+
+    it('stores large content as blob reference', async () => {
+      const largeContent = 'x'.repeat(200 * 1024); // 200 KB
+      const entry = {
+        tool: 'edit_file',
+        filePath: '/tmp/big.txt',
+        oldContent: 'small',
+        newContent: largeContent,
+        timestamp: 1700000000001,
+      };
+      await persistEntry(entry);
+
+      const histDir = path.join(tmpDir, '.nex', 'history');
+      const files = fs.readdirSync(histDir).filter(f => f.endsWith('.json'));
+      const record = JSON.parse(fs.readFileSync(path.join(histDir, files[0]), 'utf-8'));
+
+      // oldContent is small, should be inline
+      expect(record.oldContent.inline).toBe(true);
+      expect(record.oldContent.content).toBe('small');
+
+      // newContent is large, should be a blob reference
+      expect(record.newContent.inline).toBe(false);
+      expect(record.newContent.hash).toBeDefined();
+      expect(record.newContent.hash.length).toBe(64); // sha256 hex
+
+      // Blob file should exist
+      const blobPath = path.join(histDir, 'blobs', record.newContent.hash);
+      expect(fs.existsSync(blobPath)).toBe(true);
+      expect(fs.readFileSync(blobPath, 'utf-8')).toBe(largeContent);
+    });
+  });
+
+  describe('loadPersistedHistory()', () => {
+    let cwdSpy;
+
+    beforeEach(() => {
+      cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    });
+
+    afterEach(() => {
+      cwdSpy.mockRestore();
+    });
+
+    it('restores entries from disk', async () => {
+      // Persist two entries
+      const entry1 = { tool: 'write_file', filePath: '/tmp/a.js', oldContent: null, newContent: 'aaa', timestamp: 1700000000010 };
+      const entry2 = { tool: 'edit_file', filePath: '/tmp/b.js', oldContent: 'old', newContent: 'new', timestamp: 1700000000020 };
+      await persistEntry(entry1);
+      await persistEntry(entry2);
+
+      // Clear in-memory stack
+      clearHistory();
+      expect(getUndoCount()).toBe(0);
+
+      // Load from disk
+      const count = await loadPersistedHistory();
+      expect(count).toBe(2);
+      expect(getUndoCount()).toBe(2);
+
+      // Verify order (ascending by timestamp)
+      const history = getHistory(10);
+      expect(history[0].filePath).toBe('/tmp/b.js'); // most recent first in getHistory
+      expect(history[1].filePath).toBe('/tmp/a.js');
+    });
+
+    it('returns 0 when no history directory exists', async () => {
+      const count = await loadPersistedHistory();
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('pruneHistory()', () => {
+    let cwdSpy;
+
+    beforeEach(() => {
+      cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    });
+
+    afterEach(() => {
+      cwdSpy.mockRestore();
+    });
+
+    it('removes old entries and orphaned blobs', async () => {
+      const now = Date.now();
+      const oldTimestamp = now - 10 * 24 * 60 * 60 * 1000; // 10 days ago
+      const recentTimestamp = now - 1 * 24 * 60 * 60 * 1000; // 1 day ago
+
+      // Create an old entry with a blob
+      const largeOld = 'y'.repeat(200 * 1024);
+      const oldEntry = { tool: 'write_file', filePath: '/tmp/old.js', oldContent: null, newContent: largeOld, timestamp: oldTimestamp };
+      await persistEntry(oldEntry);
+
+      // Create a recent entry
+      const recentEntry = { tool: 'write_file', filePath: '/tmp/recent.js', oldContent: null, newContent: 'recent', timestamp: recentTimestamp };
+      await persistEntry(recentEntry);
+
+      const histDir = path.join(tmpDir, '.nex', 'history');
+      expect(fs.readdirSync(histDir).filter(f => f.endsWith('.json')).length).toBe(2);
+
+      const pruned = await pruneHistory(7);
+      expect(pruned).toBe(1);
+
+      // Only recent entry should remain
+      const remaining = fs.readdirSync(histDir).filter(f => f.endsWith('.json'));
+      expect(remaining.length).toBe(1);
+      expect(remaining[0]).toContain(String(recentTimestamp));
+
+      // Orphaned blob from old entry should be deleted
+      const blobsDir = path.join(histDir, 'blobs');
+      if (fs.existsSync(blobsDir)) {
+        expect(fs.readdirSync(blobsDir).length).toBe(0);
+      }
+    });
+
+    it('returns 0 when no history exists', async () => {
+      const pruned = await pruneHistory();
+      expect(pruned).toBe(0);
+    });
+  });
+
+  describe('round-trip: record → persist → clear → load → undo', () => {
+    let cwdSpy;
+
+    beforeEach(() => {
+      cwdSpy = jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
+    });
+
+    afterEach(() => {
+      cwdSpy.mockRestore();
+    });
+
+    it('works end-to-end', async () => {
+      const fp = path.join(tmpDir, 'roundtrip.txt');
+      fs.writeFileSync(fp, 'edited');
+
+      // Record a change (this also persists via fire-and-forget)
+      recordChange('edit_file', fp, 'original', 'edited');
+
+      // Wait for fire-and-forget persist to complete
+      await new Promise(r => setTimeout(r, 100));
+
+      // Verify persisted file exists
+      const histDir = path.join(tmpDir, '.nex', 'history');
+      const files = fs.readdirSync(histDir).filter(f => f.endsWith('.json'));
+      expect(files.length).toBe(1);
+
+      // Clear in-memory history
+      clearHistory();
+      expect(getUndoCount()).toBe(0);
+
+      // Load from disk
+      const count = await loadPersistedHistory();
+      expect(count).toBe(1);
+      expect(getUndoCount()).toBe(1);
+
+      // Undo should restore original content
+      const result = await undo();
+      expect(result).not.toBeNull();
+      expect(result.tool).toBe('edit_file');
+      expect(fs.readFileSync(fp, 'utf-8')).toBe('original');
     });
   });
 });

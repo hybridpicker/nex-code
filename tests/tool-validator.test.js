@@ -77,7 +77,7 @@ jest.mock('../cli/mcp', () => ({
   getMCPToolDefinitions: jest.fn().mockReturnValue([]),
 }));
 
-const { validateToolArgs, closestMatch, levenshtein } = require('../cli/tool-validator');
+const { validateToolArgs, validateToolCallFormat, closestMatch, levenshtein } = require('../cli/tool-validator');
 
 describe('levenshtein()', () => {
   it('returns 0 for identical strings', () => {
@@ -256,6 +256,110 @@ describe('validateToolArgs()', () => {
       // Should auto-correct since it's close enough
       expect(result.valid).toBe(true);
       expect(result.corrected.command).toBe('ls');
+    });
+  });
+});
+
+describe('validateToolCallFormat()', () => {
+  describe('OpenAI/Ollama string arguments', () => {
+    it('parses valid JSON string arguments', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'read_file', arguments: '{"path":"test.js"}' },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.arguments).toEqual({ path: 'test.js' });
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('returns error for malformed JSON string', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'read_file', arguments: '{bad json}' },
+      }, 'ollama');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('Invalid JSON');
+      expect(result.errors[0]).toContain('ollama');
+    });
+
+    it('treats empty string arguments as empty object', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash', arguments: '' },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.arguments).toEqual({});
+    });
+  });
+
+  describe('Gemini args normalization', () => {
+    it('normalizes function.args to function.arguments', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash', args: { command: 'ls' } },
+      }, 'gemini');
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.arguments).toEqual({ command: 'ls' });
+      expect(result.normalized.function.args).toBeUndefined();
+    });
+
+    it('normalizes flat name + args format', () => {
+      const result = validateToolCallFormat({
+        name: 'read_file',
+        args: { path: 'test.js' },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.name).toBe('read_file');
+      expect(result.normalized.function.arguments).toEqual({ path: 'test.js' });
+    });
+  });
+
+  describe('missing or null arguments', () => {
+    it('defaults undefined arguments to empty object', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash' },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.arguments).toEqual({});
+    });
+
+    it('defaults null arguments to empty object', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash', arguments: null },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.normalized.function.arguments).toEqual({});
+    });
+  });
+
+  describe('invalid tool calls', () => {
+    it('fails when both function and name are missing', () => {
+      const result = validateToolCallFormat({ id: 'call_1' });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('missing both');
+    });
+
+    it('fails when function name is empty', () => {
+      const result = validateToolCallFormat({
+        function: { name: '', arguments: {} },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('non-empty string');
+    });
+  });
+
+  describe('provider name in errors', () => {
+    it('includes provider name when given', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash', arguments: 'not-json' },
+      }, 'openai');
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('openai');
+    });
+
+    it('omits provider context when not given', () => {
+      const result = validateToolCallFormat({
+        function: { name: 'bash', arguments: 'not-json' },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('Invalid JSON');
+      expect(result.errors[0]).not.toContain('undefined');
     });
   });
 });

@@ -19,6 +19,7 @@ const { runDiagnostics } = require('./diagnostics');
 const { findFileInIndex, getFileIndex } = require('./index-engine');
 const { resolveProfile, sshExec, scpUpload, scpDownload } = require('./ssh');
 const { resolveDeployConfig, loadDeployConfigs } = require('./deploy-config');
+const { getEditMode } = require('./tool-tiers');
 
 // Use process.cwd() dynamically to support tests mocking it
 
@@ -422,14 +423,22 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'grep',
-      description: 'Search file contents with regex. Returns matching lines with file paths and line numbers. Use this to find where functions/variables/classes are defined or used. Prefer this over bash grep/rg.',
+      description: 'Search file contents with regex. Returns matching lines with file paths and line numbers. Supports output modes (content/files_with_matches/count), context lines, head_limit, offset, type filter, and multiline. Prefer this over bash grep/rg.',
       parameters: {
         type: 'object',
         properties: {
           pattern: { type: 'string', description: 'Regex pattern to search for' },
           path: { type: 'string', description: 'Directory or file to search (default: project root)' },
-          include: { type: 'string', description: "File filter (e.g. '*.js', '*.ts')" },
+          include: { type: 'string', description: "File filter glob (e.g. '*.js', '*.ts')" },
           ignore_case: { type: 'boolean', description: 'Case-insensitive search' },
+          output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode: content (matching lines), files_with_matches (file paths only), count (match counts). Default: content' },
+          context: { type: 'number', description: 'Lines of context around each match (like grep -C)' },
+          before_context: { type: 'number', description: 'Lines before each match (like grep -B)' },
+          after_context: { type: 'number', description: 'Lines after each match (like grep -A)' },
+          head_limit: { type: 'number', description: 'Limit output to first N results' },
+          offset: { type: 'number', description: 'Skip first N results' },
+          type: { type: 'string', description: "File type filter (e.g. 'js', 'py', 'ts') — maps to --include='*.ext'" },
+          multiline: { type: 'boolean', description: 'Enable multiline matching (grep -Pz)' },
         },
         required: ['pattern'],
       },
@@ -1070,6 +1079,21 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  // ─── Deployment Status Tool ──────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'deployment_status',
+      description: 'Check deployment status across all configured servers. Reads .nex/deploy.json configs and checks service health on each server. Returns a status summary table.',
+      parameters: {
+        type: 'object',
+        properties: {
+          config: { type: 'string', description: 'Specific deploy config name to check (optional — checks all if omitted)' },
+        },
+        required: [],
+      },
+    },
+  },
   // ─── Sysadmin Tool ────────────────────────────────────────────
   {
     type: 'function',
@@ -1181,18 +1205,19 @@ async function _executeToolInner(name, args, options = {}) {
           : `(interactive command exited with code ${result.status})`;
       }
 
-      const bashSpinner = options.silent ? null : new Spinner(`Running: ${cmd.substring(0, 60)}${cmd.length > 60 ? '...' : ''}`);
-      if (bashSpinner) bashSpinner.start();
+      const { ToolProgress: BashProgress } = require('./spinner');
+      const bProgress = options.silent ? null : new BashProgress('bash', cmd.substring(0, 40));
+      if (bProgress) bProgress.start();
       try {
         const { stdout, stderr } = await exec(cmd, {
           cwd: safeCwd,
           timeout: 90000,
           maxBuffer: 5 * 1024 * 1024,
         });
-        if (bashSpinner) bashSpinner.stop();
+        if (bProgress) bProgress.stop();
         return stdout || stderr || '(no output)';
       } catch (e) {
-        if (bashSpinner) bashSpinner.stop();
+        if (bProgress) bProgress.stop();
         const rawError = (e.stderr || e.stdout || e.message || '').toString().substring(0, 5000);
         const enriched = enrichBashError(rawError, cmd);
         return `EXIT ${e.code || 1}\n${enriched}`;
@@ -1228,10 +1253,14 @@ async function _executeToolInner(name, args, options = {}) {
       const lines = content.split('\n');
       const start = (args.line_start || 1) - 1;
       const end = args.line_end || lines.length;
-      return lines
+      const stats = await fs.stat(fp);
+      const lineCount = lines.length;
+      const summary = `File: ${path.relative(process.cwd(), fp)} (${lineCount} lines, ${stats.size} bytes)`;
+      const numberedLines = lines
         .slice(start, end)
         .map((l, i) => `${start + i + 1}: ${l}`)
         .join('\n');
+      return `${summary}\n${numberedLines}`;
     }
 
     case 'write_file': {
@@ -1291,7 +1320,19 @@ async function _executeToolInner(name, args, options = {}) {
       let autoFixed = false;
 
       if (!content.includes(args.old_text)) {
-        // Try fuzzy whitespace-normalized match
+        const { getActiveModelId, getActiveProviderName } = require('./providers/registry');
+        const editMode = getEditMode(getActiveModelId(), getActiveProviderName());
+
+        if (editMode === 'strict') {
+          // Strict mode: exact match only, no fuzzy fallback
+          const similar = findMostSimilar(content, args.old_text);
+          if (similar) {
+            return `ERROR: old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+          }
+          return `ERROR: old_text not found in ${fp} (strict mode — exact match required)`;
+        }
+
+        // Fuzzy mode: try whitespace-normalized match → auto-fix → error
         const fuzzyResult = fuzzyFindText(content, args.old_text);
         if (fuzzyResult) {
           matchText = fuzzyResult;
@@ -1442,6 +1483,10 @@ async function _executeToolInner(name, args, options = {}) {
       const namePattern = pattern.split('/').pop();
       const nameRegex = globToRegex(namePattern);
 
+      const { ToolProgress: GlobProgress } = require('./spinner');
+      const gProgress = new GlobProgress('glob', 'Finding files...');
+      gProgress.start();
+
       let { getFileIndex: getIndex, getIndexedCwd, refreshIndex, isIndexValid } = require('./index-engine');
       let allFiles = getIndex();
       let indexedCwd = getIndexedCwd();
@@ -1456,11 +1501,30 @@ async function _executeToolInner(name, args, options = {}) {
         .filter(f => fullRegex.test(f) || nameRegex.test(path.basename(f)))
         .map(f => path.join(basePath, f));
 
-      if (matches.length === 0) return '(no matches)';
+      if (matches.length === 0) {
+        gProgress.stop();
+        return '(no matches)';
+      }
+
+      // Sort by modification time (most recent first)
+      const withStats = await Promise.all(
+        matches.slice(0, GLOB_LIMIT + 10).map(async (f) => {
+          try {
+            const stat = await fs.stat(f);
+            return { path: f, mtime: stat.mtimeMs };
+          } catch {
+            return { path: f, mtime: 0 };
+          }
+        })
+      );
+      withStats.sort((a, b) => b.mtime - a.mtime);
+      const sortedMatches = withStats.map(s => s.path);
 
       const truncated = matches.length > GLOB_LIMIT;
-      const result = matches.slice(0, GLOB_LIMIT).join('\n');
+      const result = sortedMatches.slice(0, GLOB_LIMIT).join('\n');
 
+      gProgress.update({ count: matches.length, detail: args.pattern });
+      gProgress.stop();
       return truncated
         ? `${result}\n\n⚠ Results truncated at ${GLOB_LIMIT}. Use a more specific pattern.`
         : result;
@@ -1468,33 +1532,60 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'grep': {
       const searchPath = args.path ? resolvePath(args.path) : process.cwd();
-      const grepArgs2 = ['-rn', '-E', '--null', '-H']; // Extended regex (supports |, +, etc.) + null-delimited for spaces
+      const grepArgs2 = ['-rn', '-E', '--null', '-H'];
       if (args.ignore_case) grepArgs2.push('-i');
       if (args.include) grepArgs2.push(`--include=${args.include}`);
+      // type filter maps to --include
+      if (args.type) grepArgs2.push(`--include=*.${args.type}`);
+      // Context lines
+      if (args.context) grepArgs2.push(`-C`, String(args.context));
+      else {
+        if (args.before_context) grepArgs2.push(`-B`, String(args.before_context));
+        if (args.after_context) grepArgs2.push(`-A`, String(args.after_context));
+      }
+      // Output mode
+      if (args.output_mode === 'files_with_matches') grepArgs2.push('-l');
+      else if (args.output_mode === 'count') grepArgs2.push('-c');
       grepArgs2.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=coverage');
       grepArgs2.push(args.pattern, searchPath);
+      const { ToolProgress } = require('./spinner');
+      const grepProgress = new ToolProgress('grep', 'Searching...');
+      grepProgress.start();
       try {
         const { stdout } = await execFile('grep', grepArgs2, {
           cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
         });
-        // Parse null-delimited output to handle filenames with spaces
-        const parts = stdout.split('\0');
-        const results = [];
-        for (let i = 0; i < parts.length; i += 2) {
-          const file = parts[i];
-          const content = parts[i + 1];
-          if (file && content) {
-            const lines = content.split('\n').filter(l => l.trim());
-            for (const line of lines) {
-              results.push(`${file}:${line}`);
-              if (results.length >= 100) break;
+
+        let results;
+        if (args.output_mode === 'files_with_matches' || args.output_mode === 'count') {
+          // These modes output one line per file, no null-delimited parsing needed
+          results = stdout.trim().split('\n').filter(l => l.trim());
+        } else {
+          // Parse null-delimited output for content mode
+          const parts = stdout.split('\0');
+          results = [];
+          for (let i = 0; i < parts.length; i += 2) {
+            const file = parts[i];
+            const content = parts[i + 1];
+            if (file && content) {
+              const lines = content.split('\n').filter(l => l.trim());
+              for (const line of lines) {
+                results.push(`${file}:${line}`);
+              }
             }
           }
-          if (results.length >= 100) break;
         }
+
+        // Apply offset and head_limit
+        const offset = args.offset || 0;
+        const limit = args.head_limit || (args.output_mode === 'files_with_matches' ? 200 : 100);
+        results = results.slice(offset, offset + limit);
+
+        grepProgress.update({ count: results.length, detail: `in ${searchPath}` });
+        grepProgress.stop();
         return results.join('\n').trim() || '(no matches)';
       } catch (e) {
-        // exit 1 = no matches (normal), exit 2 = regex error
+        grepProgress.stop();
         if (e.code === 2) {
           return `ERROR: Invalid regex pattern: ${args.pattern}`;
         }
@@ -1523,6 +1614,10 @@ async function _executeToolInner(name, args, options = {}) {
 
       let content = await fs.readFile(fp, 'utf-8');
 
+      // Determine edit mode for current model
+      const { getActiveModelId: getPatchModelId, getActiveProviderName: getPatchProviderName } = require('./providers/registry');
+      const patchEditMode = getEditMode(getPatchModelId(), getPatchProviderName());
+
       // Validate all patches first (exact → fuzzy → auto-fix → error)
       const resolvedPatches = [];
       let anyFuzzy = false;
@@ -1531,6 +1626,13 @@ async function _executeToolInner(name, args, options = {}) {
         const { old_text, new_text } = patches[i];
         if (content.includes(old_text)) {
           resolvedPatches.push({ old_text, new_text });
+        } else if (patchEditMode === 'strict') {
+          // Strict mode: exact match only, no fuzzy fallback
+          const similar = findMostSimilar(content, old_text);
+          if (similar) {
+            return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+          }
+          return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)`;
         } else {
           const fuzzyResult = fuzzyFindText(content, old_text);
           if (fuzzyResult) {
@@ -2471,6 +2573,74 @@ async function _executeToolInner(name, args, options = {}) {
       return `Deployed [${method}] ${methodLabel}\n${syncOutput}${scriptOutput}${healthOutput}`.trim();
     }
 
+    case 'deployment_status': {
+      const configs = loadDeployConfigs();
+      const names = args.config ? [args.config] : Object.keys(configs);
+
+      if (names.length === 0) return 'No deploy configs found. Create .nex/deploy.json to configure deployments.';
+
+      const results = [];
+      for (const name of names) {
+        const cfg = configs[name];
+        if (!cfg) {
+          results.push(`${name}: NOT FOUND`);
+          continue;
+        }
+
+        try {
+          const profile = resolveProfile(cfg.server || name);
+          // Check if server is reachable
+          const pingResult = await sshExec(profile, 'echo OK', { timeout: 10000 });
+          const reachable = pingResult.stdout.trim() === 'OK';
+
+          let serviceStatus = 'unknown';
+          if (reachable && cfg.deploy_script) {
+            // Extract service name from deploy_script if it's a systemctl command
+            const svcMatch = cfg.deploy_script.match(/systemctl\s+\w+\s+(\S+)/);
+            if (svcMatch) {
+              try {
+                const svcResult = await sshExec(profile, `systemctl is-active ${svcMatch[1]}`, { timeout: 10000 });
+                serviceStatus = svcResult.stdout.trim();
+              } catch {
+                serviceStatus = 'inactive';
+              }
+            }
+          }
+
+          let healthStatus = 'N/A';
+          if (cfg.health_check) {
+            const hc = cfg.health_check.trim();
+            if (/^https?:\/\//.test(hc)) {
+              try {
+                const fetch = require('node-fetch');
+                const res = await Promise.race([
+                  fetch(hc),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+                ]);
+                healthStatus = res.ok ? 'healthy' : `HTTP ${res.status}`;
+              } catch (e) {
+                healthStatus = `unhealthy: ${e.message.substring(0, 50)}`;
+              }
+            } else {
+              // Treat as remote shell command
+              try {
+                const hcResult = await sshExec(profile, hc, { timeout: 10000 });
+                healthStatus = hcResult.exitCode === 0 ? 'healthy' : 'unhealthy';
+              } catch {
+                healthStatus = 'unhealthy';
+              }
+            }
+          }
+
+          results.push(`${name}: server=${reachable ? 'reachable' : 'unreachable'} service=${serviceStatus} health=${healthStatus}`);
+        } catch (e) {
+          results.push(`${name}: ERROR — ${e.message}`);
+        }
+      }
+
+      return `Deployment Status:\n${results.join('\n')}`;
+    }
+
     case 'frontend_recon': {
       const cwd = process.cwd();
       const targetType = (args.type || '').toLowerCase();
@@ -3027,24 +3197,53 @@ fi
       }
     }
 
-    default:
+    default: {
+      // Check if it's a plugin tool
+      const { executePluginTool } = require('./plugins');
+      const pluginResult = await executePluginTool(name, args, options);
+      if (pluginResult !== null) return pluginResult;
+
       return `ERROR: Unknown tool: ${name}`;
+    }
   }
 }
 
 // ─── Spinner Wrapper ──────────────────────────────────────────
 async function executeTool(name, args, options = {}) {
+  const { emit } = require('./plugins');
+  const { logToolExecution } = require('./audit');
+  const startTime = Date.now();
   const spinnerText = options.silent ? null : getToolSpinnerText(name, args);
-  if (!spinnerText) return _executeToolInner(name, args, options);
+  if (!spinnerText) {
+    const result = await _executeToolInner(name, args, options);
+    logToolExecution({
+      tool: name, args, result,
+      duration: Date.now() - startTime,
+      success: !result.startsWith?.('ERROR'),
+    });
+    await emit('onToolResult', { tool: name, args, result });
+    return result;
+  }
 
   const spinner = new Spinner(spinnerText);
   spinner.start();
   try {
     const result = await _executeToolInner(name, args, options);
     spinner.stop();
+    logToolExecution({
+      tool: name, args, result,
+      duration: Date.now() - startTime,
+      success: !result.startsWith?.('ERROR'),
+    });
+    await emit('onToolResult', { tool: name, args, result });
     return result;
   } catch (err) {
     spinner.stop();
+    logToolExecution({
+      tool: name, args, result: err.message,
+      duration: Date.now() - startTime,
+      success: false,
+    });
     throw err;
   }
 }
