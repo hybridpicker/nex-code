@@ -1,6 +1,6 @@
 ```
  ██▄▄██   nex-code  v0.3.54
- █▀██▀█   qwen3-coder:480b  ·  /help
+ █▀██▀█   devstral-2:123b  ·  /help
  ▀████▀
 ```
 
@@ -93,20 +93,52 @@ npm update -g nex-code
 
 ---
 
-## Ollama Cloud — The Free-by-Default Model Tier
+## Ollama Cloud — Recommended Model Setup
 
 nex-code was built with Ollama Cloud as its primary provider. No subscription, no billing surprises.
-Use powerful open models like **Qwen3 Coder**, **Kimi K2.5**, **Devstral**, and **DeepSeek R1** for free.
+Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks against real nex-code schemas.
 
-| Model | Context | Best For |
-|---|---|---|
-| `qwen3-coder:480b` | 131K | Code generation, tool calling |
-| `kimi-k2.5` | 256K | Large repos, reasoning |
-| `devstral-2:123b` | 131K | Reliable tool calling |
-| `devstral-small-2:24b` | 131K | Fast, efficient |
-| `qwen3.5:35b-a3b` | 256K | MoE, very fast |
+### Flat-Rate / Pay-as-you-go
 
-Switch anytime: `/model ollama:qwen3-coder:480b` or add your `OLLAMA_API_KEY` to `.env`.
+<!-- nex-benchmark-start -->
+<!-- Updated: 2026-03-20 — run `/benchmark --discover` after new Ollama Cloud releases -->
+
+| Rank | Model | Score | Avg Latency | Context | Best For |
+|---|---|---|---|---|---|
+| 🥇 | `devstral-2:123b` | **84.0** | 1.5s | 131K | Default — fastest + most reliable tool selection |
+| 🥈 | `qwen3-coder:480b` | 78.7 | 2.9s | 131K | Coding-heavy sessions, heavy sub-agents |
+| 🥈 | `kimi-k2:1t` | 78.7 | 2.7s | 256K | Large repos (>100K tokens) |
+| — | `minimax-m2.7:cloud` | 73.3 | 3.5s | 200K | Complex swarm / multi-agent sessions (Toolathon SOTA) |
+| — | `devstral-small-2:24b` | 73.3 | 1.0s | 131K | Fast sub-agents, simple lookups |
+
+> Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
+> Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
+<!-- nex-benchmark-end -->
+
+### Recommended `.env` for Ollama Cloud (Flat-Rate)
+
+```env
+DEFAULT_PROVIDER=ollama
+DEFAULT_MODEL=devstral-2:123b         # nex-code benchmark winner (84/100, 1.5s)
+
+# Sub-agent routing
+NEX_HEAVY_MODEL=qwen3-coder:480b      # complex multi-step coding
+NEX_STANDARD_MODEL=devstral-2:123b    # routine tasks
+NEX_FAST_MODEL=devstral-small-2:24b   # quick lookups, fast sub-agents
+```
+
+### Run the benchmark yourself
+
+```bash
+/benchmark             # full run: 15 tasks × 5 models
+/benchmark --quick     # fast run: 7 tasks × 3 models
+/benchmark --discover  # detect new Ollama Cloud models, benchmark + auto-update README
+/benchmark --models=minimax-m2.7:cloud,qwen3-coder:480b
+/benchmark --history   # show OpenClaw nightly trend
+```
+
+Switch anytime: `/model devstral-2:123b` or update `DEFAULT_MODEL` in `.env`.
+Auto-discovery runs weekly via the scheduled improvement task and updates this table automatically.
 
 ---
 
@@ -155,7 +187,7 @@ PERPLEXITY_API_KEY=your-key   # Perplexity (optional — enables grounded web se
 
 # Optional tuning
 DEFAULT_PROVIDER=ollama        # Active provider on startup
-DEFAULT_MODEL=qwen3-coder:480b # Active model on startup
+DEFAULT_MODEL=devstral-2:123b  # Active model on startup (see /benchmark for ranking)
 FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
 NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
 NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
