@@ -367,14 +367,23 @@ function formatToolSummary(name, args, result, isError) {
       } else if (outputLines.length === 0) {
         summary = icon;
       } else {
-        const shown = outputLines.slice(0, BASH_PREVIEW);
+        // On failure show last N lines (error is at the end); on success show first N
+        const failed = exitMatch && exitMatch[1] !== '0';
+        const shown = failed
+          ? outputLines.slice(-BASH_PREVIEW)
+          : outputLines.slice(0, BASH_PREVIEW);
         const more = outputLines.length - BASH_PREVIEW;
         const lines = shown.map((l, i) =>
           i === 0
             ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
             : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
         );
-        if (more > 0) lines.push(`     ${T.subtle}… +${more} lines${T.reset}`);
+        if (more > 0) {
+          const ellipsis = failed
+            ? `     ${T.subtle}${more} lines above…${T.reset}`
+            : `     ${T.subtle}… +${more} lines${T.reset}`;
+          failed ? lines.unshift(ellipsis) : lines.push(ellipsis);
+        }
         summary = lines.join('\n');
       }
       break;
@@ -394,13 +403,14 @@ function formatToolSummary(name, args, result, isError) {
         const header = fileCount > 1
           ? `${matchCount} match${matchCount !== 1 ? 'es' : ''} in ${fileCount} files${patternHint}`
           : `${matchCount} match${matchCount !== 1 ? 'es' : ''}${patternHint}`;
-        // Format: "basename:linenum: content snippet" — avoids doubled-path visual confusion
+        // Format: "basename:linenum content" — avoids doubled-path visual confusion
+        // Grep output: "file:linenum:content" (match) or "file:linenum-content" (context line)
         function fmtGrepLine(l) {
           const colonIdx = l.indexOf(':');
           if (colonIdx === -1) return `${T.muted}${l.substring(0, 90)}${T.reset}`;
           const file = l.substring(0, colonIdx);
-          const rest = l.substring(colonIdx + 1);            // "linenum:content" or just "content"
-          const lineNumM = rest.match(/^(\d+):(.*)/s);
+          const rest = l.substring(colonIdx + 1);            // "linenum:content" or "linenum-content"
+          const lineNumM = rest.match(/^(\d+)[:-](.*)/s);
           const lineNum = lineNumM ? `:${lineNumM[1]}` : '';
           const content = (lineNumM ? lineNumM[2] : rest).trim();
           const label = `${T.subtle}${path.basename(file)}${lineNum}${T.reset}`;
