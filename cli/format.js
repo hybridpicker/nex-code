@@ -385,6 +385,7 @@ function formatToolSummary(name, args, result, isError) {
         const patternHint = args.pattern ? ` ${T.muted}"${String(args.pattern).substring(0, 40)}"${T.reset}` : '';
         summary = `No matches${patternHint}`;
       } else {
+        const path = require('path');
         const lines = r.split('\n').filter(Boolean);
         const matchCount = lines.length;
         const files = new Set(lines.map(l => l.split(':')[0]).filter(Boolean));
@@ -393,9 +394,22 @@ function formatToolSummary(name, args, result, isError) {
         const header = fileCount > 1
           ? `${matchCount} match${matchCount !== 1 ? 'es' : ''} in ${fileCount} files${patternHint}`
           : `${matchCount} match${matchCount !== 1 ? 'es' : ''}${patternHint}`;
+        // Format: "basename:linenum: content snippet" — avoids doubled-path visual confusion
+        function fmtGrepLine(l) {
+          const colonIdx = l.indexOf(':');
+          if (colonIdx === -1) return `${T.muted}${l.substring(0, 90)}${T.reset}`;
+          const file = l.substring(0, colonIdx);
+          const rest = l.substring(colonIdx + 1);            // "linenum:content" or just "content"
+          const lineNumM = rest.match(/^(\d+):(.*)/s);
+          const lineNum = lineNumM ? `:${lineNumM[1]}` : '';
+          const content = (lineNumM ? lineNumM[2] : rest).trim();
+          const label = `${T.subtle}${path.basename(file)}${lineNum}${T.reset}`;
+          const snippet = `${T.muted}${content.substring(0, 80)}${content.length > 80 ? '…' : ''}${T.reset}`;
+          return `${label}  ${snippet}`;
+        }
         const preview = lines.slice(0, 4).map((l, i) =>
-          i === 0 ? `${header}\n     ${T.muted}${l.substring(0, 110)}${T.reset}`
-                  : `     ${T.muted}${l.substring(0, 110)}${T.reset}`
+          i === 0 ? `${header}\n     ${fmtGrepLine(l)}`
+                  : `     ${fmtGrepLine(l)}`
         );
         const more = lines.length - 4;
         if (more > 0) preview.push(`     ${T.subtle}… +${more} lines${T.reset}`);
