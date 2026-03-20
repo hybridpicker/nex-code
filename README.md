@@ -66,30 +66,43 @@ npm update -g nex-code
 
 ## Why nex-code?
 
-| | **nex-code** | Claude Code | Gemini CLI | Aider |
-|---|---|---|---|---|
-| **VS Code extension** | ✅ Built-in sidebar panel | ✅ | ❌ | ❌ |
-| **Free with Ollama** | ✅ Native, first-class | ⚠️ Workaround | ❌ | ✅ |
-| **Ollama Cloud support** | ✅ 47+ models, native | ⚠️ API-compat only | ❌ | ✅ |
-| **Multi-provider runtime swap** | ✅ 5 providers, no restart | ❌ Claude-only | ❌ Gemini-only | ✅ |
-| **Tool tiers (adapts to model)** | ✅ essential/standard/full | ❌ | ❌ | ❌ |
-| **5-layer open-model auto-fix** | ✅ | ❌ | ❌ | ⚠️ |
-| **Undo / Redo (persistent)** | ✅ Survives restart | ❌ | ❌ | ❌ |
-| **Cost tracking + budgets** | ✅ | ❌ | ❌ | ❌ |
-| **Pre-push secret detection** | ✅ | ❌ | ❌ | ❌ |
-| **Browser agent (headless)** | ✅ Playwright-based | ❌ | ⚠️ Experimental | ❌ |
-| **Grounded web search** | ✅ Perplexity/DDG | ❌ | ✅ Google grounded | ❌ |
-| **GitHub Actions tools** | ✅ native | ❌ | ❌ | ❌ |
-| **SSH server management** | ✅ native (AlmaLinux/macOS) | ❌ | ❌ | ❌ |
-| **Docker tools** | ✅ local + remote via SSH | ❌ | ❌ | ❌ |
-| **Deploy tool (rsync)** | ✅ named configs | ❌ | ❌ | ❌ |
-| **Open-source** | ✅ MIT | ❌ | ✅ Apache 2.0 | ✅ |
-| **Runtime dependencies** | **2** (axios, dotenv) | Many | Many | Heavy (Python) |
-| **Startup time** | **~100ms** | ~400ms | ~300ms | Slow |
-| **Plugin API** | ✅ registerTool + hooks | ❌ | ❌ | ❌ |
-| **Skill marketplace** | ✅ Install from git | ❌ | ❌ | ❌ |
-| **Audit logging** | ✅ JSONL + sanitization | ❌ | ❌ | ❌ |
-| **Test coverage** | 3074 tests, 85% | — | — | — |
+**Provider-agnostic by design.** Run fully free with a local Ollama server, use Ollama Cloud's 47+ models on a flat-rate plan, or connect OpenAI, Anthropic, or Gemini — switch at runtime with `/model`, no restart needed. The fallback chain automatically retries failed requests on the next configured provider.
+
+**Open-model first.** nex-code was built around open models, not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
+
+**Smart model routing.** The built-in `/benchmark` system tests all configured models against 33 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
+
+| Detected task | Routed model (example) |
+|---|---|
+| Frontend / CSS / React | `qwen3-coder:480b` |
+| Sysadmin / Docker / nginx | `devstral-2:123b` |
+| Data / SQL / migrations | `devstral-2:123b` |
+| Agentic swarms | `minimax-m2.7:cloud` |
+| General coding | `devstral-2:123b` (default) |
+
+**Built-in VS Code extension.** A sidebar chat panel with streaming output, collapsible tool cards, and native VS Code theme support — shipped in the same repo, no separate install.
+
+**Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime, no daemon process.
+
+**Infrastructure tools built in:**
+- SSH server management (AlmaLinux, macOS, any Linux)
+- Docker tools — local and remote via SSH
+- Kubernetes overview (`/k8s`)
+- GitHub Actions tools (trigger, monitor runs)
+- Named deploy configs (`rsync`-based, `/deploy`)
+- Browser agent via Playwright (optional, not bundled)
+- Grounded web search via Perplexity or DuckDuckGo
+
+**Developer safety:**
+- Pre-push secret detection — blocks commits that contain API keys or tokens
+- Full audit log (JSONL + sanitization)
+- Undo/Redo with persistence across restarts
+- Cost tracking and per-provider budget limits
+- Plan mode — analysis-only pass before any file changes
+
+**Extensible.** Plugin API (`registerTool` + lifecycle hooks), skill system (install from any git URL), MCP server support.
+
+**Tested.** 3074 tests, 85% coverage, CI on every push.
 
 ---
 
@@ -105,11 +118,7 @@ Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks agai
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `devstral-2:123b` | **84.0** | 1.5s | 131K | Default — fastest + most reliable tool selection |
-| 🥈 | `qwen3-coder:480b` | 78.7 | 2.9s | 131K | Coding-heavy sessions, heavy sub-agents |
-| 🥈 | `kimi-k2:1t` | 78.7 | 2.7s | 256K | Large repos (>100K tokens) |
-| — | `minimax-m2.7:cloud` | 73.3 | 3.5s | 200K | Complex swarm / multi-agent sessions (Toolathon SOTA) |
-| — | `devstral-small-2:24b` | 73.3 | 1.0s | 131K | Fast sub-agents, simple lookups |
+
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
@@ -331,7 +340,7 @@ npm run package        # syncs version, builds, and creates .vsix
 |---------|---------|-------------|
 | `nexCode.executablePath` | `nex-code` | Path to the nex-code binary |
 | `nexCode.defaultProvider` | `ollama` | LLM provider |
-| `nexCode.defaultModel` | `qwen3-coder:480b` | Model name |
+| `nexCode.defaultModel` | `devstral-2:123b` | Model name |
 | `nexCode.anthropicApiKey` | — | Anthropic API key |
 | `nexCode.openaiApiKey` | — | OpenAI API key |
 | `nexCode.ollamaApiKey` | — | Ollama Cloud API key |
@@ -432,7 +441,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/review [--strict] [file]` | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
 | `/k8s [user@host]` | Kubernetes overview: namespaces + pod health (remote via SSH optional) |
 | `/setup` | Interactive setup wizard — configure provider, API keys, web search |
-| `/benchmark` | Show model benchmark results (7-day trend) |
+| `/benchmark [--quick\|--discover\|--history]` | Rank models on nex-code tool-calling tasks, auto-update routing |
 | `/install-skill <url>` | Install a skill from a git repo |
 | `/search-skill <query>` | Search GitHub for nex-code skills |
 | `/remove-skill <name>` | Remove an installed skill |
