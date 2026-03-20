@@ -118,7 +118,11 @@ Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks agai
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-
+| 🥇 | `devstral-2:123b` | **84** | 1.5s | 131K | Default — fastest + most reliable tool selection |
+| 🥈 | `qwen3-coder:480b` | 79 | 2.9s | 131K | Coding-heavy sessions, heavy sub-agents |
+| 🥉 | `kimi-k2:1t` | 79 | 2.7s | 256K | Large repos (>100K tokens) |
+| — | `minimax-m2.7:cloud` | 73 | 3.5s | 200K | Complex swarm / multi-agent sessions (Toolathon SOTA) |
+| — | `devstral-small-2:24b` | 73 | 1.0s | 131K | Fast sub-agents, simple lookups |
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
