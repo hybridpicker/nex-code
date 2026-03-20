@@ -446,6 +446,8 @@ async function handleSlashCommand(input, rl) {
       }
       clearConversation();
       clearHistory();
+      const { deleteSession: _delAutosave } = require('./session');
+      _delAutosave('_autosave');
       console.log(`${C.green}Conversation cleared${C.reset}`);
       return true;
     }
