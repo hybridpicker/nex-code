@@ -125,8 +125,10 @@ function withFileLockSync(filePath, fn, { timeout = 5000, retryMs = 50 } = {}) {
           try { fs.unlinkSync(lockPath); } catch { /* may already be gone */ }
           continue; // retry immediately
         }
-      } catch {
-        // Lock file disappeared between EEXIST and readFileSync — retry
+      } catch (readErr) {
+        // EISDIR / EACCES: the lock "file" is actually a directory or unreadable — propagate
+        if (readErr.code && readErr.code !== 'ENOENT') throw readErr;
+        // ENOENT: lock file disappeared between EEXIST and readFileSync — retry
         continue;
       }
 
