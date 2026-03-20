@@ -33,7 +33,7 @@ jest.mock('../cli/theme', () => {
   return { T: theme, isDark: true };
 });
 
-const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader } = require('../cli/format');
+const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader, formatMilestone } = require('../cli/format');
 
 // ─── formatToolCall ──────────────────────────────────────────
 describe('formatToolCall()', () => {
@@ -592,5 +592,64 @@ describe('formatSectionHeader()', () => {
   it('handles unknown tool name gracefully', () => {
     const out = formatSectionHeader([{ fnName: 'custom_thing', args: {}, canExecute: true }], 1);
     expect(out).toContain('custom thing');
+  });
+});
+
+// ─── formatMilestone ─────────────────────────────────────────
+describe('formatMilestone()', () => {
+  const counts = (obj) => new Map(Object.entries(obj));
+
+  it('contains phaseName', () => {
+    const out = formatMilestone('Exploration', 5, counts({ read_file: 5 }), 3000, new Set(), new Set());
+    expect(out).toContain('Exploration');
+  });
+
+  it('contains step count', () => {
+    const out = formatMilestone('Research', 3, counts({ web_search: 3 }), 2000, new Set(), new Set());
+    expect(out).toContain('3 steps');
+  });
+
+  it('contains tool count', () => {
+    const out = formatMilestone('Phase 1', 2, counts({ bash: 4, read_file: 2 }), 1000, new Set(), new Set());
+    expect(out).toContain('6 tools');
+  });
+
+  it('contains elapsed time in seconds', () => {
+    const out = formatMilestone('Phase 1', 1, counts({ bash: 1 }), 7000, new Set(), new Set());
+    expect(out).toContain('7s');
+  });
+
+  it('formats elapsed time in minutes when >= 60s', () => {
+    const out = formatMilestone('Phase 1', 1, counts({ bash: 1 }), 95000, new Set(), new Set());
+    expect(out).toContain('1m');
+    expect(out).toContain('35s');
+  });
+
+  it('omits modified files when set is empty', () => {
+    const out = formatMilestone('Verification', 5, counts({ bash: 5 }), 4000, new Set(), new Set());
+    expect(out).not.toContain('modified');
+  });
+
+  it('includes modified file count when present', () => {
+    const out = formatMilestone('Implementation', 5, counts({ write_file: 5 }), 4000, new Set(), new Set(['a.js', 'b.js']));
+    expect(out).toContain('2 files modified');
+  });
+
+  it('uses singular "step" for stepCount=1', () => {
+    const out = formatMilestone('Phase 1', 1, counts({ bash: 1 }), 1000, new Set(), new Set());
+    expect(out).toContain('1 step');
+    expect(out).not.toContain('1 steps');
+  });
+
+  it('uses singular "tool" for toolCount=1', () => {
+    const out = formatMilestone('Phase 1', 1, counts({ bash: 1 }), 1000, new Set(), new Set());
+    expect(out).toContain('1 tool');
+    expect(out).not.toContain('1 tools');
+  });
+
+  it('uses singular "file modified" for one modification', () => {
+    const out = formatMilestone('Phase 1', 1, counts({ write_file: 1 }), 1000, new Set(), new Set(['x.js']));
+    expect(out).toContain('1 file modified');
+    expect(out).not.toContain('1 files');
   });
 });

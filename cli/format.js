@@ -542,4 +542,21 @@ function formatToolSummary(name, args, result, isError) {
   return `  ${T.muted}└ ${summary}${T.reset}`;
 }
 
-module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader };
+function formatMilestone(phaseName, stepCount, toolCounts, elapsedMs, filesRead, filesModified) {
+  const totalTools  = [...toolCounts.values()].reduce((a, b) => a + b, 0);
+  const elapsedSecs = Math.round(elapsedMs / 1000);
+  const timeStr     = elapsedSecs >= 60
+    ? `${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
+    : `${elapsedSecs}s`;
+
+  let line = `${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
+  line += `${C.dim} · ${stepCount} step${stepCount !== 1 ? 's' : ''}`;
+  line += ` · ${totalTools} tool${totalTools !== 1 ? 's' : ''}`;
+  line += ` · ${timeStr}`;
+  if (filesModified.size > 0)
+    line += ` · ${filesModified.size} file${filesModified.size !== 1 ? 's' : ''} modified`;
+  line += C.reset;
+  return line;
+}
+
+module.exports = { C, formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader, formatMilestone };
