@@ -163,17 +163,25 @@ function scrubSecrets(content) {
   return content.replace(SECRET_SCRUB_RE, (_, varName) => `${varName}=***REDACTED***`);
 }
 
+// read_file results use tighter thresholds — large files flood context quickly
+const READ_FILE_TOKEN_THRESHOLD = 7000;
+const READ_FILE_COMPRESS_TARGET = 4000;
+
 /**
  * Scrub secrets and compress tool result if it exceeds token threshold.
- * Uses context-engine compression to reduce token count.
+ * read_file results use tighter limits to prevent large-file context flood.
+ * @param {string} content
+ * @param {string} [fnName] - tool name for per-tool threshold selection
  */
-function compressToolResultIfNeeded(content) {
+function compressToolResultIfNeeded(content, fnName = null) {
   const scrubbed = scrubSecrets(content);
   const tokens = estimateTokens(scrubbed);
-  if (tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
+  const threshold = fnName === 'read_file' ? READ_FILE_TOKEN_THRESHOLD : TOOL_RESULT_TOKEN_THRESHOLD;
+  const target = fnName === 'read_file' ? READ_FILE_COMPRESS_TARGET : TOOL_RESULT_COMPRESS_TARGET;
+  if (tokens > threshold) {
     try {
       const { compressToolResult } = require('./context-engine');
-      const compressed = compressToolResult(scrubbed, TOOL_RESULT_COMPRESS_TARGET);
+      const compressed = compressToolResult(scrubbed, target);
       return compressed;
     } catch {
       // Fallback: return scrubbed original if compression fails
@@ -485,7 +493,7 @@ async function executeSingleTool(prep, quiet = false) {
   }
 
   // Compress large tool results early to save context tokens
-  const compressedContent = compressToolResultIfNeeded(truncated);
+  const compressedContent = compressToolResultIfNeeded(truncated, prep.fnName);
   const msg = { role: 'tool', content: compressedContent, tool_call_id: prep.callId };
   return { msg, summary };
 }
@@ -1243,6 +1251,7 @@ async function processInput(userInput, serverHooks = null) {
   let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
+  let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1664,6 +1673,37 @@ async function processInput(userInput, serverHooks = null) {
     // checks and validation are synchronous; only user-confirmation prompts
     // are async, but readline serialises them through stdin automatically.
     const prepared = await Promise.all(tool_calls.map(tc => prepareToolCall(tc)));
+
+    // ─── Pre-batch context pressure check ───────────────────────────────────
+    // Warn the LLM before it executes tool calls that could overflow context.
+    // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
+    {
+      const ctxUsage = getUsage(apiMessages, []);
+      const ctxPct = ctxUsage.percentage;
+      const hasUnboundedRead = prepared.some(p =>
+        p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
+      );
+      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always
+      const warnNow =
+        (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
+        (ctxPct >= 85 && contextPressureWarnedAt < 85);
+      if (warnNow) {
+        contextPressureWarnedAt = ctxPct;
+        const urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
+        const advice = hasUnboundedRead
+          ? `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`
+          : `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        const pressureMsg = {
+          role: 'user',
+          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
+        };
+        conversationMessages.push(pressureMsg);
+        apiMessages.push(pressureMsg);
+        if (ctxPct >= 85) {
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${C.reset}`);
+        }
+      }
+    }
 
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
