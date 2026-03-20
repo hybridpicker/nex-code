@@ -323,11 +323,22 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'write_file': {
-      const lines = (args.content || '').split('\n').length;
+      const contentLines = (args.content || '').split('\n');
+      const lineCount = contentLines.length;
       const fname = args.path ? require('path').basename(args.path) : null;
-      summary = fname
-        ? `Wrote ${fname} · ${lines} line${lines !== 1 ? 's' : ''}`
-        : `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
+      const header = fname
+        ? `Wrote ${fname} · ${lineCount} line${lineCount !== 1 ? 's' : ''}`
+        : `Wrote ${lineCount} line${lineCount !== 1 ? 's' : ''}`;
+      // For small files show the full content; for larger files show a preview
+      const WRITE_SHOW = 40;
+      const WRITE_PREVIEW = 8;
+      if (lineCount <= WRITE_SHOW) {
+        const block = contentLines.map(l => `     ${T.muted}${l}${T.reset}`).join('\n');
+        summary = `${header}\n${block}`;
+      } else {
+        const shown = contentLines.slice(0, WRITE_PREVIEW).map(l => `     ${T.muted}${l}${T.reset}`).join('\n');
+        summary = `${header}\n${shown}\n     ${T.subtle}… +${lineCount - WRITE_PREVIEW} lines${T.reset}`;
+      }
       break;
     }
     case 'edit_file': {
