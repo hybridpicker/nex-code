@@ -27,7 +27,6 @@ class MilestoneTracker {
     this._N              = n;
     this._disabled       = n <= 0;
     this._phaseNum       = 0;
-    this._linesThisPhase = 0;
     this._stepsThisPhase = 0;
     this._phaseCounts    = new Map();
     this._phaseStart     = Date.now();
@@ -35,16 +34,15 @@ class MilestoneTracker {
 
   /**
    * Call after each step group is printed.
-   * @param {number}   stepLines   - lines printed (header + summaries + blank)
+   * @param {number}   _stepLines  - unused (kept for API compat — milestones are append-only)
    * @param {string[]} toolNames   - tools used in this step (ask_user excluded)
    * @param {Set}      filesRead
    * @param {Set}      filesModified
    * @returns {object|null} milestone descriptor, or null if phase not complete
    */
-  record(stepLines, toolNames, filesRead, filesModified) {
+  record(_stepLines, toolNames, filesRead, filesModified) {
     if (this._disabled) return null;
 
-    this._linesThisPhase += stepLines;
     this._stepsThisPhase++;
     for (const n of toolNames) {
       this._phaseCounts.set(n, (this._phaseCounts.get(n) || 0) + 1);
@@ -54,9 +52,6 @@ class MilestoneTracker {
 
     this._phaseNum++;
     const ms = {
-      fire:          true,
-      inViewport:    this._isInViewport(),
-      linesBack:     this._linesThisPhase,
       phaseNum:      this._phaseNum,
       phaseName:     _phaseName(this._phaseCounts, this._phaseNum),
       stepCount:     this._stepsThisPhase,
@@ -67,18 +62,11 @@ class MilestoneTracker {
     };
 
     // Reset phase state
-    this._linesThisPhase = 0;
     this._stepsThisPhase = 0;
     this._phaseCounts    = new Map();
     this._phaseStart     = Date.now();
 
     return ms;
-  }
-
-  _isInViewport() {
-    if (!process.stdout.isTTY) return false;
-    const viewport = Math.max(1, (process.stdout.rows || 24) - 2);
-    return this._linesThisPhase <= viewport;
   }
 }
 

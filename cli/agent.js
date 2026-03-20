@@ -41,13 +41,9 @@ function _emitMilestone(ms) {
     ms.phaseName, ms.stepCount, ms.toolCounts,
     ms.elapsed, ms.filesRead, ms.filesModified
   );
-  if (ms.inViewport && process.stdout.isTTY) {
-    const currentViewport = Math.max(1, (process.stdout.rows || 24) - 2);
-    if (ms.linesBack <= currentViewport) {
-      process.stdout.write(`\x1b[${ms.linesBack}A\r\x1b[J${banner}\n`);
-      return;
-    }
-  }
+  // Append-only: no cursor-up-and-erase. The cursor-up/\x1b[J approach left
+  // blank lines in terminal scrollback (copy-paste artifact) and caused visible
+  // gaps when linesBack was off by even one line. Append is simpler and correct.
   process.stdout.write(`${banner}\n`);
 }
 
@@ -163,17 +159,25 @@ function scrubSecrets(content) {
   return content.replace(SECRET_SCRUB_RE, (_, varName) => `${varName}=***REDACTED***`);
 }
 
+// read_file results use tighter thresholds — large files flood context quickly
+const READ_FILE_TOKEN_THRESHOLD = 7000;
+const READ_FILE_COMPRESS_TARGET = 4000;
+
 /**
  * Scrub secrets and compress tool result if it exceeds token threshold.
- * Uses context-engine compression to reduce token count.
+ * read_file results use tighter limits to prevent large-file context flood.
+ * @param {string} content
+ * @param {string} [fnName] - tool name for per-tool threshold selection
  */
-function compressToolResultIfNeeded(content) {
+function compressToolResultIfNeeded(content, fnName = null) {
   const scrubbed = scrubSecrets(content);
   const tokens = estimateTokens(scrubbed);
-  if (tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
+  const threshold = fnName === 'read_file' ? READ_FILE_TOKEN_THRESHOLD : TOOL_RESULT_TOKEN_THRESHOLD;
+  const target = fnName === 'read_file' ? READ_FILE_COMPRESS_TARGET : TOOL_RESULT_COMPRESS_TARGET;
+  if (tokens > threshold) {
     try {
       const { compressToolResult } = require('./context-engine');
-      const compressed = compressToolResult(scrubbed, TOOL_RESULT_COMPRESS_TARGET);
+      const compressed = compressToolResult(scrubbed, target);
       return compressed;
     } catch {
       // Fallback: return scrubbed original if compression fails
@@ -485,7 +489,7 @@ async function executeSingleTool(prep, quiet = false) {
   }
 
   // Compress large tool results early to save context tokens
-  const compressedContent = compressToolResultIfNeeded(truncated);
+  const compressedContent = compressToolResultIfNeeded(truncated, prep.fnName);
   const msg = { role: 'tool', content: compressedContent, tool_call_id: prep.callId };
   return { msg, summary };
 }
@@ -634,6 +638,7 @@ function _buildLanguagePrompt() {
   lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
   lines.push('COMPLETENESS RULES:');
   lines.push('  • ALWAYS show actual code when explaining implementations — never describe without showing');
+  lines.push('  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.');
   lines.push('  • Include complete examples with full context (imports, function signatures, error handling)');
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
@@ -761,9 +766,9 @@ Response patterns by request type:
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
 - **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
-- **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES: When writing a regex to detect calls like console.log(), the pattern must exclude comment lines — pipe through 'grep -v "^\s*//"' before the pattern match so that lines like "// console.log(x)" do not trigger a false positive. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
+- **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES IN DIFF OUTPUT: Diff lines start with '+' (added) or '-' (removed) — the actual code content comes AFTER the leading '+'/'-'. This means 'grep -v "^\s*//"' does NOT exclude comment lines in diff output because the line starts with '+', not with whitespace. CORRECT pipeline for detecting console.log in staged .js changes while excluding comment lines: 'git diff --cached -- "*.js" | grep "^+" | grep -v "^+++" | grep -v "^\+[[:space:]]*//" | grep -q "console\.log"'. The key pattern is '^\+[[:space:]]*//' — match lines where after the '+' prefix comes optional whitespace then '//'. Always use this exact pipeline, never 'grep -v "^\s*//"' on diff output. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
 - **Memory leak explanations**: Show the problematic code, then present the primary fix (move emitter.on() outside the loop, registered once) with the original setInterval kept intact for its intended purpose. Then briefly mention 2 alternatives: (1) emitter.once() if only one event needs handling, (2) removeAllListeners() (or emitter.off(event, handler)) BEFORE re-registering inside the loop. CRITICAL for alternative 2: you MUST call removeAllListeners() or off() BEFORE the new emitter.on() — if you call emitter.on() inside an interval without first removing the previous listener, a new listener accumulates on every tick, which is the same leak as the original. Always show the removal step explicitly. Do NOT replace the setInterval body with an empty callback — keep the interval doing its original work.
-- **Makefile tasks**: ALWAYS follow this exact order: (1) paste the COMPLETE Makefile in a fenced code block in your text response FIRST, (2) THEN optionally write it to a file with a tool. The user cannot see files you write — your text response is the ONLY output they receive. Never describe the Makefile in prose — paste the actual code. Every target, every recipe, every .PHONY line. Use EXACTLY the tools specified (jest means jest directly, not npm test; tsc means tsc). Never put glob patterns like src/**/*.ts in prerequisites — make does not expand them. MAKEFILE SYNTAX RULES (hard requirements): (a) Recipe lines MUST be indented with a real TAB character — never spaces; a space-indented recipe causes "missing separator" errors. (b) Declare ALL phony targets in a SINGLE .PHONY line at the top — NEVER split .PHONY across multiple declarations. (c) NEVER define the same target name twice — duplicate targets silently override each other and produce contradictory behaviour. (d) Do NOT add @echo lines unless the task explicitly asks for output messages. (e) DEPENDENCY CHAIN: if the task describes a test target that runs tests after compilation/building, the test target MUST declare an explicit dependency on build (e.g. "test: build") — otherwise make test runs against stale or missing binaries. When in doubt, add the dependency; omitting it is always the wrong default.
+- **Makefile tasks**: ALWAYS follow this exact order: (1) paste the COMPLETE Makefile in a fenced code block in your text response FIRST, (2) THEN optionally write it to a file with a tool. The user cannot see files you write — your text response is the ONLY output they receive. Calling write_file does NOT substitute for pasting the code in your response. Never describe the Makefile in prose — paste the actual code. Every target, every recipe, every .PHONY line. Use EXACTLY the tools specified (jest means jest directly, not npm test; tsc means tsc, never npx tsc). Never put glob patterns like src/**/*.ts in prerequisites — make does not expand them. MAKEFILE SYNTAX RULES (hard requirements): (a) Recipe lines MUST be indented with a real TAB character — never spaces; a space-indented recipe causes "missing separator" errors. CRITICAL: commands go on the NEXT LINE after the target, indented with a TAB — NEVER on the same line. WRONG: "build: tsc" (puts tsc as a file dependency, does nothing). RIGHT: "build:\n\ttsc" (TAB then tsc on the line below). (b) Declare ALL phony targets in a SINGLE .PHONY line at the top — NEVER split .PHONY across multiple declarations. (c) NEVER define the same target name twice — duplicate targets silently override each other and produce contradictory behaviour. (d) Do NOT add @echo lines unless the task explicitly asks for output messages. (e) DEPENDENCY CHAIN: if the task describes a test target that runs tests after compilation/building, the test target MUST declare an explicit dependency on build (e.g. "test: build") — otherwise make test runs against stale or missing binaries. When in doubt, add the dependency; omitting it is always the wrong default. (f) 'all' target ordering: NEVER write "all: clean build test" and rely on make's left-to-right execution — with parallel make (-j) this is not guaranteed. Instead, encode the sequence via individual target dependencies: "test: build", "build: clean" (if clean→build→test is the intent), so the chain is enforced regardless of parallelism. Or use ordered prerequisites with .NOTPARALLEL if the task explicitly requires strict ordering.
 - **Dataclass definitions**: Paste the COMPLETE dataclass code directly in your text response — @dataclass decorator, all fields with type annotations and defaults, full __post_init__ validation block. The code must appear verbatim in your chat text. Writing a file with a tool does NOT satisfy this — always also paste the code in text.
 - **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked. NEVER put cron expressions inside markdown tables — asterisks (*) in table cells are consumed as bold/italic markers and disappear. Always present each cron expression in its own fenced code block. For "every N minutes between X-Yh": only present both interpretations (inclusive vs. exclusive endpoint) when the task is genuinely ambiguous about whether the endpoint fires. If the task explicitly states "8-18h" or "until 18h" without qualification, write the expression with 8-18 directly — do NOT second-guess or add a confusing dual-interpretation note that contradicts the explicit request. The note is only appropriate when the task says something like "during business hours" or "until approximately 18h" where intent is unclear. CRITICAL OFF-BY-ONE: "8-18h" means the hour field is 8-18 (runs fire AT 18:00 are INCLUDED). Writing 8-17 silently drops the 18:00 run — this is WRONG. If you notice mid-response that you wrote 8-17 for an 8-18h spec, CORRECT THE EXPRESSION in-place immediately — do NOT leave both versions and add a contradictory note.
 - **Express/fetch error handling**: When adding error handling to an Express route that fetches by ID: (1) validate the ID parameter first (check it exists and is a valid format), (2) wrap fetch in try-catch, (3) check response.ok and handle 404 specifically, (4) call next(error) to pass errors to Express error-handling middleware — do not just send a raw 500 response.
@@ -833,6 +838,51 @@ After frontend_recon returns:
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
 - After completing work, give a brief summary of what was done and any important details. Don't just silently finish.
+
+# Diagnose Before Build (Critical)
+
+⚠ MANDATORY: Before writing, creating, or modifying ANYTHING for a bug/problem/config task:
+
+1. **Check what already exists** — read the relevant files, check .env variables, check remote state (server, database, API) FIRST. Do NOT assume the problem is real until you've verified it.
+2. **Verify the problem is real** — if the issue might already be solved (token in .env, config already set, service already running), confirm that BEFORE writing any fix.
+3. **One diagnosis step before any write step** — the sequence is always: read → understand → act. Never act → then discover.
+
+Examples of what this prevents:
+- Writing a v2 of a module when the original just needs a 2-line change
+- Creating setup guides when the setup already exists
+- Building Auto-Renewal systems when the token is already in .env
+
+# No Documentation Bloat
+
+NEVER create documentation files unless the user explicitly asks for them. This includes:
+- \`*_SETUP.md\`, \`*_GUIDE.md\`, \`*_SOLUTION.md\`, \`*_PACKAGE.md\`, \`*_FIX.md\`
+- \`env-example.txt\`, \`server-env-additions.txt\`, \`quickstart.sh\` wrappers
+- Any file whose sole purpose is to explain what you just did
+
+Write the solution. Do not document the solution unless asked.
+
+# No Backup Files / No v2 Copies
+
+NEVER create \`file-backup.js\`, \`file-v2.js\`, \`file-old.js\`, or similar. Git is the backup.
+Modify files directly. If a rollback is needed, git handles it.
+
+# Decide and Act — Don't Present Options
+
+When the user says "do it" or "fix it" or "set it up": pick the best approach and execute it.
+Do NOT present "Option 1 / Option 2 / Option 3" lists and wait. You decide. You act.
+If you genuinely cannot proceed without a specific credential or value the user must provide, ask for exactly that — in one sentence, not a list of alternatives.
+
+# No "What You Need to Do" Lists
+
+You are the agent. The user should not need to do anything unless you hit a hard blocker (missing credential, physical device access, etc.).
+Never write "Here's what you need to do: 1. ... 2. ... 3. ..." after completing your work.
+If you need the user to take an action, state exactly one thing, explain why you can't do it yourself, and stop.
+
+# Secrets Never in Output
+
+Token values, passwords, API keys — NEVER show their values in chat or terminal output.
+Show only variable names: \`SMARTTHINGS_TOKEN=<set>\`, never the actual value.
+This applies to bash output, SSH output, grep results, and all other tool output you summarize.
 
 # Tool Strategy
 
@@ -1019,7 +1069,7 @@ function _notifyDesktop(message) {
   } catch { /* ignore — notification is best-effort */ }
 }
 
-function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
+function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint = false } = {}) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
@@ -1049,7 +1099,7 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
     console.log(`${C.dim}  💡 /diff · /commit · /undo${C.reset}`);
-  } else if (filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
+  } else if (!suppressHint && filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
     // Audit / read-heavy session — prompt for applying fixes
     console.log(`${C.dim}  💡 Found issues? Say "fix 1" or "apply all fixes"${C.reset}`);
   } else if (filesRead.size > 0 && totalSteps >= 2) {
@@ -1240,13 +1290,19 @@ async function processInput(userInput, serverHooks = null) {
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
+  let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
+  const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
+  const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
+  let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
 
   let i;
   let iterLimit = MAX_ITERATIONS;
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3;  // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
+  let progressMadeThisPass = false; // progress gate for auto-extend
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
+  progressMadeThisPass = false;
   for (i = 0; i < iterLimit; i++) {
     // Check if aborted (Ctrl+C) at start of each iteration
     const loopSignal = _getAbortSignal();
@@ -1580,7 +1636,6 @@ async function processInput(userInput, serverHooks = null) {
     if (streamedText) {
       stream.flush();
     }
-
     // Reset retry counters on success
     networkRetries = 0;
     staleRetries = 0;
@@ -1658,6 +1713,37 @@ async function processInput(userInput, serverHooks = null) {
     // are async, but readline serialises them through stdin automatically.
     const prepared = await Promise.all(tool_calls.map(tc => prepareToolCall(tc)));
 
+    // ─── Pre-batch context pressure check ───────────────────────────────────
+    // Warn the LLM before it executes tool calls that could overflow context.
+    // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
+    {
+      const ctxUsage = getUsage(apiMessages, []);
+      const ctxPct = ctxUsage.percentage;
+      const hasUnboundedRead = prepared.some(p =>
+        p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
+      );
+      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always
+      const warnNow =
+        (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
+        (ctxPct >= 85 && contextPressureWarnedAt < 85);
+      if (warnNow) {
+        contextPressureWarnedAt = ctxPct;
+        const urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
+        const advice = hasUnboundedRead
+          ? `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`
+          : `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        const pressureMsg = {
+          role: 'user',
+          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
+        };
+        conversationMessages.push(pressureMsg);
+        apiMessages.push(pressureMsg);
+        if (ctxPct >= 85) {
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${C.reset}`);
+        }
+      }
+    }
+
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
     // ask_user renders its own UI — skip the normal section header for it
@@ -1700,12 +1786,11 @@ async function processInput(userInput, serverHooks = null) {
       // Blank line after each step group for visual separation
       console.log('');
 
-      // Milestone tracking
-      const stepLines = 1 + shownSummaries.length + 1; // header + summaries + blank
+      // Milestone tracking — linesBack no longer needed (append-only emit)
       const toolNames = prepared
         .filter(p => p && p.fnName !== 'ask_user')
         .map(p => p.fnName);
-      const ms = _milestone.record(stepLines, toolNames, filesRead, filesModified);
+      const ms = _milestone.record(0, toolNames, filesRead, filesModified);
       if (ms) _emitMilestone(ms);
     }
 
@@ -1736,7 +1821,7 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
             saveNow(conversationMessages);
             return;
           }
@@ -1759,7 +1844,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
         }
@@ -1779,15 +1864,42 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
         }
       } else {
         consecutiveErrors = 0; // reset on success
+        progressMadeThisPass = true;
       }
       if (isOk && prep.fnName === 'read_file') {
         if (prep.args && prep.args.path) filesRead.add(prep.args.path);
+      }
+      // Spawn-agents truncation stuck detection
+      if (prep.fnName === 'spawn_agents') {
+        const doneCount = (res.match(/\bStatus: done\b/g) || []).length;
+        const truncCount = (res.match(/\bStatus: truncated\b/g) || []).length;
+        if (truncCount > 0 && doneCount === 0) {
+          truncatedSwarmCount++;
+          if (truncatedSwarmCount === LOOP_WARN_SWARM) {
+            console.log(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
+            const swarmWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] All sub-agents hit their iteration limit without completing the task for the ${truncatedSwarmCount}nd time in a row. Change strategy: do not spawn further agents for the same search — try a different approach or report what you know.`,
+            };
+            conversationMessages.push(swarmWarning);
+            apiMessages.push(swarmWarning);
+          } else if (truncatedSwarmCount >= LOOP_ABORT_SWARM) {
+            console.log(`${C.red}  ✖ Swarm abort: all sub-agents hit iteration limit ${truncatedSwarmCount}× — aborting stuck swarm${C.reset}`);
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            saveNow(conversationMessages);
+            return;
+          }
+        } else if (doneCount > 0) {
+          truncatedSwarmCount = 0;
+        }
       }
     }
 
@@ -1804,7 +1916,7 @@ async function processInput(userInput, serverHooks = null) {
       const noteMsg = { role: 'user', content: `[User note mid-run]: ${midRunNote}` };
       conversationMessages.push(noteMsg);
       apiMessages.push(noteMsg);
-      console.log(`${C.cyan}  ✎ Kontext hinzugefügt${C.reset}`);
+      console.log(`${C.cyan}  ✎ Context added${C.reset}`);
     }
   }
 
@@ -1818,6 +1930,11 @@ async function processInput(userInput, serverHooks = null) {
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();
     if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
+      // Skip auto-extend if no meaningful progress was made in this pass
+      if (filesModified.size === 0 && !progressMadeThisPass) {
+        console.log(`${C.yellow}  ⚠ Max iterations reached with no progress. Stopping.${C.reset}`);
+        break outer;
+      }
       // Free provider — auto-extend silently.
       // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
       // so the next pass runs exactly 20 more iterations, not the full cumulative sum

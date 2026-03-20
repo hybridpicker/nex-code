@@ -421,7 +421,10 @@ class StreamRenderer {
 
   /** Write to stdout, silently ignoring EPIPE errors after abort */
   _safeWrite(data) {
-    try { process.stdout.write(data); } catch (e) { if (e.code !== 'EPIPE') throw e; }
+    try {
+      this.lineCount += (data.match(/\n/g) || []).length;
+      process.stdout.write(data);
+    } catch (e) { if (e.code !== 'EPIPE') throw e; }
   }
 
   /** Write to stderr (same stream as Spinner) for cursor animation */
