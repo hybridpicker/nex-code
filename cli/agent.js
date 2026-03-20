@@ -1019,7 +1019,7 @@ function _notifyDesktop(message) {
   } catch { /* ignore — notification is best-effort */ }
 }
 
-function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime) {
+function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint = false } = {}) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
@@ -1049,7 +1049,7 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
     console.log(`${C.dim}  💡 /diff · /commit · /undo${C.reset}`);
-  } else if (filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
+  } else if (!suppressHint && filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
     // Audit / read-heavy session — prompt for applying fixes
     console.log(`${C.dim}  💡 Found issues? Say "fix 1" or "apply all fixes"${C.reset}`);
   } else if (filesRead.size > 0 && totalSteps >= 2) {
@@ -1240,13 +1240,18 @@ async function processInput(userInput, serverHooks = null) {
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
+  let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
+  const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
+  const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
 
   let i;
   let iterLimit = MAX_ITERATIONS;
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3;  // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
+  let progressMadeThisPass = false; // progress gate for auto-extend
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
+  progressMadeThisPass = false;
   for (i = 0; i < iterLimit; i++) {
     // Check if aborted (Ctrl+C) at start of each iteration
     const loopSignal = _getAbortSignal();
@@ -1278,6 +1283,7 @@ async function processInput(userInput, serverHooks = null) {
     }
     let firstToken = true;
     let streamedText = '';
+    let stepTextLines = 0;
     const stream = new StreamRenderer();
 
     let result;
@@ -1580,6 +1586,7 @@ async function processInput(userInput, serverHooks = null) {
     if (streamedText) {
       stream.flush();
     }
+    stepTextLines = stream.lineCount;
 
     // Reset retry counters on success
     networkRetries = 0;
@@ -1700,8 +1707,11 @@ async function processInput(userInput, serverHooks = null) {
       // Blank line after each step group for visual separation
       console.log('');
 
-      // Milestone tracking
-      const stepLines = 1 + shownSummaries.length + 1; // header + summaries + blank
+      // Milestone tracking — count actual visual lines per summary (may contain \n)
+      const actualSummaryLines = shownSummaries.reduce(
+        (n, s) => n + (s.match(/\n/g) || []).length + 1, 0
+      );
+      const stepLines = stepTextLines + 1 + actualSummaryLines + 1; // text + header + summaries + blank
       const toolNames = prepared
         .filter(p => p && p.fnName !== 'ask_user')
         .map(p => p.fnName);
@@ -1736,7 +1746,7 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
             saveNow(conversationMessages);
             return;
           }
@@ -1759,7 +1769,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
         }
@@ -1779,15 +1789,42 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
         }
       } else {
         consecutiveErrors = 0; // reset on success
+        progressMadeThisPass = true;
       }
       if (isOk && prep.fnName === 'read_file') {
         if (prep.args && prep.args.path) filesRead.add(prep.args.path);
+      }
+      // Spawn-agents truncation stuck detection
+      if (prep.fnName === 'spawn_agents') {
+        const doneCount = (res.match(/\bStatus: done\b/g) || []).length;
+        const truncCount = (res.match(/\bStatus: truncated\b/g) || []).length;
+        if (truncCount > 0 && doneCount === 0) {
+          truncatedSwarmCount++;
+          if (truncatedSwarmCount === LOOP_WARN_SWARM) {
+            console.log(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
+            const swarmWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] All sub-agents hit their iteration limit without completing the task for the ${truncatedSwarmCount}nd time in a row. Change strategy: do not spawn further agents for the same search — try a different approach or report what you know.`,
+            };
+            conversationMessages.push(swarmWarning);
+            apiMessages.push(swarmWarning);
+          } else if (truncatedSwarmCount >= LOOP_ABORT_SWARM) {
+            console.log(`${C.red}  ✖ Swarm abort: all sub-agents hit iteration limit ${truncatedSwarmCount}× — aborting stuck swarm${C.reset}`);
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            saveNow(conversationMessages);
+            return;
+          }
+        } else if (doneCount > 0) {
+          truncatedSwarmCount = 0;
+        }
       }
     }
 
@@ -1804,7 +1841,7 @@ async function processInput(userInput, serverHooks = null) {
       const noteMsg = { role: 'user', content: `[User note mid-run]: ${midRunNote}` };
       conversationMessages.push(noteMsg);
       apiMessages.push(noteMsg);
-      console.log(`${C.cyan}  ✎ Kontext hinzugefügt${C.reset}`);
+      console.log(`${C.cyan}  ✎ Context added${C.reset}`);
     }
   }
 
@@ -1818,6 +1855,11 @@ async function processInput(userInput, serverHooks = null) {
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();
     if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
+      // Skip auto-extend if no meaningful progress was made in this pass
+      if (filesModified.size === 0 && !progressMadeThisPass) {
+        console.log(`${C.yellow}  ⚠ Max iterations reached with no progress. Stopping.${C.reset}`);
+        break outer;
+      }
       // Free provider — auto-extend silently.
       // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
       // so the next pass runs exactly 20 more iterations, not the full cumulative sum
