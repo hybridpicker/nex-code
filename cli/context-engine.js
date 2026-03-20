@@ -69,7 +69,12 @@ function estimateTokens(text) {
   // Check cache — key: first 80 chars + length to avoid O(n) key comparison on large strings
   const cacheKey = text.length <= 80 ? text : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length - 20)}`;
   const cached = stringTokenCache.get(cacheKey);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // LRU: move to end of insertion order
+    stringTokenCache.delete(cacheKey);
+    stringTokenCache.set(cacheKey, cached);
+    return cached;
+  }
 
   const tokens = Math.ceil(text.length / getTokenRatio());
 
