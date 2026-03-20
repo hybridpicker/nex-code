@@ -198,6 +198,7 @@ async function runSubAgent(agentDef, callbacks = {}, _depth = 0) {
   const toolsUsed = [];
   const tokensUsed = { input: 0, output: 0 };
   const locksHeld = new Set();
+  const bashFailCounts = new Map(); // track repeated failed bash commands
 
   const systemPrompt = `You are a focused sub-agent. Complete this specific task efficiently.
 
@@ -361,6 +362,19 @@ ERROR RECOVERY:
       const toolMessages = await Promise.all(toolResultPromises);
       messages.push(...toolMessages);
 
+      // Track repeated failed bash commands for stuck-detection reporting
+      for (let j = 0; j < tool_calls.length; j++) {
+        const tc = tool_calls[j];
+        if (tc.function.name === 'bash_exec') {
+          const tcArgs = parseToolArgs(tc.function.arguments);
+          const resultContent = toolMessages[j]?.content || '';
+          if (resultContent.startsWith('ERROR') && tcArgs && tcArgs.command) {
+            const cmdKey = tcArgs.command.replace(/\s+/g, ' ').trim().slice(0, 100);
+            bashFailCounts.set(cmdKey, (bashFailCounts.get(cmdKey) || 0) + 1);
+          }
+        }
+      }
+
       if (callbacks.onUpdate) {
         callbacks.onUpdate(`step ${i + 1}/${maxIter}`);
       }
@@ -369,10 +383,17 @@ ERROR RECOVERY:
     // Max iterations reached
     for (const fp of locksHeld) releaseLock(fp);
 
+    const repeatedFailures = [...bashFailCounts.entries()]
+      .filter(([, count]) => count >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([cmd, count]) => `"${cmd}" (failed ${count}×)`);
+
     return {
       task: agentDef.task,
       status: 'truncated',
       abortReason: 'iteration_limit',
+      repeatedFailures,
       result: messages[messages.length - 1]?.content || '(max iterations reached)',
       toolsUsed,
       tokensUsed,
@@ -473,6 +494,9 @@ async function executeSpawnAgents(args, _depth = 0) {
       lines.push(`  Status: ${r.status}`);
       lines.push(`  Tools used: ${r.toolsUsed.length > 0 ? r.toolsUsed.join(', ') : 'none'}`);
       lines.push(`  Result: ${r.result}`);
+      if (r.repeatedFailures && r.repeatedFailures.length > 0) {
+        lines.push(`  Repeated failures: ${r.repeatedFailures.join('; ')}`);
+      }
       lines.push('');
       totalInput += r.tokensUsed.input;
       totalOutput += r.tokensUsed.output;
