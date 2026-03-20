@@ -2314,12 +2314,12 @@ describe('tools.js', () => {
 
   // ─── sysadmin ssl_check with cert_path ────────────────────────
   describe('sysadmin ssl_check', () => {
-    (process.env.CI ? it.skip : it)('runs ssl_check with cert_path', async () => {
+    it.skip('runs ssl_check with cert_path — calls openssl', async () => {
       const result = await executeTool('sysadmin', { action: 'ssl_check', cert_path: '/nonexistent/cert.pem' });
       expect(typeof result).toBe('string');
     });
 
-    (process.env.CI ? it.skip : it)('runs ssl_check with domain', async () => {
+    it.skip('runs ssl_check with domain — requires network', async () => {
       const result = await executeTool('sysadmin', { action: 'ssl_check', domain: 'example.com' });
       expect(typeof result).toBe('string');
     }, 15000);
@@ -2580,12 +2580,12 @@ describe('tools.js', () => {
 
   // ─── gh_run_list exercises code path ─────────────────────────
   describe('gh_run_list', () => {
-    (process.env.CI ? it.skip : it)('exercises run list with filters', async () => {
+    it.skip('exercises run list with filters — requires gh CLI', async () => {
       const result = await executeTool('gh_run_list', { limit: 5, workflow: 'ci.yml', branch: 'main', status: 'success' });
       expect(typeof result).toBe('string');
     });
 
-    (process.env.CI ? it.skip : it)('exercises run list without filters', async () => {
+    it.skip('exercises run list without filters — requires gh CLI', async () => {
       const result = await executeTool('gh_run_list', {});
       expect(typeof result).toBe('string');
     });
