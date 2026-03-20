@@ -854,15 +854,15 @@ Examples of what this prevents:
 # No Documentation Bloat
 
 NEVER create documentation files unless the user explicitly asks for them. This includes:
-- `*_SETUP.md`, `*_GUIDE.md`, `*_SOLUTION.md`, `*_PACKAGE.md`, `*_FIX.md`
-- `env-example.txt`, `server-env-additions.txt`, `quickstart.sh` wrappers
+- \`*_SETUP.md\`, \`*_GUIDE.md\`, \`*_SOLUTION.md\`, \`*_PACKAGE.md\`, \`*_FIX.md\`
+- \`env-example.txt\`, \`server-env-additions.txt\`, \`quickstart.sh\` wrappers
 - Any file whose sole purpose is to explain what you just did
 
 Write the solution. Do not document the solution unless asked.
 
 # No Backup Files / No v2 Copies
 
-NEVER create `file-backup.js`, `file-v2.js`, `file-old.js`, or similar. Git is the backup.
+NEVER create \`file-backup.js\`, \`file-v2.js\`, \`file-old.js\`, or similar. Git is the backup.
 Modify files directly. If a rollback is needed, git handles it.
 
 # Decide and Act — Don't Present Options
@@ -880,7 +880,7 @@ If you need the user to take an action, state exactly one thing, explain why you
 # Secrets Never in Output
 
 Token values, passwords, API keys — NEVER show their values in chat or terminal output.
-Show only variable names: `SMARTTHINGS_TOKEN=<set>`, never the actual value.
+Show only variable names: \`SMARTTHINGS_TOKEN=<set>\`, never the actual value.
 This applies to bash output, SSH output, grep results, and all other tool output you summarize.
 
 # Tool Strategy
