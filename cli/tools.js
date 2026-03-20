@@ -1269,7 +1269,13 @@ async function _executeToolInner(name, args, options = {}) {
         .slice(start, end)
         .map((l, i) => `${start + i + 1}: ${l}`)
         .join('\n');
-      return `${summary}\n${numberedLines}`;
+      // Append a targeted-read hint when a large file is read without a line range,
+      // so the LLM knows to use line_start/line_end on subsequent reads.
+      const wasFullRead = !args.line_start && !args.line_end;
+      const rangeHint = wasFullRead && lineCount > 150
+        ? `\n[LARGE FILE: ${lineCount} lines returned in full. For subsequent reads use line_start/line_end to avoid context overflow.]`
+        : '';
+      return `${summary}\n${numberedLines}${rangeHint}`;
     }
 
     case 'write_file': {

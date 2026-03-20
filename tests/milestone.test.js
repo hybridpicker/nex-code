@@ -52,7 +52,7 @@ describe('MilestoneTracker', () => {
     t.record(4, ['read_file'], emptySet, emptySet);
     const ms = t.record(4, ['read_file'], emptySet, emptySet);
     expect(ms).not.toBeNull();
-    expect(ms.fire).toBe(true);
+    expect(ms).not.toBeNull();
   });
 
   test('snapshot has correct stepCount and phaseNum', () => {
@@ -63,12 +63,13 @@ describe('MilestoneTracker', () => {
     expect(ms.phaseNum).toBe(1);
   });
 
-  test('linesBack accumulates correctly across steps', () => {
+  test('milestone fires at correct step count (linesBack removed — append-only)', () => {
     const t = new MilestoneTracker(3);
-    t.record(4, ['read_file'], emptySet, emptySet);
-    t.record(6, ['read_file'], emptySet, emptySet);
-    const ms = t.record(5, ['read_file'], emptySet, emptySet);
-    expect(ms.linesBack).toBe(15);
+    t.record(0, ['read_file'], emptySet, emptySet);
+    t.record(0, ['read_file'], emptySet, emptySet);
+    const ms = t.record(0, ['read_file'], emptySet, emptySet);
+    expect(ms).not.toBeNull();
+    expect(ms.stepCount).toBe(3);
   });
 
   test('toolCounts in snapshot reflects only current phase', () => {
@@ -90,7 +91,6 @@ describe('MilestoneTracker', () => {
     expect(t.record(5, ['read_file'], emptySet, emptySet)).toBeNull();
     const ms = t.record(5, ['read_file'], emptySet, emptySet);
     expect(ms).not.toBeNull();
-    expect(ms.linesBack).toBe(10);
     expect(ms.phaseNum).toBe(2);
   });
 

@@ -306,14 +306,13 @@ function formatToolSummary(name, args, result, isError) {
   switch (name) {
     case 'read_file': {
       const resultLines = r.split('\n').filter(Boolean);
-      const count = resultLines.length;
-      const lastLine = resultLines[resultLines.length - 1];
+      const codeLines = resultLines.filter(l => !/^File:\s/.test(l) && !/^\[LARGE FILE:/.test(l));
+      const count = codeLines.length;
+      const lastLine = codeLines[codeLines.length - 1];
       const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
       const isPartial = args.line_start || args.line_end;
       const fname = args.path ? require('path').basename(args.path) : null;
       const fileHint = fname ? ` ${T.muted}from ${fname}${T.reset}` : '';
-      // First actual code line — skip the tool metadata header ("File: path (N lines, N bytes)")
-      const codeLines = resultLines.filter(l => !/^File:\s/.test(l));
       const firstContent = (codeLines[0] || '').replace(/^\d+:\s*/, '').trim();
       const contentHint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 70)}${firstContent.length > 70 ? '…' : ''}${C.reset}` : '';
       if (isPartial && lastLineNum > count) {
@@ -324,11 +323,22 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'write_file': {
-      const lines = (args.content || '').split('\n').length;
+      const contentLines = (args.content || '').split('\n');
+      const lineCount = contentLines.length;
       const fname = args.path ? require('path').basename(args.path) : null;
-      summary = fname
-        ? `Wrote ${fname} · ${lines} line${lines !== 1 ? 's' : ''}`
-        : `Wrote ${lines} line${lines !== 1 ? 's' : ''}`;
+      const header = fname
+        ? `Wrote ${fname} · ${lineCount} line${lineCount !== 1 ? 's' : ''}`
+        : `Wrote ${lineCount} line${lineCount !== 1 ? 's' : ''}`;
+      // For small files show the full content; for larger files show a preview
+      const WRITE_SHOW = 40;
+      const WRITE_PREVIEW = 8;
+      if (lineCount <= WRITE_SHOW) {
+        const block = contentLines.map(l => `     ${T.muted}${l}${T.reset}`).join('\n');
+        summary = `${header}\n${block}`;
+      } else {
+        const shown = contentLines.slice(0, WRITE_PREVIEW).map(l => `     ${T.muted}${l}${T.reset}`).join('\n');
+        summary = `${header}\n${shown}\n     ${T.subtle}… +${lineCount - WRITE_PREVIEW} lines${T.reset}`;
+      }
       break;
     }
     case 'edit_file': {
@@ -368,14 +378,23 @@ function formatToolSummary(name, args, result, isError) {
       } else if (outputLines.length === 0) {
         summary = icon;
       } else {
-        const shown = outputLines.slice(0, BASH_PREVIEW);
+        // On failure show last N lines (error is at the end); on success show first N
+        const failed = exitMatch && exitMatch[1] !== '0';
+        const shown = failed
+          ? outputLines.slice(-BASH_PREVIEW)
+          : outputLines.slice(0, BASH_PREVIEW);
         const more = outputLines.length - BASH_PREVIEW;
         const lines = shown.map((l, i) =>
           i === 0
             ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
             : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
         );
-        if (more > 0) lines.push(`     ${T.subtle}… +${more} lines${T.reset}`);
+        if (more > 0) {
+          const ellipsis = failed
+            ? `     ${T.subtle}${more} lines above…${T.reset}`
+            : `     ${T.subtle}… +${more} lines${T.reset}`;
+          failed ? lines.unshift(ellipsis) : lines.push(ellipsis);
+        }
         summary = lines.join('\n');
       }
       break;
@@ -386,6 +405,7 @@ function formatToolSummary(name, args, result, isError) {
         const patternHint = args.pattern ? ` ${T.muted}"${String(args.pattern).substring(0, 40)}"${T.reset}` : '';
         summary = `No matches${patternHint}`;
       } else {
+        const path = require('path');
         const lines = r.split('\n').filter(Boolean);
         const matchCount = lines.length;
         const files = new Set(lines.map(l => l.split(':')[0]).filter(Boolean));
@@ -394,9 +414,23 @@ function formatToolSummary(name, args, result, isError) {
         const header = fileCount > 1
           ? `${matchCount} match${matchCount !== 1 ? 'es' : ''} in ${fileCount} files${patternHint}`
           : `${matchCount} match${matchCount !== 1 ? 'es' : ''}${patternHint}`;
+        // Format: "basename:linenum content" — avoids doubled-path visual confusion
+        // Grep output: "file:linenum:content" (match) or "file:linenum-content" (context line)
+        function fmtGrepLine(l) {
+          const colonIdx = l.indexOf(':');
+          if (colonIdx === -1) return `${T.muted}${l.substring(0, 90)}${T.reset}`;
+          const file = l.substring(0, colonIdx);
+          const rest = l.substring(colonIdx + 1);            // "linenum:content" or "linenum-content"
+          const lineNumM = rest.match(/^(\d+)[:-](.*)/s);
+          const lineNum = lineNumM ? `:${lineNumM[1]}` : '';
+          const content = (lineNumM ? lineNumM[2] : rest).trim();
+          const label = `${T.subtle}${path.basename(file)}${lineNum}${T.reset}`;
+          const snippet = `${T.muted}${content.substring(0, 80)}${content.length > 80 ? '…' : ''}${T.reset}`;
+          return `${label}  ${snippet}`;
+        }
         const preview = lines.slice(0, 4).map((l, i) =>
-          i === 0 ? `${header}\n     ${T.muted}${l.substring(0, 110)}${T.reset}`
-                  : `     ${T.muted}${l.substring(0, 110)}${T.reset}`
+          i === 0 ? `${header}\n     ${fmtGrepLine(l)}`
+                  : `     ${fmtGrepLine(l)}`
         );
         const more = lines.length - 4;
         if (more > 0) preview.push(`     ${T.subtle}… +${more} lines${T.reset}`);
