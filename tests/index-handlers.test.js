@@ -277,9 +277,9 @@ describe('index-handlers.test.js — additional handler coverage', () => {
         score: 85,
       }));
 
-      await handleSlashCommand('/benchmark');
+      await handleSlashCommand('/benchmark --history');
       const output = logSpy.mock.calls.map(c => c[0]).join('\n');
-      expect(output).toContain('Benchmark Results');
+      expect(output).toContain('Nightly Results');
       expect(output).toContain('qwen3-coder');
 
       // Cleanup
@@ -313,7 +313,7 @@ describe('index-handlers.test.js — additional handler coverage', () => {
         fs.writeFileSync(filePath, JSON.stringify({ model: 'test', score: 80 + i * 5 }));
       }
 
-      await handleSlashCommand('/benchmark');
+      await handleSlashCommand('/benchmark --history');
       const output = logSpy.mock.calls.map(c => c[0]).join('\n');
       expect(output).toContain('Trend');
 
