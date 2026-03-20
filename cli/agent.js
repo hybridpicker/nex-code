@@ -3,7 +3,8 @@
  * Hybrid: chat + tool-use in a single conversation.
  */
 
-const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, formatSectionHeader, setActiveTaskProgress } = require('./ui');
+const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, formatSectionHeader, formatMilestone, setActiveTaskProgress } = require('./ui');
+const { MilestoneTracker } = require('./milestone');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
 const { executeTool } = require('./tools');
@@ -28,6 +29,27 @@ const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./
 const { getConfiguredProviders, getActiveProviderName, getActiveModelId, setActiveModel, MODEL_EQUIVALENTS } = require('./providers/registry');
 const fsSync = require('fs');
 const path = require('path');
+
+// ─── Milestone compression ───────────────────────────────────
+const MILESTONE_N = (() => {
+  const v = parseInt(process.env.NEX_MILESTONE_STEPS ?? '5', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 5;
+})();
+
+function _emitMilestone(ms) {
+  const banner = formatMilestone(
+    ms.phaseName, ms.stepCount, ms.toolCounts,
+    ms.elapsed, ms.filesRead, ms.filesModified
+  );
+  if (ms.inViewport && process.stdout.isTTY) {
+    const currentViewport = Math.max(1, (process.stdout.rows || 24) - 2);
+    if (ms.linesBack <= currentViewport) {
+      process.stdout.write(`\x1b[${ms.linesBack}A\r\x1b[J${banner}\n`);
+      return;
+    }
+  }
+  process.stdout.write(`${banner}\n`);
+}
 
 // ─── Vision / Image Helpers ──────────────────────────────────
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i;
@@ -1208,6 +1230,7 @@ async function processInput(userInput, serverHooks = null) {
   const filesModified = new Set();
   const filesRead = new Set();
   const startTime = Date.now();
+  const _milestone = new MilestoneTracker(MILESTONE_N);
   const fileEditCounts = new Map(); // loop detection: edits per file
   const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
   const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
@@ -1670,12 +1693,20 @@ async function processInput(userInput, serverHooks = null) {
 
     // Print summaries below the header (skip ask_user — it renders its own UI)
     if (!batchOpts.skipSummaries) {
-      for (let si = 0; si < batchSummaries.length; si++) {
-        if (prepared[si] && prepared[si].fnName === 'ask_user') continue;
-        console.log(batchSummaries[si]);
-      }
+      const shownSummaries = batchSummaries.filter((_, si) =>
+        !(prepared[si] && prepared[si].fnName === 'ask_user')
+      );
+      for (const s of shownSummaries) console.log(s);
       // Blank line after each step group for visual separation
       console.log('');
+
+      // Milestone tracking
+      const stepLines = 1 + shownSummaries.length + 1; // header + summaries + blank
+      const toolNames = prepared
+        .filter(p => p && p.fnName !== 'ask_user')
+        .map(p => p.fnName);
+      const ms = _milestone.record(stepLines, toolNames, filesRead, filesModified);
+      if (ms) _emitMilestone(ms);
     }
 
     // Track modified and read files
