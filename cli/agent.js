@@ -41,13 +41,9 @@ function _emitMilestone(ms) {
     ms.phaseName, ms.stepCount, ms.toolCounts,
     ms.elapsed, ms.filesRead, ms.filesModified
   );
-  if (ms.inViewport && process.stdout.isTTY) {
-    const currentViewport = Math.max(1, (process.stdout.rows || 24) - 2);
-    if (ms.linesBack <= currentViewport) {
-      process.stdout.write(`\x1b[${ms.linesBack}A\r\x1b[J${banner}\n`);
-      return;
-    }
-  }
+  // Append-only: no cursor-up-and-erase. The cursor-up/\x1b[J approach left
+  // blank lines in terminal scrollback (copy-paste artifact) and caused visible
+  // gaps when linesBack was off by even one line. Append is simpler and correct.
   process.stdout.write(`${banner}\n`);
 }
 
@@ -1292,7 +1288,6 @@ async function processInput(userInput, serverHooks = null) {
     }
     let firstToken = true;
     let streamedText = '';
-    let stepTextLines = 0;
     const stream = new StreamRenderer();
 
     let result;
@@ -1595,8 +1590,6 @@ async function processInput(userInput, serverHooks = null) {
     if (streamedText) {
       stream.flush();
     }
-    stepTextLines = stream.lineCount;
-
     // Reset retry counters on success
     networkRetries = 0;
     staleRetries = 0;
@@ -1747,15 +1740,11 @@ async function processInput(userInput, serverHooks = null) {
       // Blank line after each step group for visual separation
       console.log('');
 
-      // Milestone tracking — count actual visual lines per summary (may contain \n)
-      const actualSummaryLines = shownSummaries.reduce(
-        (n, s) => n + (s.match(/\n/g) || []).length + 1, 0
-      );
-      const stepLines = stepTextLines + 1 + actualSummaryLines + 1; // text + header + summaries + blank
+      // Milestone tracking — linesBack no longer needed (append-only emit)
       const toolNames = prepared
         .filter(p => p && p.fnName !== 'ask_user')
         .map(p => p.fnName);
-      const ms = _milestone.record(stepLines, toolNames, filesRead, filesModified);
+      const ms = _milestone.record(0, toolNames, filesRead, filesModified);
       if (ms) _emitMilestone(ms);
     }
 
