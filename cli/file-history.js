@@ -97,6 +97,13 @@ function getRedoCount() { return redoStack.length; }
 function clearHistory() {
   undoStack.length = 0;
   redoStack.length = 0;
+  // Also wipe persisted entries so they don't reload on next startup
+  const dir = historyDir();
+  fs.readdir(dir).then(files => {
+    for (const f of files) {
+      if (f.endsWith('.json')) fs.unlink(path.join(dir, f)).catch(() => {});
+    }
+  }).catch(() => {});
 }
 
 // ─── Persistent History ───────────────────────────────────────────────────────
