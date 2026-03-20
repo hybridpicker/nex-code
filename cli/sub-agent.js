@@ -17,13 +17,17 @@ const MAX_REVIEWER_ITERATIONS = 8;
 const MAX_REVIEWER_AGENTS = 2;
 
 // ─── File Locking ─────────────────────────────────────────────
-// Map<filePath, agentId> — allows same agent to re-lock its own files
+// Map<filePath, {agentId, timestamp}> — allows same agent to re-lock its own files
 const lockedFiles = new Map();
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 function acquireLock(filePath, agentId) {
-  const owner = lockedFiles.get(filePath);
-  if (owner && owner !== agentId) return false;
-  lockedFiles.set(filePath, agentId);
+  const entry = lockedFiles.get(filePath);
+  if (entry && entry.agentId !== agentId) {
+    // Check if lock has expired
+    if (Date.now() - entry.timestamp < LOCK_TIMEOUT_MS) return false;
+  }
+  lockedFiles.set(filePath, { agentId, timestamp: Date.now() });
   return true;
 }
 
@@ -484,4 +488,4 @@ async function executeSpawnAgents(args, _depth = 0) {
   }
 }
 
-module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry, getExcludedTools };
+module.exports = { runSubAgent, executeSpawnAgents, clearAllLocks, classifyTask, pickModelForTier, resolveSubAgentModel, isRetryableError, callWithRetry, getExcludedTools, LOCK_TIMEOUT_MS };
