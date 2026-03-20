@@ -306,14 +306,13 @@ function formatToolSummary(name, args, result, isError) {
   switch (name) {
     case 'read_file': {
       const resultLines = r.split('\n').filter(Boolean);
-      const count = resultLines.length;
-      const lastLine = resultLines[resultLines.length - 1];
+      const codeLines = resultLines.filter(l => !/^File:\s/.test(l) && !/^\[LARGE FILE:/.test(l));
+      const count = codeLines.length;
+      const lastLine = codeLines[codeLines.length - 1];
       const lastLineNum = lastLine ? parseInt(lastLine.match(/^(\d+):/)?.[1] || '0') : 0;
       const isPartial = args.line_start || args.line_end;
       const fname = args.path ? require('path').basename(args.path) : null;
       const fileHint = fname ? ` ${T.muted}from ${fname}${T.reset}` : '';
-      // First actual code line — skip the tool metadata header ("File: path (N lines, N bytes)")
-      const codeLines = resultLines.filter(l => !/^File:\s/.test(l));
       const firstContent = (codeLines[0] || '').replace(/^\d+:\s*/, '').trim();
       const contentHint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 70)}${firstContent.length > 70 ? '…' : ''}${C.reset}` : '';
       if (isPartial && lastLineNum > count) {
