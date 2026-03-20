@@ -1078,14 +1078,14 @@ describe('agent.js', () => {
 
   // ─── language prompt (exercised through system prompt) ─────
   describe('language prompt', () => {
-    it('includes auto language rule when NEX_LANGUAGE is unset', async () => {
+    it('defaults to English when NEX_LANGUAGE is unset', async () => {
       delete process.env.NEX_LANGUAGE;
       const agent = require('../cli/agent');
       agent.invalidateSystemPromptCache();
       mockStream('ok');
       await processInput('test');
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain('same language as the user');
+      expect(sysMsg).toContain('respond in English');
     });
 
     it('includes specific language when NEX_LANGUAGE is set', async () => {

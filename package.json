@@ -72,6 +72,11 @@
   },
   "jest": {
     "coverageThreshold": {
+      "global": {
+        "lines": 45,
+        "functions": 30,
+        "branches": 35
+      },
       "./cli/sub-agent.js": {
         "lines": 70,
         "functions": 65,

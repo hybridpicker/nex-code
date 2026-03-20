@@ -2017,17 +2017,22 @@ async function startREPL() {
 
   // Populate the status bar with model + git branch + project name
   {
-    let _gitBranch = '';
-    try {
-      const { execSync } = require('child_process');
-      _gitBranch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', {
-        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-    } catch {}
+    // Set status bar immediately (branch loads async)
     footer.setStatusInfo({
       model:   bannerModel,
-      branch:  _gitBranch,
+      branch:  '',
       project: path.basename(CWD),
+    });
+    // Async git branch fetch — updates footer when ready
+    const { execFile: _execFile } = require('child_process');
+    _execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }, (err, stdout) => {
+      if (!err && stdout) {
+        footer.setStatusInfo({
+          model:   bannerModel,
+          branch:  stdout.trim(),
+          project: path.basename(CWD),
+        });
+      }
     });
   }
 

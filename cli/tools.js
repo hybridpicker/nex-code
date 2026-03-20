@@ -31,6 +31,11 @@ const INTERACTIVE_CMDS = /^(vim?|nano|emacs|pico|less|more|top|htop|iftop|iotop|
 const SSH_INTERACTIVE_RE = /^ssh\s/;
 const SSH_HAS_REMOTE_CMD_RE = /^ssh(?:\s+-\S+)*\s+\S+@?\S+\s+["']?[^-]/;
 
+/** Check if a file exists (async). */
+async function fileExists(fp) {
+  return fs.access(fp).then(() => true).catch(() => false);
+}
+
 // ─── Auto-Fix Helpers ─────────────────────────────────────────
 
 /**
@@ -50,7 +55,7 @@ async function autoFixPath(originalPath) {
     .replace(/\/+/g, '/')           // double slashes
     .replace(/^~\//, `${require('os').homedir()}/`); // expand ~
   const np = resolvePath(normalized);
-  if (np && (await fs.access(np).then(() => true).catch(() => false))) {
+  if (np && (await fileExists(np))) {
     return { fixedPath: np, message: `(auto-fixed path: ${originalPath} → ${normalized})` };
   }
 
@@ -60,7 +65,7 @@ async function autoFixPath(originalPath) {
   if (!hasExt) {
     for (const ext of extVariants) {
       const withExt = resolvePath(originalPath + ext);
-      if (withExt && (await fs.access(withExt).then(() => true).catch(() => false))) {
+      if (withExt && (await fileExists(withExt))) {
         return { fixedPath: withExt, message: `(auto-fixed: added ${ext} extension)` };
       }
     }
@@ -71,7 +76,7 @@ async function autoFixPath(originalPath) {
     for (const ext of extVariants) {
       if (ext === hasExt) continue;
       const alt = resolvePath(base + ext);
-      if (alt && (await fs.access(alt).then(() => true).catch(() => false))) {
+      if (alt && (await fileExists(alt))) {
         return { fixedPath: alt, message: `(auto-fixed: ${hasExt} → ${ext})` };
       }
     }
@@ -1231,7 +1236,7 @@ async function _executeToolInner(name, args, options = {}) {
     case 'read_file': {
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      const exists = await fileExists(fp);
       if (!exists) {
         // Auto-fix: try to find the file
         const fix = await autoFixPath(args.path);
@@ -1271,7 +1276,7 @@ async function _executeToolInner(name, args, options = {}) {
       await ensureCheckpoint();
       const fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      const exists = await fileExists(fp);
       let oldContent = null;
 
       if (!options.autoConfirm) {
@@ -1292,7 +1297,7 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       const dir = path.dirname(fp);
-      const dirExists = await fs.access(dir).then(() => true).catch(() => false);
+      const dirExists = await fileExists(dir);
       if (!dirExists) await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(fp, args.content, 'utf-8');
       const needsExec = /[/\\]\.git[/\\]hooks[/\\]/.test(fp) || fp.endsWith('.sh') || args.content.startsWith('#!');
@@ -1306,7 +1311,7 @@ async function _executeToolInner(name, args, options = {}) {
       await ensureCheckpoint();
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      const exists = await fileExists(fp);
       if (!exists) {
         // Auto-fix: try to find the file
         const fix = await autoFixPath(args.path);
@@ -1390,12 +1395,12 @@ async function _executeToolInner(name, args, options = {}) {
     case 'list_directory': {
       let dp = resolvePath(args.path);
       if (!dp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fs.access(dp).then(() => true).catch(() => false);
+      const exists = await fileExists(dp);
       if (!exists) {
         // Auto-fix: normalize path
         const normalized = args.path.replace(/\/+/g, '/').replace(/^~\//, `${require('os').homedir()}/`);
         const np = resolvePath(normalized);
-        const npExists = await fs.access(np).then(() => true).catch(() => false);
+        const npExists = await fileExists(np);
         if (np && npExists) {
           dp = np;
         } else {
@@ -1601,7 +1606,7 @@ async function _executeToolInner(name, args, options = {}) {
       await ensureCheckpoint();
       let fp = resolvePath(args.path);
       if (!fp) return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fs.access(fp).then(() => true).catch(() => false);
+      const exists = await fileExists(fp);
       if (!exists) {
         // Auto-fix: try to find the file
         const fix = await autoFixPath(args.path);
@@ -2802,7 +2807,7 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       // Django / Python detection (manage.py or requirements.txt)
-      const hasDjango = (await fs.access(path.join(cwd, 'manage.py')).then(() => true).catch(() => false)) ||
+      const hasDjango = (await fileExists(path.join(cwd, 'manage.py'))) ||
         ((await tryRead(path.join(cwd, 'requirements.txt'), 50) || '').includes('Django'));
       if (hasDjango) stackParts.push('Django (server-rendered templates)');
 
@@ -3252,4 +3257,4 @@ async function executeTool(name, args, options = {}) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser, setAskUserHandler };
+module.exports = { TOOL_DEFINITIONS, executeTool, resolvePath, autoFixPath, autoFixEdit, enrichBashError, cancelPendingAskUser, setAskUserHandler, fileExists };
