@@ -80,7 +80,7 @@ const SLASH_COMMANDS = [
   { cmd: '/servers', desc: 'List server profiles / ping' },
   { cmd: '/docker', desc: 'List containers across all servers' },
   { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
-  { cmd: '/benchmark', desc: 'Show model benchmark results (7-day trend)' },
+  { cmd: '/benchmark [--quick] [--models=a,b]', desc: 'Rank Ollama Cloud models on nex-code tool-calling tasks (--history for nightly log)' },
   { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/setup', desc: 'Configure provider and API keys' },
   { cmd: '/undo', desc: 'Undo last file change' },
@@ -226,6 +226,10 @@ ${C.bold}${C.cyan}Undo / Redo:${C.reset}
   ${C.cyan}/undo${C.reset}             ${C.dim}Undo last file change${C.reset}
   ${C.cyan}/redo${C.reset}             ${C.dim}Redo last undone change${C.reset}
   ${C.cyan}/history${C.reset}          ${C.dim}Show file change history${C.reset}
+
+  ${C.cyan}/benchmark${C.reset}        ${C.dim}Rank Ollama Cloud models on nex-code tool-calling tasks${C.reset}
+  ${C.cyan}/benchmark --quick${C.reset}${C.dim}  Fast run: 7 tasks, 3 models${C.reset}
+  ${C.cyan}/benchmark --models=a,b${C.reset}${C.dim}  Custom model list${C.reset}
 
   ${C.cyan}/exit${C.reset}             ${C.dim}Quit${C.reset}
 `);
@@ -1684,86 +1688,6 @@ For each issue, include:
       return true;
     }
 
-    case '/benchmark': {
-      const os = require('os');
-      const resultsDir = path.join(os.homedir(), 'Coding', 'nex-code-benchmarks', 'results');
-
-      if (!fs.existsSync(resultsDir)) {
-        console.log(`${C.yellow}No benchmark results found at ${resultsDir}${C.reset}`);
-        console.log(`${C.dim}Run the benchmark system first: ~/Coding/nex-code-benchmarks/run.sh${C.reset}`);
-        break;
-      }
-
-      // Read last 7 days of results
-      const files = fs.readdirSync(resultsDir)
-        .filter(f => f.endsWith('.json'))
-        .sort()
-        .slice(-7);
-
-      if (files.length === 0) {
-        console.log(`${C.yellow}No benchmark results found${C.reset}`);
-        break;
-      }
-
-      console.log(`\n${C.bold}${C.cyan}Model Benchmark Results (${files.length}-day trend)${C.reset}\n`);
-
-      // Parse results and show table
-      const rows = [];
-      for (const file of files) {
-        try {
-          const data = JSON.parse(fs.readFileSync(path.join(resultsDir, file), 'utf-8'));
-          const date = file.replace('.json', '');
-
-          // Extract metrics — adapt to actual result format
-          const totalTasks = data.tasks?.length || data.total || 0;
-          const passed = data.tasks?.filter(t => t.passed || t.score >= 0.7)?.length || data.passed || 0;
-          const toolCallSuccess = data.tool_call_success ?? data.metrics?.tool_call_success ?? 'N/A';
-          const editAccuracy = data.edit_accuracy ?? data.metrics?.edit_accuracy ?? 'N/A';
-          const avgTime = data.avg_response_time ?? data.metrics?.avg_response_time ?? 'N/A';
-          const score = data.score ?? data.overall_score ?? (totalTasks > 0 ? Math.round(passed / totalTasks * 100) : 'N/A');
-          const model = data.model || data.config?.model || 'unknown';
-
-          rows.push({ date, model, totalTasks, passed, toolCallSuccess, editAccuracy, avgTime, score });
-        } catch {
-          // Skip corrupt files
-        }
-      }
-
-      if (rows.length === 0) {
-        console.log(`${C.yellow}Could not parse any benchmark results${C.reset}`);
-        break;
-      }
-
-      // Header
-      console.log(`  ${C.dim}${'Date'.padEnd(12)} ${'Model'.padEnd(25)} ${'Score'.padEnd(8)} ${'Pass'.padEnd(8)} ${'Tool OK'.padEnd(10)} ${'Edit Acc'.padEnd(10)} ${'Avg Time'.padEnd(10)}${C.reset}`);
-      console.log(`  ${C.dim}${'─'.repeat(85)}${C.reset}`);
-
-      for (const r of rows) {
-        const scoreColor = typeof r.score === 'number' ? (r.score >= 80 ? C.green : r.score >= 60 ? C.yellow : C.red) : C.dim;
-        const scoreStr = typeof r.score === 'number' ? `${r.score}%` : String(r.score);
-        const passStr = `${r.passed}/${r.totalTasks}`;
-        const toolStr = typeof r.toolCallSuccess === 'number' ? `${Math.round(r.toolCallSuccess * 100)}%` : String(r.toolCallSuccess);
-        const editStr = typeof r.editAccuracy === 'number' ? `${Math.round(r.editAccuracy * 100)}%` : String(r.editAccuracy);
-        const timeStr = typeof r.avgTime === 'number' ? `${r.avgTime.toFixed(1)}s` : String(r.avgTime);
-
-        console.log(`  ${r.date.padEnd(12)} ${r.model.substring(0, 24).padEnd(25)} ${scoreColor}${scoreStr.padEnd(8)}${C.reset} ${passStr.padEnd(8)} ${toolStr.padEnd(10)} ${editStr.padEnd(10)} ${timeStr.padEnd(10)}`);
-      }
-
-      // Show trend arrow
-      if (rows.length >= 2) {
-        const first = rows[0].score;
-        const last = rows[rows.length - 1].score;
-        if (typeof first === 'number' && typeof last === 'number') {
-          const diff = last - first;
-          const arrow = diff > 0 ? `${C.green}▲ +${diff}%` : diff < 0 ? `${C.red}▼ ${diff}%` : `${C.dim}→ stable`;
-          console.log(`\n  ${C.bold}Trend:${C.reset} ${arrow}${C.reset} over ${rows.length} days`);
-        }
-      }
-
-      console.log();
-      break;
-    }
-
     case '/init': {
       const { runServerWizard, runDeployWizard, setWizardRL } = require('./wizard');
       setWizardRL(rl);
@@ -1779,6 +1703,198 @@ For each issue, include:
     case '/setup': {
       const { runSetupWizard } = require('./setup');
       await runSetupWizard({ rl, force: true });
+      return true;
+    }
+
+    case '/benchmark': {
+      // --history: show OpenClaw nightly results instead of running live benchmark
+      if (rest.includes('--history')) {
+        const os = require('os');
+        const resultsDir = path.join(os.homedir(), 'Coding', 'nex-code-benchmarks', 'results');
+        if (!fs.existsSync(resultsDir)) {
+          console.log(`${C.yellow}No nightly results at ${resultsDir}${C.reset}`);
+          console.log(`${C.dim}Use /benchmark (no flags) to run a live model comparison.${C.reset}`);
+          break;
+        }
+        const files = fs.readdirSync(resultsDir).filter(f => f.endsWith('.json')).sort().slice(-7);
+        if (files.length === 0) { console.log(`${C.yellow}No result files found${C.reset}`); break; }
+        console.log(`\n${C.bold}${C.cyan}OpenClaw Nightly Results (${files.length}-day trend)${C.reset}\n`);
+        console.log(`  ${C.dim}${'Date'.padEnd(12)} ${'Model'.padEnd(25)} ${'Score'.padEnd(8)} ${'Pass'.padEnd(8)}${C.reset}`);
+        console.log(`  ${C.dim}${'─'.repeat(58)}${C.reset}`);
+        const rows = [];
+        for (const file of files) {
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(resultsDir, file), 'utf-8'));
+            const date = file.replace('.json', '');
+            const total = data.tasks?.length || data.total || 0;
+            const passed = data.tasks?.filter(t => t.passed || t.score >= 0.7)?.length || data.passed || 0;
+            const score = data.score ?? data.overall_score ?? (total > 0 ? Math.round(passed / total * 100) : 'N/A');
+            const model = data.model || data.config?.model || 'unknown';
+            rows.push({ date, model, total, passed, score });
+            const sc = typeof score === 'number' ? (score >= 80 ? C.green : score >= 60 ? C.yellow : C.red) : C.dim;
+            console.log(`  ${date.padEnd(12)} ${model.substring(0, 24).padEnd(25)} ${sc}${String(score).padEnd(8)}${C.reset} ${passed}/${total}`);
+          } catch { /* skip corrupt */ }
+        }
+        if (rows.length >= 2) {
+          const first = rows[0].score; const last = rows[rows.length - 1].score;
+          if (typeof first === 'number' && typeof last === 'number') {
+            const diff = last - first;
+            const arrow = diff > 0 ? `${C.green}▲ +${diff}` : diff < 0 ? `${C.red}▼ ${diff}` : `${C.dim}→ stable`;
+            console.log(`\n  ${C.bold}Trend:${C.reset} ${arrow}${C.reset} over ${rows.length} days`);
+          }
+        }
+        console.log();
+        break;
+      }
+
+      // --discover: find new Ollama Cloud models, benchmark them, auto-update README + models.env
+      if (rest.includes('--discover')) {
+        const { findNewModels, markBenchmarked, updateReadme, updateModelsEnv } = require('./model-watcher');
+        const { runDiscoverBenchmark, buildSummary } = require('./benchmark');
+
+        console.log(`\n${C.bold}Checking Ollama Cloud for new models...${C.reset}`);
+        let discovery;
+        try {
+          discovery = await findNewModels();
+        } catch (err) {
+          console.log(`${C.red}Discovery failed: ${err.message}${C.reset}`);
+          break;
+        }
+
+        const { newModels, allCloud } = discovery;
+        console.log(`${C.dim}${allCloud.length} models available on cloud${C.reset}`);
+
+        if (newModels.length === 0) {
+          console.log(`${C.green}No new models since last benchmark run.${C.reset}\n`);
+          break;
+        }
+
+        console.log(`${C.cyan}New models to benchmark (${newModels.length}):${C.reset} ${newModels.join(', ')}\n`);
+
+        // Load existing ranking from saved results if available
+        const os = require('os');
+        const resultsFile = path.join(os.homedir(), '.nex-code', 'benchmark-results.json');
+        let existingRanking = [];
+        try {
+          if (fs.existsSync(resultsFile)) {
+            existingRanking = JSON.parse(fs.readFileSync(resultsFile, 'utf-8'));
+          }
+        } catch { /* start fresh */ }
+
+        let current = '';
+        const merged = await runDiscoverBenchmark({
+          newModels,
+          existingRanking,
+          onProgress: ({ model, task, done, score, error }) => {
+            if (!done) {
+              if (model !== current) {
+                if (current) process.stdout.write('\n');
+                current = model;
+                process.stdout.write(`${C.cyan}${model}${C.reset}  `);
+              }
+              return;
+            }
+            const dot = error ? `${C.red}✗${C.reset}` : score >= 80 ? `${C.green}·${C.reset}` : score >= 40 ? `${C.yellow}·${C.reset}` : `${C.red}·${C.reset}`;
+            process.stdout.write(dot);
+          },
+        });
+        if (current) process.stdout.write('\n');
+
+        // Save merged results for next run
+        try {
+          fs.writeFileSync(resultsFile, JSON.stringify(merged, null, 2));
+        } catch { /* non-fatal */ }
+
+        // Mark all cloud models as known (so next run only picks up truly new ones)
+        markBenchmarked(allCloud);
+
+        // Auto-update README, models.env, and per-category routing config
+        const readmePath = path.join(process.cwd(), 'README.md');
+        const readmeUpdated = updateReadme(merged, readmePath);
+        const envResult     = updateModelsEnv(merged);
+
+        const { buildCategoryWinners } = require('./benchmark');
+        const { updateRoutingConfig }  = require('./model-watcher');
+        const catWinners = buildCategoryWinners(merged);
+        const routeResult = updateRoutingConfig(catWinners);
+
+        if (readmeUpdated) {
+          console.log(`${C.green}README.md benchmark table updated${C.reset}`);
+        }
+        if (envResult.updated) {
+          console.log(`${C.green}DEFAULT_MODEL: ${envResult.previousModel} → ${envResult.newModel}${C.reset}`);
+        } else if (envResult.reason) {
+          console.log(`${C.dim}models.env unchanged: ${envResult.reason}${C.reset}`);
+        }
+        if (routeResult.changes.length > 0) {
+          console.log(`${C.green}Routing updated:${C.reset}`);
+          for (const ch of routeResult.changes) console.log(`  ${C.dim}${ch}${C.reset}`);
+        }
+        console.log();
+        return true;
+      }
+
+      const { runBenchmark, DEFAULT_MODELS, QUICK_MODELS } = require('./benchmark');
+      const quick   = rest.includes('--quick');
+      const mFlag   = rest.find(r => r.startsWith('--models='));
+      const models  = mFlag
+        ? mFlag.replace('--models=', '').split(',').map(m => m.trim()).filter(Boolean)
+        : [];
+
+      const taskCount = quick ? 7 : 15;
+      const modelList = models.length > 0 ? models : (quick ? QUICK_MODELS : DEFAULT_MODELS);
+
+      console.log(
+        `\n${C.bold}Starting benchmark${C.reset}  ` +
+        `${C.dim}${taskCount} tasks · ${modelList.length} models · ollama cloud${C.reset}`
+      );
+      console.log(`${C.dim}Models: ${modelList.join(', ')}${C.reset}\n`);
+
+      let current = '';
+      let tasksDone = 0;
+      const totalTasks = taskCount * modelList.length;
+
+      const summary = await runBenchmark({
+        models: modelList,
+        quick,
+        onProgress: ({ model, task, done, score, error }) => {
+          if (!done) {
+            if (model !== current) {
+              if (current) process.stdout.write('\n');
+              current = model;
+              process.stdout.write(`${C.cyan}${model}${C.reset}  `);
+            }
+            return;
+          }
+          tasksDone++;
+          const dot = error ? `${C.red}✗${C.reset}` : score >= 80 ? `${C.green}·${C.reset}` : score >= 40 ? `${C.yellow}·${C.reset}` : `${C.red}·${C.reset}`;
+          process.stdout.write(dot);
+        },
+      });
+
+      if (current) process.stdout.write('\n');
+
+      // After a full (non-quick) benchmark: update routing config + README
+      if (!quick && summary && summary.length > 0) {
+        const { buildCategoryWinners } = require('./benchmark');
+        const { updateRoutingConfig, updateReadme, updateModelsEnv } = require('./model-watcher');
+        const catWinners  = buildCategoryWinners(summary);
+        const routeResult = updateRoutingConfig(catWinners);
+        if (routeResult.changes.length > 0) {
+          console.log(`\n${C.bold}Per-category routing saved:${C.reset}`);
+          for (const ch of routeResult.changes) console.log(`  ${C.dim}${ch}${C.reset}`);
+        }
+        const readmePath = path.join(process.cwd(), 'README.md');
+        if (updateReadme(summary, readmePath)) {
+          console.log(`${C.green}README.md updated${C.reset}`);
+        }
+        updateModelsEnv(summary);
+
+        // Save results for --discover merging
+        const os2 = require('os');
+        const rf = path.join(os2.homedir(), '.nex-code', 'benchmark-results.json');
+        try { fs.writeFileSync(rf, JSON.stringify(summary, null, 2)); } catch { /* non-fatal */ }
+      }
       return true;
     }
 
@@ -2004,6 +2120,7 @@ async function startREPL() {
 
   const footer = new StickyFooter();
   footer.activate(rl);
+  global._nexFooter = footer; // expose for task-router model switch
 
   // Clear terminal on startup so previous shell output doesn't bleed through
   if (process.stdout.isTTY) {
@@ -2509,6 +2626,31 @@ async function startREPL() {
         _setPM(true);
         _inv();
         console.log(`${C.cyan}${C.bold}⎇  Auto Plan Mode${C.reset}${C.dim} — implementation task detected · read-only until /plan approve${C.reset}`);
+      }
+    }
+
+    // Task-type routing: on the very first user message, detect category and
+    // switch to the best model if a different one is configured for that task type.
+    {
+      const { getConversationLength } = require('./agent');
+      if (getConversationLength() === 0) {
+        try {
+          const { detectCategory, getModelForCategory } = require('./task-router');
+          const cat = detectCategory(input);
+          if (cat && cat.id !== 'coding') {
+            const routedModel = getModelForCategory(cat.id);
+            const currentModel = getActiveModel();
+            if (routedModel && routedModel !== currentModel?.id) {
+              if (setActiveModel(routedModel)) {
+                const newModel = getActiveModel();
+                console.log(`${C.dim}↳ ${cat.icon} ${cat.label} task — routing to ${newModel?.name || routedModel}${C.reset}`);
+                if (global._nexFooter) {
+                  global._nexFooter.setStatusInfo({ model: newModel?.name || routedModel });
+                }
+              }
+            }
+          }
+        } catch { /* routing is non-critical — never block the agent */ }
       }
     }
 
