@@ -146,7 +146,7 @@ function enrichBashError(errorOutput, command) {
   const hints = [];
 
   // Command not found
-  if (/command not found|not recognized/i.test(errorOutput)) {
+  if (/command not found|: not found|not recognized/i.test(errorOutput)) {
     const cmdMatch = command.match(/^(\S+)/);
     const cmd = cmdMatch ? cmdMatch[1] : '';
     if (/^(npx|npm|node|yarn|pnpm|bun)$/.test(cmd)) {

@@ -279,8 +279,8 @@ describe('file-history.js', () => {
       await persistEntry(entry1);
       await persistEntry(entry2);
 
-      // Clear in-memory stack
-      clearHistory();
+      // Clear in-memory stack only (don't wipe disk — that's what we're testing can reload)
+      clearHistory({ diskToo: false });
       expect(getUndoCount()).toBe(0);
 
       // Load from disk
@@ -375,8 +375,8 @@ describe('file-history.js', () => {
       const files = fs.readdirSync(histDir).filter(f => f.endsWith('.json'));
       expect(files.length).toBe(1);
 
-      // Clear in-memory history
-      clearHistory();
+      // Clear in-memory history only (don't wipe disk — that's what we're testing can reload)
+      clearHistory({ diskToo: false });
       expect(getUndoCount()).toBe(0);
 
       // Load from disk

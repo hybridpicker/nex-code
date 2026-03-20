@@ -43,7 +43,7 @@ describe('picker.js', () => {
       process.stdin.isRaw = originals.stdinIsRaw;
       process.stdin.removeListener = originals.stdinRemoveListener;
       process.stdout.write = originals.stdoutWrite;
-      process.stdout.rows = originals.stdoutRows;
+      Object.defineProperty(process.stdout, 'rows', { value: originals.stdoutRows, writable: true, configurable: true });
     });
 
     /**
@@ -59,7 +59,7 @@ describe('picker.js', () => {
       process.stdin.resume = jest.fn();
       process.stdin.removeListener = jest.fn();
       process.stdout.write = jest.fn();
-      process.stdout.rows = rows;
+      Object.defineProperty(process.stdout, 'rows', { value: rows, writable: true, configurable: true });
 
       let keypressHandler;
       process.stdin.on = jest.fn((event, handler) => {

@@ -137,6 +137,7 @@ jest.mock('../cli/session', () => ({
   loadSession: jest.fn().mockReturnValue(null),
   listSessions: jest.fn().mockReturnValue([]),
   getLastSession: jest.fn().mockReturnValue(null),
+  deleteSession: jest.fn().mockReturnValue(true),
 }));
 
 jest.mock('../cli/memory', () => ({
@@ -444,6 +445,7 @@ describe('index.js (REPL commands)', () => {
         loadSession: jest.fn().mockReturnValue(null),
         listSessions: jest.fn().mockReturnValue([]),
         getLastSession: jest.fn().mockReturnValue(null),
+        deleteSession: jest.fn().mockReturnValue(true),
       }));
       jest.mock('../cli/memory', () => ({
         remember: jest.fn(),
@@ -554,6 +556,7 @@ describe('index.js (REPL commands)', () => {
         loadSession: jest.fn().mockReturnValue(null),
         listSessions: jest.fn().mockReturnValue([]),
         getLastSession: jest.fn().mockReturnValue(null),
+        deleteSession: jest.fn().mockReturnValue(true),
       }));
       jest.mock('../cli/memory', () => ({
         remember: jest.fn(),
@@ -698,6 +701,7 @@ describe('index.js (REPL commands)', () => {
           { name: '_autosave', updatedAt: '2025-06-02T00:00:00Z', messageCount: 8 },
         ]),
         getLastSession: jest.fn().mockReturnValue({ name: '_autosave', messageCount: 8, messages: [{ role: 'user', content: 'last' }] }),
+        deleteSession: jest.fn().mockReturnValue(true),
       }));
       jest.mock('../cli/memory', () => ({
         remember: jest.fn(),
@@ -1539,7 +1543,7 @@ describe('index.js (REPL commands)', () => {
       jest.mock('../cli/tools', () => ({ TOOL_DEFINITIONS: [], setAskUserHandler: jest.fn(), cancelPendingAskUser: jest.fn() }));
       jest.mock('../cli/session', () => ({
         saveSession: jest.fn(), loadSession: jest.fn(),
-        listSessions: jest.fn(), getLastSession: jest.fn(),
+        listSessions: jest.fn(), getLastSession: jest.fn(), deleteSession: jest.fn(),
       }));
       jest.mock('../cli/memory', () => ({ remember: jest.fn(), forget: jest.fn(), listMemories: jest.fn() }));
       jest.mock('../cli/permissions', () => ({

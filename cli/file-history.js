@@ -94,16 +94,18 @@ function getHistory(limit = 10) {
 function getUndoCount() { return undoStack.length; }
 function getRedoCount() { return redoStack.length; }
 
-function clearHistory() {
+function clearHistory({ diskToo = true } = {}) {
   undoStack.length = 0;
   redoStack.length = 0;
   // Also wipe persisted entries so they don't reload on next startup
-  const dir = historyDir();
-  fs.readdir(dir).then(files => {
-    for (const f of files) {
-      if (f.endsWith('.json')) fs.unlink(path.join(dir, f)).catch(() => {});
-    }
-  }).catch(() => {});
+  if (diskToo) {
+    const dir = historyDir();
+    fs.readdir(dir).then(files => {
+      for (const f of files) {
+        if (f.endsWith('.json')) fs.unlink(path.join(dir, f)).catch(() => {});
+      }
+    }).catch(() => {});
+  }
 }
 
 // ─── Persistent History ───────────────────────────────────────────────────────
