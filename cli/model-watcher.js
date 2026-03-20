@@ -225,9 +225,13 @@ function updateRoutingConfig(categoryWinners) {
   const envPath = path.join(os.homedir(), '.nex-code', 'models.env');
   const changes = [];
 
+  // Guard: skip if no real benchmark data (all scores 0 means summary was empty)
+  const validEntries = Object.entries(categoryWinners).filter(([, e]) => e.score > 0);
+  if (validEntries.length === 0) return { saved: false, envUpdated: false, changes: [] };
+
   // Write model-routing.json
   const routing = {};
-  for (const [cat, entry] of Object.entries(categoryWinners)) {
+  for (const [cat, entry] of validEntries) {
     routing[cat] = entry.model;
     changes.push(`${cat}: ${entry.model} (${entry.score}/100)`);
   }
@@ -248,7 +252,7 @@ function updateRoutingConfig(categoryWinners) {
 
     // Build the routing block to insert/replace
     const routingLines = Object.entries(ROUTE_ENV_KEYS)
-      .filter(([cat]) => categoryWinners[cat])
+      .filter(([cat]) => categoryWinners[cat] && categoryWinners[cat].score > 0)
       .map(([cat, key]) => `${key}=${categoryWinners[cat].model}  # ${cat} score: ${categoryWinners[cat].score}/100`)
       .join('\n');
 
