@@ -638,6 +638,7 @@ function _buildLanguagePrompt() {
   lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
   lines.push('COMPLETENESS RULES:');
   lines.push('  • ALWAYS show actual code when explaining implementations — never describe without showing');
+  lines.push('  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.');
   lines.push('  • Include complete examples with full context (imports, function signatures, error handling)');
   lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
   lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
