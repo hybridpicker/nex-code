@@ -140,6 +140,76 @@ function buildUserContent(text) {
   return blocks.length > 1 ? blocks : text;
 }
 
+// ─── LLM Output Repetition Detector ─────────────────────────
+
+/**
+ * Detect and truncate repeated paragraph/sentence patterns in LLM output.
+ *
+ * Strategy: split text into sentences (". " delimiter), build sliding windows
+ * of 3 sentences, count occurrences. If any 3-sentence window appears 3+
+ * times, the content is considered a repetition loop.
+ *
+ * Truncation rules:
+ *  - Keep first 2 occurrences of the repeated block, then append a system note.
+ *  - Additionally, if text is >8000 chars AND has a repetition pattern,
+ *    hard-truncate to 3000 chars.
+ *
+ * @param {string} text — raw LLM response content
+ * @returns {{ text: string, truncated: boolean, repeatCount: number }}
+ */
+function detectAndTruncateRepetition(text) {
+  if (!text || text.length < 200) return { text, truncated: false, repeatCount: 0 };
+
+  // Split into sentences using ". " as delimiter, keep delimiter attached
+  const raw = text.split(/(?<=\. )/);
+  const sentences = raw.filter((s) => s.trim().length > 0);
+
+  if (sentences.length < 6) return { text, truncated: false, repeatCount: 0 };
+
+  // Build sliding windows of 3 sentences and count occurrences
+  const windowCounts = new Map();
+  for (let i = 0; i <= sentences.length - 3; i++) {
+    const window = sentences.slice(i, i + 3).join('').trim();
+    // Only track non-trivial windows (>30 chars)
+    if (window.length > 30) {
+      windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
+    }
+  }
+
+  // Find the most-repeated window
+  let maxCount = 0;
+  let repeatedWindow = '';
+  for (const [window, count] of windowCounts) {
+    if (count > maxCount) { maxCount = count; repeatedWindow = window; }
+  }
+
+  if (maxCount < 3) return { text, truncated: false, repeatCount: maxCount };
+
+  // Repetition detected — truncate to first 2 occurrences
+  const SYSTEM_NOTE = `\n\n[SYSTEM: Output-Wiederholung erkannt — Antwort gekürzt (${maxCount}× gleicher Paragraph)]`;
+
+  let truncated;
+  if (text.length > 8000) {
+    // Hard truncate for very long outputs
+    truncated = text.slice(0, 3000) + SYSTEM_NOTE;
+  } else {
+    // Find the position of the 3rd occurrence and cut there
+    let occurrences = 0;
+    let cutPos = -1;
+    let searchFrom = 0;
+    while (occurrences < 2) {
+      const pos = text.indexOf(repeatedWindow, searchFrom);
+      if (pos === -1) break;
+      occurrences++;
+      cutPos = pos + repeatedWindow.length;
+      searchFrom = pos + 1;
+    }
+    truncated = cutPos > 0 ? text.slice(0, cutPos) + SYSTEM_NOTE : text.slice(0, 3000) + SYSTEM_NOTE;
+  }
+
+  return { text: truncated, truncated: true, repeatCount: maxCount };
+}
+
 // ─── Lazy Tool Loading ───────────────────────────────────────
 // Cache tool definitions to avoid loading on every call
 let cachedToolDefinitions = null;
@@ -642,6 +712,7 @@ const MAX_CONVERSATION_HISTORY = 300;
 // Reset in clearConversation() so /clear starts fresh.
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
+const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
 let _sessionConsecutiveSshCalls = 0;
@@ -1037,6 +1108,7 @@ function clearConversation() {
   conversationMessages = [];
   _sessionBashCmdCounts.clear();
   _sessionGrepPatternCounts.clear();
+  _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
   _sessionConsecutiveSshCalls = 0;
@@ -1375,9 +1447,12 @@ async function processInput(userInput, serverHooks = null) {
   const grepPatternCounts = _sessionGrepPatternCounts;
   const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
+  const grepFileCounts = _sessionGrepFileCounts;  // per-file grep count (different patterns)
+  const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
+  const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file
-  const LOOP_ABORT_READS = 6; // abort after 6 reads of the same file
+  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -1761,7 +1836,14 @@ async function processInput(userInput, serverHooks = null) {
       if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
     }
 
-    const { content, tool_calls } = result;
+    const { content: rawContent, tool_calls } = result;
+
+    // ── Repetition guard: truncate looping LLM output before storing ──────
+    const repCheck = detectAndTruncateRepetition(rawContent || '');
+    const content = repCheck.truncated ? repCheck.text : rawContent;
+    if (repCheck.truncated) {
+      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
+    }
 
     // Build assistant message for history
     const assistantMsg = { role: 'assistant', content: content || '' };
@@ -1832,25 +1914,84 @@ async function processInput(userInput, serverHooks = null) {
       const hasUnboundedRead = prepared.some(p =>
         p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
       );
-      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always
+      // Detect re-reads: any read_file call for a file that was already read at least once
+      const reReadFiles = prepared
+        .filter(p => p.canExecute && p.fnName === 'read_file' && p.args?.path && fileReadCounts.get(p.args.path) >= 1)
+        .map(p => p.args.path.split('/').slice(-2).join('/'));
+      const hasReRead = reReadFiles.length > 0;
+      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always;
+      // also warn unconditionally if re-reading a file already in context.
       const warnNow =
         (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
-        (ctxPct >= 85 && contextPressureWarnedAt < 85);
+        (ctxPct >= 85 && contextPressureWarnedAt < 85) ||
+        hasReRead;
       if (warnNow) {
         contextPressureWarnedAt = ctxPct;
-        const urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
-        const advice = hasUnboundedRead
-          ? `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`
-          : `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        let urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
+        let advice;
+        if (hasReRead) {
+          urgency = 'WARNING';
+          advice = `You are about to re-read file(s) already in your context: ${reReadFiles.join(', ')}. This adds NO new information and wastes context tokens. STOP. Use grep or targeted line ranges (line_start/line_end) to find specific sections instead of re-reading the whole file.`;
+        } else if (hasUnboundedRead) {
+          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
+        } else {
+          advice = `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        }
         const pressureMsg = {
           role: 'user',
           content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
         };
         conversationMessages.push(pressureMsg);
         apiMessages.push(pressureMsg);
-        if (ctxPct >= 85) {
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${C.reset}`);
+        if (ctxPct >= 85 || hasReRead) {
+          const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
+      }
+    }
+
+    // ─── Block re-reads after warning threshold ──────────────────────────────
+    // After a SYSTEM WARNING has been injected for a file (readCount >= LOOP_WARN_READS),
+    // hard-block any further full re-read of that file in this batch so the tool never
+    // executes and doesn't waste context tokens. The LLM receives a BLOCKED error result
+    // instead, reinforcing the injected warning without redundant file content.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'read_file') continue;
+      const path = prep.args?.path;
+      if (!path) continue;
+      const alreadyRead = fileReadCounts.get(path) || 0;
+      if (alreadyRead >= LOOP_WARN_READS) {
+        const shortPath = path.split('/').slice(-2).join('/');
+        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — warning threshold exceeded${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: read_file("${path}") was denied. You have already read this file ${alreadyRead} time${alreadyRead === 1 ? '' : 's'} — it is fully in your context. Reading it again adds nothing new and wastes tokens. Use grep with a specific pattern, or reference the line numbers you already have. Do NOT re-read this file.`,
+          tool_call_id: prep.callId,
+        };
+      }
+    }
+
+    // ─── Block grep flood after abort threshold ──────────────────────────────
+    // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
+    // further greps on that file. The file content is already in context — searching
+    // it again only wastes tokens and scores worse on the session scorer.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'grep') continue;
+      const grepPath = prep.args?.path;
+      if (!grepPath) continue;
+      const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
+      if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
+        const shortPath = grepPath.split('/').slice(-2).join('/');
+        console.log(`${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: grep("${grepPath}") was denied. You have already searched this file ${alreadyGrepped} time${alreadyGrepped === 1 ? '' : 's'} with different patterns — the file content is in your context. Stop searching and use the data you already have. Reference the line numbers from previous reads instead of issuing more grep calls.`,
+          tool_call_id: prep.callId,
+        };
       }
     }
 
@@ -2023,6 +2164,23 @@ async function processInput(userInput, serverHooks = null) {
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
+        }
+        // Per-file grep loop detection — multiple different patterns on same file
+        // This catches "search flood" where the agent greps the same file repeatedly
+        // with varying patterns instead of reading it once and using the context.
+        if (prep.args.path) {
+          const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
+          grepFileCounts.set(prep.args.path, fileGrepCount);
+          if (fileGrepCount === LOOP_WARN_GREP_FILE) {
+            const shortPath = prep.args.path.split('/').slice(-2).join('/');
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
+            const fileGrepWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] You have grepped "${prep.args.path}" ${fileGrepCount} times with different patterns. The file content is already in your context from the read_file call. STOP searching it again — use the data already in your context. If you need a specific line, reference the line numbers you already saw. Further greps on this file waste context tokens without adding new information.`,
+            };
+            conversationMessages.push(fileGrepWarning);
+            apiMessages.push(fileGrepWarning);
+          }
         }
       }
       // Health-check stop signal — inject strong stop instruction when tool result
