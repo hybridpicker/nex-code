@@ -197,11 +197,12 @@ function scoreMessages(messages) {
       msg.role === 'user' &&
       typeof msg.content === 'string' &&
       msg.content.startsWith('[SYSTEM WARNING]') &&
-      (msg.content.includes('edited') || msg.content.includes('bash command') || msg.content.includes('grep pattern'))
+      (msg.content.includes('edited') || msg.content.includes('bash command') || msg.content.includes('grep pattern') ||
+       msg.content.includes('re-read') || msg.content.includes('already in your context'))
   );
   if (loopWarningInjected) {
     score -= 2.0;
-    issues.push('Loop-warning was fired during session (repeated file edits or bash commands)');
+    issues.push('Loop-warning was fired during session (repeated file edits, bash commands, or re-reads)');
   }
 
   // ── 2. sed -n used (-1.5) ─────────────────────────────────────────────────
@@ -355,7 +356,32 @@ function scoreMessages(messages) {
     issues.push(`read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`);
   }
 
-  // ── 11. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
+  // ── 11. Per-file grep flood (-0.75) ───────────────────────────────────────
+  // Detect when the agent greps the same target file 3+ times with different
+  // patterns instead of using the file content already in context.
+  const grepFilePatterns = new Map(); // file → Set of distinct patterns
+  for (const tc of toolCalls) {
+    if (tc.name === 'grep' && tc.input?.path && tc.input?.pattern) {
+      const f = tc.input.path;
+      if (!grepFilePatterns.has(f)) grepFilePatterns.set(f, new Set());
+      grepFilePatterns.get(f).add(tc.input.pattern);
+    }
+  }
+  let worstGrepFileCount = 0;
+  let worstGrepFile = '';
+  for (const [f, patterns] of grepFilePatterns) {
+    if (patterns.size > worstGrepFileCount) {
+      worstGrepFileCount = patterns.size;
+      worstGrepFile = f;
+    }
+  }
+  if (worstGrepFileCount >= 3) {
+    score -= 0.75;
+    const shortPath = worstGrepFile.split('/').slice(-2).join('/');
+    issues.push(`grep flood on single file: "${shortPath}" searched ${worstGrepFileCount}× with different patterns (file already in context)`);
+  }
+
+  // ── 12. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
   // Count tool results starting with "EXIT" (non-zero bash exit codes).
   // 10+ EXIT errors in a session indicates repeated failed commands.
   const exitErrorCount = toolResults.filter((tr) => tr.content.startsWith('EXIT')).length;
@@ -365,6 +391,52 @@ function scoreMessages(messages) {
   } else if (exitErrorCount >= 5) {
     score -= 0.5;
     issues.push(`Repeated bash errors: ${exitErrorCount} tool results with non-zero exit code`);
+  }
+
+  // ── 13. LLM output loop: repeated content in assistant message (-1.5) ────
+  // Detect when a single assistant message is very long AND contains a high
+  // proportion of repeated content (same sliding-window block seen 3+ times).
+  // Mirrors the detectAndTruncateRepetition logic in agent.js.
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
+    let text = '';
+    if (typeof msg.content === 'string') {
+      text = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      text = msg.content
+        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
+        .map((b) => (typeof b === 'string' ? b : b.text || ''))
+        .join('');
+    }
+    if (text.length <= 5000) continue;
+
+    // Build sliding windows of 3 sentences and count occurrences
+    const sentences = text.split(/(?<=\. )/).filter((s) => s.trim().length > 0);
+    if (sentences.length < 6) continue;
+
+    const windowCounts = new Map();
+    for (let wi = 0; wi <= sentences.length - 3; wi++) {
+      const window = sentences.slice(wi, wi + 3).join('').trim();
+      if (window.length > 30) windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
+    }
+
+    let maxWinCount = 0;
+    let maxWinKey = '';
+    for (const [key, count] of windowCounts) {
+      if (count > maxWinCount) { maxWinCount = count; maxWinKey = key; }
+    }
+
+    if (maxWinCount < 3) continue;
+
+    // Estimate repeated-content ratio: repeated window * count / total length
+    const repeatedChars = maxWinKey.length * maxWinCount;
+    const ratio = repeatedChars / text.length;
+    // Trigger on high ratio OR clearly excessive repetition count (≥10)
+    if (ratio >= 0.4 || maxWinCount >= 10) {
+      score -= 1.5;
+      issues.push(`llm output loop: assistant message repeated content detected (${maxWinCount}× same paragraph, ${Math.round(ratio * 100)}% repeated)`);
+      break; // Only penalise once
+    }
   }
 
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
