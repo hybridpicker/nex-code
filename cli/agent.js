@@ -1804,7 +1804,7 @@ async function processInput(userInput, serverHooks = null) {
       // Only inspect the first line — tool output may legitimately contain
       // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
       const firstLine = res.split('\n')[0];
-      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED');
+      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed');
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
           filesModified.add(prep.args.path);
@@ -1829,8 +1829,8 @@ async function processInput(userInput, serverHooks = null) {
           }
         }
       }
-      // Bash command loop detection
-      if (prep.fnName === 'bash_exec' && prep.args && prep.args.command) {
+      // Bash/SSH command loop detection
+      if ((prep.fnName === 'bash_exec' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
         const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
         const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
         bashCmdCounts.set(cmdKey, bashCount);
