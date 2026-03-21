@@ -1371,8 +1371,8 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   let consecutiveSshCalls = 0; // SSH storm detection: consecutive ssh_exec calls
-  const SSH_STORM_WARN = 10;  // warn after 10 consecutive ssh_exec calls
-  const SSH_STORM_ABORT = 15; // hard abort after 15 consecutive ssh_exec calls
+  const SSH_STORM_WARN = 5;   // warn after 5 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1983,7 +1983,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.yellow}  ⚠ SSH storm warning: ${consecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
           const sshStormWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] You have made ${consecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize what you have found so far and either answer the user's question or declare that further investigation is needed and explain what specific single piece of information is still missing.`,
+            content: `[SYSTEM WARNING] You have made ${consecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
           };
           conversationMessages.push(sshStormWarning);
           apiMessages.push(sshStormWarning);
