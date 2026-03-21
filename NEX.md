@@ -161,13 +161,51 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 - Cost Limits: setCostLimit/removeCostLimit/checkBudget per provider, budget gate in callStream/callChat, auto-fallback on budget exceeded, persistence in .nex/config.json
 - Performance: non-blocking I/O for all file and git operations, <100ms startup via bundling, instant search results via in-memory index (rg-compatible)
 
+## Quality & Benchmark
+
+### Session Scorer (`cli/session-scorer.js`)
+Scores a saved session 0-10 by static analysis of anti-patterns:
+- `sed -n` log-scrolling in bash/ssh commands
+- Repeated grep patterns (loop detection)
+- Excessive step count (> 30 per user turn)
+- Context compression triggered multiple times
+- HTTP 400 cascades from context overflow
+
+```js
+const { scoreSession, scoreMessages } = require('./cli/session-scorer');
+scoreSession('my-session');  // => { score: 9.0, issues: [...], summary: '...' }
+```
+
+### Benchmark Suite (`cli/benchmark.js`)
+Five Jarvis-style scenarios run against a live model, scored automatically.
+
+Slash commands:
+- `/bench` — run full 5-scenario suite
+- `/bench quick` — run first 2 scenarios only
+- `/trend` — show score history from `.nex/benchmark-history.json`
+
+History is appended to `.nex/benchmark-history.json` after each run.
+
+### Loop Detection (agent.js)
+Key anti-patterns that trigger warnings/aborts during agentic execution:
+- Repeated bash/ssh commands (normalized, digits → N): warn@5, abort@8
+- Repeated grep patterns: warn@4, abort@7
+- Repeated file edits: warn@2, abort@4
+- Consecutive tool failures: warn@6, abort@10
+- sed-n detected: immediate [SYSTEM WARNING] injection + pre-compress
+- SSH output capped at 200 lines; grep -C capped at 20 lines
+- Proactive context compression at 78% (not just at overflow)
+
+Full improvement history: `docs/IMPROVEMENT-JOURNEY.md`
+
 ## .nex/ Directory
 
 ```
 .nex/
-├── sessions/          # Saved conversations
-├── memory/            # Persistent project knowledge
-├── plans/             # Saved plans
-├── hooks/             # Custom hook scripts
-└── config.json        # Permissions, MCP servers, hooks, aliases, maxIterations
+├── sessions/              # Saved conversations
+├── memory/                # Persistent project knowledge
+├── plans/                 # Saved plans
+├── hooks/                 # Custom hook scripts
+├── benchmark-history.json # /bench score history
+└── config.json            # Permissions, MCP servers, hooks, aliases, maxIterations
 ```
