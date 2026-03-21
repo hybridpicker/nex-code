@@ -393,6 +393,52 @@ function scoreMessages(messages) {
     issues.push(`Repeated bash errors: ${exitErrorCount} tool results with non-zero exit code`);
   }
 
+  // ── 13. LLM output loop: repeated content in assistant message (-1.5) ────
+  // Detect when a single assistant message is very long AND contains a high
+  // proportion of repeated content (same sliding-window block seen 3+ times).
+  // Mirrors the detectAndTruncateRepetition logic in agent.js.
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
+    let text = '';
+    if (typeof msg.content === 'string') {
+      text = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      text = msg.content
+        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
+        .map((b) => (typeof b === 'string' ? b : b.text || ''))
+        .join('');
+    }
+    if (text.length <= 5000) continue;
+
+    // Build sliding windows of 3 sentences and count occurrences
+    const sentences = text.split(/(?<=\. )/).filter((s) => s.trim().length > 0);
+    if (sentences.length < 6) continue;
+
+    const windowCounts = new Map();
+    for (let wi = 0; wi <= sentences.length - 3; wi++) {
+      const window = sentences.slice(wi, wi + 3).join('').trim();
+      if (window.length > 30) windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
+    }
+
+    let maxWinCount = 0;
+    let maxWinKey = '';
+    for (const [key, count] of windowCounts) {
+      if (count > maxWinCount) { maxWinCount = count; maxWinKey = key; }
+    }
+
+    if (maxWinCount < 3) continue;
+
+    // Estimate repeated-content ratio: repeated window * count / total length
+    const repeatedChars = maxWinKey.length * maxWinCount;
+    const ratio = repeatedChars / text.length;
+    // Trigger on high ratio OR clearly excessive repetition count (≥10)
+    if (ratio >= 0.4 || maxWinCount >= 10) {
+      score -= 1.5;
+      issues.push(`llm output loop: assistant message repeated content detected (${maxWinCount}× same paragraph, ${Math.round(ratio * 100)}% repeated)`);
+      break; // Only penalise once
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
