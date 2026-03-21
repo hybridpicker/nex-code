@@ -21,7 +21,7 @@ cli/index-engine.js      → In-memory File Index (ripgrep/fallback)
   local.js               → Local Ollama Server Provider
   registry.js            → Provider Registry + Model Resolution + Provider Routing (5 providers)
 cli/ollama.js            → Backward-compatible wrapper (delegates to providers/)
-cli/tools.js             → 17 Tool Definitions + Implementations (Async I/O) + Auto-Fix (path, edit, bash hints)
+cli/tools.js             → 44 Tool Definitions + Implementations (Async I/O) + Auto-Fix (path, edit, bash hints)
 cli/sub-agent.js         → Parallel Sub-Agent Runner (file locking, multi-progress, model routing)
 cli/tasks.js             → Task List Management (create, update, render, dependencies, onChange callbacks)
 cli/context-engine.js    → Token Management + Context Compression
@@ -44,7 +44,7 @@ cli/picker.js            → Interactive Terminal Picker (model selection, gener
 cli/footer.js            → Sticky Footer (scroll region, status bar, input row, resize handling, FOOTER_DEBUG)
 cli/skills.js            → Skills System (prompt + script skills)
 dist/                    → Final Bundled CLI scripts (esbuild)
-tests/                   → Jest, 43 Suites, 1783 Tests, 90%+ Stmts / 83%+ Branch Coverage
+tests/                   → Jest, 73 Suites, 3150+ Tests
 ```
 
 ## Commit Message Convention
@@ -75,13 +75,25 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 - **NEVER** use `--no-verify` with git commit or push
 - Commits are pushed WITHOUT any AI attribution
 
+## Release Workflow
+
+- Development on **`devel`** branch only — never commit directly to `main`
+- To release: **`npm run merge-to-main`** from `devel` (clean working tree required)
+  - Polls GitHub CI for current devel HEAD — waits if running, aborts if failed
+  - Merges into main only when CI is green
+  - post-merge hook bumps patch version, pushes main, syncs devel
+  - GitHub Actions Release workflow (`release.yml`) publishes to npm automatically
+- **NEVER** merge devel → main manually
+- **NEVER** run `npm publish` locally — GitHub Actions is the sole publisher
+
 ## Testing
 
-- Framework: Jest
-- Coverage target: 90%+ Statements, 80%+ Branches
-- Run: `npm test` (jest --coverage)
+- Framework: Jest (73 suites, 3150+ tests)
+- Coverage thresholds: 45% lines / 30% functions / 35% branches (global); sub-agent.js 70%/65%/55%
+- Run: `npm test`
 - Watch: `npm run test:watch`
-- CI: GitHub Actions on push/PR (Node 18/20/22)
+- CI: GitHub Actions on push/PR (Node 20 LTS only)
+- Tests needing network/TTY/CLI tools are skipped in CI via `process.env.CI ? it.skip : it`
 
 ## Provider System
 
@@ -112,7 +124,7 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 - Stale stream thresholds configurable via `NEX_STALE_WARN_MS` / `NEX_STALE_ABORT_MS` (default: 60s/120s)
 - Streaming output is piped through `renderMarkdown()` (rich terminal rendering)
 - `ollama.js` is a backward-compatible wrapper (delegates to registry)
-- 17 Tools: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents
+- 44 Tools including: bash, read_file, write_file, edit_file, list_directory, search_files, glob, grep, patch_file, web_fetch, web_search, ask_user, git_status, git_diff, git_log, task_list, spawn_agents, sysadmin, remote_agent, k8s_pods, and more
 - Permission system: allow/ask/deny per tool (configurable in `.nex/config.json`)
 - Context Engine: token counting, auto-compression above 70% window
 - Session persistence: auto-save after each turn in `.nex/sessions/`
