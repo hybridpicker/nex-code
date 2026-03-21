@@ -46,6 +46,21 @@ if (yoloMode) {
   setAutoConfirm(true);
 }
 
+// ─── .nex/config.json yolo fallback ──────────────────────────
+if (!yoloMode) {
+  try {
+    const fs = require('fs');
+    const configPath = path.join(process.cwd(), '.nex', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (cfg.yolo === true) {
+        const { setAutoConfirm } = require('../cli/safety');
+        setAutoConfirm(true);
+      }
+    }
+  } catch { /* ignore malformed config */ }
+}
+
 // ─── --model ──────────────────────────────────────────────────
 const modelIdx = args.indexOf('--model');
 if (modelIdx !== -1 && args[modelIdx + 1]) {

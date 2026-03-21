@@ -297,41 +297,49 @@ describe('index-handlers.test.js — additional handler coverage', () => {
       }
     });
 
-    it('shows trend arrow for multiple days', async () => {
-      const resultsDir = path.join(os.homedir(), 'Coding', 'nex-code-benchmarks', 'results');
-      const needsCleanup = !fs.existsSync(resultsDir);
-      if (needsCleanup) fs.mkdirSync(resultsDir, { recursive: true });
+     it('shows trend arrow for multiple days', async () => {
+       const resultsDir = path.join(os.homedir(), 'Coding', 'nex-code-benchmarks', 'results');
+       const needsCleanup = !fs.existsSync(resultsDir);
+       if (needsCleanup) fs.mkdirSync(resultsDir, { recursive: true });
 
-      const files = [];
-      for (let i = 0; i < 3; i++) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().slice(0, 10);
-        const filePath = path.join(resultsDir, `${dateStr}.json`);
-        const existed = fs.existsSync(filePath);
-        files.push({ path: filePath, existed, orig: existed ? fs.readFileSync(filePath, 'utf-8') : null });
-        fs.writeFileSync(filePath, JSON.stringify({ model: 'test', score: 80 + i * 5 }));
-      }
+       // Clean up any existing result files to ensure a clean state
+       try {
+         const existingFiles = fs.readdirSync(resultsDir).filter(f => f.endsWith('.json'));
+         for (const file of existingFiles) {
+           fs.unlinkSync(path.join(resultsDir, file));
+         }
+       } catch { /* ignore */ }
 
-      await handleSlashCommand('/benchmark --history');
-      const output = logSpy.mock.calls.map(c => c[0]).join('\n');
-      expect(output).toContain('Trend');
+       const files = [];
+       for (let i = 0; i < 3; i++) {
+         const date = new Date();
+         date.setDate(date.getDate() - i);
+         const dateStr = date.toISOString().slice(0, 10);
+         const filePath = path.join(resultsDir, `${dateStr}.json`);
+         const existed = fs.existsSync(filePath);
+         files.push({ path: filePath, existed, orig: existed ? fs.readFileSync(filePath, 'utf-8') : null });
+         fs.writeFileSync(filePath, JSON.stringify({ model: 'test', score: 80 + i * 5 }));
+       }
 
-      // Cleanup
-      for (const f of files) {
-        if (f.existed) {
-          fs.writeFileSync(f.path, f.orig);
-        } else {
-          try { fs.unlinkSync(f.path); } catch { /* ignore */ }
-        }
-      }
-      if (needsCleanup) {
-        try {
-          const remaining = fs.readdirSync(resultsDir);
-          if (remaining.length === 0) fs.rmdirSync(resultsDir);
-        } catch { /* ignore */ }
-      }
-    });
+       await handleSlashCommand('/benchmark --history');
+       const output = logSpy.mock.calls.map(c => c[0]).join('\n');
+       expect(output).toContain('Trend');
+
+       // Cleanup
+       for (const f of files) {
+         if (f.existed) {
+           fs.writeFileSync(f.path, f.orig);
+         } else {
+           try { fs.unlinkSync(f.path); } catch { /* ignore */ }
+         }
+       }
+       if (needsCleanup) {
+         try {
+           const remaining = fs.readdirSync(resultsDir);
+           if (remaining.length === 0) fs.rmdirSync(resultsDir);
+         } catch { /* ignore */ }
+       }
+     });
   });
 
   // ─── /budget with active limits and display ────────────────

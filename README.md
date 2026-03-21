@@ -289,6 +289,13 @@ Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemin
 
 Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved. The banner shows a `⚡ YOLO` indicator. Toggle at runtime with `/autoconfirm`.
 
+On macOS, nex-code automatically runs `caffeinate` for the duration of the session (idle sleep and disk sleep are suppressed), so long autonomous tasks won't be interrupted by the system going to sleep. This applies to all modes, not just YOLO.
+
+You can also enable YOLO mode permanently for a project via `.nex/config.json`:
+```json
+{ "yolo": true }
+```
+
 ### Headless / Programmatic Mode
 
 Run nex-code non-interactively from scripts, CI pipelines, or other processes:
@@ -314,7 +321,7 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 | `--prompt-file <path>` | Read prompt from a UTF-8 file and run headless |
 | `--delete-prompt-file` | Delete the prompt file after reading (use with `--prompt-file`) |
 | `--auto` | Skip confirmations (non-interactive, no REPL banner) |
-| `--yolo` | Skip all confirmations including dangerous commands |
+| `--yolo` | Skip all confirmations including dangerous commands (also configurable via `.nex/config.json` `"yolo": true`) |
 | `--server` | Start JSON-lines IPC server (used by the VS Code extension) |
 | `--json` | Output `{"success":true,"response":"..."}` to stdout |
 | `--max-turns <n>` | Override the agentic loop iteration limit |
