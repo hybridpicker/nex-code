@@ -1796,19 +1796,21 @@ describe('tools.js', () => {
   describe('buildKubectlCmd coverage', () => {
     // buildKubectlCmd is not exported but tested indirectly through k8s tool calls
     // The k8s_pods tool triggers buildKubectlCmd
-    it('k8s_pods with namespace and label', async () => {
-      // This will fail with kubectl not found, but covers the buildKubectlCmd path
+    // Skipped in CI: kubectl may be installed but will hang trying to reach a
+    // non-existent cluster, exceeding Jest's per-test timeout.
+    const itLocal = process.env.CI ? it.skip : it;
+
+    itLocal('k8s_pods with namespace and label', async () => {
       const result = await executeTool('k8s_pods', { namespace: 'default', label: 'app=web' });
-      // Will return an error (kubectl likely not installed), but exercises the code
       expect(typeof result).toBe('string');
     });
 
-    it('k8s_pods with context parameter', async () => {
+    itLocal('k8s_pods with context parameter', async () => {
       const result = await executeTool('k8s_pods', { context: 'my-context' });
       expect(typeof result).toBe('string');
     });
 
-    it('k8s_pods with server parameter (SSH tunnel)', async () => {
+    itLocal('k8s_pods with server parameter (SSH tunnel)', async () => {
       const result = await executeTool('k8s_pods', { server: 'user@host' });
       expect(typeof result).toBe('string');
     });
