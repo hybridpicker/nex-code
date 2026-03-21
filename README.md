@@ -1110,6 +1110,15 @@ NEX_UNPROTECT=1 nex-code
 
 This disables the protected-path check only — forbidden patterns and critical-command prompts remain active.
 
+### Reporting Vulnerabilities
+
+If you discover a security vulnerability, please report it responsibly:
+
+- **Do not** open a public GitHub issue
+- Email: **security@schoensgibl.com**
+- Include: description, reproduction steps, and potential impact
+- Allow up to 72 hours for initial response
+
 ---
 
 ## Team Permissions
