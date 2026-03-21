@@ -46,6 +46,50 @@ const FORBIDDEN_PATTERNS = [
   /curl.*--data/,
 ];
 
+// Forbidden patterns for ssh_exec remote commands.
+// Extends FORBIDDEN_PATTERNS with additional secret-exposure patterns that are
+// especially dangerous over SSH (reading .env, credentials, private keys via any
+// tool — cat, grep, awk, sed, etc. — all expose secrets in tool output).
+const SSH_FORBIDDEN_PATTERNS = [
+  ...FORBIDDEN_PATTERNS,
+  // .env exposure via any read command (cat is already in FORBIDDEN_PATTERNS, add the rest)
+  /\bgrep\b.*\.env\b/,
+  /\bawk\b.*\.env\b/,
+  /\bsed\b.*\.env\b/,
+  /\bhead\b.*\.env\b/,
+  /\btail\b.*\.env\b/,
+  /\bless\b.*\.env\b/,
+  /\bmore\b.*\.env\b/,
+  /\bstrings\b.*\.env\b/,
+  // credentials file exposure via any read command
+  /\bgrep\b.*credentials/i,
+  /\bawk\b.*credentials/i,
+  /\bsed\b.*credentials/i,
+  /\bhead\b.*credentials/i,
+  /\btail\b.*credentials/i,
+  // Private key material via any read command
+  /\bcat\b.*private.*key/i,
+  /\bgrep\b.*private_key/i,
+  // Google service account JSON (contains private_key field)
+  /\bcat\b.*google.*\.json/i,
+  /\bcat\b.*service.?account/i,
+];
+
+/**
+ * Check if a remote ssh_exec command matches an SSH-specific forbidden pattern.
+ * These patterns block secret-exposure commands that are safe locally (under human
+ * supervision) but leak credentials directly into LLM tool-result context when run
+ * via ssh_exec.
+ * @param {string} command
+ * @returns {RegExp|null}
+ */
+function isSSHForbidden(command) {
+  for (const pat of SSH_FORBIDDEN_PATTERNS) {
+    if (pat.test(command)) return pat;
+  }
+  return null;
+}
+
 // Paths protected from destructive bash operations (rm, mv, truncate, etc.)
 // Mirrors SENSITIVE_PATHS from tools.js but applies to bash commands.
 const BASH_PROTECTED_PATHS = [
@@ -384,6 +428,7 @@ function setAllowAlwaysHandler(fn) { _onAllowAlways = fn; }
 
 module.exports = {
   FORBIDDEN_PATTERNS,
+  SSH_FORBIDDEN_PATTERNS,
   BASH_PROTECTED_PATHS,
   SSH_SAFE_PATTERNS,
   isSSHReadOnly,
@@ -391,6 +436,7 @@ module.exports = {
   CRITICAL_BASH,
   NOTABLE_BASH,
   isForbidden,
+  isSSHForbidden,
   isDangerous,
   isCritical,
   isBashPathForbidden,
