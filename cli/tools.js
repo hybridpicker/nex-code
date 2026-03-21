@@ -1557,11 +1557,12 @@ async function _executeToolInner(name, args, options = {}) {
       if (args.include) grepArgs2.push(`--include=${args.include}`);
       // type filter maps to --include
       if (args.type) grepArgs2.push(`--include=*.${args.type}`);
-      // Context lines
-      if (args.context) grepArgs2.push(`-C`, String(args.context));
+      // Context lines — cap at 20 to prevent flooding LLM context
+      const MAX_CTX = 20;
+      if (args.context) grepArgs2.push(`-C`, String(Math.min(Number(args.context), MAX_CTX)));
       else {
-        if (args.before_context) grepArgs2.push(`-B`, String(args.before_context));
-        if (args.after_context) grepArgs2.push(`-A`, String(args.after_context));
+        if (args.before_context) grepArgs2.push(`-B`, String(Math.min(Number(args.before_context), MAX_CTX)));
+        if (args.after_context) grepArgs2.push(`-A`, String(Math.min(Number(args.after_context), MAX_CTX)));
       }
       // Output mode
       if (args.output_mode === 'files_with_matches') grepArgs2.push('-l');
@@ -2170,6 +2171,15 @@ async function _executeToolInner(name, args, options = {}) {
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
       if (exitCode !== 0) {
         return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
+      }
+      // Cap SSH output at 200 lines — keeps last 200 (most relevant for log commands).
+      // Prevents grep -B200 / journalctl from flooding LLM context with thousands of lines.
+      const SSH_MAX_LINES = 200;
+      const outputLines = output.split('\n');
+      if (outputLines.length > SSH_MAX_LINES) {
+        const dropped = outputLines.length - SSH_MAX_LINES;
+        return `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
+          outputLines.slice(-SSH_MAX_LINES).join('\n');
       }
       return output || '(command completed, no output)';
     }
