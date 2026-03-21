@@ -66,6 +66,7 @@ jest.mock('child_process', () => {
 
 jest.mock('../cli/safety', () => ({
   isForbidden: jest.fn().mockReturnValue(null),
+  isSSHForbidden: jest.fn().mockReturnValue(null),
   isDangerous: jest.fn().mockReturnValue(false),
   isCritical: jest.fn().mockReturnValue(false),
   confirm: jest.fn().mockResolvedValue(true),

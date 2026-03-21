@@ -9,7 +9,7 @@ const exec = require('util').promisify(require('child_process').exec);
 const execFile = require('util').promisify(require('child_process').execFile);
 const { spawnSync } = require('child_process');
 const axios = require('axios');
-const { isForbidden, isDangerous, isCritical, isBashPathForbidden, confirm } = require('./safety');
+const { isForbidden, isSSHForbidden, isDangerous, isCritical, isBashPathForbidden, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
@@ -2155,6 +2155,14 @@ async function _executeToolInner(name, args, options = {}) {
       let cmd = args.command;
       const useSudo = Boolean(args.sudo);
       const timeoutMs = (args.timeout || 30) * 1000;
+
+      // Block secret-exposure commands on remote hosts.
+      // cat/grep of .env, credentials, private keys, etc. dump secrets directly into
+      // LLM tool-result context — equivalent to printing them in the chat.
+      const sshForbidden = isSSHForbidden(cmd);
+      if (sshForbidden) {
+        return `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+      }
 
       // Cap grep context flags in ssh_exec commands — mirrors the grep tool's own 20-line cap.
       // Without this an agent can bypass the cap by using ssh_exec with grep -B100.
