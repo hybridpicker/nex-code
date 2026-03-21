@@ -81,6 +81,8 @@ const SLASH_COMMANDS = [
   { cmd: '/docker', desc: 'List containers across all servers' },
   { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
   { cmd: '/benchmark [--quick] [--models=a,b]', desc: 'Rank Ollama Cloud models on nex-code tool-calling tasks (--history for nightly log)' },
+  { cmd: '/bench [--dry-run] [--model=<spec>]', desc: 'Run Jarvis scenario benchmark (5 agentic tasks)' },
+  { cmd: '/trend [n]', desc: 'Show score history trend (default: last 10 sessions)' },
   { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/setup', desc: 'Configure provider and API keys' },
   { cmd: '/undo', desc: 'Undo last file change' },
@@ -522,7 +524,10 @@ async function handleSlashCommand(input, rl) {
       for (const s of sessions) {
         const date = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '?';
         const auto = s.name === '_autosave' ? ` ${C.dim}(auto)${C.reset}` : '';
-        console.log(`  ${C.cyan}${s.name}${C.reset}${auto} — ${s.messageCount} msgs, ${date}`);
+        const scoreStr = s.score != null
+          ? ` · score ${s.score}/10${s.scoreGrade ? ` (${s.scoreGrade})` : ''}`
+          : '';
+        console.log(`  ${C.cyan}${s.name}${C.reset}${auto} — ${s.messageCount} msgs, ${date}${C.dim}${scoreStr}${C.reset}`);
       }
       console.log();
       return true;
@@ -1904,6 +1909,42 @@ For each issue, include:
       return true;
     }
 
+    case '/bench': {
+      const { runJarvisBenchmark } = require('./benchmark');
+      const dryRun = rest.includes('--dry-run');
+      const mFlag  = rest.find((r) => r.startsWith('--model='));
+      const model  = mFlag ? mFlag.replace('--model=', '').trim() : undefined;
+
+      if (!dryRun) {
+        console.log(
+          `\n${C.bold}Jarvis Benchmark${C.reset}  ` +
+          `${C.dim}5 agentic scenarios · each run as child process${C.reset}\n`
+        );
+      }
+
+      await runJarvisBenchmark({
+        dryRun,
+        model,
+        cwd: CWD,
+        onProgress: ({ id, name, done, score, grade }) => {
+          if (!done) {
+            process.stdout.write(`${C.dim}  → ${name}...${C.reset}`);
+          } else {
+            const color = score >= 8 ? C.green : score >= 6 ? C.yellow : C.red;
+            process.stdout.write(` ${color}${score}/10 (${grade})${C.reset}\n`);
+          }
+        },
+      });
+      return true;
+    }
+
+    case '/trend': {
+      const { showScoreTrend } = require('./benchmark');
+      const n = parseInt(rest[0], 10) || 10;
+      showScoreTrend(n);
+      return true;
+    }
+
     case '/exit':
     case '/quit':
       process.stdout.write('\x1b[r\x1b[H\x1b[2J\x1b[3J');
@@ -1912,7 +1953,26 @@ For each issue, include:
     default:
       // Check if it's a skill command before reporting unknown
       if (handleSkillCommand(input)) return true;
-      console.log(`${C.red}Unknown command: ${cmd}. Type /help${C.reset}`);
+      // Fuzzy-match against known commands — suggest the closest if within edit distance 2
+      {
+        const allKnown = [...SLASH_COMMANDS, ...getSkillCommands()].map(c => c.cmd.split(' ')[0]);
+        const lev = (a, b) => {
+          const m = a.length, n = b.length;
+          const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+          for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+          return dp[m][n];
+        };
+        let best = null, bestDist = 3;
+        for (const known of allKnown) {
+          const d = lev(cmd, known);
+          if (d < bestDist) { bestDist = d; best = known; }
+        }
+        if (best) {
+          console.log(`${C.red}Unknown command: ${cmd}.${C.reset} ${C.dim}Did you mean ${C.reset}${C.cyan}${best}${C.reset}${C.dim}? Type /help for all commands.${C.reset}`);
+        } else {
+          console.log(`${C.red}Unknown command: ${cmd}. Type /help${C.reset}`);
+        }
+      }
       return true;
   }
 }

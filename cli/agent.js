@@ -11,11 +11,61 @@ const { executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
 const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
 const { autoSave, flushAutoSave } = require('./session');
+const { scoreMessages, formatScore, appendScoreHistory } = require('./session-scorer');
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
 function saveNow(messages) { autoSave(messages); flushAutoSave(); }
+
+/**
+ * Score the current session and print the result, then persist score into
+ * the autosave metadata.  Only runs when there were actual tool calls.
+ */
+function _scoreAndPrint(messages) {
+  try {
+    // Only score sessions that had meaningful agent activity
+    const hasToolCalls = messages.some((m) => {
+      if (m.role !== 'assistant') return false;
+      if (Array.isArray(m.content) && m.content.some((b) => b && b.type === 'tool_use')) return true;
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
+      return false;
+    });
+    if (!hasToolCalls) return;
+
+    const result = scoreMessages(messages);
+    if (!result) return;
+
+    console.log(formatScore(result, C));
+
+    // Write score into the autosave file metadata
+    try {
+      const { _getSessionsDir } = require('./session');
+      const fs = require('fs');
+      const p = require('path').join(_getSessionsDir(), '_autosave.json');
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        data.score = result.score;
+        data.scoreGrade = result.grade;
+        data.scoreIssues = result.issues;
+        fs.writeFileSync(p, JSON.stringify(data, null, 2));
+      }
+    } catch { /* non-critical — ignore */ }
+
+    // Persist score to benchmark history
+    try {
+      const { getActiveModel } = require('./ollama');
+      const pkg = require('../package.json');
+      appendScoreHistory(result.score, {
+        version: pkg.version,
+        model: getActiveModel ? getActiveModel() : null,
+        sessionName: '_autosave',
+        issues: result.issues,
+      });
+    } catch { /* non-critical — ignore */ }
+  } catch { /* scorer must never crash the agent */ }
+}
 const { getMemoryContext } = require('./memory');
+const { getDeploymentContextBlock } = require('./server-context');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
 const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
@@ -585,6 +635,17 @@ let conversationMessages = [];
 // fitToContext() still handles what gets sent to the API — this caps the in-memory store only.
 const MAX_CONVERSATION_HISTORY = 300;
 
+// ─── Session-scoped loop detection counters ──────────────────────────────────
+// These live at module level so they persist across multi-turn REPL conversations.
+// Without this, each processInput() call resets the counters, allowing the agent
+// to run e.g. 7 sed calls per turn indefinitely across many turns.
+// Reset in clearConversation() so /clear starts fresh.
+const _sessionBashCmdCounts = new Map();
+const _sessionGrepPatternCounts = new Map();
+const _sessionFileReadCounts = new Map();
+const _sessionFileEditCounts = new Map();
+let _sessionConsecutiveSshCalls = 0;
+
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
 
@@ -621,8 +682,8 @@ function _buildLanguagePrompt() {
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
-  // Default to English. Use NEX_LANGUAGE=auto to mirror the user's language.
-  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? 'English' : uiLangRaw;
+  // Default: mirror user's language (auto). Set NEX_LANGUAGE=English (or any language) to hard-enforce.
+  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
 
   const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
 
@@ -653,15 +714,11 @@ function _buildLanguagePrompt() {
   lines.push('  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.');
   lines.push('  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting because the shell expands the glob into separate words before the loop — there is no subshell output to split. CRITICAL: NEVER suggest "ls -N" or any ls variant as a fix — ls -N outputs filenames one per line, but word splitting still occurs on each line when used in a subshell expansion. The only correct fix is the bare glob pattern.');
 
-  const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
-  if (effectiveCodeLang) {
-    lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
-  }
+  const effectiveCodeLang = codeLang || 'English';
+  lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
 
-  const effectiveCommitLang = commitLang || (uiLang ? 'English' : null);
-  if (effectiveCommitLang) {
-    lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
-  }
+  const effectiveCommitLang = commitLang || 'English';
+  lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
 
   if (uiLang) {
     lines.push(`\nThis is a hard requirement. Always respond in ${uiLang}. Do NOT switch to any other language — even if the user writes to you in German, French, or any other language, your reply MUST be in ${uiLang}.`);
@@ -724,6 +781,7 @@ async function buildSystemPrompt() {
   // Model routing guide is also cached internally
 
   const languagePrompt = _buildLanguagePrompt();
+  const deploymentContext = getDeploymentContextBlock();
   cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
 WORKING DIRECTORY: ${process.cwd()}
@@ -731,7 +789,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}# Core Behavior
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
@@ -763,6 +821,26 @@ Response patterns by request type:
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
+- **Server investigation rule**: When investigating errors via SSH, the moment you see a clear root cause, STOP reading more logs immediately. State the finding, then execute the fix. Never expand log line ranges after identifying the error — reading more of the same log is not progress, it is an investigation loop.
+
+  **Immediate stop triggers** — seeing ANY of these in tool output means root cause found, act now:
+  - "core-dump" / "code=dumped" / "status=11/SEGV" / "status=6/ABRT" → process crashed, investigate crash not symptoms
+  - "Cannot find module" / "MODULE_NOT_FOUND" → missing file/package, fix path or run npm install
+  - "ENOENT" / "no such file" / "file not found" → wrong path, locate with glob/ls
+  - "EACCES" / "permission denied" → fix permissions, don't retry
+  - "401 Unauthorized" / "token expired" / "auth failed" → renew credentials
+  - "ECONNREFUSED" / "port not reachable" → service down, check systemctl status
+  - "OOM" / "JavaScript heap out of memory" → memory issue, restart + increase limits
+
+  **Correct investigation order** (stop at the first step that gives a clear answer):
+  1. systemctl status <service> — is it running? any recent crash?
+  2. journalctl -u <service> -n 50 --no-pager — last 50 journal lines
+  3. grep -n "ERROR|FATAL|fail" <logfile> | tail -20 — recent errors
+  4. Only if still unclear: targeted grep -B5 -A5 "<specific error>" around the known error string
+  NEVER use sequential sed -n 'N,Mp' to scroll backwards through a log file — use grep to find the exact line instead.
+  NEVER use grep -B or -A with values larger than 20 — large context windows flood the LLM context and cause 400 errors. Use -B5 or -B10 at most.
+
+  **Health-check stop signal**: If a health/token-validation endpoint returns {"valid":true} AND the API responds with HTTP 200, the problem is intermittent or already resolved. STOP reading logs immediately. Report to the user: the token is valid, the service is reachable, the error was transient — no fix is needed. Do NOT continue reading log files after seeing {"valid":true} from a health check.
 - **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
 - **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES IN DIFF OUTPUT: Diff lines start with '+' (added) or '-' (removed) — the actual code content comes AFTER the leading '+'/'-'. This means 'grep -v "^\s*//"' does NOT exclude comment lines in diff output because the line starts with '+', not with whitespace. CORRECT pipeline for detecting console.log in staged .js changes while excluding comment lines: 'git diff --cached -- "*.js" | grep "^+" | grep -v "^+++" | grep -v "^\+[[:space:]]*//" | grep -q "console\.log"'. The key pattern is '^\+[[:space:]]*//' — match lines where after the '+' prefix comes optional whitespace then '//'. Always use this exact pipeline, never 'grep -v "^\s*//"' on diff output. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
@@ -957,6 +1035,11 @@ You have access to a persistent knowledge base in .nex/brain/.
 
 function clearConversation() {
   conversationMessages = [];
+  _sessionBashCmdCounts.clear();
+  _sessionGrepPatternCounts.clear();
+  _sessionFileReadCounts.clear();
+  _sessionFileEditCounts.clear();
+  _sessionConsecutiveSshCalls = 0;
 }
 
 function trimConversationHistory() {
@@ -1280,19 +1363,30 @@ async function processInput(userInput, serverHooks = null) {
   const filesRead = new Set();
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
-  const fileEditCounts = new Map(); // loop detection: edits per file
+  // Loop detection: use session-level Maps so counters persist across REPL turns.
+  // If they were declared locally here they would reset on every processInput() call,
+  // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
+  const fileEditCounts = _sessionFileEditCounts;
   const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
   const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
-  const bashCmdCounts = new Map(); // loop detection: repeated bash commands
+  const bashCmdCounts = _sessionBashCmdCounts;
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
-  let consecutiveErrors = 0;  // loop detection: consecutive tool failures
+  const grepPatternCounts = _sessionGrepPatternCounts;
+  const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
+  const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
+  const fileReadCounts = _sessionFileReadCounts;
+  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file
+  const LOOP_ABORT_READS = 6; // abort after 6 reads of the same file
+  let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
   let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
+  const SSH_STORM_WARN = 5;   // warn after 5 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1306,6 +1400,22 @@ async function processInput(userInput, serverHooks = null) {
     // Check if aborted (Ctrl+C) at start of each iteration
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
+
+    // ─── Proactive auto-compress before LLM call ─────────────────────────────
+    // If context is already ≥78% before sending the next request, compress now
+    // rather than waiting for a 400 error. This prevents the nuclear-compression
+    // cascade that occurs when a bloated session is resumed.
+    {
+      const _autoCtx = getUsage(apiMessages, []);
+      if (_autoCtx.percentage >= 78) {
+        const _allTools = getAllToolDefinitions();
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+        if (_freed > 0) {
+          apiMessages = _compressed;
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+        }
+      }
+    }
 
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
@@ -1695,6 +1805,7 @@ async function processInput(userInput, serverHooks = null) {
       setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
       saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
       return;
     }
 
@@ -1800,8 +1911,10 @@ async function processInput(userInput, serverHooks = null) {
       const res = toolMessages[j].content;
       // Only inspect the first line — tool output may legitimately contain
       // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
+      // "EXIT" is the prefix used for non-zero bash exit codes (EXIT 1, EXIT ENOENT, etc.)
+      // and must also be treated as an error for consecutive-error counting.
       const firstLine = res.split('\n')[0];
-      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED');
+      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed') && !firstLine.startsWith('EXIT');
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
           filesModified.add(prep.args.path);
@@ -1826,9 +1939,27 @@ async function processInput(userInput, serverHooks = null) {
           }
         }
       }
-      // Bash command loop detection
-      if (prep.fnName === 'bash_exec' && prep.args && prep.args.command) {
-        const cmdKey = prep.args.command.replace(/\s+/g, ' ').trim().slice(0, 100);
+      // sed -n pattern detection — warn immediately when the model uses sed line-range scrolling
+      if ((prep.fnName === 'ssh_exec' || prep.fnName === 'bash') && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
+        // Always pre-compress before injecting warning — the warning itself can tip an
+        // already-large context over the limit, triggering a 400 cascade. The compress
+        // is a no-op when context is small, so there is no downside to always running it.
+        {
+          const _allTools = getAllToolDefinitions();
+          const { messages: _c } = forceCompress(apiMessages, _allTools);
+          apiMessages = _c;
+        }
+        console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
+        const sedWarning = {
+          role: 'user',
+          content: `[SYSTEM WARNING] You used 'sed -n' to scroll through a log file. This is explicitly forbidden — it reads huge sequential chunks and floods the context with irrelevant lines. STOP. Use targeted grep instead: grep -n "ERROR\\|FATAL\\|fail" <logfile> | tail -20. Never use sed -n 'N,Mp' again.`,
+        };
+        conversationMessages.push(sedWarning);
+        apiMessages.push(sedWarning);
+      }
+      // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
+      if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
+        const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
         const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
         bashCmdCounts.set(cmdKey, bashCount);
         if (bashCount === LOOP_WARN_BASH) {
@@ -1847,6 +1978,77 @@ async function processInput(userInput, serverHooks = null) {
           saveNow(conversationMessages);
           return;
         }
+      }
+      // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
+      // The existing bash-loop detector only fires on *similar* commands; an agent running 16
+      // different grep/cat patterns via ssh_exec bypasses it while still burning context.
+      if (prep.fnName === 'ssh_exec') {
+        _sessionConsecutiveSshCalls++;
+        if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
+          console.log(`${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
+          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
+          const sshStormWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] You have made ${_sessionConsecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
+          };
+          conversationMessages.push(sshStormWarning);
+          apiMessages.push(sshStormWarning);
+        }
+      } else {
+        _sessionConsecutiveSshCalls = 0;
+      }
+      // Grep pattern loop detection — repeated identical patterns waste context
+      if (isOk && prep.fnName === 'grep' && prep.args && prep.args.pattern) {
+        const patKey = `${prep.args.pattern}|${prep.args.path || ''}`;
+        const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
+        grepPatternCounts.set(patKey, grepCount);
+        if (grepCount === LOOP_WARN_GREP) {
+          console.log(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
+          const grepWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] You have run the same grep pattern ${grepCount} times. You already have the results — searching again returns the same matches. STOP repeating this search. Either use the data you already found, try a different pattern, or declare the investigation complete.`,
+          };
+          conversationMessages.push(grepWarning);
+          apiMessages.push(grepWarning);
+        } else if (grepCount >= LOOP_ABORT_GREP) {
+          console.log(`${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        }
+      }
+      // Health-check stop signal — inject strong stop instruction when tool result
+      // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
+      if (isOk && (prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && res.includes('"valid":true')) {
+        // Pre-compress before injecting the STOP message: if context is already at
+        // ≥60% after the tool result was appended, adding another message would push
+        // it over the limit and trigger a 400 cascade on the next LLM call.
+        {
+          const _stopCtx = getUsage(apiMessages, []);
+          if (_stopCtx.percentage >= 60) {
+            const _allTools = getAllToolDefinitions();
+            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+            if (_freed > 0) {
+              apiMessages = _compressed;
+              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+            }
+          }
+        }
+        const stopMsg = {
+          role: 'user',
+          content: '[SYSTEM STOP] Tool result contains {"valid":true}. The token/service is valid and reachable. STOP all further investigation immediately. Report to the user that the token is valid, the service is healthy, and no fix is needed. Do NOT read any more log files.',
+        };
+        conversationMessages.push(stopMsg);
+        apiMessages.push(stopMsg);
+        console.log(`${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`);
       }
       // Consecutive error detection
       if (!isOk) {
@@ -1872,7 +2074,38 @@ async function processInput(userInput, serverHooks = null) {
         progressMadeThisPass = true;
       }
       if (isOk && prep.fnName === 'read_file') {
-        if (prep.args && prep.args.path) filesRead.add(prep.args.path);
+        if (prep.args && prep.args.path) {
+          filesRead.add(prep.args.path);
+          const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
+          fileReadCounts.set(prep.args.path, readCount);
+          const shortPath = prep.args.path.split('/').slice(-2).join('/');
+          if (readCount === LOOP_WARN_READS) {
+            // Pre-compress before injecting warning — prevents the warning itself from
+            // triggering a 400-cascade when context is already near capacity.
+            {
+              const _readCtx = getUsage(apiMessages, []);
+              if (_readCtx.percentage >= 60) {
+                const _allTools = getAllToolDefinitions();
+                const { messages: _c } = forceCompress(apiMessages, _allTools);
+                apiMessages = _c;
+              }
+            }
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read ${readCount}× — already in context${C.reset}`);
+            const readWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] You have read "${prep.args.path}" ${readCount} times. This file is already in your context — reading it again adds nothing new. STOP re-reading this file. Use grep to find specific sections instead of re-reading the whole file. Use the data you already have or use targeted reads (line_start/line_end) if you need a specific section.`,
+            };
+            conversationMessages.push(readWarning);
+            apiMessages.push(readWarning);
+          } else if (readCount >= LOOP_ABORT_READS) {
+            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read ${readCount}× — aborting runaway read loop${C.reset}`);
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            saveNow(conversationMessages);
+            return;
+          }
+        }
       }
       // Spawn-agents truncation stuck detection
       if (prep.fnName === 'spawn_agents') {
@@ -1907,6 +2140,22 @@ async function processInput(userInput, serverHooks = null) {
       apiMessages.push(toolMsg);
     }
 
+    // ─── Post-tool auto-compress ─────────────────────────────────────────────
+    // Tool results (especially large SSH/grep outputs) can push context over the
+    // limit between iterations. Compress immediately after appending so the next
+    // LLM call never hits a 400 context-overflow error.
+    {
+      const _postCtx = getUsage(apiMessages, []);
+      if (_postCtx.percentage >= 78) {
+        const _allTools = getAllToolDefinitions();
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+        if (_freed > 0) {
+          apiMessages = _compressed;
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+        }
+      }
+    }
+
     // ─── Mid-run user notes ───
     // If the user typed something while the agent was running, inject it now
     // before the next API call so the model can take it into account.
@@ -1925,6 +2174,7 @@ async function processInput(userInput, serverHooks = null) {
     setOnChange(null);
     _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
     saveNow(conversationMessages);
+    _scoreAndPrint(conversationMessages);
 
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();

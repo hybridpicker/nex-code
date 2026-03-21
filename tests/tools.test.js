@@ -5,6 +5,7 @@ const os = require('os');
 // Mock safety and diff modules
 jest.mock('../cli/safety', () => ({
   isForbidden: jest.requireActual('../cli/safety').isForbidden,
+  isSSHForbidden: jest.requireActual('../cli/safety').isSSHForbidden,
   isDangerous: jest.requireActual('../cli/safety').isDangerous,
   isCritical: jest.requireActual('../cli/safety').isCritical,
   isBashPathForbidden: jest.requireActual('../cli/safety').isBashPathForbidden,
@@ -3457,6 +3458,35 @@ describe('tools.js', () => {
       mockSshExec.mockResolvedValue({ stdout: 'root', stderr: '', exitCode: 0 });
       const result = await executeTool('ssh_exec', { server: 'production', command: 'whoami', sudo: true });
       expect(result).toBe('root');
+    });
+
+    it('blocks grep of .env file on remote host', async () => {
+      mockResolveProfile.mockReturnValue({ host: 'test.example.com', user: 'deploy' });
+      const result = await executeTool('ssh_exec', { server: 'production', command: 'grep -i "GOOGLE" /home/jarvis/jarvis-agent/.env' });
+      expect(result).toContain('BLOCKED');
+      expect(result).toContain('SSH secret-exposure');
+    });
+
+    it('blocks cat of credentials file on remote host', async () => {
+      mockResolveProfile.mockReturnValue({ host: 'test.example.com', user: 'deploy' });
+      const result = await executeTool('ssh_exec', { server: 'production', command: 'cat /home/jarvis/jarvis-agent/credentials/google-credentials.json' });
+      expect(result).toContain('BLOCKED');
+      expect(result).toContain('SSH secret-exposure');
+    });
+
+    it('blocks grep of private_key on remote host', async () => {
+      mockResolveProfile.mockReturnValue({ host: 'test.example.com', user: 'deploy' });
+      const result = await executeTool('ssh_exec', { server: 'production', command: 'grep private_key /some/file.json' });
+      expect(result).toContain('BLOCKED');
+      expect(result).toContain('SSH secret-exposure');
+    });
+
+    it('allows safe grep commands that do not target secret files', async () => {
+      mockResolveProfile.mockReturnValue({ host: 'test.example.com', user: 'deploy' });
+      mockSshExec.mockResolvedValue({ stdout: 'result', stderr: '', exitCode: 0 });
+      const result = await executeTool('ssh_exec', { server: 'production', command: 'grep -r "error" /var/log/app.log' });
+      expect(result).not.toContain('BLOCKED');
+      expect(result).toBe('result');
     });
   });
 
