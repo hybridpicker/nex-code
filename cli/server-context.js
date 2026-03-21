@@ -108,4 +108,66 @@ function getProfileNames() {
   return Object.keys(loadServerProfiles());
 }
 
-module.exports = { getServerContext, hasServerOS, getProfileNames, OS_HINTS };
+/**
+ * Build a deployment context block for the system prompt.
+ * Activates when server profiles are configured AND NEX.md contains deployment indicators.
+ * This block is injected prominently so the model understands remote vs local context
+ * before attempting any file reads or debugging actions.
+ *
+ * Reads NEX.md from the project root automatically.
+ * @returns {string|null} - Formatted block, or null if not a deployed project
+ */
+function getDeploymentContextBlock() {
+  const fs = require('fs');
+  const path = require('path');
+  const nexMdPath = path.join(process.cwd(), 'NEX.md');
+  let nexMdContent = '';
+  try { nexMdContent = fs.readFileSync(nexMdPath, 'utf-8'); } catch { /* no NEX.md */ }
+  const profiles = loadServerProfiles();
+  const profileNames = Object.keys(profiles);
+  if (profileNames.length === 0) return null;
+
+  // Only activate if NEX.md signals this is a deployed/remote application
+  const deploymentKeywords = [
+    'server', 'deploy', 'remote', 'ssh', 'service', 'systemctl',
+    'production', 'linux', 'almalinux', 'ubuntu', 'debian',
+  ];
+  const nexLower = nexMdContent.toLowerCase();
+  const isDeployedProject = deploymentKeywords.some(kw => nexLower.includes(kw));
+  if (!isDeployedProject) return null;
+
+  const serverList = profileNames.map(name => {
+    const p = profiles[name];
+    const target = p.user ? `${p.user}@${p.host}` : p.host;
+    const portStr = p.port && Number(p.port) !== 22 ? `:${p.port}` : '';
+    return `  - **${name}**: ${target}${portStr}${p.os ? ` (${p.os})` : ''}`;
+  }).join('\n');
+
+  // Collect server log paths from profiles if specified
+  const logPaths = profileNames
+    .map(n => profiles[n].log_path)
+    .filter(Boolean);
+  const logHint = logPaths.length > 0
+    ? `\n- Server log paths: ${logPaths.join(', ')}`
+    : '';
+
+  return `# Deployment Context (Auto-detected)
+
+This project is deployed on a **remote server**. The application runs as a service there — NOT locally.
+
+## Configured Servers
+${serverList}
+
+## Critical Debugging Rules
+
+**When you receive an error or warning from the running application** (e.g. "500 ERR_BAD_RESPONSE", "⚠️ service error", health check failures, service alerts):
+- ✅ Use \`ssh_exec\` or \`service_logs\` to investigate on the remote server
+- ✅ \`ssh_exec\` example: \`tail -50 /path/to/logs/api.log\`
+- ✅ \`service_logs\` or \`bash\` with \`ssh\` to check \`systemctl status <service>\`${logHint}
+- ❌ Do NOT \`read_file\` on paths like \`logs/\` — these files do not exist locally
+- ❌ Do NOT \`list_directory\` on server paths — the local project is the source, not the running instance
+
+**When in doubt:** If a path contains \`logs/\`, \`/var/log/\`, or \`/home/<user>/\` — it is on the server. SSH there.`;
+}
+
+module.exports = { getServerContext, getDeploymentContextBlock, hasServerOS, getProfileNames, OS_HINTS };
