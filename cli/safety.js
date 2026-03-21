@@ -46,6 +46,26 @@ const FORBIDDEN_PATTERNS = [
   /curl.*--data/,
 ];
 
+// Paths protected from destructive bash operations (rm, mv, truncate, etc.)
+// Mirrors SENSITIVE_PATHS from tools.js but applies to bash commands.
+const BASH_PROTECTED_PATHS = [
+  /\.env\b/,
+  /credentials\b/i,
+  /\.ssh\b/,
+  /\.gnupg\b/,
+  /\.aws\b/,
+  /\.npmrc\b/,
+  /\.docker\/config/,
+  /\.kube\/config/,
+  /venv\b/,
+  /\.venv\b/,
+  /\.sqlite3\b/,
+  /\.git\/(?!hooks)/,
+];
+
+// Destructive command prefixes that target file paths
+const DESTRUCTIVE_CMDS = /\b(?:rm|rmdir|unlink|truncate|shred|mv|cp)\b/;
+
 // Read-only SSH patterns that are safe (no confirmation needed)
 const SSH_SAFE_PATTERNS = [
   /systemctl\s+(status|is-active|is-enabled|list-units|show)/,
@@ -226,6 +246,19 @@ function isCritical(command) {
 }
 
 /**
+ * Check if a bash command performs a destructive operation on a protected path.
+ * Returns the matched path pattern or null.
+ */
+function isBashPathForbidden(command) {
+  if (process.env.NEX_UNPROTECT === '1') return null;
+  if (!DESTRUCTIVE_CMDS.test(command)) return null;
+  for (const pat of BASH_PROTECTED_PATHS) {
+    if (pat.test(command)) return pat;
+  }
+  return null;
+}
+
+/**
  * @param {string} question
  * @param {{ toolName?: string }} [opts]
  * @returns {Promise<boolean>}
@@ -252,15 +285,16 @@ function confirm(question, opts = {}) {
 
     if (_rl) _rl.pause();
 
+    const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
     const render = () => {
-      if (drawn) process.stdout.write(`\x1b[${options.length + 1}A`);
+      if (drawn) raw(`\x1b[${options.length + 1}A`);
       drawn = true;
-      process.stdout.write(`\r\x1b[K${C.yellow}${question}${C.reset}\n`);
+      raw(`\r\x1b[K${C.yellow}${question}${C.reset}\n`);
       for (let i = 0; i < options.length; i++) {
         const sel = i === selected;
         const cursor = sel ? `${C.yellow}❯${C.reset}` : ' ';
         const label = sel ? `${C.yellow}${options[i]}${C.reset}` : options[i];
-        process.stdout.write(`\r\x1b[K  ${cursor} ${label}\n`);
+        raw(`\r\x1b[K  ${cursor} ${label}\n`);
       }
     };
 
@@ -268,12 +302,14 @@ function confirm(question, opts = {}) {
       process.stdin.setRawMode(false);
       process.stdin.pause();
       process.stdin.removeListener('data', onKey);
-      // Erase menu lines
-      process.stdout.write(`\x1b[${options.length + 1}A`);
+      // Erase menu lines via rawWrite so the footer's row tracker is not
+      // inflated by the \n characters in the erase sequence.
+      const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
+      raw(`\x1b[${options.length + 1}A`);
       for (let i = 0; i < options.length + 1; i++) {
-        process.stdout.write(`\r\x1b[K\n`);
+        raw(`\r\x1b[K\n`);
       }
-      process.stdout.write(`\x1b[${options.length + 1}A`);
+      raw(`\x1b[${options.length + 1}A`);
       if (_rl) _rl.resume();
       resolve(result);
     };
@@ -334,6 +370,7 @@ function setAllowAlwaysHandler(fn) { _onAllowAlways = fn; }
 
 module.exports = {
   FORBIDDEN_PATTERNS,
+  BASH_PROTECTED_PATHS,
   SSH_SAFE_PATTERNS,
   isSSHReadOnly,
   DANGEROUS_BASH,
@@ -342,6 +379,7 @@ module.exports = {
   isForbidden,
   isDangerous,
   isCritical,
+  isBashPathForbidden,
   confirm,
   setAutoConfirm,
   getAutoConfirm,
