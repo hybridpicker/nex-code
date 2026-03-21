@@ -187,6 +187,7 @@ const DARK = {
   footer_branch:  rgb(80,  210, 100),
   footer_project: rgb(130, 130, 145),
   footer_divider: rgb(80,   80,  95),
+  footer_mode:    rgb(210, 150,  50),
 
   // Backward-compat raw ANSI keys (referenced directly in callers)
   white:         '\x1b[37m',
@@ -250,6 +251,7 @@ const LIGHT = {
   footer_branch:  rgb(0,  138,  62),
   footer_project: rgb(135, 135, 148),
   footer_divider: rgb(168, 168, 178),
+  footer_mode:    rgb(148,  88,   0),
 
   // Backward-compat — darker variants readable on white backgrounds
   white:         rgb(40,  40,  52),

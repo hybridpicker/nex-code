@@ -13,7 +13,7 @@ const { flushAutoSave } = require('./session');
 const { getActiveModel, setActiveModel } = require('./ollama');
 const { printContext } = require('./context');
 const { loadAllSkills, getSkillCommands, handleSkillCommand } = require('./skills');
-const { setReadlineInterface, setAutoConfirm, getAutoConfirm } = require('./safety');
+const { setReadlineInterface, setAutoConfirm, getAutoConfirm, setAllowAlwaysHandler } = require('./safety');
 const { StickyFooter } = require('./footer');
 // Lazy-loaded imports in startREPL or handlers
 
@@ -473,6 +473,7 @@ async function handleSlashCommand(input, rl) {
       if (newVal) {
         console.log(`${C.yellow}  ⚠ File changes will be applied without confirmation${C.reset}`);
       }
+      _updateFooterMode();
       return true;
     }
 
@@ -994,6 +995,7 @@ async function handleSlashCommand(input, rl) {
         if (approvePlan()) {
           startExecution();
           setPlanMode(false);
+          _updateFooterMode();
           invalidateSystemPromptCache();
           const plan = getActivePlan();
           const stepCount = plan?.steps?.length || 0;
@@ -1008,6 +1010,7 @@ async function handleSlashCommand(input, rl) {
       }
       // Enter plan mode
       setPlanMode(true);
+      _updateFooterMode();
       invalidateSystemPromptCache();
       console.log(`
 ${C.cyan}${C.bold}┌─ PLAN MODE ───────────────────────────────────────┐${C.reset}
@@ -1046,6 +1049,7 @@ ${C.cyan}${C.bold}└───────────────────�
       }
       if (setAutonomyLevel(level)) {
         console.log(`${C.green}Autonomy: ${level}${C.reset}`);
+        _updateFooterMode();
       } else {
         console.log(`${C.red}Unknown level: ${level}. Use: ${AUTONOMY_LEVELS.join(', ')}${C.reset}`);
       }
@@ -1942,17 +1946,22 @@ function appendHistory(line) {
 
 // ─── Smart Prompt ────────────────────────────────────────────
 function getPrompt() {
+  // Mode indicators (plan/autonomy/always) are shown in the footer — keep prompt clean.
+  return `${C.bold}${C.cyan}>${C.reset} `;
+}
+
+/** Recompute mode badge and push it to the footer status bar. */
+function _updateFooterMode() {
+  if (!global._nexFooter) return;
   const { isPlanMode, getAutonomyLevel } = require('./planner');
+  const { getAutoConfirm } = require('./safety');
   const parts = [];
-
   if (isPlanMode()) parts.push('plan');
-
   const level = getAutonomyLevel();
-  if (level !== 'interactive') parts.push(level);
-
-  // Model is shown in the footer status bar — omit from prompt
-  const tag = parts.length > 0 ? `${C.dim}[${parts.join(' · ')}]${C.reset} ` : '';
-  return `${tag}${C.bold}${C.cyan}>${C.reset} `;
+  if (level === 'semi-auto')  parts.push('semi');
+  if (level === 'autonomous') parts.push('auto');
+  if (getAutoConfirm())       parts.push('always');
+  global._nexFooter.setStatusInfo({ mode: parts.join(' · ') });
 }
 
 // ─── Bracketed Paste Detection ──────────────────────────────
@@ -2123,6 +2132,11 @@ async function startREPL() {
   const footer = new StickyFooter();
   footer.activate(rl);
   global._nexFooter = footer; // expose for task-router model switch
+  // Expose rawWrite so confirm dialogs can erase their menu lines without
+  // inflating _lastOutputRow (the patched stdout tracks newlines for layout).
+  global._nexRawWrite = (data) => footer.rawWrite(data);
+  // Keep footer mode badge in sync when user chooses "Always allow" in a confirm menu.
+  setAllowAlwaysHandler(() => _updateFooterMode());
 
   // Clear terminal on startup so previous shell output doesn't bleed through
   if (process.stdout.isTTY) {

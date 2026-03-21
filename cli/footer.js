@@ -73,16 +73,18 @@ class StickyFooter {
     this._statusModel       = '';
     this._statusBranch      = '';
     this._statusProject     = '';
+    this._statusMode        = ''; // e.g. 'plan · semi' or 'always'
   }
 
   /**
    * Set content shown in the status bar.
    * Call after footer.activate() once model/project info is known.
    */
-  setStatusInfo({ model = '', branch = '', project = '' } = {}) {
-    this._statusModel   = model;
-    this._statusBranch  = branch;
-    this._statusProject = project;
+  setStatusInfo({ model, branch, project, mode } = {}) {
+    if (model   !== undefined) this._statusModel   = model;
+    if (branch  !== undefined) this._statusBranch  = branch;
+    if (project !== undefined) this._statusProject = project;
+    if (mode    !== undefined) this._statusMode    = mode;
     if (this._active) this.drawFooter();
   }
 
@@ -95,29 +97,41 @@ class StickyFooter {
   _goto(row, col = 1) { return `\x1b[${row};${col}H`; }
 
   _statusLine() {
-    const cols = this._cols;
+    const cols    = this._cols;
     const model   = this._statusModel;
     const branch  = this._statusBranch;
     const project = this._statusProject;
+    const mode    = this._statusMode;
 
     if (!model) {
       return T.footer_sep + '─'.repeat(cols) + C_RESET;
     }
 
-    // Build colored info segment
+    // Build colored left info segment
     const divider = ` ${T.footer_divider}·${C_RESET} `;
     const parts = [];
     if (model)   parts.push(`${T.footer_model}${model}${C_RESET}`);
     if (branch)  parts.push(`${T.footer_branch}${branch}${C_RESET}`);
     if (project) parts.push(`${T.footer_project}${project}${C_RESET}`);
     const info = parts.join(divider);
-
-    // Visible width of the info text (strip ANSI escapes)
     const visibleInfo = [model, branch, project].filter(Boolean).join(' · ').length;
     const prefix = '─ ';
+
+    if (mode) {
+      // Right-aligned mode badge: ── info ───── mode ──
+      const visibleMode = mode.length;
+      const trailLen = Math.max(0, cols - prefix.length - visibleInfo - 1 - 1 - visibleMode - 3);
+      const trail = '─'.repeat(trailLen);
+      return (
+        `${T.footer_sep}${prefix}${C_RESET}` +
+        `${info}${T.footer_sep} ${trail} ${C_RESET}` +
+        `${T.footer_mode}${mode}${C_RESET}` +
+        `${T.footer_sep} ──${C_RESET}`
+      );
+    }
+
     const trailLen = Math.max(0, cols - prefix.length - visibleInfo - 2);
     const trail = '─'.repeat(trailLen);
-
     return `${T.footer_sep}${prefix}${C_RESET}${info}${T.footer_sep} ${trail}${C_RESET}`;
   }
 

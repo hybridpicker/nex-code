@@ -3,7 +3,7 @@
  * Hybrid: chat + tool-use in a single conversation.
  */
 
-const { C, Spinner, TaskProgress, formatToolCall, formatResult, formatToolSummary, formatSectionHeader, formatMilestone, setActiveTaskProgress } = require('./ui');
+const { C, Spinner, TaskProgress, formatToolCall, formatToolSummary, formatSectionHeader, formatMilestone, setActiveTaskProgress } = require('./ui');
 const { MilestoneTracker } = require('./milestone');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
@@ -471,7 +471,6 @@ async function executeSingleTool(prep, quiet = false) {
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
 
   if (!quiet) {
-    console.log(formatResult(truncated));
     console.log(summary);
   }
 
