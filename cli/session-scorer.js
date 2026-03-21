@@ -356,7 +356,32 @@ function scoreMessages(messages) {
     issues.push(`read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`);
   }
 
-  // ── 11. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
+  // ── 11. Per-file grep flood (-0.75) ───────────────────────────────────────
+  // Detect when the agent greps the same target file 3+ times with different
+  // patterns instead of using the file content already in context.
+  const grepFilePatterns = new Map(); // file → Set of distinct patterns
+  for (const tc of toolCalls) {
+    if (tc.name === 'grep' && tc.input?.path && tc.input?.pattern) {
+      const f = tc.input.path;
+      if (!grepFilePatterns.has(f)) grepFilePatterns.set(f, new Set());
+      grepFilePatterns.get(f).add(tc.input.pattern);
+    }
+  }
+  let worstGrepFileCount = 0;
+  let worstGrepFile = '';
+  for (const [f, patterns] of grepFilePatterns) {
+    if (patterns.size > worstGrepFileCount) {
+      worstGrepFileCount = patterns.size;
+      worstGrepFile = f;
+    }
+  }
+  if (worstGrepFileCount >= 3) {
+    score -= 0.75;
+    const shortPath = worstGrepFile.split('/').slice(-2).join('/');
+    issues.push(`grep flood on single file: "${shortPath}" searched ${worstGrepFileCount}× with different patterns (file already in context)`);
+  }
+
+  // ── 12. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
   // Count tool results starting with "EXIT" (non-zero bash exit codes).
   // 10+ EXIT errors in a session indicates repeated failed commands.
   const exitErrorCount = toolResults.filter((tr) => tr.content.startsWith('EXIT')).length;
