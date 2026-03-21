@@ -618,8 +618,10 @@ describe('index-handlers.test.js — additional handler coverage', () => {
   });
 
   // ─── getPrompt variations ──────────────────────────────────
+  // Mode indicators (plan / autonomy / always) moved to the sticky footer
+  // status bar — getPrompt() always returns the clean "> " arrow prompt.
   describe('getPrompt()', () => {
-    it('shows plain prompt in interactive mode', () => {
+    it('always returns plain arrow prompt regardless of mode', () => {
       const planner = require('../cli/planner');
       planner.isPlanMode.mockReturnValue(false);
       planner.getAutonomyLevel.mockReturnValue('interactive');
@@ -627,33 +629,31 @@ describe('index-handlers.test.js — additional handler coverage', () => {
       expect(prompt).toContain('>');
       expect(prompt).not.toContain('plan');
       expect(prompt).not.toContain('semi-auto');
+      expect(prompt).not.toContain('autonomous');
     });
 
-    it('shows plan tag in plan mode', () => {
+    it('does not embed plan tag even in plan mode', () => {
       const planner = require('../cli/planner');
       planner.isPlanMode.mockReturnValueOnce(true);
       planner.getAutonomyLevel.mockReturnValueOnce('interactive');
       const prompt = getPrompt();
-      expect(prompt).toContain('plan');
+      expect(prompt).toContain('>');
+      expect(prompt).not.toContain('plan');
     });
 
-    it('shows autonomy level when not interactive', () => {
+    it('does not embed autonomy tag when not interactive', () => {
       const planner = require('../cli/planner');
       planner.isPlanMode.mockReturnValueOnce(false);
       planner.getAutonomyLevel.mockReturnValueOnce('autonomous');
       const prompt = getPrompt();
-      expect(prompt).toContain('autonomous');
+      expect(prompt).toContain('>');
+      expect(prompt).not.toContain('autonomous');
     });
 
-    it('shows both plan and autonomy tags', () => {
-      const planner = require('../cli/planner');
-      planner.isPlanMode.mockReturnValueOnce(true);
-      planner.getAutonomyLevel.mockReturnValueOnce('semi-auto');
+    it('is always a short single-line prompt', () => {
       const prompt = getPrompt();
-      expect(prompt).toContain('plan');
-      expect(prompt).toContain('semi-auto');
-      // Tags should be joined with a separator
-      expect(prompt).toContain('\u00b7'); // · character
+      expect(prompt).not.toContain('\n');
+      expect(prompt.length).toBeLessThan(30);
     });
   });
 
