@@ -140,6 +140,76 @@ function buildUserContent(text) {
   return blocks.length > 1 ? blocks : text;
 }
 
+// ─── LLM Output Repetition Detector ─────────────────────────
+
+/**
+ * Detect and truncate repeated paragraph/sentence patterns in LLM output.
+ *
+ * Strategy: split text into sentences (". " delimiter), build sliding windows
+ * of 3 sentences, count occurrences. If any 3-sentence window appears 3+
+ * times, the content is considered a repetition loop.
+ *
+ * Truncation rules:
+ *  - Keep first 2 occurrences of the repeated block, then append a system note.
+ *  - Additionally, if text is >8000 chars AND has a repetition pattern,
+ *    hard-truncate to 3000 chars.
+ *
+ * @param {string} text — raw LLM response content
+ * @returns {{ text: string, truncated: boolean, repeatCount: number }}
+ */
+function detectAndTruncateRepetition(text) {
+  if (!text || text.length < 200) return { text, truncated: false, repeatCount: 0 };
+
+  // Split into sentences using ". " as delimiter, keep delimiter attached
+  const raw = text.split(/(?<=\. )/);
+  const sentences = raw.filter((s) => s.trim().length > 0);
+
+  if (sentences.length < 6) return { text, truncated: false, repeatCount: 0 };
+
+  // Build sliding windows of 3 sentences and count occurrences
+  const windowCounts = new Map();
+  for (let i = 0; i <= sentences.length - 3; i++) {
+    const window = sentences.slice(i, i + 3).join('').trim();
+    // Only track non-trivial windows (>30 chars)
+    if (window.length > 30) {
+      windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
+    }
+  }
+
+  // Find the most-repeated window
+  let maxCount = 0;
+  let repeatedWindow = '';
+  for (const [window, count] of windowCounts) {
+    if (count > maxCount) { maxCount = count; repeatedWindow = window; }
+  }
+
+  if (maxCount < 3) return { text, truncated: false, repeatCount: maxCount };
+
+  // Repetition detected — truncate to first 2 occurrences
+  const SYSTEM_NOTE = `\n\n[SYSTEM: Output-Wiederholung erkannt — Antwort gekürzt (${maxCount}× gleicher Paragraph)]`;
+
+  let truncated;
+  if (text.length > 8000) {
+    // Hard truncate for very long outputs
+    truncated = text.slice(0, 3000) + SYSTEM_NOTE;
+  } else {
+    // Find the position of the 3rd occurrence and cut there
+    let occurrences = 0;
+    let cutPos = -1;
+    let searchFrom = 0;
+    while (occurrences < 2) {
+      const pos = text.indexOf(repeatedWindow, searchFrom);
+      if (pos === -1) break;
+      occurrences++;
+      cutPos = pos + repeatedWindow.length;
+      searchFrom = pos + 1;
+    }
+    truncated = cutPos > 0 ? text.slice(0, cutPos) + SYSTEM_NOTE : text.slice(0, 3000) + SYSTEM_NOTE;
+  }
+
+  return { text: truncated, truncated: true, repeatCount: maxCount };
+}
+
 // ─── Lazy Tool Loading ───────────────────────────────────────
 // Cache tool definitions to avoid loading on every call
 let cachedToolDefinitions = null;
@@ -1766,7 +1836,14 @@ async function processInput(userInput, serverHooks = null) {
       if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
     }
 
-    const { content, tool_calls } = result;
+    const { content: rawContent, tool_calls } = result;
+
+    // ── Repetition guard: truncate looping LLM output before storing ──────
+    const repCheck = detectAndTruncateRepetition(rawContent || '');
+    const content = repCheck.truncated ? repCheck.text : rawContent;
+    if (repCheck.truncated) {
+      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
+    }
 
     // Build assistant message for history
     const assistantMsg = { role: 'assistant', content: content || '' };
