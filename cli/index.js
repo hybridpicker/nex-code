@@ -522,7 +522,10 @@ async function handleSlashCommand(input, rl) {
       for (const s of sessions) {
         const date = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '?';
         const auto = s.name === '_autosave' ? ` ${C.dim}(auto)${C.reset}` : '';
-        console.log(`  ${C.cyan}${s.name}${C.reset}${auto} — ${s.messageCount} msgs, ${date}`);
+        const scoreStr = s.score != null
+          ? ` · score ${s.score}/10${s.scoreGrade ? ` (${s.scoreGrade})` : ''}`
+          : '';
+        console.log(`  ${C.cyan}${s.name}${C.reset}${auto} — ${s.messageCount} msgs, ${date}${C.dim}${scoreStr}${C.reset}`);
       }
       console.log();
       return true;
