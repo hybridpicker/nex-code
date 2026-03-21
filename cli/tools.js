@@ -133,6 +133,9 @@ function getBlockedHint(cmd) {
   if (/(?:^|[;&|]\s*)history(?:\s|$)/.test(cmd)) {
     return 'Shell history is blocked. Look at git log or project files for context instead.';
   }
+  if (/\bsed\s+-n\s+['"]?\d+,\d+p/.test(cmd)) {
+    return 'sed -n line-range scrolling floods context with irrelevant lines. Use targeted grep instead: grep -n "ERROR\\|pattern" <logfile> | tail -20';
+  }
   return '';
 }
 
