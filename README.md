@@ -1091,6 +1091,27 @@ Arguments are automatically sanitized — keys matching `key`, `token`, `passwor
 
 ---
 
+## Safety
+
+nex-code includes multi-layer protections to prevent accidental damage — even in `--auto` and `--yolo` mode:
+
+| Layer | What it guards | Bypass possible? |
+|---|---|---|
+| **Forbidden patterns** | `rm -rf /`, fork bombs, reverse shells, `cat .env` | No |
+| **Protected paths** | Destructive bash ops (`rm`, `mv`, `truncate`, …) on `.env`, `credentials/`, `venv/`, `.ssh/`, `.aws/`, `.sqlite3`, `.git/` internals | Only via `NEX_UNPROTECT=1` |
+| **Sensitive file tools** | `read_file` / `write_file` / `edit_file` on `.env`, `.ssh/`, `.npmrc`, `.kube/config`, etc. | No |
+| **Critical commands** | `rm -rf`, `sudo`, `git push --force`, `git reset --hard` | Requires explicit confirmation |
+
+**Override:** If you intentionally need to modify a protected path via bash (e.g. rotating credentials in a deploy script), set `NEX_UNPROTECT=1`:
+
+```bash
+NEX_UNPROTECT=1 nex-code
+```
+
+This disables the protected-path check only — forbidden patterns and critical-command prompts remain active.
+
+---
+
 ## Team Permissions
 
 Permission presets for team environments:
