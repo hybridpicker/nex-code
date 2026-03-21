@@ -2172,16 +2172,29 @@ async function _executeToolInner(name, args, options = {}) {
       if (exitCode !== 0) {
         return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
       }
+      // For grep commands with large -B or -A context: remove '--' separator lines (they
+      // waste context without adding information) and enforce a tighter line cap.
+      const isGrepCmd = /\bgrep\b/.test(cmd);
+      let processedOutput = output;
+      if (isGrepCmd) {
+        // Strip grep '--' context separator lines entirely
+        processedOutput = processedOutput
+          .split('\n')
+          .filter(line => line !== '--')
+          .join('\n');
+      }
+
       // Cap SSH output at 200 lines — keeps last 200 (most relevant for log commands).
-      // Prevents grep -B200 / journalctl from flooding LLM context with thousands of lines.
-      const SSH_MAX_LINES = 200;
-      const outputLines = output.split('\n');
+      // Grep commands with -B or -A get a tighter cap (100 lines) because context blocks
+      // multiply quickly and fill the LLM context when several grep calls run in parallel.
+      const SSH_MAX_LINES = isGrepCmd ? 100 : 200;
+      const outputLines = processedOutput.split('\n');
       if (outputLines.length > SSH_MAX_LINES) {
         const dropped = outputLines.length - SSH_MAX_LINES;
         return `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
           outputLines.slice(-SSH_MAX_LINES).join('\n');
       }
-      return output || '(command completed, no output)';
+      return processedOutput || '(command completed, no output)';
     }
 
     case 'ssh_upload': {
