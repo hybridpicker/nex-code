@@ -1310,6 +1310,22 @@ async function processInput(userInput, serverHooks = null) {
     const loopSignal = _getAbortSignal();
     if (loopSignal?.aborted) break;
 
+    // ─── Proactive auto-compress before LLM call ─────────────────────────────
+    // If context is already ≥78% before sending the next request, compress now
+    // rather than waiting for a 400 error. This prevents the nuclear-compression
+    // cascade that occurs when a bloated session is resumed.
+    {
+      const _autoCtx = getUsage(apiMessages, []);
+      if (_autoCtx.percentage >= 78) {
+        const _allTools = getAllToolDefinitions();
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+        if (_freed > 0) {
+          apiMessages = _compressed;
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+        }
+      }
+    }
+
     // Step indicator — deferred, only shown for tool iterations (matches résumé count)
     let stepPrinted = true; // default: no marker (text-only iterations stay silent)
 
