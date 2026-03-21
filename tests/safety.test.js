@@ -1,4 +1,4 @@
-const { isForbidden, isDangerous, isCritical, isSSHReadOnly, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
+const { isForbidden, isDangerous, isCritical, isBashPathForbidden, isSSHReadOnly, confirm, setAutoConfirm, getAutoConfirm } = require('../cli/safety');
 
 describe('safety.js', () => {
   afterEach(() => {
@@ -727,6 +727,100 @@ describe('safety.js', () => {
   describe('isDangerous() - additional notable', () => {
     it('flags SKIP_PREFLIGHT_CHECK=true', () => {
       expect(isDangerous('SKIP_PREFLIGHT_CHECK=true npm start')).toBe(true);
+    });
+  });
+
+  // ─── isBashPathForbidden ──────────────────────────────────────
+  describe('isBashPathForbidden()', () => {
+    afterEach(() => {
+      delete process.env.NEX_UNPROTECT;
+    });
+
+    it('blocks rm .env', () => {
+      expect(isBashPathForbidden('rm .env')).toBeTruthy();
+    });
+
+    it('blocks rm -f .env', () => {
+      expect(isBashPathForbidden('rm -f .env')).toBeTruthy();
+    });
+
+    it('blocks rm -rf credentials/', () => {
+      expect(isBashPathForbidden('rm -rf credentials/')).toBeTruthy();
+    });
+
+    it('blocks rm -rf venv/', () => {
+      expect(isBashPathForbidden('rm -rf venv/')).toBeTruthy();
+    });
+
+    it('blocks rm -rf .venv/', () => {
+      expect(isBashPathForbidden('rm -rf .venv/')).toBeTruthy();
+    });
+
+    it('blocks mv .env .env.bak', () => {
+      expect(isBashPathForbidden('mv .env .env.bak')).toBeTruthy();
+    });
+
+    it('blocks shred .ssh/id_rsa', () => {
+      expect(isBashPathForbidden('shred .ssh/id_rsa')).toBeTruthy();
+    });
+
+    it('blocks rm db.sqlite3', () => {
+      expect(isBashPathForbidden('rm db.sqlite3')).toBeTruthy();
+    });
+
+    it('blocks rm -rf .git/objects', () => {
+      expect(isBashPathForbidden('rm -rf .git/objects')).toBeTruthy();
+    });
+
+    it('blocks truncate -s 0 .env', () => {
+      expect(isBashPathForbidden('truncate -s 0 .env')).toBeTruthy();
+    });
+
+    it('blocks cp over .env (cp malicious .env)', () => {
+      expect(isBashPathForbidden('cp malicious .env')).toBeTruthy();
+    });
+
+    it('blocks unlink .npmrc', () => {
+      expect(isBashPathForbidden('unlink .npmrc')).toBeTruthy();
+    });
+
+    it('allows rm .git/hooks (hooks are excluded from protection)', () => {
+      expect(isBashPathForbidden('rm .git/hooks/pre-commit')).toBeNull();
+    });
+
+    it('allows rm temp.txt (not a protected path)', () => {
+      expect(isBashPathForbidden('rm temp.txt')).toBeNull();
+    });
+
+    it('allows cat .env (not a destructive command)', () => {
+      expect(isBashPathForbidden('cat .env')).toBeNull();
+    });
+
+    it('allows ls credentials/ (not destructive)', () => {
+      expect(isBashPathForbidden('ls credentials/')).toBeNull();
+    });
+
+    it('allows grep .env (not destructive)', () => {
+      expect(isBashPathForbidden('grep SECRET .env')).toBeNull();
+    });
+
+    it('allows rm when NEX_UNPROTECT=1', () => {
+      process.env.NEX_UNPROTECT = '1';
+      expect(isBashPathForbidden('rm .env')).toBeNull();
+    });
+
+    it('blocks rm .env when NEX_UNPROTECT is not set', () => {
+      delete process.env.NEX_UNPROTECT;
+      expect(isBashPathForbidden('rm .env')).toBeTruthy();
+    });
+
+    it('blocks commands with paths in longer pipelines', () => {
+      expect(isBashPathForbidden('echo yes | rm -rf credentials/')).toBeTruthy();
+    });
+
+    it('allows non-destructive commands on any path', () => {
+      expect(isBashPathForbidden('echo .env')).toBeNull();
+      expect(isBashPathForbidden('touch newfile.txt')).toBeNull();
     });
   });
 });
