@@ -11,7 +11,7 @@ const { executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
 const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
 const { autoSave, flushAutoSave } = require('./session');
-const { scoreMessages, formatScore } = require('./session-scorer');
+const { scoreMessages, formatScore, appendScoreHistory } = require('./session-scorer');
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
@@ -49,6 +49,18 @@ function _scoreAndPrint(messages) {
         data.scoreIssues = result.issues;
         fs.writeFileSync(p, JSON.stringify(data, null, 2));
       }
+    } catch { /* non-critical — ignore */ }
+
+    // Persist score to benchmark history
+    try {
+      const { getActiveModel } = require('./ollama');
+      const pkg = require('../package.json');
+      appendScoreHistory(result.score, {
+        version: pkg.version,
+        model: getActiveModel ? getActiveModel() : null,
+        sessionName: '_autosave',
+        issues: result.issues,
+      });
     } catch { /* non-critical — ignore */ }
   } catch { /* scorer must never crash the agent */ }
 }

@@ -399,12 +399,60 @@ function formatScore(result, C = null) {
   return out;
 }
 
+// ─── Score History ────────────────────────────────────────────────────────────
+
+/**
+ * Append a score entry to .nex/benchmark-history.json.
+ * Creates the file (and .nex/ dir) if it doesn't exist.
+ * Caps history at 100 entries (oldest dropped first).
+ *
+ * @param {number} score
+ * @param {{ version?: string, model?: string, sessionName?: string, issues?: string[] }} meta
+ */
+function appendScoreHistory(score, meta = {}) {
+  try {
+    const nexDir = path.join(process.cwd(), '.nex');
+    if (!fs.existsSync(nexDir)) fs.mkdirSync(nexDir, { recursive: true });
+
+    const historyPath = path.join(nexDir, 'benchmark-history.json');
+    let history = [];
+    if (fs.existsSync(historyPath)) {
+      try { history = JSON.parse(fs.readFileSync(historyPath, 'utf-8')); } catch { history = []; }
+    }
+    if (!Array.isArray(history)) history = [];
+
+    const grade =
+      score >= 9.0 ? 'A' :
+      score >= 8.0 ? 'B' :
+      score >= 7.0 ? 'C' :
+      score >= 6.0 ? 'D' : 'F';
+
+    const entry = {
+      date: new Date().toISOString(),
+      version: meta.version || null,
+      model: meta.model || null,
+      score,
+      grade,
+      sessionName: meta.sessionName || null,
+      issues: Array.isArray(meta.issues) ? meta.issues : [],
+    };
+
+    history.push(entry);
+
+    // Keep latest 100 entries
+    if (history.length > 100) history = history.slice(history.length - 100);
+
+    fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
+  } catch { /* non-critical — never crash the caller */ }
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
   scoreMessages,
   scoreSession,
   formatScore,
+  appendScoreHistory,
   // exported for testing
   _extractToolCalls: extractToolCalls,
   _extractToolResults: extractToolResults,
