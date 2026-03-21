@@ -1348,6 +1348,9 @@ async function processInput(userInput, serverHooks = null) {
   const grepPatternCounts = new Map(); // loop detection: repeated grep patterns
   const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
+  const fileReadCounts = new Map(); // loop detection: repeated reads of same file
+  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file
+  const LOOP_ABORT_READS = 6; // abort after 6 reads of the same file
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -1879,8 +1882,10 @@ async function processInput(userInput, serverHooks = null) {
       const res = toolMessages[j].content;
       // Only inspect the first line — tool output may legitimately contain
       // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
+      // "EXIT" is the prefix used for non-zero bash exit codes (EXIT 1, EXIT ENOENT, etc.)
+      // and must also be treated as an error for consecutive-error counting.
       const firstLine = res.split('\n')[0];
-      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed');
+      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed') && !firstLine.startsWith('EXIT');
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
           filesModified.add(prep.args.path);
@@ -2008,7 +2013,28 @@ async function processInput(userInput, serverHooks = null) {
         progressMadeThisPass = true;
       }
       if (isOk && prep.fnName === 'read_file') {
-        if (prep.args && prep.args.path) filesRead.add(prep.args.path);
+        if (prep.args && prep.args.path) {
+          filesRead.add(prep.args.path);
+          const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
+          fileReadCounts.set(prep.args.path, readCount);
+          const shortPath = prep.args.path.split('/').slice(-2).join('/');
+          if (readCount === LOOP_WARN_READS) {
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read ${readCount}× — already in context${C.reset}`);
+            const readWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] You have read "${prep.args.path}" ${readCount} times. This file is already in your context — reading it again adds nothing new. STOP re-reading this file. Use the data you already have or use targeted reads (line_start/line_end) if you need a specific section.`,
+            };
+            conversationMessages.push(readWarning);
+            apiMessages.push(readWarning);
+          } else if (readCount >= LOOP_ABORT_READS) {
+            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read ${readCount}× — aborting runaway read loop${C.reset}`);
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            setOnChange(null);
+            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            saveNow(conversationMessages);
+            return;
+          }
+        }
       }
       // Spawn-agents truncation stuck detection
       if (prep.fnName === 'spawn_agents') {
