@@ -1358,6 +1358,9 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
+  let consecutiveSshCalls = 0; // SSH storm detection: consecutive ssh_exec calls
+  const SSH_STORM_WARN = 10;  // warn after 10 consecutive ssh_exec calls
+  const SSH_STORM_ABORT = 15; // hard abort after 15 consecutive ssh_exec calls
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -1912,6 +1915,16 @@ async function processInput(userInput, serverHooks = null) {
       }
       // sed -n pattern detection — warn immediately when the model uses sed line-range scrolling
       if ((prep.fnName === 'ssh_exec' || prep.fnName === 'bash') && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
+        // Pre-compress before injecting warning — prevents the warning itself from triggering
+        // a 400-cascade when context is already near capacity.
+        {
+          const _sedCtx = getUsage(apiMessages, []);
+          if (_sedCtx.percentage >= 60) {
+            const _allTools = getAllToolDefinitions();
+            const { messages: _c } = forceCompress(apiMessages, _allTools);
+            apiMessages = _c;
+          }
+        }
         console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
         const sedWarning = {
           role: 'user',
@@ -1941,6 +1954,30 @@ async function processInput(userInput, serverHooks = null) {
           saveNow(conversationMessages);
           return;
         }
+      }
+      // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
+      // The existing bash-loop detector only fires on *similar* commands; an agent running 16
+      // different grep/cat patterns via ssh_exec bypasses it while still burning context.
+      if (prep.fnName === 'ssh_exec') {
+        consecutiveSshCalls++;
+        if (consecutiveSshCalls >= SSH_STORM_ABORT) {
+          console.log(`${C.red}  ✖ SSH storm abort: ${consecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        } else if (consecutiveSshCalls === SSH_STORM_WARN) {
+          console.log(`${C.yellow}  ⚠ SSH storm warning: ${consecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
+          const sshStormWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] You have made ${consecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize what you have found so far and either answer the user's question or declare that further investigation is needed and explain what specific single piece of information is still missing.`,
+          };
+          conversationMessages.push(sshStormWarning);
+          apiMessages.push(sshStormWarning);
+        }
+      } else {
+        consecutiveSshCalls = 0;
       }
       // Grep pattern loop detection — repeated identical patterns waste context
       if (isOk && prep.fnName === 'grep' && prep.args && prep.args.pattern) {
