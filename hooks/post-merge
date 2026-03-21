@@ -1,5 +1,6 @@
 #!/bin/bash
-# post-merge hook — auto version bump on devel→main merge + npm install + auto-publish
+# post-merge hook — auto version bump on devel→main merge + npm install
+# Publish is handled by GitHub Actions Release workflow on push to main.
 # Install via: npm run install-hooks
 
 set -euo pipefail
@@ -34,7 +35,6 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
 " 2>/dev/null || echo "unknown")
     if [ "$CI_STATUS" != "success" ] && [ "$CI_STATUS" != "no_run" ]; then
       echo "[post-merge] ABORT: CI status for devel @ ${SHORT_SHA} is '${CI_STATUS}'."
-      echo "[post-merge] The merge has been recorded locally but publish is blocked."
       echo "[post-merge] Fix CI on devel, then use: npm run merge-to-main"
       exit 1
     elif [ "$CI_STATUS" = "no_run" ]; then
@@ -50,41 +50,18 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
   git add package.json package-lock.json 2>/dev/null || git add package.json
   git commit -m "chore: bump version to ${NEW_VERSION}"
   echo "[post-merge] Version bumped to ${NEW_VERSION}"
-  
-  # Check npm auth before publishing
-  echo "[post-merge] Checking npm authentication..."
-  if ! npm whoami &>/dev/null; then
-    echo "[post-merge] Not logged in to npm. Starting login (confirm in browser)..."
-    npm login
-    if ! npm whoami &>/dev/null; then
-      echo "[post-merge] npm login failed. Please login and publish manually:"
-      echo "[post-merge]   npm login && npm publish"
-      echo ""
-      exit 0
-    fi
-  fi
-  NPM_USER=$(npm whoami 2>/dev/null)
-  echo "[post-merge] Logged in as: ${NPM_USER}"
 
-  # Publish to npm
-  echo "[post-merge] Publishing version ${NEW_VERSION} to npm..."
-  if npm publish --access public; then
-    echo "[post-merge] Successfully published version ${NEW_VERSION} to npm!"
-    echo "[post-merge] GitHub Actions will create a release shortly."
-  else
-    echo "[post-merge] Failed to publish to npm. Please publish manually:"
-    echo "[post-merge]   npm publish"
-  fi
-  echo ""
+  # Push main — this triggers GitHub Actions which handles npm publish
+  echo "[post-merge] Pushing main (GitHub Actions will publish to npm)..."
+  git push origin main
 
   # Sync version bump back to devel so both branches stay in sync
   echo "[post-merge] Syncing version bump back to devel..."
-  git push origin main 2>/dev/null || true
   git checkout devel
   git merge main --no-edit
   git push origin devel
   git checkout main
-  echo "[post-merge] devel is now synced to ${NEW_VERSION}"
+  echo "[post-merge] Done. v${NEW_VERSION} — devel synced, GitHub Actions publishing to npm."
 fi
 
 # Run npm install if package.json changed in the merge
