@@ -16,6 +16,7 @@ const { autoSave, flushAutoSave } = require('./session');
 // debounced timeout doesn't race against process exit.
 function saveNow(messages) { autoSave(messages); flushAutoSave(); }
 const { getMemoryContext } = require('./memory');
+const { getDeploymentContextBlock } = require('./server-context');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
 const { confirm, setAllowAlwaysHandler } = require('./safety');
 const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
@@ -724,6 +725,7 @@ async function buildSystemPrompt() {
   // Model routing guide is also cached internally
 
   const languagePrompt = _buildLanguagePrompt();
+  const deploymentContext = getDeploymentContextBlock();
   cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
 WORKING DIRECTORY: ${process.cwd()}
@@ -731,7 +733,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}# Core Behavior
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
