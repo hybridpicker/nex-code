@@ -660,46 +660,63 @@ async function runDiscoverBenchmark({ newModels, existingRanking = [], onProgres
 // ─── Jarvis Scenario Benchmark ────────────────────────────────────────────────
 
 /**
- * Five Jarvis-typical agentic scenarios for benchmarking nex-code end-to-end.
- * Each scenario is run as a real nex-code child process and scored via session-scorer.
+ * Generic fallback scenarios — no server IPs or internal paths.
+ * Used when .nex/benchmark-config.json does not exist.
  */
-const JARVIS_SCENARIOS = [
+const DEFAULT_SCENARIOS = [
   {
-    id: 'health_check',
-    name: 'Service Health Check',
-    prompt: 'Check if jarvis-api is running on 94.130.37.43 and report status',
-    maxTurns: 10,
-    successCriteria: ['valid', 'running', 'healthy', 'status 200', 'OK'],
-  },
-  {
-    id: 'log_analysis',
-    name: 'Log Error Analysis',
-    prompt: 'Find the most recent errors in /home/jarvis/jarvis-agent/logs/api.log and summarize them',
-    maxTurns: 15,
-    successCriteria: ['error', 'found', 'lines', 'ERR', 'log'],
-  },
-  {
-    id: 'service_diagnosis',
-    name: 'Service Diagnosis',
-    prompt: 'jarvis-api returns 500 ERR_BAD_RESPONSE on smarthome_status. Diagnose the root cause.',
-    maxTurns: 20,
-    successCriteria: ['SmartThings', 'token', 'PAT', '401', '500', 'cause'],
-  },
-  {
-    id: 'code_search',
-    name: 'Code Search & Explain',
-    prompt: 'Find where set_reminder parses time formats in the jarvis-agent codebase and explain the logic',
-    maxTurns: 12,
-    successCriteria: ['misc.js', 'reminder', 'time', 'format', 'parse'],
-  },
-  {
-    id: 'no_loop',
-    name: 'No-Loop Convergence',
-    prompt: 'What Node.js version is running on 94.130.37.43?',
-    maxTurns: 5,
-    successCriteria: ['v', 'node', 'version'],
+    id: 'simple_question',
+    name: 'Simple Convergence',
+    prompt: 'What is 2+2?',
+    maxTurns: 3,
+    successCriteria: ['4'],
   },
 ];
+
+/**
+ * Load scenarios from .nex/benchmark-config.json if it exists.
+ * Falls back to DEFAULT_SCENARIOS and prints a setup hint.
+ *
+ * @param {string} [cwd]
+ * @returns {Array}
+ */
+function loadScenarios(cwd) {
+  const fs   = require('fs');
+  const path = require('path');
+  const configPath = path.join(cwd || process.cwd(), '.nex', 'benchmark-config.json');
+
+  if (!fs.existsSync(configPath)) {
+    console.log(
+      `${C.yellow}No scenarios configured.${C.reset} ` +
+      `Create ${C.dim}.nex/benchmark-config.json${C.reset} to define your benchmark scenarios.\n` +
+      `  Example:\n` +
+      `  {\n` +
+      `    "scenarios": [\n` +
+      `      {\n` +
+      `        "id": "health_check",\n` +
+      `        "name": "Service Health Check",\n` +
+      `        "prompt": "Check if my-api is running on <your-server> and report status",\n` +
+      `        "maxTurns": 10,\n` +
+      `        "successCriteria": ["running", "healthy", "OK"]\n` +
+      `      }\n` +
+      `    ]\n` +
+      `  }\n`
+    );
+    return DEFAULT_SCENARIOS;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (!Array.isArray(data.scenarios) || data.scenarios.length === 0) {
+      console.log(`${C.yellow}benchmark-config.json has no scenarios — using defaults.${C.reset}\n`);
+      return DEFAULT_SCENARIOS;
+    }
+    return data.scenarios;
+  } catch (err) {
+    console.log(`${C.yellow}Failed to parse benchmark-config.json: ${err.message}${C.reset}\n`);
+    return DEFAULT_SCENARIOS;
+  }
+}
 
 /**
  * Score a completed scenario session.
@@ -909,9 +926,11 @@ function showScoreTrend(n = 10) {
 async function runJarvisBenchmark({ dryRun = false, model, cwd, onProgress } = {}) {
   const pkg = require('../package.json');
 
+  const scenarios = loadScenarios(cwd);
+
   if (dryRun) {
     console.log(`\n${C.bold}Jarvis Benchmark — Scenarios (dry-run):${C.reset}\n`);
-    for (const s of JARVIS_SCENARIOS) {
+    for (const s of scenarios) {
       console.log(`  ${C.cyan}${s.id.padEnd(20)}${C.reset} ${C.dim}${s.name}${C.reset}  maxTurns=${s.maxTurns}`);
       console.log(`    ${C.dim}${s.prompt.substring(0, 80)}${C.reset}`);
     }
@@ -929,7 +948,7 @@ async function runJarvisBenchmark({ dryRun = false, model, cwd, onProgress } = {
 
   const results = [];
 
-  for (const scenario of JARVIS_SCENARIOS) {
+  for (const scenario of scenarios) {
     onProgress?.({ id: scenario.id, name: scenario.name, done: false });
 
     console.log(`\n${C.dim}Running scenario: ${scenario.name}...${C.reset}`);
@@ -989,6 +1008,7 @@ module.exports = {
   // Jarvis scenario benchmark
   runJarvisBenchmark,
   showScoreTrend,
-  JARVIS_SCENARIOS,
+  loadScenarios,
+  DEFAULT_SCENARIOS,
   scoreJarvisScenario,
 };
