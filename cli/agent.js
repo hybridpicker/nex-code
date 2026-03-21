@@ -642,6 +642,7 @@ const MAX_CONVERSATION_HISTORY = 300;
 // Reset in clearConversation() so /clear starts fresh.
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
+const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
 let _sessionConsecutiveSshCalls = 0;
@@ -1037,6 +1038,7 @@ function clearConversation() {
   conversationMessages = [];
   _sessionBashCmdCounts.clear();
   _sessionGrepPatternCounts.clear();
+  _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
   _sessionConsecutiveSshCalls = 0;
@@ -1375,6 +1377,8 @@ async function processInput(userInput, serverHooks = null) {
   const grepPatternCounts = _sessionGrepPatternCounts;
   const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
+  const grepFileCounts = _sessionGrepFileCounts;  // per-file grep count (different patterns)
+  const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
@@ -2037,6 +2041,23 @@ async function processInput(userInput, serverHooks = null) {
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
+        }
+        // Per-file grep loop detection — multiple different patterns on same file
+        // This catches "search flood" where the agent greps the same file repeatedly
+        // with varying patterns instead of reading it once and using the context.
+        if (prep.args.path) {
+          const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
+          grepFileCounts.set(prep.args.path, fileGrepCount);
+          if (fileGrepCount === LOOP_WARN_GREP_FILE) {
+            const shortPath = prep.args.path.split('/').slice(-2).join('/');
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
+            const fileGrepWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] You have grepped "${prep.args.path}" ${fileGrepCount} times with different patterns. The file content is already in your context from the read_file call. STOP searching it again — use the data already in your context. If you need a specific line, reference the line numbers you already saw. Further greps on this file waste context tokens without adding new information.`,
+            };
+            conversationMessages.push(fileGrepWarning);
+            apiMessages.push(fileGrepWarning);
+          }
         }
       }
       // Health-check stop signal — inject strong stop instruction when tool result
