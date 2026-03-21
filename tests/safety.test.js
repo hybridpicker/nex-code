@@ -93,6 +93,19 @@ describe('safety.js', () => {
       expect(isForbidden('git log --follow --history')).toBeNull();
       expect(isForbidden('rpm -q --history bash')).toBeNull();
     });
+
+    it('blocks sed -n line-range scrolling', () => {
+      expect(isForbidden("sed -n '21880,21890p' api.log")).not.toBeNull();
+      expect(isForbidden('sed -n 100,200p logfile')).not.toBeNull();
+      expect(isForbidden('sed -n "1,50p" file.txt')).not.toBeNull();
+    });
+
+    it('allows sed -n regex filtering (not line-range)', () => {
+      expect(isForbidden("sed -n '/ERROR/p' file.log")).toBeNull();
+      expect(isForbidden("sed -n '/^#/d' config.txt")).toBeNull();
+      // sed without -n (substitution) is fine
+      expect(isForbidden("sed 's/foo/bar/' file.txt")).toBeNull();
+    });
   });
 
   // ─── isDangerous ────────────────────────────────────────────
