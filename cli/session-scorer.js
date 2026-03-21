@@ -64,17 +64,25 @@ function extractToolCalls(messages) {
 function extractToolResults(messages) {
   const results = [];
   messages.forEach((msg, msgIndex) => {
-    if (msg.role !== 'user') return;
-
-    if (Array.isArray(msg.content)) {
+    // OpenAI-style: role:'user' with content array containing type:'tool_result' blocks
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
       msg.content.forEach((block) => {
         if (block && block.type === 'tool_result') {
           const content = typeof block.content === 'string'
             ? block.content
-            : JSON.stringify(block.content || '');
+            : Array.isArray(block.content)
+              ? block.content.map((b) => (typeof b === 'string' ? b : b.text || '')).join('')
+              : JSON.stringify(block.content || '');
           results.push({ content, index: msgIndex });
         }
       });
+    }
+    // Anthropic-style: role:'tool' with string content
+    if (msg.role === 'tool') {
+      const content = typeof msg.content === 'string'
+        ? msg.content
+        : JSON.stringify(msg.content || '');
+      results.push({ content, index: msgIndex });
     }
   });
   return results;
@@ -288,6 +296,38 @@ function scoreMessages(messages) {
       score -= 0.5;
       issues.push(`SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`);
     }
+  }
+
+  // ── 10. Repeated read_file on same file (-1.0) ────────────────────────────
+  // Detect read loops: same file read 3+ times (agent ignores context).
+  const readFileCounts = new Map();
+  for (const tc of toolCalls) {
+    if (tc.name === 'read_file' && tc.input?.path) {
+      const p = tc.input.path;
+      readFileCounts.set(p, (readFileCounts.get(p) || 0) + 1);
+    }
+  }
+  let worstReadCount = 0;
+  let worstReadPath = '';
+  for (const [p, count] of readFileCounts) {
+    if (count > worstReadCount) { worstReadCount = count; worstReadPath = p; }
+  }
+  if (worstReadCount >= 3) {
+    score -= 1.0;
+    const shortPath = worstReadPath.split('/').slice(-2).join('/');
+    issues.push(`read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`);
+  }
+
+  // ── 11. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
+  // Count tool results starting with "EXIT" (non-zero bash exit codes).
+  // 10+ EXIT errors in a session indicates repeated failed commands.
+  const exitErrorCount = toolResults.filter((tr) => tr.content.startsWith('EXIT')).length;
+  if (exitErrorCount >= 10) {
+    score -= 1.0;
+    issues.push(`Bash exit-error storm: ${exitErrorCount} tool results started with EXIT (repeated failing commands)`);
+  } else if (exitErrorCount >= 5) {
+    score -= 0.5;
+    issues.push(`Repeated bash errors: ${exitErrorCount} tool results with non-zero exit code`);
   }
 
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
