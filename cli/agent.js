@@ -1305,9 +1305,12 @@ async function processInput(userInput, serverHooks = null) {
   const fileEditCounts = new Map(); // loop detection: edits per file
   const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
   const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
-  const bashCmdCounts = new Map(); // loop detection: repeated bash commands
+  const bashCmdCounts = new Map(); // loop detection: repeated bash/ssh commands
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
+  const grepPatternCounts = new Map(); // loop detection: repeated grep patterns
+  const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
+  const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -1865,8 +1868,8 @@ async function processInput(userInput, serverHooks = null) {
         }
       }
       // sed -n pattern detection — warn immediately when the model uses sed line-range scrolling
-      if (prep.fnName === 'ssh_exec' && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
-        console.log(`${C.yellow}  ⚠ sed -n detected in SSH command — injecting anti-pattern warning${C.reset}`);
+      if ((prep.fnName === 'ssh_exec' || prep.fnName === 'bash') && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
+        console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
         const sedWarning = {
           role: 'user',
           content: `[SYSTEM WARNING] You used 'sed -n' to scroll through a log file. This is explicitly forbidden — it reads huge sequential chunks and floods the context with irrelevant lines. STOP. Use targeted grep instead: grep -n "ERROR\\|FATAL\\|fail" <logfile> | tail -20. Never use sed -n 'N,Mp' again.`,
@@ -1874,8 +1877,8 @@ async function processInput(userInput, serverHooks = null) {
         conversationMessages.push(sedWarning);
         apiMessages.push(sedWarning);
       }
-      // Bash/SSH command loop detection
-      if ((prep.fnName === 'bash_exec' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
+      // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
+      if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
         const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
         const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
         bashCmdCounts.set(cmdKey, bashCount);
@@ -1895,6 +1898,39 @@ async function processInput(userInput, serverHooks = null) {
           saveNow(conversationMessages);
           return;
         }
+      }
+      // Grep pattern loop detection — repeated identical patterns waste context
+      if (isOk && prep.fnName === 'grep' && prep.args && prep.args.pattern) {
+        const patKey = `${prep.args.pattern}|${prep.args.path || ''}`;
+        const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
+        grepPatternCounts.set(patKey, grepCount);
+        if (grepCount === LOOP_WARN_GREP) {
+          console.log(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
+          const grepWarning = {
+            role: 'user',
+            content: `[SYSTEM WARNING] You have run the same grep pattern ${grepCount} times. You already have the results — searching again returns the same matches. STOP repeating this search. Either use the data you already found, try a different pattern, or declare the investigation complete.`,
+          };
+          conversationMessages.push(grepWarning);
+          apiMessages.push(grepWarning);
+        } else if (grepCount >= LOOP_ABORT_GREP) {
+          console.log(`${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        }
+      }
+      // Health-check stop signal — inject strong stop instruction when tool result
+      // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
+      if (isOk && (prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && res.includes('"valid":true')) {
+        const stopMsg = {
+          role: 'user',
+          content: '[SYSTEM STOP] Tool result contains {"valid":true}. The token/service is valid and reachable. STOP all further investigation immediately. Report to the user that the token is valid, the service is healthy, and no fix is needed. Do NOT read any more log files.',
+        };
+        conversationMessages.push(stopMsg);
+        apiMessages.push(stopMsg);
+        console.log(`${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`);
       }
       // Consecutive error detection
       if (!isOk) {
