@@ -1379,6 +1379,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
   const grepFileCounts = _sessionGrepFileCounts;  // per-file grep count (different patterns)
   const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
+  const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
@@ -1869,6 +1870,51 @@ async function processInput(userInput, serverHooks = null) {
           const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
           console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
+      }
+    }
+
+    // ─── Block re-reads after warning threshold ──────────────────────────────
+    // After a SYSTEM WARNING has been injected for a file (readCount >= LOOP_WARN_READS),
+    // hard-block any further full re-read of that file in this batch so the tool never
+    // executes and doesn't waste context tokens. The LLM receives a BLOCKED error result
+    // instead, reinforcing the injected warning without redundant file content.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'read_file') continue;
+      const path = prep.args?.path;
+      if (!path) continue;
+      const alreadyRead = fileReadCounts.get(path) || 0;
+      if (alreadyRead >= LOOP_WARN_READS) {
+        const shortPath = path.split('/').slice(-2).join('/');
+        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — warning threshold exceeded${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: read_file("${path}") was denied. You have already read this file ${alreadyRead} time${alreadyRead === 1 ? '' : 's'} — it is fully in your context. Reading it again adds nothing new and wastes tokens. Use grep with a specific pattern, or reference the line numbers you already have. Do NOT re-read this file.`,
+          tool_call_id: prep.callId,
+        };
+      }
+    }
+
+    // ─── Block grep flood after abort threshold ──────────────────────────────
+    // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
+    // further greps on that file. The file content is already in context — searching
+    // it again only wastes tokens and scores worse on the session scorer.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'grep') continue;
+      const grepPath = prep.args?.path;
+      if (!grepPath) continue;
+      const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
+      if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
+        const shortPath = grepPath.split('/').slice(-2).join('/');
+        console.log(`${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: grep("${grepPath}") was denied. You have already searched this file ${alreadyGrepped} time${alreadyGrepped === 1 ? '' : 's'} with different patterns — the file content is in your context. Stop searching and use the data you already have. Reference the line numbers from previous reads instead of issuing more grep calls.`,
+          tool_call_id: prep.callId,
+        };
       }
     }
 
