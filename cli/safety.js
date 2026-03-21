@@ -281,35 +281,49 @@ function confirm(question, opts = {}) {
 
   return new Promise((resolve) => {
     let selected = 0;
-    let drawn = false;
 
     if (_rl) _rl.pause();
 
     const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
+
+    // Compute the top row of the dialog using absolute terminal coordinates.
+    // Rendering with absolute goto() + \x1b[2K (no \n) avoids triggering terminal
+    // scroll when the cursor is on or near the last row, which previously caused
+    // the footer to shift and left "No" (or other option text) stranded on screen.
+    const _dialogStartRow = () => {
+      const rows = process.stdout.rows || 24;
+      // Reserve 2 rows for footer (rowStatus) and input (rowInput).
+      return Math.max(1, rows - options.length - 2);
+    };
+
     const render = () => {
-      if (drawn) raw(`\x1b[${options.length + 1}A`);
-      drawn = true;
-      raw(`\r\x1b[K${C.yellow}${question}${C.reset}\n`);
+      const startRow = _dialogStartRow();
+      // Build the entire dialog as a single write — no \n, pure absolute positioning.
+      let buf = `\x1b[${startRow};1H\x1b[2K${C.yellow}${question}${C.reset}`;
       for (let i = 0; i < options.length; i++) {
         const sel = i === selected;
         const cursor = sel ? `${C.yellow}❯${C.reset}` : ' ';
         const label = sel ? `${C.yellow}${options[i]}${C.reset}` : options[i];
-        raw(`\r\x1b[K  ${cursor} ${label}\n`);
+        buf += `\x1b[${startRow + 1 + i};1H\x1b[2K  ${cursor} ${label}`;
       }
+      raw(buf);
     };
 
     const cleanup = (result) => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
       process.stdin.removeListener('data', onKey);
-      // Erase menu lines via rawWrite so the footer's row tracker is not
-      // inflated by the \n characters in the erase sequence.
+      // Erase each dialog row via absolute positioning — no \n, no cursor-relative
+      // moves — so the row tracker and scroll region are completely unaffected.
       const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
-      raw(`\x1b[${options.length + 1}A`);
+      const startRow = _dialogStartRow();
+      let buf = '';
       for (let i = 0; i < options.length + 1; i++) {
-        raw(`\r\x1b[K\n`);
+        buf += `\x1b[${startRow + i};1H\x1b[2K`;
       }
-      raw(`\x1b[${options.length + 1}A`);
+      raw(buf);
+      // Redraw footer in case a previous (broken) render overlapped it.
+      if (global._nexFooter) global._nexFooter.drawFooter();
       if (_rl) _rl.resume();
       resolve(result);
     };
