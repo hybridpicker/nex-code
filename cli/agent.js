@@ -1962,6 +1962,20 @@ async function processInput(userInput, serverHooks = null) {
       // Health-check stop signal — inject strong stop instruction when tool result
       // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
       if (isOk && (prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && res.includes('"valid":true')) {
+        // Pre-compress before injecting the STOP message: if context is already at
+        // ≥60% after the tool result was appended, adding another message would push
+        // it over the limit and trigger a 400 cascade on the next LLM call.
+        {
+          const _stopCtx = getUsage(apiMessages, []);
+          if (_stopCtx.percentage >= 60) {
+            const _allTools = getAllToolDefinitions();
+            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+            if (_freed > 0) {
+              apiMessages = _compressed;
+              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+            }
+          }
+        }
         const stopMsg = {
           role: 'user',
           content: '[SYSTEM STOP] Tool result contains {"valid":true}. The token/service is valid and reachable. STOP all further investigation immediately. Report to the user that the token is valid, the service is healthy, and no fix is needed. Do NOT read any more log files.',
