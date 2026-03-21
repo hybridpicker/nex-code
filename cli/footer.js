@@ -329,7 +329,9 @@ class StickyFooter {
       // Reposition cursor to the input row so keypresses land there, but do NOT
       // call rl.prompt() — that triggers _doRefreshLine on every tool line, which
       // clears+rewrites the input row and causes visual corruption during agent runs.
-      rawWrite(self._goto(self._rowInput));
+      // Clear the input row (\x1b[2K) so residual SSH/tool output doesn't bleed
+      // into the prompt area between tool calls.
+      rawWrite(self._goto(self._rowInput) + '\x1b[2K');
       self._cursorOnInputRow = true;
     }
 
@@ -339,7 +341,7 @@ class StickyFooter {
       self._cursorOnInputRow = false;
       self._origError(...args);
       self.drawFooter();
-      rawWrite(self._goto(self._rowInput));
+      rawWrite(self._goto(self._rowInput) + '\x1b[2K');
       self._cursorOnInputRow = true;
     }
 
