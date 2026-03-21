@@ -1376,8 +1376,8 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file
-  const LOOP_ABORT_READS = 6; // abort after 6 reads of the same file
+  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -1832,24 +1832,38 @@ async function processInput(userInput, serverHooks = null) {
       const hasUnboundedRead = prepared.some(p =>
         p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
       );
-      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always
+      // Detect re-reads: any read_file call for a file that was already read at least once
+      const reReadFiles = prepared
+        .filter(p => p.canExecute && p.fnName === 'read_file' && p.args?.path && fileReadCounts.get(p.args.path) >= 1)
+        .map(p => p.args.path.split('/').slice(-2).join('/'));
+      const hasReRead = reReadFiles.length > 0;
+      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always;
+      // also warn unconditionally if re-reading a file already in context.
       const warnNow =
         (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
-        (ctxPct >= 85 && contextPressureWarnedAt < 85);
+        (ctxPct >= 85 && contextPressureWarnedAt < 85) ||
+        hasReRead;
       if (warnNow) {
         contextPressureWarnedAt = ctxPct;
-        const urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
-        const advice = hasUnboundedRead
-          ? `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`
-          : `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        let urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
+        let advice;
+        if (hasReRead) {
+          urgency = 'WARNING';
+          advice = `You are about to re-read file(s) already in your context: ${reReadFiles.join(', ')}. This adds NO new information and wastes context tokens. STOP. Use grep or targeted line ranges (line_start/line_end) to find specific sections instead of re-reading the whole file.`;
+        } else if (hasUnboundedRead) {
+          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
+        } else {
+          advice = `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+        }
         const pressureMsg = {
           role: 'user',
           content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
         };
         conversationMessages.push(pressureMsg);
         apiMessages.push(pressureMsg);
-        if (ctxPct >= 85) {
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${C.reset}`);
+        if (ctxPct >= 85 || hasReRead) {
+          const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
       }
     }
