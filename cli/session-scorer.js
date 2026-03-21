@@ -118,6 +118,34 @@ function getLastAssistantText(messages) {
 }
 
 /**
+ * Get text content from up to N last assistant messages.
+ * Returns an array of non-empty trimmed strings (newest first).
+ * @param {Array} messages
+ * @param {number} n
+ * @returns {string[]}
+ */
+function getLastNAssistantTexts(messages, n) {
+  const texts = [];
+  for (let i = messages.length - 1; i >= 0 && texts.length < n; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'assistant') continue;
+
+    let text = '';
+    if (typeof msg.content === 'string') {
+      text = msg.content.trim();
+    } else if (Array.isArray(msg.content)) {
+      text = msg.content
+        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
+        .map((b) => (typeof b === 'string' ? b : b.text || ''))
+        .join('')
+        .trim();
+    }
+    if (text) texts.push(text);
+  }
+  return texts;
+}
+
+/**
  * Count how many times each tool-call "signature" appears.
  * Signature = name + JSON-serialized input (normalised).
  * @param {Array} toolCalls
@@ -203,11 +231,20 @@ function scoreMessages(messages) {
   }
 
   // ── 4. Session ends without diagnosis (-2.0) ──────────────────────────────
+  // Check the last 3 assistant turns — if ANY of them contains a substantive
+  // diagnosis (>100 chars, not ending with a bare question), the session is
+  // considered properly concluded. This prevents false positives for valid
+  // short closings like "Done." or "Verstanden." after a full explanation.
   const lastAssistantText = getLastAssistantText(messages);
+  const lastThreeTexts = getLastNAssistantTexts(messages, 3);
+  const hasSubstantiveDiagnosis = lastThreeTexts.some(
+    (t) => t.length > 100 && !/^[^.!]{0,40}\?$/.test(t)
+  );
   const endsWithoutDiagnosis =
-    lastAssistantText.length < 50 ||
-    // Ends with a bare question (nothing substantive before the "?")
-    /^[^.!]{0,40}\?$/.test(lastAssistantText);
+    !hasSubstantiveDiagnosis && (
+      lastAssistantText.length < 50 ||
+      /^[^.!]{0,40}\?$/.test(lastAssistantText)
+    );
   if (endsWithoutDiagnosis) {
     score -= 2.0;
     const snippet = lastAssistantText.length > 0
@@ -457,5 +494,6 @@ module.exports = {
   _extractToolCalls: extractToolCalls,
   _extractToolResults: extractToolResults,
   _getLastAssistantText: getLastAssistantText,
+  _getLastNAssistantTexts: getLastNAssistantTexts,
   _countDuplicateToolCalls: countDuplicateToolCalls,
 };
