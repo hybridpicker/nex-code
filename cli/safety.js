@@ -44,6 +44,10 @@ const FORBIDDEN_PATTERNS = [
   // Data exfiltration via POST
   /curl.*-X\s*POST/,
   /curl.*--data/,
+  // sed -n line-range scrolling — floods context with irrelevant log lines.
+  // Blocks `sed -n 'N,Mp'` patterns (numeric address range).
+  // Regex filtering (`sed -n '/pattern/p'`) is NOT blocked — only line-range scrolling.
+  /\bsed\s+-n\s+['"]?\d+,\d+p/,
 ];
 
 // Forbidden patterns for ssh_exec remote commands.
