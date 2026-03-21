@@ -14,6 +14,36 @@ fi
 # Check if the merge came from devel
 MERGE_MSG=$(git log --merges -1 --format=%s 2>/dev/null || true)
 if echo "$MERGE_MSG" | grep -qi "devel"; then
+  # Safety net: verify CI passed for the devel commit that was merged.
+  # The second parent of a merge commit is the branch tip that was merged in.
+  DEVEL_SHA=$(git log --merges -1 --format="%P" 2>/dev/null | awk '{print $2}')
+  if [ -n "$DEVEL_SHA" ] && command -v gh &>/dev/null; then
+    SHORT_SHA="${DEVEL_SHA:0:8}"
+    echo "[post-merge] Verifying CI status for merged devel @ ${SHORT_SHA}..."
+    CI_JSON=$(gh run list \
+      --workflow "CI" \
+      --commit "$DEVEL_SHA" \
+      --limit 1 \
+      --json conclusion,status \
+      2>/dev/null || echo "[]")
+    CI_STATUS=$(echo "$CI_JSON" | node -e "
+const runs = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+if (!runs.length) { console.log('no_run'); process.exit(0); }
+const r = runs[0];
+if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.conclusion); }
+" 2>/dev/null || echo "unknown")
+    if [ "$CI_STATUS" != "success" ] && [ "$CI_STATUS" != "no_run" ]; then
+      echo "[post-merge] ABORT: CI status for devel @ ${SHORT_SHA} is '${CI_STATUS}'."
+      echo "[post-merge] The merge has been recorded locally but publish is blocked."
+      echo "[post-merge] Fix CI on devel, then use: npm run merge-to-main"
+      exit 1
+    elif [ "$CI_STATUS" = "no_run" ]; then
+      echo "[post-merge] WARNING: No CI run found for devel @ ${SHORT_SHA}. Proceeding anyway."
+    else
+      echo "[post-merge] CI passed for devel @ ${SHORT_SHA}."
+    fi
+  fi
+
   echo "[post-merge] devel→main merge detected — bumping patch version..."
   npm version patch --no-git-tag-version
   NEW_VERSION=$(node -p "require('./package.json').version")
