@@ -2056,10 +2056,20 @@ async function processInput(userInput, serverHooks = null) {
           fileReadCounts.set(prep.args.path, readCount);
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
           if (readCount === LOOP_WARN_READS) {
+            // Pre-compress before injecting warning — prevents the warning itself from
+            // triggering a 400-cascade when context is already near capacity.
+            {
+              const _readCtx = getUsage(apiMessages, []);
+              if (_readCtx.percentage >= 60) {
+                const _allTools = getAllToolDefinitions();
+                const { messages: _c } = forceCompress(apiMessages, _allTools);
+                apiMessages = _c;
+              }
+            }
             console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read ${readCount}× — already in context${C.reset}`);
             const readWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] You have read "${prep.args.path}" ${readCount} times. This file is already in your context — reading it again adds nothing new. STOP re-reading this file. Use the data you already have or use targeted reads (line_start/line_end) if you need a specific section.`,
+              content: `[SYSTEM WARNING] You have read "${prep.args.path}" ${readCount} times. This file is already in your context — reading it again adds nothing new. STOP re-reading this file. Use grep to find specific sections instead of re-reading the whole file. Use the data you already have or use targeted reads (line_start/line_end) if you need a specific section.`,
             };
             conversationMessages.push(readWarning);
             apiMessages.push(readWarning);
