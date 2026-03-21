@@ -2152,9 +2152,19 @@ async function _executeToolInner(name, args, options = {}) {
         return `ERROR: ${e.message}`;
       }
 
-      const cmd = args.command;
+      let cmd = args.command;
       const useSudo = Boolean(args.sudo);
       const timeoutMs = (args.timeout || 30) * 1000;
+
+      // Cap grep context flags in ssh_exec commands — mirrors the grep tool's own 20-line cap.
+      // Without this an agent can bypass the cap by using ssh_exec with grep -B100.
+      cmd = cmd.replace(/(-[BAC])\s*(\d+)/g, (_, flag, n) => {
+        const capped = Math.min(Number(n), 20);
+        return `${flag} ${capped}`;
+      });
+      cmd = cmd.replace(/(--(?:before|after|context)=)(\d+)/g, (_, flag, n) => {
+        return flag + Math.min(Number(n), 20);
+      });
 
       // Require confirmation for destructive/modifying remote commands
       const isDestructive = /\b(rm|rmdir|mv|cp|chmod|chown|dd|mkfs|systemctl\s+(start|stop|restart|reload|enable|disable)|dnf\s+(install|remove|update|upgrade)|yum\s+(install|remove)|apt(-get)?\s+(install|remove|purge)|pip\s+install|pip3\s+install|firewall-cmd\s+--permanent|semanage|setsebool|passwd|userdel|useradd|nginx\s+-s\s+(reload|stop)|service\s+\w+\s+(start|stop|restart))\b/.test(cmd);
