@@ -197,11 +197,12 @@ function scoreMessages(messages) {
       msg.role === 'user' &&
       typeof msg.content === 'string' &&
       msg.content.startsWith('[SYSTEM WARNING]') &&
-      (msg.content.includes('edited') || msg.content.includes('bash command') || msg.content.includes('grep pattern'))
+      (msg.content.includes('edited') || msg.content.includes('bash command') || msg.content.includes('grep pattern') ||
+       msg.content.includes('re-read') || msg.content.includes('already in your context'))
   );
   if (loopWarningInjected) {
     score -= 2.0;
-    issues.push('Loop-warning was fired during session (repeated file edits or bash commands)');
+    issues.push('Loop-warning was fired during session (repeated file edits, bash commands, or re-reads)');
   }
 
   // ── 2. sed -n used (-1.5) ─────────────────────────────────────────────────
