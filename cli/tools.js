@@ -1112,7 +1112,7 @@ const TOOL_DEFINITIONS = [
           action: {
             type: 'string',
             enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large', 'service', 'kill_process', 'journalctl'],
-            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
+            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt (package_action: check|list|install|remove|update|upgrade); user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
           },
           path: { type: 'string', description: 'File or directory path. For disk_usage (default /), log_tail (required), find_large (default /).' },
           lines: { type: 'number', description: 'Lines to tail for log_tail or journalctl. Default: 100.' },
@@ -2969,6 +2969,15 @@ async function _executeToolInner(name, args, options = {}) {
             case 'list':
               pkgCmd = pm === 'dnf' ? 'dnf list installed 2>/dev/null | head -60' : 'dpkg -l | head -60';
               break;
+            case 'check': {
+              // dnf check-update exits 100 (updates available), 0 (up to date), or other on error.
+              // apt-get -s upgrade exits 0 always; we parse output for "upgraded" count.
+              const checkCmd = pm === 'dnf'
+                ? 'dnf check-update 2>/dev/null; EC=$?; [ $EC -eq 100 ] && echo "EXIT_STATUS: updates_available" || ([ $EC -eq 0 ] && echo "EXIT_STATUS: up_to_date" || echo "EXIT_STATUS: error $EC")'
+                : 'apt-get -s upgrade 2>/dev/null | tail -5';
+              const { out: checkOut } = await sysRun(checkCmd, 60000);
+              return checkOut || '(no output from package check)';
+            }
             case 'install':
               if (!pkgList) return 'ERROR: packages required for install';
               pkgCmd = pm === 'dnf' ? `dnf install -y ${pkgList}` : `apt-get install -y ${pkgList}`;
@@ -3150,7 +3159,12 @@ fi
 `.trim();
           }
           const { out, exitCode } = await sysRun(sslCmd, 25000);
-          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
+          // openssl s_client pipelines often exit non-zero even when cert data was
+          // successfully extracted (e.g. the pipe to openssl x509 exits 1 because
+          // s_client wrote extra text).  If the output contains actual cert fields
+          // (notAfter= or "Days until expiry:") treat it as success regardless.
+          const hasCertData = /notAfter=|Days until expiry:/i.test(out);
+          return (exitCode !== 0 && !hasCertData) ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
         }
 
         case 'log_tail': {
@@ -3206,7 +3220,11 @@ fi
               return `ERROR: Unknown service_action: ${args.service_action}`;
           }
           const { out, exitCode } = await sysRun(svcCmd, 30000);
-          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
+          // systemctl status exits 3 for inactive/dead units and 4 for "not found" —
+          // exit 3 is still useful output (the status block), not a tool error.
+          // exit 4 means the unit genuinely doesn't exist.
+          const svcIsOk = exitCode === 0 || (args.service_action === 'status' && exitCode === 3);
+          return !svcIsOk ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
         }
 
         case 'kill_process': {
