@@ -81,6 +81,8 @@ const SLASH_COMMANDS = [
   { cmd: '/docker', desc: 'List containers across all servers' },
   { cmd: '/deploy', desc: 'List deploy configs / run named deploy' },
   { cmd: '/benchmark [--quick] [--models=a,b]', desc: 'Rank Ollama Cloud models on nex-code tool-calling tasks (--history for nightly log)' },
+  { cmd: '/bench [--dry-run] [--model=<spec>]', desc: 'Run Jarvis scenario benchmark (5 agentic tasks)' },
+  { cmd: '/trend [n]', desc: 'Show score history trend (default: last 10 sessions)' },
   { cmd: '/init', desc: 'Interactive setup wizard (.nex/)' },
   { cmd: '/setup', desc: 'Configure provider and API keys' },
   { cmd: '/undo', desc: 'Undo last file change' },
@@ -1904,6 +1906,42 @@ For each issue, include:
         const rf = path.join(os2.homedir(), '.nex-code', 'benchmark-results.json');
         try { fs.writeFileSync(rf, JSON.stringify(summary, null, 2)); } catch { /* non-fatal */ }
       }
+      return true;
+    }
+
+    case '/bench': {
+      const { runJarvisBenchmark } = require('./benchmark');
+      const dryRun = rest.includes('--dry-run');
+      const mFlag  = rest.find((r) => r.startsWith('--model='));
+      const model  = mFlag ? mFlag.replace('--model=', '').trim() : undefined;
+
+      if (!dryRun) {
+        console.log(
+          `\n${C.bold}Jarvis Benchmark${C.reset}  ` +
+          `${C.dim}5 agentic scenarios · each run as child process${C.reset}\n`
+        );
+      }
+
+      await runJarvisBenchmark({
+        dryRun,
+        model,
+        cwd: CWD,
+        onProgress: ({ id, name, done, score, grade }) => {
+          if (!done) {
+            process.stdout.write(`${C.dim}  → ${name}...${C.reset}`);
+          } else {
+            const color = score >= 8 ? C.green : score >= 6 ? C.yellow : C.red;
+            process.stdout.write(` ${color}${score}/10 (${grade})${C.reset}\n`);
+          }
+        },
+      });
+      return true;
+    }
+
+    case '/trend': {
+      const { showScoreTrend } = require('./benchmark');
+      const n = parseInt(rest[0], 10) || 10;
+      showScoreTrend(n);
       return true;
     }
 
