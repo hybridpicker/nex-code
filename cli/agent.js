@@ -11,10 +11,47 @@ const { executeTool } = require('./tools');
 const { gatherProjectContext } = require('./context');
 const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
 const { autoSave, flushAutoSave } = require('./session');
+const { scoreMessages, formatScore } = require('./session-scorer');
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
 function saveNow(messages) { autoSave(messages); flushAutoSave(); }
+
+/**
+ * Score the current session and print the result, then persist score into
+ * the autosave metadata.  Only runs when there were actual tool calls.
+ */
+function _scoreAndPrint(messages) {
+  try {
+    // Only score sessions that had meaningful agent activity
+    const hasToolCalls = messages.some((m) => {
+      if (m.role !== 'assistant') return false;
+      if (Array.isArray(m.content) && m.content.some((b) => b && b.type === 'tool_use')) return true;
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
+      return false;
+    });
+    if (!hasToolCalls) return;
+
+    const result = scoreMessages(messages);
+    if (!result) return;
+
+    console.log(formatScore(result, C));
+
+    // Write score into the autosave file metadata
+    try {
+      const { _getSessionsDir } = require('./session');
+      const fs = require('fs');
+      const p = require('path').join(_getSessionsDir(), '_autosave.json');
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        data.score = result.score;
+        data.scoreGrade = result.grade;
+        data.scoreIssues = result.issues;
+        fs.writeFileSync(p, JSON.stringify(data, null, 2));
+      }
+    } catch { /* non-critical — ignore */ }
+  } catch { /* scorer must never crash the agent */ }
+}
 const { getMemoryContext } = require('./memory');
 const { getDeploymentContextBlock } = require('./server-context');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
@@ -1736,6 +1773,7 @@ async function processInput(userInput, serverHooks = null) {
       setOnChange(null);
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
       saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
       return;
     }
 
@@ -2025,6 +2063,7 @@ async function processInput(userInput, serverHooks = null) {
     setOnChange(null);
     _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
     saveNow(conversationMessages);
+    _scoreAndPrint(conversationMessages);
 
     const { getActiveProviderName: _getProviderName } = require('./providers/registry');
     const provider = _getProviderName();
