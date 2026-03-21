@@ -61,6 +61,7 @@ jest.mock('../cli/safety', () => ({
   setAutoConfirm: jest.fn(),
   getAutoConfirm: jest.fn().mockReturnValue(false),
   setReadlineInterface: jest.fn(),
+  setAllowAlwaysHandler: jest.fn(),
 }));
 
 jest.mock('../cli/context-engine', () => ({
@@ -512,6 +513,7 @@ describe('index.js (REPL commands)', () => {
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
+        setAllowAlwaysHandler: jest.fn(),
       }));
       jest.mock('../cli/costs', () => ({
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
@@ -622,6 +624,7 @@ describe('index.js (REPL commands)', () => {
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
+        setAllowAlwaysHandler: jest.fn(),
       }));
       jest.mock('../cli/costs', () => ({
         formatCosts: jest.fn().mockReturnValue('No token usage recorded this session.'),
@@ -788,6 +791,7 @@ describe('index.js (REPL commands)', () => {
         setAutoConfirm: jest.fn(),
         getAutoConfirm: jest.fn().mockReturnValue(false),
         setReadlineInterface: jest.fn(),
+        setAllowAlwaysHandler: jest.fn(),
       }));
       jest.mock('../cli/skills', () => ({
         loadAllSkills: jest.fn().mockReturnValue([]),
@@ -2455,27 +2459,31 @@ describe('index.js (REPL commands)', () => {
     });
 
     // ─── getPrompt ────────────────────────────────────────
-    it('getPrompt shows plan mode', () => {
+    // Mode indicators moved to the sticky footer — getPrompt() is always plain.
+    it('getPrompt is plain arrow regardless of plan mode', () => {
       const planner = require('../cli/planner');
       planner.isPlanMode.mockReturnValueOnce(true);
       const prompt = getPrompt();
-      expect(prompt).toContain('plan');
+      expect(prompt).toContain('>');
+      expect(prompt).not.toContain('plan');
     });
 
-    it('getPrompt shows autonomy level', () => {
+    it('getPrompt is plain arrow regardless of autonomy level', () => {
       const planner = require('../cli/planner');
       planner.getAutonomyLevel.mockReturnValueOnce('semi-auto');
       const prompt = getPrompt();
-      expect(prompt).toContain('semi-auto');
+      expect(prompt).toContain('>');
+      expect(prompt).not.toContain('semi-auto');
     });
 
-    it('getPrompt shows both plan and autonomy', () => {
+    it('getPrompt is plain arrow even with plan + autonomy active', () => {
       const planner = require('../cli/planner');
       planner.isPlanMode.mockReturnValueOnce(true);
       planner.getAutonomyLevel.mockReturnValueOnce('autonomous');
       const prompt = getPrompt();
-      expect(prompt).toContain('plan');
-      expect(prompt).toContain('autonomous');
+      expect(prompt).toContain('>');
+      expect(prompt).not.toContain('plan');
+      expect(prompt).not.toContain('autonomous');
     });
 
     // ─── getAbortSignal ───────────────────────────────────
