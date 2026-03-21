@@ -635,6 +635,17 @@ let conversationMessages = [];
 // fitToContext() still handles what gets sent to the API — this caps the in-memory store only.
 const MAX_CONVERSATION_HISTORY = 300;
 
+// ─── Session-scoped loop detection counters ──────────────────────────────────
+// These live at module level so they persist across multi-turn REPL conversations.
+// Without this, each processInput() call resets the counters, allowing the agent
+// to run e.g. 7 sed calls per turn indefinitely across many turns.
+// Reset in clearConversation() so /clear starts fresh.
+const _sessionBashCmdCounts = new Map();
+const _sessionGrepPatternCounts = new Map();
+const _sessionFileReadCounts = new Map();
+const _sessionFileEditCounts = new Map();
+let _sessionConsecutiveSshCalls = 0;
+
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
 
@@ -1024,6 +1035,11 @@ You have access to a persistent knowledge base in .nex/brain/.
 
 function clearConversation() {
   conversationMessages = [];
+  _sessionBashCmdCounts.clear();
+  _sessionGrepPatternCounts.clear();
+  _sessionFileReadCounts.clear();
+  _sessionFileEditCounts.clear();
+  _sessionConsecutiveSshCalls = 0;
 }
 
 function trimConversationHistory() {
@@ -1347,26 +1363,28 @@ async function processInput(userInput, serverHooks = null) {
   const filesRead = new Set();
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
-  const fileEditCounts = new Map(); // loop detection: edits per file
+  // Loop detection: use session-level Maps so counters persist across REPL turns.
+  // If they were declared locally here they would reset on every processInput() call,
+  // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
+  const fileEditCounts = _sessionFileEditCounts;
   const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
   const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
-  const bashCmdCounts = new Map(); // loop detection: repeated bash/ssh commands
+  const bashCmdCounts = _sessionBashCmdCounts;
   const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
-  const grepPatternCounts = new Map(); // loop detection: repeated grep patterns
+  const grepPatternCounts = _sessionGrepPatternCounts;
   const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
-  const fileReadCounts = new Map(); // loop detection: repeated reads of same file
+  const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file
   const LOOP_ABORT_READS = 6; // abort after 6 reads of the same file
-  let consecutiveErrors = 0;  // loop detection: consecutive tool failures
+  let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
   let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  let consecutiveSshCalls = 0; // SSH storm detection: consecutive ssh_exec calls
   const SSH_STORM_WARN = 5;   // warn after 5 consecutive ssh_exec calls (matches scorer penalty threshold)
   const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
@@ -1965,25 +1983,25 @@ async function processInput(userInput, serverHooks = null) {
       // The existing bash-loop detector only fires on *similar* commands; an agent running 16
       // different grep/cat patterns via ssh_exec bypasses it while still burning context.
       if (prep.fnName === 'ssh_exec') {
-        consecutiveSshCalls++;
-        if (consecutiveSshCalls >= SSH_STORM_ABORT) {
-          console.log(`${C.red}  ✖ SSH storm abort: ${consecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
+        _sessionConsecutiveSshCalls++;
+        if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
+          console.log(`${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
           saveNow(conversationMessages);
           return;
-        } else if (consecutiveSshCalls === SSH_STORM_WARN) {
-          console.log(`${C.yellow}  ⚠ SSH storm warning: ${consecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
+        } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
+          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
           const sshStormWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] You have made ${consecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
+            content: `[SYSTEM WARNING] You have made ${_sessionConsecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
           };
           conversationMessages.push(sshStormWarning);
           apiMessages.push(sshStormWarning);
         }
       } else {
-        consecutiveSshCalls = 0;
+        _sessionConsecutiveSshCalls = 0;
       }
       // Grep pattern loop detection — repeated identical patterns waste context
       if (isOk && prep.fnName === 'grep' && prep.args && prep.args.pattern) {
