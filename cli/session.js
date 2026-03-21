@@ -83,6 +83,8 @@ function listSessions() {
         messageCount: data.messageCount || 0,
         model: data.model,
         provider: data.provider,
+        score: data.score != null ? data.score : null,
+        scoreGrade: data.scoreGrade || null,
       });
     } catch {
       // skip corrupt files

@@ -178,6 +178,7 @@ function formatToolCall(name, args) {
       primary = _shortPath(args.path);
       break;
     case 'bash':
+    case 'ssh_exec':
       primary = (args.command || '').substring(0, 80);
       break;
     case 'grep': case 'search_files':
@@ -560,12 +561,37 @@ function formatToolSummary(name, args, result, isError) {
       summary = switchMatch ? `→ ${switchMatch[1]}` : 'Done';
       break;
     }
+    case 'ssh_exec': {
+      const SSH_PREVIEW = 6;
+      const failed = r.startsWith('EXIT ') || r.startsWith('Command failed');
+      const outputLines = r.split('\n').filter(l => l.trim() && !l.startsWith('EXIT '));
+      const icon = failed ? `${T.error}✗${T.reset}` : `${T.success}✓${T.reset}`;
+      if (outputLines.length === 0) {
+        summary = icon;
+      } else {
+        const shown = failed ? outputLines.slice(-SSH_PREVIEW) : outputLines.slice(0, SSH_PREVIEW);
+        const more = outputLines.length - SSH_PREVIEW;
+        const lines = shown.map((l, i) =>
+          i === 0
+            ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
+            : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
+        );
+        if (more > 0) {
+          const ellipsis = failed
+            ? `     ${T.subtle}${more} lines above…${T.reset}`
+            : `     ${T.subtle}… +${more} lines${T.reset}`;
+          failed ? lines.unshift(ellipsis) : lines.push(ellipsis);
+        }
+        summary = lines.join('\n');
+      }
+      break;
+    }
     default: {
       // Show first meaningful output line instead of generic "Done"
       const meaningfulLines = r.split('\n').filter(l => l.trim() && !l.startsWith('EXIT ') && !l.startsWith('HINT:'));
       if (meaningfulLines.length > 0) {
         const first = meaningfulLines[0].trim().substring(0, 90);
-        const more = meaningfulLines.length > 1 ? ` ${T.subtle}+${meaningfulLines.length - 1}${T.reset}` : '';
+        const more = meaningfulLines.length > 1 ? ` ${T.subtle}… +${meaningfulLines.length - 1} lines${T.reset}` : '';
         summary = `${T.muted}${first}${T.reset}${more}`;
       } else {
         summary = 'Done';

@@ -593,6 +593,8 @@ When `.nex/servers.json` exists, the agent automatically receives OS-aware conte
 - **AlmaLinux 9**: `dnf`, `firewalld`, `systemctl`, SELinux hints
 - **macOS**: `brew`, `launchctl`, `log show` instead of `journalctl`
 
+If the project also has a `NEX.md` containing deployment indicators (`ssh`, `server`, `systemctl`, etc.), nex-code injects a **Deployment Context** block at the top of its system prompt. This tells the model that the application runs on the remote server — not locally — and steers debugging toward `ssh_exec`/`service_logs` instead of local `read_file` calls on server-side paths like `logs/`.
+
 ### Slash Commands
 
 | Command | Description |

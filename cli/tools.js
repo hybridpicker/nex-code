@@ -9,7 +9,7 @@ const exec = require('util').promisify(require('child_process').exec);
 const execFile = require('util').promisify(require('child_process').execFile);
 const { spawnSync } = require('child_process');
 const axios = require('axios');
-const { isForbidden, isDangerous, isCritical, isBashPathForbidden, confirm } = require('./safety');
+const { isForbidden, isSSHForbidden, isDangerous, isCritical, isBashPathForbidden, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
@@ -132,6 +132,9 @@ function getBlockedHint(cmd) {
   }
   if (/(?:^|[;&|]\s*)history(?:\s|$)/.test(cmd)) {
     return 'Shell history is blocked. Look at git log or project files for context instead.';
+  }
+  if (/\bsed\s+-n\s+['"]?\d+,\d+p/.test(cmd)) {
+    return 'sed -n line-range scrolling floods context with irrelevant lines. Use targeted grep instead: grep -n "ERROR\\|pattern" <logfile> | tail -20';
   }
   return '';
 }
@@ -1112,7 +1115,7 @@ const TOOL_DEFINITIONS = [
           action: {
             type: 'string',
             enum: ['audit', 'disk_usage', 'process_list', 'network_status', 'package', 'user_manage', 'firewall', 'cron', 'ssl_check', 'log_tail', 'find_large', 'service', 'kill_process', 'journalctl'],
-            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt; user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
+            description: 'Sysadmin operation. audit=full health overview; disk_usage=df+du; process_list=top procs; network_status=open ports; package=dnf/apt (package_action: check|list|install|remove|update|upgrade); user_manage=users/keys; firewall=rules; cron=crontab; ssl_check=cert expiry+days; log_tail=tail any log; find_large=big files; service=systemd unit management; kill_process=kill by PID or name; journalctl=query system journal.',
           },
           path: { type: 'string', description: 'File or directory path. For disk_usage (default /), log_tail (required), find_large (default /).' },
           lines: { type: 'number', description: 'Lines to tail for log_tail or journalctl. Default: 100.' },
@@ -1557,11 +1560,12 @@ async function _executeToolInner(name, args, options = {}) {
       if (args.include) grepArgs2.push(`--include=${args.include}`);
       // type filter maps to --include
       if (args.type) grepArgs2.push(`--include=*.${args.type}`);
-      // Context lines
-      if (args.context) grepArgs2.push(`-C`, String(args.context));
+      // Context lines — cap at 20 to prevent flooding LLM context
+      const MAX_CTX = 20;
+      if (args.context) grepArgs2.push(`-C`, String(Math.min(Number(args.context), MAX_CTX)));
       else {
-        if (args.before_context) grepArgs2.push(`-B`, String(args.before_context));
-        if (args.after_context) grepArgs2.push(`-A`, String(args.after_context));
+        if (args.before_context) grepArgs2.push(`-B`, String(Math.min(Number(args.before_context), MAX_CTX)));
+        if (args.after_context) grepArgs2.push(`-A`, String(Math.min(Number(args.after_context), MAX_CTX)));
       }
       // Output mode
       if (args.output_mode === 'files_with_matches') grepArgs2.push('-l');
@@ -2151,9 +2155,27 @@ async function _executeToolInner(name, args, options = {}) {
         return `ERROR: ${e.message}`;
       }
 
-      const cmd = args.command;
+      let cmd = args.command;
       const useSudo = Boolean(args.sudo);
       const timeoutMs = (args.timeout || 30) * 1000;
+
+      // Block secret-exposure commands on remote hosts.
+      // cat/grep of .env, credentials, private keys, etc. dump secrets directly into
+      // LLM tool-result context — equivalent to printing them in the chat.
+      const sshForbidden = isSSHForbidden(cmd);
+      if (sshForbidden) {
+        return `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+      }
+
+      // Cap grep context flags in ssh_exec commands — mirrors the grep tool's own 20-line cap.
+      // Without this an agent can bypass the cap by using ssh_exec with grep -B100.
+      cmd = cmd.replace(/(-[BAC])\s*(\d+)/g, (_, flag, n) => {
+        const capped = Math.min(Number(n), 20);
+        return `${flag} ${capped}`;
+      });
+      cmd = cmd.replace(/(--(?:before|after|context)=)(\d+)/g, (_, flag, n) => {
+        return flag + Math.min(Number(n), 20);
+      });
 
       // Require confirmation for destructive/modifying remote commands
       const isDestructive = /\b(rm|rmdir|mv|cp|chmod|chown|dd|mkfs|systemctl\s+(start|stop|restart|reload|enable|disable)|dnf\s+(install|remove|update|upgrade)|yum\s+(install|remove)|apt(-get)?\s+(install|remove|purge)|pip\s+install|pip3\s+install|firewall-cmd\s+--permanent|semanage|setsebool|passwd|userdel|useradd|nginx\s+-s\s+(reload|stop)|service\s+\w+\s+(start|stop|restart))\b/.test(cmd);
@@ -2171,7 +2193,29 @@ async function _executeToolInner(name, args, options = {}) {
       if (exitCode !== 0) {
         return `EXIT ${exitCode}\n${error || output || '(no output)'}`;
       }
-      return output || '(command completed, no output)';
+      // For grep commands with large -B or -A context: remove '--' separator lines (they
+      // waste context without adding information) and enforce a tighter line cap.
+      const isGrepCmd = /\bgrep\b/.test(cmd);
+      let processedOutput = output;
+      if (isGrepCmd) {
+        // Strip grep '--' context separator lines entirely
+        processedOutput = processedOutput
+          .split('\n')
+          .filter(line => line !== '--')
+          .join('\n');
+      }
+
+      // Cap SSH output at 200 lines — keeps last 200 (most relevant for log commands).
+      // Grep commands with -B or -A get a tighter cap (100 lines) because context blocks
+      // multiply quickly and fill the LLM context when several grep calls run in parallel.
+      const SSH_MAX_LINES = isGrepCmd ? 100 : 200;
+      const outputLines = processedOutput.split('\n');
+      if (outputLines.length > SSH_MAX_LINES) {
+        const dropped = outputLines.length - SSH_MAX_LINES;
+        return `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
+          outputLines.slice(-SSH_MAX_LINES).join('\n');
+      }
+      return processedOutput || '(command completed, no output)';
     }
 
     case 'ssh_upload': {
@@ -2946,6 +2990,15 @@ async function _executeToolInner(name, args, options = {}) {
             case 'list':
               pkgCmd = pm === 'dnf' ? 'dnf list installed 2>/dev/null | head -60' : 'dpkg -l | head -60';
               break;
+            case 'check': {
+              // dnf check-update exits 100 (updates available), 0 (up to date), or other on error.
+              // apt-get -s upgrade exits 0 always; we parse output for "upgraded" count.
+              const checkCmd = pm === 'dnf'
+                ? 'dnf check-update 2>/dev/null; EC=$?; [ $EC -eq 100 ] && echo "EXIT_STATUS: updates_available" || ([ $EC -eq 0 ] && echo "EXIT_STATUS: up_to_date" || echo "EXIT_STATUS: error $EC")'
+                : 'apt-get -s upgrade 2>/dev/null | tail -5';
+              const { out: checkOut } = await sysRun(checkCmd, 60000);
+              return checkOut || '(no output from package check)';
+            }
             case 'install':
               if (!pkgList) return 'ERROR: packages required for install';
               pkgCmd = pm === 'dnf' ? `dnf install -y ${pkgList}` : `apt-get install -y ${pkgList}`;
@@ -3127,7 +3180,12 @@ fi
 `.trim();
           }
           const { out, exitCode } = await sysRun(sslCmd, 25000);
-          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
+          // openssl s_client pipelines often exit non-zero even when cert data was
+          // successfully extracted (e.g. the pipe to openssl x509 exits 1 because
+          // s_client wrote extra text).  If the output contains actual cert fields
+          // (notAfter= or "Days until expiry:") treat it as success regardless.
+          const hasCertData = /notAfter=|Days until expiry:/i.test(out);
+          return (exitCode !== 0 && !hasCertData) ? `EXIT ${exitCode}\n${out}` : out || '(no cert info returned)';
         }
 
         case 'log_tail': {
@@ -3183,7 +3241,11 @@ fi
               return `ERROR: Unknown service_action: ${args.service_action}`;
           }
           const { out, exitCode } = await sysRun(svcCmd, 30000);
-          return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
+          // systemctl status exits 3 for inactive/dead units and 4 for "not found" —
+          // exit 3 is still useful output (the status block), not a tool error.
+          // exit 4 means the unit genuinely doesn't exist.
+          const svcIsOk = exitCode === 0 || (args.service_action === 'status' && exitCode === 3);
+          return !svcIsOk ? `EXIT ${exitCode}\n${out}` : out || `service ${args.service_action} OK`;
         }
 
         case 'kill_process': {
