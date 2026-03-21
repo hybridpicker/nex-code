@@ -9,7 +9,7 @@ const exec = require('util').promisify(require('child_process').exec);
 const execFile = require('util').promisify(require('child_process').execFile);
 const { spawnSync } = require('child_process');
 const axios = require('axios');
-const { isForbidden, isDangerous, isCritical, confirm } = require('./safety');
+const { isForbidden, isDangerous, isCritical, isBashPathForbidden, confirm } = require('./safety');
 const { showClaudeDiff, showClaudeNewFile, showEditDiff, confirmFileChange } = require('./diff');
 const { C, Spinner, getToolSpinnerText } = require('./ui');
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require('./git');
@@ -1182,11 +1182,16 @@ async function _executeToolInner(name, args, options = {}) {
         return `BLOCKED: Command matches forbidden pattern: ${forbidden}${hint ? `\nHINT: ${hint}` : ''}`;
       }
 
+      // Block destructive operations on protected paths (even in --auto mode)
+      const pathViolation = isBashPathForbidden(cmd);
+      if (pathViolation) {
+        return `BLOCKED: Destructive operation on protected path: ${pathViolation}\nHINT: Protected files (.env, credentials, venv, .ssh, etc.) cannot be deleted or moved via bash. Override with NEX_UNPROTECT=1 if intentional.`;
+      }
+
       const needsPrompt = options.autoConfirm ? isCritical(cmd) : isDangerous(cmd);
       if (needsPrompt) {
-        const label = isCritical(cmd) ? '  ⛔ Critical command' : '  ⚠ Dangerous command';
-        console.log(`\n${C.yellow}${label}: ${cmd}${C.reset}`);
-        const ok = await confirm('  Execute?');
+        const icon = isCritical(cmd) ? '⛔' : '⚠';
+        const ok = await confirm(`  ${icon} bash: \`${cmd}\``, { toolName: 'bash' });
         if (!ok) return 'CANCELLED: User declined to execute this command.';
       }
 
