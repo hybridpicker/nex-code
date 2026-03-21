@@ -671,8 +671,8 @@ function _buildLanguagePrompt() {
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
-  // Default to English. Use NEX_LANGUAGE=auto to mirror the user's language.
-  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? 'English' : uiLangRaw;
+  // Default: mirror user's language (auto). Set NEX_LANGUAGE=English (or any language) to hard-enforce.
+  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
 
   const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
 
@@ -703,15 +703,11 @@ function _buildLanguagePrompt() {
   lines.push('  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.');
   lines.push('  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting because the shell expands the glob into separate words before the loop — there is no subshell output to split. CRITICAL: NEVER suggest "ls -N" or any ls variant as a fix — ls -N outputs filenames one per line, but word splitting still occurs on each line when used in a subshell expansion. The only correct fix is the bare glob pattern.');
 
-  const effectiveCodeLang = codeLang || (uiLang ? 'English' : null);
-  if (effectiveCodeLang) {
-    lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
-  }
+  const effectiveCodeLang = codeLang || 'English';
+  lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
 
-  const effectiveCommitLang = commitLang || (uiLang ? 'English' : null);
-  if (effectiveCommitLang) {
-    lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
-  }
+  const effectiveCommitLang = commitLang || 'English';
+  lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
 
   if (uiLang) {
     lines.push(`\nThis is a hard requirement. Always respond in ${uiLang}. Do NOT switch to any other language — even if the user writes to you in German, French, or any other language, your reply MUST be in ${uiLang}.`);
@@ -1927,15 +1923,13 @@ async function processInput(userInput, serverHooks = null) {
       }
       // sed -n pattern detection — warn immediately when the model uses sed line-range scrolling
       if ((prep.fnName === 'ssh_exec' || prep.fnName === 'bash') && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
-        // Pre-compress before injecting warning — prevents the warning itself from triggering
-        // a 400-cascade when context is already near capacity.
+        // Always pre-compress before injecting warning — the warning itself can tip an
+        // already-large context over the limit, triggering a 400 cascade. The compress
+        // is a no-op when context is small, so there is no downside to always running it.
         {
-          const _sedCtx = getUsage(apiMessages, []);
-          if (_sedCtx.percentage >= 60) {
-            const _allTools = getAllToolDefinitions();
-            const { messages: _c } = forceCompress(apiMessages, _allTools);
-            apiMessages = _c;
-          }
+          const _allTools = getAllToolDefinitions();
+          const { messages: _c } = forceCompress(apiMessages, _allTools);
+          apiMessages = _c;
         }
         console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
         const sedWarning = {
