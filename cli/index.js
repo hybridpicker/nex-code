@@ -1953,7 +1953,26 @@ For each issue, include:
     default:
       // Check if it's a skill command before reporting unknown
       if (handleSkillCommand(input)) return true;
-      console.log(`${C.red}Unknown command: ${cmd}. Type /help${C.reset}`);
+      // Fuzzy-match against known commands — suggest the closest if within edit distance 2
+      {
+        const allKnown = [...SLASH_COMMANDS, ...getSkillCommands()].map(c => c.cmd.split(' ')[0]);
+        const lev = (a, b) => {
+          const m = a.length, n = b.length;
+          const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+          for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+          return dp[m][n];
+        };
+        let best = null, bestDist = 3;
+        for (const known of allKnown) {
+          const d = lev(cmd, known);
+          if (d < bestDist) { bestDist = d; best = known; }
+        }
+        if (best) {
+          console.log(`${C.red}Unknown command: ${cmd}.${C.reset} ${C.dim}Did you mean ${C.reset}${C.cyan}${best}${C.reset}${C.dim}? Type /help for all commands.${C.reset}`);
+        } else {
+          console.log(`${C.red}Unknown command: ${cmd}. Type /help${C.reset}`);
+        }
+      }
       return true;
   }
 }
