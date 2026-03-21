@@ -326,7 +326,11 @@ class StickyFooter {
       self._cursorOnInputRow = false;
       self._origLog(...args);
       self.drawFooter();
-      if (self._rl) self._rl.prompt();
+      // Reposition cursor to the input row so keypresses land there, but do NOT
+      // call rl.prompt() — that triggers _doRefreshLine on every tool line, which
+      // clears+rewrites the input row and causes visual corruption during agent runs.
+      rawWrite(self._goto(self._rowInput));
+      self._cursorOnInputRow = true;
     }
 
     function wrappedError(...args) {
@@ -335,7 +339,8 @@ class StickyFooter {
       self._cursorOnInputRow = false;
       self._origError(...args);
       self.drawFooter();
-      if (self._rl) self._rl.prompt();
+      rawWrite(self._goto(self._rowInput));
+      self._cursorOnInputRow = true;
     }
 
     console.log   = wrappedLog;
