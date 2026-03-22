@@ -2219,7 +2219,44 @@ async function processInput(userInput, serverHooks = null) {
             continue;
           }
         } else {
-          console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+          // Prose plan with no extractable numbered steps — still offer A-key approval
+          let _prosePlanApproved = false;
+          if (process.stdout.isTTY && process.stdin.isTTY) {
+            const { approvePlan, startExecution, setPlanMode } = require('./planner');
+            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready.${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `);
+            const wasRaw2 = process.stdin.isRaw;
+            const choice2 = await new Promise(resolve => {
+              try { process.stdin.setRawMode(true); } catch (_) { /* no tty */ }
+              process.stdin.resume();
+              process.stdin.once('data', (ch) => {
+                try { process.stdin.setRawMode(wasRaw2 || false); } catch (_) { /* ignore */ }
+                resolve(ch.toString().toLowerCase()[0] || '\r');
+              });
+            });
+            process.stdout.write('\n');
+            if (choice2 === 'r') {
+              console.log(`${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`);
+            } else {
+              if (approvePlan()) {
+                startExecution();
+                setPlanMode(false);
+                invalidateSystemPromptCache();
+                console.log(`${C.green}${C.bold}Approved!${C.reset} Executing...`);
+                const planText2 = getPlanContent() || result.content;
+                const execPrompt2 = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText2}`;
+                conversationMessages.push({ role: 'user', content: execPrompt2 });
+                apiMessages.push({ role: 'user', content: execPrompt2 });
+                _prosePlanApproved = true;
+              }
+            }
+          } else {
+            console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
+          }
+          if (_prosePlanApproved) {
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            i--;
+            continue;
+          }
         }
       }
       if (taskProgress) { taskProgress.stop(); taskProgress = null; }
