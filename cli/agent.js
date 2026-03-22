@@ -2123,6 +2123,20 @@ async function processInput(userInput, serverHooks = null) {
         conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
         continue; // retry — don't count as a new step
       }
+      // In plan mode: if the LLM presented a plan without reading ANY files first,
+      // reject it and force investigation. A plan based on zero tool calls is pure
+      // hallucination — the LLM invented data structures, file locations, etc.
+      if (isPlanMode() && hasText && totalSteps === 0) {
+        const investigateNudge = {
+          role: 'user',
+          content: `[SYSTEM] You wrote a plan without reading any files. This plan may be based on incorrect assumptions (wrong database type, wrong file structure, etc.).\n\nMANDATORY: Use read_file, glob, or grep to investigate the actual codebase first. Read at least the relevant module file and route file before writing the plan.`,
+        };
+        conversationMessages.push(investigateNudge);
+        apiMessages.push(investigateNudge);
+        console.log(`${C.yellow}  ⚠ Plan rejected: no files read before planning — forcing investigation${C.reset}`);
+        continue;
+      }
+
       // In plan mode: save the plan text output to disk and extract structured steps
       if (isPlanMode() && hasText) {
         const planText = (content || streamedText || '').trim();
