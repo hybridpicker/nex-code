@@ -1535,17 +1535,18 @@ async function processInput(userInput, serverHooks = null) {
     if (loopSignal?.aborted) break;
 
     // ─── Proactive auto-compress before LLM call ─────────────────────────────
-    // If context is already ≥78% before sending the next request, compress now
-    // rather than waiting for a 400 error. This prevents the nuclear-compression
-    // cascade that occurs when a bloated session is resumed.
+    // Compress proactively to avoid 400 errors. Use a lower threshold on the first
+    // call (65%) because token estimation is imprecise and models may have a lower
+    // actual context limit than configured. After the first call, use 78%.
     {
       const _allTools = getAllToolDefinitions();
       const _autoCtx = getUsage(apiMessages, _allTools);
-      if (_autoCtx.percentage >= 78) {
-        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+      const _threshold = totalSteps === 0 ? 65 : 78;
+      if (_autoCtx.percentage >= _threshold) {
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools, totalSteps === 0);
         if (_freed > 0) {
           apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`);
+          if (_freed > 50) console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`);
         }
       }
     }
@@ -1779,8 +1780,15 @@ async function processInput(userInput, serverHooks = null) {
         if (contextRetries < 3 && totalContextRetries < MAX_TOTAL_CONTEXT_RETRIES) {
           contextRetries++;
           totalContextRetries++;
-          const nuclear = contextRetries === 3 || staleCompressUsed > 0;
-          if (nuclear) {
+          // On the very first call (no tool steps yet), skip gentle compression — there are
+          // no old messages to trim. Go straight to nuclear to avoid 3 noisy failed attempts.
+          const isFirstCall = totalSteps === 0 && contextRetries === 1;
+          const nuclear = isFirstCall || contextRetries === 3 || staleCompressUsed > 0;
+          if (isFirstCall) {
+            // First-call 400: system prompt too large for model. Skip to attempt 3.
+            contextRetries = 3;
+            _logCompression('Bad request (400) — system prompt too large, compressing...', C.yellow);
+          } else if (nuclear) {
             _logCompression(`Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`, C.yellow);
           } else {
             _logCompression(`Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)`, C.yellow);
@@ -1788,8 +1796,8 @@ async function processInput(userInput, serverHooks = null) {
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
-          if (tokensRemoved > 0) {
-            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+          if (tokensRemoved > 50) {
+            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           i--;
           continue;
