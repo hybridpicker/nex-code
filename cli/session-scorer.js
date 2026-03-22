@@ -315,10 +315,12 @@ function scoreMessages(messages) {
   }
 
   // ── 9. SSH reconnect storm (-0.5) ─────────────────────────────────────────
-  // ssh_exec calls in rapid succession (5+)
+  // ssh_exec calls in rapid succession (8+) — threshold raised from 7 to 8
+  // because complex Jarvis debugging legitimately needs 5-7 SSH calls
+  // (api.log + api-error.log + grep for each error + targeted search + verify)
   const sshCalls = toolCalls.filter((tc) => tc.name === 'ssh_exec');
-  if (sshCalls.length >= 5) {
-    // Check if 5+ consecutive ssh calls exist (adjacent message indices)
+  if (sshCalls.length >= 8) {
+    // Check if 8+ consecutive ssh calls exist (adjacent message indices)
     let maxConsecutive = 0;
     let current = 1;
     for (let i = 1; i < sshCalls.length; i++) {
@@ -330,7 +332,7 @@ function scoreMessages(messages) {
       }
     }
     maxConsecutive = Math.max(maxConsecutive, current);
-    if (maxConsecutive >= 5) {
+    if (maxConsecutive >= 8) {
       score -= 0.5;
       issues.push(`SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`);
     }
@@ -437,6 +439,15 @@ function scoreMessages(messages) {
       issues.push(`llm output loop: assistant message repeated content detected (${maxWinCount}× same paragraph, ${Math.round(ratio * 100)}% repeated)`);
       break; // Only penalise once
     }
+  }
+
+  // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
+  // A BLOCKED message means the agent attempted something it shouldn't have.
+  const blockedResults = toolResults.filter((tr) => tr.content.startsWith('BLOCKED:'));
+  if (blockedResults.length > 0) {
+    const penalty = Math.min(blockedResults.length * 0.5, 1.5);
+    score -= penalty;
+    issues.push(`${blockedResults.length} tool call${blockedResults.length === 1 ? '' : 's'} blocked (agent attempted denied actions)`);
   }
 
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────

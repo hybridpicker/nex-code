@@ -67,7 +67,7 @@ function _scoreAndPrint(messages) {
 const { getMemoryContext } = require('./memory');
 const { getDeploymentContextBlock } = require('./server-context');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
-const { confirm, setAllowAlwaysHandler } = require('./safety');
+const { confirm, setAllowAlwaysHandler, getAutoConfirm } = require('./safety');
 const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
 const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
@@ -186,7 +186,7 @@ function detectAndTruncateRepetition(text) {
   if (maxCount < 3) return { text, truncated: false, repeatCount: maxCount };
 
   // Repetition detected — truncate to first 2 occurrences
-  const SYSTEM_NOTE = `\n\n[SYSTEM: Output-Wiederholung erkannt — Antwort gekürzt (${maxCount}× gleicher Paragraph)]`;
+  const SYSTEM_NOTE = `\n\n[SYSTEM: Output repetition detected — response truncated (${maxCount}× repeated paragraph)]`;
 
   let truncated;
   if (text.length > 8000) {
@@ -715,7 +715,26 @@ const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
+const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 let _sessionConsecutiveSshCalls = 0;
+let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
+let _lastCompressionMsg = '';  // deduplicate consecutive identical compression messages
+let _compressionMsgCount = 0;  // count consecutive identical compression messages
+let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
+
+// Helper: deduplicate consecutive identical compression messages for cleaner output.
+// Shows the first occurrence normally, then updates with a counter on repeats.
+function _logCompression(msg, color) {
+  if (msg === _lastCompressionMsg) {
+    _compressionMsgCount++;
+    // Overwrite the previous line with updated counter
+    process.stdout.write(`\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`);
+  } else {
+    _lastCompressionMsg = msg;
+    _compressionMsgCount = 1;
+    console.log(`${color}  ⚠ ${msg}${C.reset}`);
+  }
+}
 
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
@@ -860,7 +879,18 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Core Behavior
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ''}# Jarvis Debugging Rules
+
+- Jarvis errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
+- ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/jarvis/jarvis-agent/logs/
+- NEVER run local bash/find/sqlite3 commands when debugging Jarvis issues
+- Local jarvis-agent/ is just source code — the running system is on the server
+- CRITICAL: When the user pastes a Jarvis error message ("jarvisFehler:", "jarvisEinige Fehler", error logs), this is NEVER a "simple question" to answer from training knowledge. You MUST ssh_exec to verify if the error is still occurring BEFORE writing any explanation. Do NOT explain from memory — investigate first, always.
+- LOG FILES: Always check the CURRENT log first: /home/jarvis/jarvis-agent/logs/api-error.log (no date suffix). Log files WITH a date suffix (e.g. api-error.log-20260322) are ROTATED/OLD — errors there may already be fixed. Only look at dated logs if the current log is empty or the error is absent from the current log.
+- FIX WORKFLOW (YOLO): Once you identify a fixable bug via SSH investigation: (1) edit the file on server using ssh_exec with tee or sed -i (NOT sed -n), (2) restart the affected service with systemctl restart, (3) verify with tail logs. Do NOT produce a report — execute the fix.
+- READING REMOTE FILES: NEVER use sed -n (always blocked). To read a specific function in a remote file: ssh_exec 'grep -n "functionName" /path/file -A 50'. To read the whole file: ssh_exec 'cat /path/file'. These are the only two options.
+
+# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
@@ -1111,7 +1141,12 @@ function clearConversation() {
   _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
+  _sessionReReadBlockShown.clear();
   _sessionConsecutiveSshCalls = 0;
+  _superNuclearFires = 0;
+  _sshBlockedAfterStorm = false;
+  _lastCompressionMsg = '';
+  _compressionMsgCount = 0;
 }
 
 function trimConversationHistory() {
@@ -1415,11 +1450,24 @@ async function processInput(userInput, serverHooks = null) {
     console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
   }
   if (usage.percentage > 85) {
-    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% full — consider /clear or /save + start fresh${C.reset}`);
+    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`);
   }
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
   let apiMessages = fittedMessages;
+
+  // Pre-flight context check — compress immediately if already over threshold
+  {
+    const _preCtx = getUsage(apiMessages, getAllToolDefinitions());
+    if (_preCtx.percentage >= 65) {
+      const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, getAllToolDefinitions());
+      if (_freed > 0) {
+        apiMessages = _compressed;
+        console.log(`${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, getAllToolDefinitions()).percentage)}% used]${C.reset}`);
+      }
+    }
+  }
+
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
@@ -1427,6 +1475,16 @@ async function processInput(userInput, serverHooks = null) {
   let totalContextRetries = 0;  // lifetime cap across all auto-extend cycles
   const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
+
+  // ─── Jarvis-local guard: detect if this task is Jarvis server debugging ───
+  // If the first user message mentions Jarvis error keywords, flag so we can
+  // intercept local tool calls and redirect to ssh_exec.
+  const _firstUserText = (() => {
+    const m = conversationMessages.find(r => r.role === 'user');
+    return typeof m?.content === 'string' ? m.content : '';
+  })();
+  const _isJarvisDebugging = /jarvis|set_reminder|google.?auth|cron:|fehler|server.*error|api\.log/i.test(_firstUserText);
+  let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -1451,7 +1509,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
   const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
@@ -1460,7 +1518,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 5;   // warn after 5 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_WARN = 8;   // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
   const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
@@ -1481,13 +1539,13 @@ async function processInput(userInput, serverHooks = null) {
     // rather than waiting for a 400 error. This prevents the nuclear-compression
     // cascade that occurs when a bloated session is resumed.
     {
-      const _autoCtx = getUsage(apiMessages, []);
+      const _allTools = getAllToolDefinitions();
+      const _autoCtx = getUsage(apiMessages, _allTools);
       if (_autoCtx.percentage >= 78) {
-        const _allTools = getAllToolDefinitions();
         const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
         if (_freed > 0) {
           apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`);
         }
       }
     }
@@ -1627,11 +1685,11 @@ async function processInput(userInput, serverHooks = null) {
           // Last-resort: force-compress once, then reset for fresh attempts
           if (contextRetries < 1) {
             contextRetries++;
-            console.log(`${C.yellow}  ⚠ Stale retries exhausted — last-resort force-compress...${C.reset}`);
+            _logCompression('Stale retries exhausted — last-resort force-compress...', C.yellow);
             const allTools = getAllToolDefinitions();
             const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
             apiMessages = compressedMsgs;
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
             staleRetries = 0; // Reset so compressed context gets full retry attempts
             i--;
             continue;
@@ -1664,12 +1722,12 @@ async function processInput(userInput, serverHooks = null) {
         // so aggressively trim to 35% to give the (possibly smaller) fast model headroom.
         if (staleRetries >= 1 && staleCompressUsed < 1) {
           staleCompressUsed++;
-          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...${C.reset}`);
+          _logCompression(`Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...`, C.yellow);
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           if (STALE_AUTO_SWITCH) {
             const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
@@ -1723,20 +1781,85 @@ async function processInput(userInput, serverHooks = null) {
           totalContextRetries++;
           const nuclear = contextRetries === 3 || staleCompressUsed > 0;
           if (nuclear) {
-            console.log(`${C.yellow}  ⚠ Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...${C.reset}`);
+            _logCompression(`Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`, C.yellow);
           } else {
-            console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)${C.reset}`);
+            _logCompression(`Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)`, C.yellow);
           }
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           i--;
           continue;
         }
-        // All compress retries exhausted — give up with informative message
+        // All compress retries exhausted — last resort: keep only system + first task message.
+        // This is more aggressive than nuclear (which keeps ~35% of context) — it drops
+        // everything except the origin user message so the agent can at least continue.
+        {
+          const _sys = apiMessages.find(m => m.role === 'system');
+          const _firstTask = apiMessages.find(m => m.role === 'user' &&
+            !String(m.content).startsWith('[SYSTEM') && !String(m.content).startsWith('BLOCKED:'));
+          const _superNuclear = [_sys, _firstTask].filter(Boolean);
+          const { getUsage: _gu } = require('./context-engine');
+          const _afterTokens = require('./context-engine').estimateMessagesTokens(_superNuclear);
+          const _beforeTokens = require('./context-engine').estimateMessagesTokens(apiMessages);
+          if (_afterTokens < _beforeTokens) {
+            // Extract investigation findings before wiping history so the agent
+            // can continue implementing fixes instead of re-investigating from scratch.
+            const _findingParts = [];
+            // Last 3 assistant messages with actual text content (skip pure tool-call turns)
+            const _assistantTexts = conversationMessages
+              .filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 30)
+              .slice(-3)
+              .map(m => m.content.trim().slice(0, 120).replace(/\n+/g, ' '));
+            if (_assistantTexts.length > 0) {
+              _findingParts.push('Key findings:\n' + _assistantTexts.map(t => `- ${t}`).join('\n'));
+            }
+            // Last 2-3 tool result messages with meaningful output (skip BLOCKED: messages)
+            const _toolResults = conversationMessages
+              .filter(m => m.role === 'tool' && typeof m.content === 'string' &&
+                !m.content.startsWith('BLOCKED:') && m.content.trim().length > 10)
+              .slice(-3)
+              .map(m => m.content.trim().split('\n').slice(0, 3).join('\n').slice(0, 200));
+            if (_toolResults.length > 0) {
+              _findingParts.push('Tool results summary:\n' + _toolResults.map(t => `- ${t}`).join('\n'));
+            }
+            if (_findingParts.length > 0) {
+              const _findingsMsg = {
+                role: 'user',
+                content: `[SYSTEM: Findings from investigation before context wipe]\n${_findingParts.join('\n')}\nContinue implementing the fixes based on these findings.`,
+              };
+              _superNuclear.push(_findingsMsg);
+            }
+            apiMessages = _superNuclear;
+            _superNuclearFires++;
+            _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
+            // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
+            // If the SSH storm triggered the context overflow, we must keep SSH blocked
+            // so the agent can't immediately repeat the same storm after context wipe.
+            // SSH unblocks naturally when the agent sends a text-only response.
+            _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
+            _sessionFileReadCounts.clear();  // file content is gone after wipe — allow re-reads
+            _sessionReReadBlockShown.clear();
+            _sessionGrepFileCounts.clear();  // same for grep flood counters
+            _logCompression(`Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`, C.yellow);
+            // After 2 super-nuclear fires, inject a "last chance" warning so the agent
+            // knows it must be surgical and stop after a minimal investigation.
+            if (_superNuclearFires >= 2) {
+              const lastChanceMsg = {
+                role: 'user',
+                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. LAST CHANCE: max 3 tool calls, then synthesize and answer. No more investigation.`,
+              };
+              conversationMessages.push(lastChanceMsg);
+              apiMessages.push(lastChanceMsg);
+            }
+            contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
+            i--;
+            continue;
+          }
+        }
         userMessage = 'Context too large to compress — use /clear to start fresh';
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
@@ -1856,6 +1979,26 @@ async function processInput(userInput, serverHooks = null) {
     // No tool calls → response complete (or nudge if empty after tools)
     if (!tool_calls || tool_calls.length === 0) {
       const hasText = (content || '').trim().length > 0 || streamedText.trim().length > 0;
+      // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
+      let _justUnblockedSsh = false;
+      if (_sshBlockedAfterStorm && hasText) {
+        _sshBlockedAfterStorm = false;
+        _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
+        _justUnblockedSsh = true;
+      }
+      // If the agent just got unblocked but responded with a question instead of acting,
+      // nudge it to continue implementing the fix without asking.
+      if (_justUnblockedSsh && hasText) {
+        const synthText = (content || '').trim();
+        const endsWithQuestion = synthText.endsWith('?') ||
+          /\b(Wo |Bitte |Kannst du|Soll ich)\b/.test(synthText.slice(-200));
+        if (endsWithQuestion) {
+          const continueNudge = { role: 'user', content: '[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is at 94.130.37.43.' };
+          apiMessages.push(continueNudge);
+          conversationMessages.push(continueNudge);
+          continue; // let the loop proceed without counting as a new step
+        }
+      }
       // If we just ran tools but the LLM produced no text → nudge it to summarize
       if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
         const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
@@ -1909,7 +2052,7 @@ async function processInput(userInput, serverHooks = null) {
     // Warn the LLM before it executes tool calls that could overflow context.
     // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
     {
-      const ctxUsage = getUsage(apiMessages, []);
+      const ctxUsage = getUsage(apiMessages, getAllToolDefinitions());
       const ctxPct = ctxUsage.percentage;
       const hasUnboundedRead = prepared.some(p =>
         p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
@@ -1931,43 +2074,53 @@ async function processInput(userInput, serverHooks = null) {
         let advice;
         if (hasReRead) {
           urgency = 'WARNING';
-          advice = `You are about to re-read file(s) already in your context: ${reReadFiles.join(', ')}. This adds NO new information and wastes context tokens. STOP. Use grep or targeted line ranges (line_start/line_end) to find specific sections instead of re-reading the whole file.`;
+          advice = `Re-reading ${reReadFiles.join(', ')} — already in context. Use grep or line ranges instead.`;
         } else if (hasUnboundedRead) {
-          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
+          advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
         } else {
-          advice = `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+          advice = `Context ${Math.round(ctxPct)}% used. Avoid large reads, wrap up with what you have.`;
         }
         const pressureMsg = {
           role: 'user',
-          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
+          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% used (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
         };
         conversationMessages.push(pressureMsg);
         apiMessages.push(pressureMsg);
-        if (ctxPct >= 85 || hasReRead) {
+        if (ctxPct >= 85) {
           const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${reReadLabel}${C.reset}`);
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
+        // For re-reads at low context usage, don't show misleading "Context X% used" — the
+        // hard-block message (below) already handles display for the user.
+        // The system warning is still injected into the LLM conversation above.
       }
     }
 
     // ─── Block re-reads after warning threshold ──────────────────────────────
-    // After a SYSTEM WARNING has been injected for a file (readCount >= LOOP_WARN_READS),
-    // hard-block any further full re-read of that file in this batch so the tool never
-    // executes and doesn't waste context tokens. The LLM receives a BLOCKED error result
-    // instead, reinforcing the injected warning without redundant file content.
+    // A SYSTEM WARNING is injected (pre-batch) whenever the LLM attempts to
+    // re-read a file that already has fileReadCounts >= 1.  The warning and the
+    // hard-block are evaluated in the same batch, so the threshold must be
+    // identical: block at >= 1 to deny the very same read that triggers the
+    // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
+    // despite the warning; only the third attempt (count=2) was blocked.
     for (const prep of prepared) {
       if (!prep.canExecute) continue;
       if (prep.fnName !== 'read_file') continue;
       const path = prep.args?.path;
       if (!path) continue;
       const alreadyRead = fileReadCounts.get(path) || 0;
-      if (alreadyRead >= LOOP_WARN_READS) {
+      if (alreadyRead >= 1) {
         const shortPath = path.split('/').slice(-2).join('/');
-        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — warning threshold exceeded${C.reset}`);
+        const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
+        _sessionReReadBlockShown.set(path, blockShownCount);
+        // Only show full message on first block; suppress subsequent ones (LLM still gets BLOCKED error)
+        if (blockShownCount === 1) {
+          console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" — already in context${C.reset}`);
+        }
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: read_file("${path}") was denied. You have already read this file ${alreadyRead} time${alreadyRead === 1 ? '' : 's'} — it is fully in your context. Reading it again adds nothing new and wastes tokens. Use grep with a specific pattern, or reference the line numbers you already have. Do NOT re-read this file.`,
+          content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use grep or line ranges instead.`,
           tool_call_id: prep.callId,
         };
       }
@@ -1989,9 +2142,53 @@ async function processInput(userInput, serverHooks = null) {
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: grep("${grepPath}") was denied. You have already searched this file ${alreadyGrepped} time${alreadyGrepped === 1 ? '' : 's'} with different patterns — the file content is in your context. Stop searching and use the data you already have. Reference the line numbers from previous reads instead of issuing more grep calls.`,
+          content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results.`,
           tool_call_id: prep.callId,
         };
+      }
+    }
+
+    // ─── SSH block after storm warning ──────────────────────────────────────────
+    // After SSH storm warning fires, block all further ssh_exec calls. The agent
+    // MUST synthesize with what it already has. Unblocked when the agent produces
+    // a text-only LLM response (no tool calls) — see below in the LLM response handler.
+    if (_sshBlockedAfterStorm) {
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== 'ssh_exec') continue;
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
+          tool_call_id: prep.callId,
+        };
+      }
+    }
+
+    // ─── Jarvis-local guard (pre-execution) ─────────────────────────────────────
+    // If this is a Jarvis-debugging task (first user message contains Jarvis error
+    // keywords), block the first local bash/read_file/find_files call and set an
+    // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
+    // locally. Fires once per session. Must be pre-execution (before executeBatch)
+    // — post-execution warnings can't prevent the tool from running.
+    if (_isJarvisDebugging && _jarvisLocalWarnFired < 3) {
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (!['bash', 'read_file', 'find_files'].includes(prep.fnName)) continue;
+        _jarvisLocalWarnFired++;
+        {
+          const _allTools = getAllToolDefinitions();
+          const { messages: _c } = forceCompress(apiMessages, _allTools);
+          apiMessages = _c;
+        }
+        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
+          tool_call_id: prep.callId,
+        };
+        break; // one block per batch is enough to redirect the agent
       }
     }
 
@@ -2066,7 +2263,7 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
             const loopWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] You have edited "${prep.args.path}" ${count} times already. STOP. Do NOT edit this file again unless absolutely necessary. Read it once to verify the current state, make at most ONE more targeted change, then move on or declare the task complete. Further edits to this file will abort the session.`,
+              content: `[SYSTEM WARNING] "${prep.args.path}" edited ${count}×. One more edit max, then move on.`,
             };
             conversationMessages.push(loopWarning);
             apiMessages.push(loopWarning);
@@ -2093,7 +2290,7 @@ async function processInput(userInput, serverHooks = null) {
         console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
         const sedWarning = {
           role: 'user',
-          content: `[SYSTEM WARNING] You used 'sed -n' to scroll through a log file. This is explicitly forbidden — it reads huge sequential chunks and floods the context with irrelevant lines. STOP. Use targeted grep instead: grep -n "ERROR\\|FATAL\\|fail" <logfile> | tail -20. Never use sed -n 'N,Mp' again.`,
+          content: `[SYSTEM WARNING] sed -n forbidden — floods context. Use grep -n "pattern" <file> | tail -20 instead.`,
         };
         conversationMessages.push(sedWarning);
         apiMessages.push(sedWarning);
@@ -2107,7 +2304,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`);
           const bashWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] You have run the same or similar bash command ${bashCount} times. This looks like a debug loop. STOP repeating the same command. Try a completely different approach or declare that the current approach is not working and explain why.`,
+            content: `[SYSTEM WARNING] Same bash command ${bashCount}×. Debug loop detected — try a different approach.`,
           };
           conversationMessages.push(bashWarning);
           apiMessages.push(bashWarning);
@@ -2133,15 +2330,27 @@ async function processInput(userInput, serverHooks = null) {
           saveNow(conversationMessages);
           return;
         } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
-          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
+          // Pre-compress before injecting warning — 5 SSH results fill context fast,
+          // and adding the warning on top can tip a full context into a 400 cascade.
+          {
+            const _allTools = getAllToolDefinitions();
+            const { messages: _c } = forceCompress(apiMessages, _allTools);
+            apiMessages = _c;
+          }
+          _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
+          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`);
           const sshStormWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] You have made ${_sessionConsecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
+            content: `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Synthesize findings now — no more SSH.`,
           };
           conversationMessages.push(sshStormWarning);
           apiMessages.push(sshStormWarning);
         }
-      } else {
+      } else if (prep.canExecute) {
+        // Only reset on tools that actually executed — blocked tools (canExecute=false)
+        // don't constitute real work and shouldn't reset the consecutive SSH counter.
+        // Without this, a blocked bash/read_file lets the agent bypass the storm cap
+        // by doing nothing and then immediately issuing another 7 SSH calls.
         _sessionConsecutiveSshCalls = 0;
       }
       // Grep pattern loop detection — repeated identical patterns waste context
@@ -2153,7 +2362,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
           const grepWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] You have run the same grep pattern ${grepCount} times. You already have the results — searching again returns the same matches. STOP repeating this search. Either use the data you already found, try a different pattern, or declare the investigation complete.`,
+            content: `[SYSTEM WARNING] Same grep pattern ${grepCount}×. Results unchanged — use existing data or try different pattern.`,
           };
           conversationMessages.push(grepWarning);
           apiMessages.push(grepWarning);
@@ -2176,7 +2385,7 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
             const fileGrepWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] You have grepped "${prep.args.path}" ${fileGrepCount} times with different patterns. The file content is already in your context from the read_file call. STOP searching it again — use the data already in your context. If you need a specific line, reference the line numbers you already saw. Further greps on this file waste context tokens without adding new information.`,
+              content: `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
             };
             conversationMessages.push(fileGrepWarning);
             apiMessages.push(fileGrepWarning);
@@ -2190,13 +2399,13 @@ async function processInput(userInput, serverHooks = null) {
         // ≥60% after the tool result was appended, adding another message would push
         // it over the limit and trigger a 400 cascade on the next LLM call.
         {
-          const _stopCtx = getUsage(apiMessages, []);
+          const _allToolsStop = getAllToolDefinitions();
+          const _stopCtx = getUsage(apiMessages, _allToolsStop);
           if (_stopCtx.percentage >= 60) {
-            const _allTools = getAllToolDefinitions();
-            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsStop);
             if (_freed > 0) {
               apiMessages = _compressed;
-              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, _allToolsStop).percentage)}%]${C.reset}`);
             }
           }
         }
@@ -2215,7 +2424,7 @@ async function processInput(userInput, serverHooks = null) {
           console.log(`${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`);
           const errWarning = {
             role: 'user',
-            content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive tool calls have failed. You appear to be stuck. STOP trying variations of the same failing approach. Either try something fundamentally different, acknowledge the limitation, or declare the task complete with what you have.`,
+            content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive errors. Stuck loop — try fundamentally different approach or declare done.`,
           };
           conversationMessages.push(errWarning);
           apiMessages.push(errWarning);
@@ -2241,17 +2450,17 @@ async function processInput(userInput, serverHooks = null) {
             // Pre-compress before injecting warning — prevents the warning itself from
             // triggering a 400-cascade when context is already near capacity.
             {
-              const _readCtx = getUsage(apiMessages, []);
+              const _allToolsRead = getAllToolDefinitions();
+              const _readCtx = getUsage(apiMessages, _allToolsRead);
               if (_readCtx.percentage >= 60) {
-                const _allTools = getAllToolDefinitions();
-                const { messages: _c } = forceCompress(apiMessages, _allTools);
+                const { messages: _c } = forceCompress(apiMessages, _allToolsRead);
                 apiMessages = _c;
               }
             }
             console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read ${readCount}× — already in context${C.reset}`);
             const readWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] You have read "${prep.args.path}" ${readCount} times. This file is already in your context — reading it again adds nothing new. STOP re-reading this file. Use grep to find specific sections instead of re-reading the whole file. Use the data you already have or use targeted reads (line_start/line_end) if you need a specific section.`,
+              content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}×. File in context — use grep or line ranges instead.`,
             };
             conversationMessages.push(readWarning);
             apiMessages.push(readWarning);
@@ -2275,7 +2484,7 @@ async function processInput(userInput, serverHooks = null) {
             console.log(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
             const swarmWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] All sub-agents hit their iteration limit without completing the task for the ${truncatedSwarmCount}nd time in a row. Change strategy: do not spawn further agents for the same search — try a different approach or report what you know.`,
+              content: `[SYSTEM WARNING] Sub-agents truncated ${truncatedSwarmCount}× in a row. Stop spawning — try different approach or report findings.`,
             };
             conversationMessages.push(swarmWarning);
             apiMessages.push(swarmWarning);
@@ -2303,13 +2512,13 @@ async function processInput(userInput, serverHooks = null) {
     // limit between iterations. Compress immediately after appending so the next
     // LLM call never hits a 400 context-overflow error.
     {
-      const _postCtx = getUsage(apiMessages, []);
+      const _allToolsPost = getAllToolDefinitions();
+      const _postCtx = getUsage(apiMessages, _allToolsPost);
       if (_postCtx.percentage >= 78) {
-        const _allTools = getAllToolDefinitions();
-        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsPost);
         if (_freed > 0) {
           apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`);
         }
       }
     }

@@ -447,6 +447,7 @@ const TOOL_DEFINITIONS = [
           offset: { type: 'number', description: 'Skip first N results' },
           type: { type: 'string', description: "File type filter (e.g. 'js', 'py', 'ts') — maps to --include='*.ext'" },
           multiline: { type: 'boolean', description: 'Enable multiline matching (grep -Pz)' },
+          staged: { type: 'boolean', description: 'Search only staged content (git diff --cached). Default: false' },
         },
         required: ['pattern'],
       },
@@ -1555,6 +1556,83 @@ async function _executeToolInner(name, args, options = {}) {
 
     case 'grep': {
       const searchPath = args.path ? resolvePath(args.path) : process.cwd();
+      
+      // Handle staged content search
+      if (args.staged) {
+        const { getDiff } = require('./git');
+        const stagedDiff = await getDiff(true);
+        if (!stagedDiff.trim()) {
+          return '(no staged changes)';
+        }
+        
+        // Extract files from staged diff
+        const stagedFiles = new Set();
+        const diffLines = stagedDiff.split('\n');
+        for (const line of diffLines) {
+          if (line.startsWith('diff --git')) {
+            const match = line.match(/diff --git a\/(.+) b\/(.+)/);
+            if (match) {
+              stagedFiles.add(match[2]);
+            }
+          }
+        }
+        
+        // Search only staged files, excluding comments
+        const grepArgs2 = ['-rn', '-E', '--null', '-H', '--exclude=*.md', '--exclude=*.txt', '--exclude=*.json', '--exclude=*.yaml', '--exclude=*.yml'];
+        if (args.ignore_case) grepArgs2.push('-i');
+        if (args.include) grepArgs2.push(`--include=${args.include}`);
+        if (args.type) grepArgs2.push(`--include=*.${args.type}`);
+        if (args.context) grepArgs2.push(`-C`, String(args.context));
+        else {
+          if (args.before_context) grepArgs2.push(`-B`, String(args.before_context));
+          if (args.after_context) grepArgs2.push(`-A`, String(args.after_context));
+        }
+        if (args.output_mode === 'files_with_matches') grepArgs2.push('-l');
+        else if (args.output_mode === 'count') grepArgs2.push('-c');
+        grepArgs2.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=coverage');
+        
+        const { ToolProgress } = require('./spinner');
+        const grepProgress = new ToolProgress('grep', 'Searching staged content...');
+        grepProgress.start();
+        
+        let results = [];
+        for (const file of stagedFiles) {
+          try {
+            const filePath = path.join(process.cwd(), file);
+            if (await fileExists(filePath)) {
+              const fileGrepArgs = [...grepArgs2];
+              fileGrepArgs.push(args.pattern, filePath);
+              const { stdout } = await execFile('grep', fileGrepArgs, {
+                cwd: process.cwd(), timeout: 30000, maxBuffer: 2 * 1024 * 1024,
+              });
+              
+              if (args.output_mode === 'files_with_matches' || args.output_mode === 'count') {
+                const fileResults = stdout.trim().split('\n').filter(l => l.trim());
+                results = results.concat(fileResults);
+              } else {
+                const parts = stdout.split('\0');
+                for (let i = 0; i < parts.length; i += 2) {
+                  const content = parts[i + 1];
+                  if (content) {
+                    const lines = content.split('\n').filter(l => l.trim());
+                    for (const line of lines) {
+                      results.push(`${file}:${line}`);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore errors for individual files
+          }
+        }
+        
+        grepProgress.update({ count: results.length, detail: `in staged files` });
+        grepProgress.stop();
+        return results.join('\n').trim() || '(no matches in staged files)';
+      }
+      
+      // Original non-staged search logic
       const grepArgs2 = ['-rn', '-E', '--null', '-H'];
       if (args.ignore_case) grepArgs2.push('-i');
       if (args.include) grepArgs2.push(`--include=${args.include}`);
@@ -2164,7 +2242,12 @@ async function _executeToolInner(name, args, options = {}) {
       // LLM tool-result context — equivalent to printing them in the chat.
       const sshForbidden = isSSHForbidden(cmd);
       if (sshForbidden) {
-        return `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+        // Give a specific, actionable hint based on which pattern matched
+        const isSedN = /\bsed\s+-n\s+['"]?\d+,\d+p/.test(cmd);
+        const hint = isSedN
+          ? `BLOCKED: sed -n line-range is blocked (floods context). To read specific lines from a remote file use:\n  grep -n "pattern" /path/to/file -A 50\nor to read the whole file:\n  cat /path/to/file\nNEVER use sed -n again — it will always be blocked.`
+          : `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+        return hint;
       }
 
       // Cap grep context flags in ssh_exec commands — mirrors the grep tool's own 20-line cap.
@@ -2212,10 +2295,30 @@ async function _executeToolInner(name, args, options = {}) {
       const outputLines = processedOutput.split('\n');
       if (outputLines.length > SSH_MAX_LINES) {
         const dropped = outputLines.length - SSH_MAX_LINES;
-        return `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
+        processedOutput = `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
           outputLines.slice(-SSH_MAX_LINES).join('\n');
       }
-      return processedOutput || '(command completed, no output)';
+
+      // Deduplicate repeated lines — log files often have 100+ identical error lines
+      // (e.g., "Cannot find module" firing every minute). These flood the LLM context
+      // with zero additional information. Collapse runs of >4 identical lines.
+      const SSH_DEDUP_THRESHOLD = 4;
+      const dedupLines = processedOutput.split('\n');
+      const deduped = [];
+      let i = 0;
+      while (i < dedupLines.length) {
+        let j = i + 1;
+        while (j < dedupLines.length && dedupLines[j] === dedupLines[i]) j++;
+        const count = j - i;
+        deduped.push(dedupLines[i]);
+        if (count > SSH_DEDUP_THRESHOLD) {
+          deduped.push(`... (${count - 1} identical lines omitted)`);
+        } else {
+          for (let k = 1; k < count; k++) deduped.push(dedupLines[i]);
+        }
+        i = j;
+      }
+      return deduped.join('\n') || '(command completed, no output)';
     }
 
     case 'ssh_upload': {

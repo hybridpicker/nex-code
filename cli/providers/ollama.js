@@ -6,7 +6,7 @@
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
-const { BaseProvider } = require('./base');
+const { BaseProvider, readStreamErrorBody } = require('./base');
 
 // Persistent keep-alive agents — reuse TCP connections across all Ollama Cloud requests.
 // Eliminates 50-100ms TLS handshake overhead on every API call.
@@ -143,22 +143,30 @@ class OllamaProvider extends BaseProvider {
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
 
-    const response = await axios.post(
-      `${this.baseUrl}/api/chat`,
-      {
-        model,
-        messages: this._formatMessages(messages),
-        tools: tools && tools.length > 0 ? tools : undefined,
-        stream: false,
-        options: { temperature: options.temperature ?? this.temperature, num_predict: maxTokens },
-      },
-      {
-        timeout: options.timeout || this.timeout,
-        headers: this._getHeaders(),
-        httpAgent: _keepAliveHttp,
-        httpsAgent: _keepAliveHttps,
-      }
-    );
+    let response;
+    try {
+      response = await axios.post(
+        `${this.baseUrl}/api/chat`,
+        {
+          model,
+          messages: this._formatMessages(messages),
+          tools: tools && tools.length > 0 ? tools : undefined,
+          stream: false,
+          options: { temperature: options.temperature ?? this.temperature, num_predict: maxTokens },
+        },
+        {
+          timeout: options.timeout || this.timeout,
+          headers: this._getHeaders(),
+          httpAgent: _keepAliveHttp,
+          httpsAgent: _keepAliveHttps,
+        }
+      );
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = err.response?.data?.error || err.message;
+      throw new Error(`API Error${status}: ${msg}`);
+    }
 
     return this.normalizeResponse(response.data);
   }
@@ -194,8 +202,9 @@ class OllamaProvider extends BaseProvider {
       );
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const msg = err.response?.data?.error || err.message;
-      throw new Error(`API Error: ${msg}`);
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = await readStreamErrorBody(err, (p) => p?.error);
+      throw new Error(`API Error${status}: ${msg}`);
     }
 
     return new Promise((resolve, reject) => {

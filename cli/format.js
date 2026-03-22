@@ -314,12 +314,10 @@ function formatToolSummary(name, args, result, isError) {
       const isPartial = args.line_start || args.line_end;
       const fname = args.path ? require('path').basename(args.path) : null;
       const fileHint = fname ? ` ${T.muted}from ${fname}${T.reset}` : '';
-      const firstContent = (codeLines[0] || '').replace(/^\d+:\s*/, '').trim();
-      const contentHint = firstContent ? ` ${C.dim}— ${firstContent.substring(0, 70)}${firstContent.length > 70 ? '…' : ''}${C.reset}` : '';
       if (isPartial && lastLineNum > count) {
-        summary = `Read lines ${args.line_start || 1}–${lastLineNum}${fileHint}${contentHint}`;
+        summary = `Read lines ${args.line_start || 1}–${lastLineNum}${fileHint}`;
       } else {
-        summary = `Read ${count} line${count !== 1 ? 's' : ''}${fileHint}${contentHint}`;
+        summary = `Read ${count} line${count !== 1 ? 's' : ''}${fileHint}`;
       }
       break;
     }
@@ -347,15 +345,14 @@ function formatToolSummary(name, args, result, isError) {
       const newLines = (args.new_text || '').split('\n');
       const removed = oldLines.length;
       const added = newLines.length;
-      const PREVIEW = 3;
-      const showOld = oldLines.slice(0, PREVIEW).filter(l => l.trim());
-      const showNew = newLines.slice(0, PREVIEW).filter(l => l.trim());
+      const fname = args.path ? require('path').basename(args.path) : null;
+      const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : '';
+      const firstOld = oldLines.find(l => l.trim());
+      const firstNew = newLines.find(l => l.trim());
       const diffLines = [];
-      for (const l of showOld) diffLines.push(`${T.diff_rem}     - ${T.reset}${T.muted}${l.trimEnd().substring(0, 72)}${T.reset}`);
-      if (oldLines.length > PREVIEW) diffLines.push(`${T.muted}     … +${oldLines.length - PREVIEW}${T.reset}`);
-      for (const l of showNew) diffLines.push(`${T.diff_add}     + ${T.reset}${T.muted}${l.trimEnd().substring(0, 72)}${T.reset}`);
-      if (newLines.length > PREVIEW) diffLines.push(`${T.muted}     … +${newLines.length - PREVIEW}${T.reset}`);
-      summary = `${T.reset}${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}` +
+      if (firstOld) diffLines.push(`    ${T.diff_rem}- ${T.reset}${T.muted}${firstOld.trimEnd().substring(0, 72)}${T.reset}`);
+      if (firstNew) diffLines.push(`    ${T.diff_add}+ ${T.reset}${T.muted}${firstNew.trimEnd().substring(0, 72)}${T.reset}`);
+      summary = `${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}${fnameStr}` +
         (diffLines.length > 0 ? '\n' + diffLines.join('\n') : '');
       break;
     }
@@ -367,7 +364,7 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'bash': {
-      const BASH_PREVIEW = 6;
+      const BASH_PREVIEW = 3;
       const exitMatch = r.match(/^EXIT (\d+)/);
       const outputLines = r.split('\n').filter(l => l && !l.startsWith('EXIT ') && !l.startsWith('HINT:') && l.trim());
       const icon = exitMatch
@@ -388,12 +385,12 @@ function formatToolSummary(name, args, result, isError) {
         const lines = shown.map((l, i) =>
           i === 0
             ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
-            : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
+            : `    ${T.muted}${l.substring(0, 120)}${T.reset}`
         );
         if (more > 0) {
           const ellipsis = failed
-            ? `     ${T.subtle}${more} lines above…${T.reset}`
-            : `     ${T.subtle}… +${more} lines${T.reset}`;
+            ? `    ${T.subtle}${more} lines above…${T.reset}`
+            : `    ${T.subtle}… +${more} lines${T.reset}`;
           failed ? lines.unshift(ellipsis) : lines.push(ellipsis);
         }
         summary = lines.join('\n');
@@ -429,12 +426,12 @@ function formatToolSummary(name, args, result, isError) {
           const snippet = `${T.muted}${content.substring(0, 80)}${content.length > 80 ? '…' : ''}${T.reset}`;
           return `${label}  ${snippet}`;
         }
-        const preview = lines.slice(0, 4).map((l, i) =>
-          i === 0 ? `${header}\n     ${fmtGrepLine(l)}`
-                  : `     ${fmtGrepLine(l)}`
+        const preview = lines.slice(0, 3).map((l, i) =>
+          i === 0 ? `${header}\n    ${fmtGrepLine(l)}`
+                  : `    ${fmtGrepLine(l)}`
         );
-        const more = lines.length - 4;
-        if (more > 0) preview.push(`     ${T.subtle}… +${more} lines${T.reset}`);
+        const more = lines.length - 3;
+        if (more > 0) preview.push(`    ${T.subtle}… +${more} lines${T.reset}`);
         summary = preview.join('\n');
       }
       break;
@@ -562,24 +559,29 @@ function formatToolSummary(name, args, result, isError) {
       break;
     }
     case 'ssh_exec': {
-      const SSH_PREVIEW = 6;
+      const SSH_PREVIEW = 3;
       const failed = r.startsWith('EXIT ') || r.startsWith('Command failed');
       const outputLines = r.split('\n').filter(l => l.trim() && !l.startsWith('EXIT '));
       const icon = failed ? `${T.error}✗${T.reset}` : `${T.success}✓${T.reset}`;
       if (outputLines.length === 0) {
         summary = icon;
       } else {
+        const isLogOutput = outputLines.length > 2 && outputLines.every(l => /^\[/.test(l.trim()));
+        if (isLogOutput) {
+          summary = `${icon} ${outputLines.length} log lines`;
+          break;
+        }
         const shown = failed ? outputLines.slice(-SSH_PREVIEW) : outputLines.slice(0, SSH_PREVIEW);
         const more = outputLines.length - SSH_PREVIEW;
         const lines = shown.map((l, i) =>
           i === 0
             ? `${icon} ${T.muted}${l.substring(0, 120)}${T.reset}`
-            : `     ${T.muted}${l.substring(0, 120)}${T.reset}`
+            : `    ${T.muted}${l.substring(0, 120)}${T.reset}`
         );
         if (more > 0) {
           const ellipsis = failed
-            ? `     ${T.subtle}${more} lines above…${T.reset}`
-            : `     ${T.subtle}… +${more} lines${T.reset}`;
+            ? `    ${T.subtle}${more} lines above…${T.reset}`
+            : `    ${T.subtle}… +${more} lines${T.reset}`;
           failed ? lines.unshift(ellipsis) : lines.push(ellipsis);
         }
         summary = lines.join('\n');
@@ -609,7 +611,7 @@ function formatMilestone(phaseName, stepCount, toolCounts, elapsedMs, filesRead,
     ? `${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
     : `${elapsedSecs}s`;
 
-  let line = `${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
+  let line = `\n${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
   line += `${C.dim} · ${stepCount} step${stepCount !== 1 ? 's' : ''}`;
   line += ` · ${totalTools} tool${totalTools !== 1 ? 's' : ''}`;
   line += ` · ${timeStr}`;
