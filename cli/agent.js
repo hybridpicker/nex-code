@@ -1540,7 +1540,9 @@ async function processInput(userInput, serverHooks = null) {
     const m = conversationMessages.find(r => r.role === 'user');
     return typeof m?.content === 'string' ? m.content : '';
   })();
-  const _isJarvisDebugging = /jarvis|set_reminder|google.?auth|cron:|fehler|server.*error|api\.log/i.test(_firstUserText);
+  // Only trigger for actual server debugging, not for feature development tasks.
+  // "jarvis" alone is too broad — e.g. "add feature to jarvis" should NOT block local reads.
+  const _isJarvisDebugging = /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken).{0,30}jarvis/i.test(_firstUserText);
   let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Stats tracking for résumé ───
@@ -2211,6 +2213,36 @@ async function processInput(userInput, serverHooks = null) {
       }
     }
 
+    // ─── write_file shrink guard ─────────────────────────────────────────────
+    // If write_file would replace an existing file with content <60% of the original
+    // length, it likely lost context and is overwriting with a skeleton. Block it.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'write_file') continue;
+      const wfPath = prep.args?.path;
+      const newContent = prep.args?.content || '';
+      if (!wfPath) continue;
+      try {
+        const fs_ = require('fs');
+        const resolvedWf = require('path').resolve(process.cwd(), wfPath);
+        if (fs_.existsSync(resolvedWf)) {
+          const oldLen = fs_.statSync(resolvedWf).size;
+          const newLen = Buffer.byteLength(newContent, 'utf8');
+          const ratio = oldLen > 0 ? newLen / oldLen : 1;
+          if (ratio < 0.6 && oldLen > 200) {
+            const shortPath = wfPath.split('/').slice(-2).join('/');
+            console.log(`${C.red}  ✖ write_file shrink guard: "${shortPath}" would shrink to ${Math.round(ratio * 100)}% of original — likely context loss${C.reset}`);
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: 'tool',
+              content: `BLOCKED: write_file("${wfPath}") denied — new content is only ${Math.round(ratio * 100)}% of current file size (${oldLen} → ${newLen} bytes). This looks like a partial rewrite after context loss. Use edit_file/patch_file to add only the new code, or read the file first to see full content before replacing.`,
+              tool_call_id: prep.callId,
+            };
+          }
+        }
+      } catch (_) { /* ignore stat errors */ }
+    }
+
     // ─── Block grep flood after abort threshold ──────────────────────────────
     // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
     // further greps on that file. The file content is already in context — searching
@@ -2237,16 +2269,29 @@ async function processInput(userInput, serverHooks = null) {
     // After SSH storm warning fires, block all further ssh_exec calls. The agent
     // MUST synthesize with what it already has. Unblocked when the agent produces
     // a text-only LLM response (no tool calls) — see below in the LLM response handler.
+    //
+    // Dual-block deadlock prevention: if SSH storm AND Jarvis-local guard are BOTH
+    // active, the LLM has no information source at all and will hallucinate bad code.
+    // In that case, relax the SSH storm block and give the LLM one more SSH call.
     if (_sshBlockedAfterStorm) {
-      for (const prep of prepared) {
-        if (!prep.canExecute) continue;
-        if (prep.fnName !== 'ssh_exec') continue;
-        prep.canExecute = false;
-        prep.errorResult = {
-          role: 'tool',
-          content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
-          tool_call_id: prep.callId,
-        };
+      const _allSsh = prepared.filter(p => p.canExecute && p.fnName === 'ssh_exec');
+      const _anyNonSsh = prepared.some(p => p.canExecute && p.fnName !== 'ssh_exec');
+      const _jarvisGuardActive = _isJarvisDebugging && _jarvisLocalWarnFired < 3;
+      if (_allSsh.length > 0 && !_anyNonSsh && _jarvisGuardActive) {
+        // Only SSH calls in this batch and local guard would also block — deadlock.
+        // Relax SSH storm to allow ONE call so the agent can proceed.
+        _sshBlockedAfterStorm = false;
+        _sessionConsecutiveSshCalls = Math.max(0, SSH_STORM_WARN - 2); // partial reset
+        console.log(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing SSH call]${C.reset}`);
+      } else {
+        for (const prep of _allSsh) {
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: 'tool',
+            content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
+            tool_call_id: prep.callId,
+          };
+        }
       }
     }
 
