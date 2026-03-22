@@ -389,7 +389,6 @@ function scoreMessages(messages) {
     if (d.count < 3) continue;
 
     // All reads are targeted → check whether any read overlaps a previous one.
-    // If every read covers a genuinely new section, it's legitimate navigation.
     const allTargeted = d.ranges.length === d.count; // every read had line_start
     if (allTargeted) {
       let hasLoop = false;
@@ -401,7 +400,7 @@ function scoreMessages(messages) {
         }
         seen.push([rs, re]);
       }
-      if (!hasLoop) continue; // distinct non-overlapping sections — not a loop
+      if (!hasLoop) continue; // distinct non-overlapping sections — handled by scroll check below
     }
 
     if (d.count > worstReadCount) { worstReadCount = d.count; worstReadPath = p; }
@@ -410,6 +409,29 @@ function scoreMessages(messages) {
     score -= 1.0;
     const shortPath = worstReadPath.split('/').slice(-2).join('/');
     issues.push(`read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`);
+  }
+
+  // ── 10b. File-scroll pattern (-0.5) ──────────────────────────────────────
+  // Agent reads same file in 4+ non-overlapping sections = scrolling chunk-by-chunk.
+  // 3 sections can be legitimate (e.g. header/body/footer); 4+ is almost always a scroll.
+  let worstScrollCount = 0;
+  let worstScrollPath = '';
+  for (const [p, d] of readFileData) {
+    if (d.ranges.length < 4) continue;
+    const seen = [];
+    let hasOverlap = false;
+    for (const [rs, re] of d.ranges) {
+      if (seen.length > 0 && hasSignificantOverlap(rs, re, seen)) { hasOverlap = true; break; }
+      seen.push([rs, re]);
+    }
+    if (!hasOverlap && d.ranges.length > worstScrollCount) {
+      worstScrollCount = d.ranges.length; worstScrollPath = p;
+    }
+  }
+  if (worstScrollCount >= 4) {
+    score -= 0.5;
+    const shortPath = worstScrollPath.split('/').slice(-2).join('/');
+    issues.push(`File-scroll pattern: "${shortPath}" read in ${worstScrollCount} sequential sections — use grep instead`);
   }
 
   // ── 11. Per-file grep flood (-0.75) ───────────────────────────────────────
