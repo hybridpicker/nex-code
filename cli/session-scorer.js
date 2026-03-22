@@ -491,6 +491,38 @@ function scoreMessages(messages) {
     issues.push(`Super-nuclear context wipe fired ${superNuclearCount}× (context collapse — task too large or read loops)`);
   }
 
+  // ── 16. Bash used instead of dedicated tool (cat/ls/find) (-0.25 per type, max -0.75) ──
+  // The system prompt explicitly instructs: read_file (not bash cat/head/tail),
+  // list_directory (not bash ls), glob (not bash find).
+  // Penalise sessions where the LLM ignores this — each violation type counts once.
+  {
+    let catViaBash = false;
+    let lsViaBash  = false;
+    let findViaBash = false;
+    for (const tc of toolCalls) {
+      if (tc.name !== 'bash') continue;
+      const cmd = (tc.input?.command || tc.input?.cmd || '').trim();
+      // Skip: write redirects (cat > file, cat >> file), heredocs (<<), and remote SSH usage
+      const isWrite = /cat\s*>/.test(cmd) || /<</.test(cmd);
+      if (!isWrite && /\bcat\s+\S/.test(cmd)) catViaBash = true;
+      // ls used for directory listing (not piped into grep/wc for file-type filtering,
+      // and not part of a build/test command)
+      if (/^\s*ls(\s|$)/.test(cmd) && !/npm|yarn|pnpm|make|git\b/.test(cmd)) lsViaBash = true;
+      // find used for file discovery (not -exec or complex pipeline)
+      if (/\bfind\s+\S/.test(cmd) && !/git\b|npm\b|-exec\b/.test(cmd)) findViaBash = true;
+    }
+    const bashToolViolations = [catViaBash, lsViaBash, findViaBash].filter(Boolean).length;
+    if (bashToolViolations > 0) {
+      const penalty = Math.min(bashToolViolations * 0.25, 0.75);
+      score -= penalty;
+      const types = [];
+      if (catViaBash)  types.push('cat (use read_file)');
+      if (lsViaBash)   types.push('ls (use list_directory)');
+      if (findViaBash) types.push('find (use glob)');
+      issues.push(`bash used instead of dedicated tool: ${types.join(', ')}`);
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place

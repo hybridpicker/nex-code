@@ -254,6 +254,35 @@ describe('agent.js', () => {
       expect(toolMsg.content.length).toBeLessThan(60000);
     });
 
+    it('appends HINT when bash uses cat instead of read_file', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'cat README.md' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('file contents');
+      await processInput('show file');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).toContain('HINT');
+      expect(toolMsg.content).toContain('read_file');
+    });
+
+    it('appends HINT when bash uses ls instead of list_directory', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'ls src/' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('index.js\nutils.js');
+      await processInput('list files');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).toContain('HINT');
+      expect(toolMsg.content).toContain('list_directory');
+    });
+
+    it('does not append HINT for cat write redirects', async () => {
+      mockStream('', [{ function: { name: 'bash', arguments: { command: 'cat > file.txt << EOF\nhello\nEOF' } }, id: 'c1' }]);
+      mockStream('Done');
+      executeTool.mockResolvedValueOnce('');
+      await processInput('write file');
+      const toolMsg = getConversationMessages().find(m => m.role === 'tool');
+      expect(toolMsg.content).not.toContain('HINT: use read_file');
+    });
+
     it('multiple tool calls in one response', async () => {
       mockStream('', [
         { function: { name: 'bash', arguments: { command: 'echo 1' } }, id: 'c1' },
