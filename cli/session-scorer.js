@@ -236,12 +236,19 @@ function scoreMessages(messages) {
   // diagnosis (>100 chars, not ending with a bare question), the session is
   // considered properly concluded. This prevents false positives for valid
   // short closings like "Done." or "Verstanden." after a full explanation.
+  //
+  // Skip this check entirely when there are no assistant messages at all.
+  // A session with only a user message is an incomplete/aborted capture (the
+  // autosave was written before the first LLM response), not a bad session.
+  // Penalising it as "no diagnosis" would be a false positive.
+  const hasAnyAssistantMsg = messages.some((m) => m.role === 'assistant');
   const lastAssistantText = getLastAssistantText(messages);
   const lastThreeTexts = getLastNAssistantTexts(messages, 3);
   const hasSubstantiveDiagnosis = lastThreeTexts.some(
     (t) => t.length > 100 && !/^[^.!]{0,40}\?$/.test(t)
   );
   const endsWithoutDiagnosis =
+    hasAnyAssistantMsg &&
     !hasSubstantiveDiagnosis && (
       lastAssistantText.length < 50 ||
       /^[^.!]{0,40}\?$/.test(lastAssistantText)
