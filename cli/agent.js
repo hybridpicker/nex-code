@@ -666,7 +666,23 @@ async function executeSingleTool(prep, quiet = false) {
 
   // Compress large tool results early to save context tokens
   const compressedContent = compressToolResultIfNeeded(truncated, prep.fnName);
-  const msg = { role: 'tool', content: compressedContent, tool_call_id: prep.callId };
+
+  // ── Bash-instead-of-dedicated-tool hint ──────────────────────────────────
+  // When the model runs `cat <file>` or plain `ls`, append a one-line HINT so
+  // the LLM sees the correction in its very next context window and can course-
+  // correct for subsequent steps. We never block these — just nudge.
+  let finalContent = compressedContent;
+  if (prep.fnName === 'bash' && prep.args?.command) {
+    const cmd = prep.args.command.trim();
+    const isWrite = /cat\s*>|<</.test(cmd);
+    if (!isWrite && /\bcat\s+\S/.test(cmd)) {
+      finalContent += '\nHINT: use read_file instead of bash cat — it is faster, context-efficient, and the preferred tool for reading files.';
+    } else if (/^\s*ls(\s|$)/.test(cmd) && !/npm|yarn|pnpm|make|git\b/.test(cmd)) {
+      finalContent += '\nHINT: use list_directory instead of bash ls — it is the preferred tool for listing directory contents.';
+    }
+  }
+
+  const msg = { role: 'tool', content: finalContent, tool_call_id: prep.callId };
   return { msg, summary };
 }
 
