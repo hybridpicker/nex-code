@@ -1951,17 +1951,18 @@ async function processInput(userInput, serverHooks = null) {
     }
 
     // ─── Block re-reads after warning threshold ──────────────────────────────
-    // After a SYSTEM WARNING has been injected for a file (readCount >= LOOP_WARN_READS),
-    // hard-block any further full re-read of that file in this batch so the tool never
-    // executes and doesn't waste context tokens. The LLM receives a BLOCKED error result
-    // instead, reinforcing the injected warning without redundant file content.
+    // A SYSTEM WARNING is injected whenever the LLM tries to re-read a file it
+    // already read once (fileReadCounts >= 1, see hasReRead check above). To
+    // enforce that warning, hard-block starting at readCount >= 2: the warning
+    // fires at count 1, so blocking at 2 means the very next attempt after the
+    // warning is denied rather than silently executing twice more.
     for (const prep of prepared) {
       if (!prep.canExecute) continue;
       if (prep.fnName !== 'read_file') continue;
       const path = prep.args?.path;
       if (!path) continue;
       const alreadyRead = fileReadCounts.get(path) || 0;
-      if (alreadyRead >= LOOP_WARN_READS) {
+      if (alreadyRead >= 2) {
         const shortPath = path.split('/').slice(-2).join('/');
         console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — warning threshold exceeded${C.reset}`);
         prep.canExecute = false;

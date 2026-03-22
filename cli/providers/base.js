@@ -3,6 +3,38 @@
  * All providers extend this base class.
  */
 
+/**
+ * Read the body from an axios stream error response.
+ * When responseType: 'stream', err.response.data is a Node.js Readable stream,
+ * not a parsed object. This helper collects it and parses the JSON so callers
+ * can extract the real API error message instead of the generic axios status text.
+ *
+ * @param {Error} err - axios error with optional err.response.data (stream or object)
+ * @param {Function} extractFn - (parsed) => string — pull the message from parsed JSON
+ * @returns {Promise<string>} The extracted error message, or err.message as fallback
+ */
+async function readStreamErrorBody(err, extractFn) {
+  if (!err.response?.data) return err.message;
+  const data = err.response.data;
+  // Non-stream path: data is already a parsed object
+  if (typeof data === 'object' && data !== null && typeof data.pipe !== 'function') {
+    return extractFn(data) || err.message;
+  }
+  // Stream path: collect chunks and parse
+  try {
+    const raw = await new Promise((resolve, reject) => {
+      const chunks = [];
+      data.on('data', (c) => chunks.push(c));
+      data.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      data.on('error', reject);
+    });
+    const parsed = JSON.parse(raw);
+    return extractFn(parsed) || raw || err.message;
+  } catch {
+    return err.message;
+  }
+}
+
 class BaseProvider {
   /**
    * @param {object} config
@@ -113,4 +145,4 @@ class BaseProvider {
   }
 }
 
-module.exports = { BaseProvider };
+module.exports = { BaseProvider, readStreamErrorBody };

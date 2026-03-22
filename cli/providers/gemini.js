@@ -5,7 +5,7 @@
  */
 
 const axios = require('axios');
-const { BaseProvider } = require('./base');
+const { BaseProvider, readStreamErrorBody } = require('./base');
 const { serializeMessage } = require('../context-engine');
 
 const GEMINI_MODELS = {
@@ -160,10 +160,18 @@ class GeminiProvider extends BaseProvider {
       body.tools = tools;
     }
 
-    const response = await axios.post(`${this.baseUrl}/chat/completions`, body, {
-      timeout: options.timeout || this.timeout,
-      headers: this._getHeaders(),
-    });
+    let response;
+    try {
+      response = await axios.post(`${this.baseUrl}/chat/completions`, body, {
+        timeout: options.timeout || this.timeout,
+        headers: this._getHeaders(),
+      });
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
+      throw new Error(`API Error${status}: ${msg}`);
+    }
 
     return this.normalizeResponse(response.data);
   }
@@ -197,8 +205,9 @@ class GeminiProvider extends BaseProvider {
       });
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const msg = err.response?.data?.error?.message || err.message;
-      throw new Error(`API Error: ${msg}`);
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = await readStreamErrorBody(err, (p) => p?.error?.message || p?.error);
+      throw new Error(`API Error${status}: ${msg}`);
     }
 
     return new Promise((resolve, reject) => {

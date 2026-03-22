@@ -5,7 +5,7 @@
  */
 
 const axios = require('axios');
-const { BaseProvider } = require('./base');
+const { BaseProvider, readStreamErrorBody } = require('./base');
 
 const DEFAULT_LOCAL_URL = 'http://localhost:11434';
 
@@ -116,20 +116,28 @@ class LocalProvider extends BaseProvider {
     const model = options.model || this.defaultModel;
     if (!model) throw new Error('No local model available. Is Ollama running?');
 
-    const response = await axios.post(
-      `${this.baseUrl}/api/chat`,
-      {
-        model,
-        messages: this._formatMessages(messages),
-        tools: tools && tools.length > 0 ? tools : undefined,
-        stream: false,
-        options: {
-          temperature: options.temperature ?? this.temperature,
-          num_predict: options.maxTokens || 8192,
+    let response;
+    try {
+      response = await axios.post(
+        `${this.baseUrl}/api/chat`,
+        {
+          model,
+          messages: this._formatMessages(messages),
+          tools: tools && tools.length > 0 ? tools : undefined,
+          stream: false,
+          options: {
+            temperature: options.temperature ?? this.temperature,
+            num_predict: options.maxTokens || 8192,
+          },
         },
-      },
-      { timeout: options.timeout || this.timeout }
-    );
+        { timeout: options.timeout || this.timeout }
+      );
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = err.response?.data?.error || err.message;
+      throw new Error(`API Error${status}: ${msg}`);
+    }
 
     return this.normalizeResponse(response.data);
   }
@@ -163,8 +171,9 @@ class LocalProvider extends BaseProvider {
       );
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const msg = err.response?.data?.error || err.message;
-      throw new Error(`API Error: ${msg}`);
+      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      const msg = await readStreamErrorBody(err, (p) => p?.error);
+      throw new Error(`API Error${status}: ${msg}`);
     }
 
     return new Promise((resolve, reject) => {
