@@ -1785,7 +1785,10 @@ async function processInput(userInput, serverHooks = null) {
             apiMessages = _superNuclear;
             _superNuclearFires++;
             _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
-            _sshBlockedAfterStorm = false;   // unblock SSH so agent can re-investigate
+            // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
+            // If the SSH storm triggered the context overflow, we must keep SSH blocked
+            // so the agent can't immediately repeat the same storm after context wipe.
+            // SSH unblocks naturally when the agent sends a text-only response.
             _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
             console.log(`${C.yellow}  ⚠ Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)${C.reset}`);
             // After 2 super-nuclear fires, inject a "last chance" warning so the agent
