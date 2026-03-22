@@ -1951,20 +1951,21 @@ async function processInput(userInput, serverHooks = null) {
     }
 
     // ─── Block re-reads after warning threshold ──────────────────────────────
-    // A SYSTEM WARNING is injected whenever the LLM tries to re-read a file it
-    // already read once (fileReadCounts >= 1, see hasReRead check above). To
-    // enforce that warning, hard-block starting at readCount >= 2: the warning
-    // fires at count 1, so blocking at 2 means the very next attempt after the
-    // warning is denied rather than silently executing twice more.
+    // A SYSTEM WARNING is injected (pre-batch) whenever the LLM attempts to
+    // re-read a file that already has fileReadCounts >= 1.  The warning and the
+    // hard-block are evaluated in the same batch, so the threshold must be
+    // identical: block at >= 1 to deny the very same read that triggers the
+    // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
+    // despite the warning; only the third attempt (count=2) was blocked.
     for (const prep of prepared) {
       if (!prep.canExecute) continue;
       if (prep.fnName !== 'read_file') continue;
       const path = prep.args?.path;
       if (!path) continue;
       const alreadyRead = fileReadCounts.get(path) || 0;
-      if (alreadyRead >= 2) {
+      if (alreadyRead >= 1) {
         const shortPath = path.split('/').slice(-2).join('/');
-        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — warning threshold exceeded${C.reset}`);
+        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — file is in context, use grep or line ranges${C.reset}`);
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
