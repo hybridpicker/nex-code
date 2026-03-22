@@ -210,6 +210,63 @@ function detectAndTruncateRepetition(text) {
   return { text: truncated, truncated: true, repeatCount: maxCount };
 }
 
+/**
+ * Detect and truncate LLM output loops caused by repeated paragraphs.
+ *
+ * Strategy: split text by newlines, identify paragraphs ≥20 chars,
+ * count occurrences. If any paragraph repeats more than maxRepeats times,
+ * truncate the text after the maxRepeats-th occurrence and append a warning.
+ *
+ * This catches tight loops like a single sentence repeated 661× which may
+ * not be caught by the sentence-window approach in detectAndTruncateRepetition.
+ *
+ * @param {string} text — raw LLM response content
+ * @param {number} maxRepeats — max allowed repetitions before truncating (default 5)
+ * @returns {{ text: string, truncated: boolean, repeatCount: number }}
+ */
+function detectAndTruncateLoop(text, maxRepeats = 5) {
+  if (!text || text.length < 40) return { text, truncated: false, repeatCount: 0 };
+
+  // Split by newlines and collect non-trivial paragraphs (≥20 chars)
+  const lines = text.split('\n');
+  const paragraphCounts = new Map();
+  for (const line of lines) {
+    const p = line.trim();
+    if (p.length >= 20) {
+      paragraphCounts.set(p, (paragraphCounts.get(p) || 0) + 1);
+    }
+  }
+
+  // Find the most-repeated paragraph
+  let maxCount = 0;
+  let worstParagraph = '';
+  for (const [para, count] of paragraphCounts) {
+    if (count > maxCount) { maxCount = count; worstParagraph = para; }
+  }
+
+  if (maxCount <= maxRepeats) return { text, truncated: false, repeatCount: maxCount };
+
+  // Truncate after the maxRepeats-th occurrence of the repeated paragraph
+  const WARNING = `\n\n⚠ [Response truncated: repeated paragraph detected (${maxCount}×)]`;
+
+  let occurrences = 0;
+  let cutPos = -1;
+  let searchFrom = 0;
+  while (occurrences < maxRepeats) {
+    const pos = text.indexOf(worstParagraph, searchFrom);
+    if (pos === -1) break;
+    occurrences++;
+    cutPos = pos + worstParagraph.length;
+    searchFrom = pos + 1;
+  }
+
+  const truncatedText = cutPos > 0
+    ? text.slice(0, cutPos) + WARNING
+    : text.slice(0, 2000) + WARNING;
+
+  return { text: truncatedText, truncated: true, repeatCount: maxCount };
+}
+
 // ─── Lazy Tool Loading ───────────────────────────────────────
 // Cache tool definitions to avoid loading on every call
 let cachedToolDefinitions = null;
@@ -1970,10 +2027,17 @@ async function processInput(userInput, serverHooks = null) {
     const { content: rawContent, tool_calls } = result;
 
     // ── Repetition guard: truncate looping LLM output before storing ──────
-    const repCheck = detectAndTruncateRepetition(rawContent || '');
-    const content = repCheck.truncated ? repCheck.text : rawContent;
+    // First apply paragraph-level loop detection (catches tight single-line loops)
+    const loopCheck = detectAndTruncateLoop(rawContent || '');
+    const afterLoopCheck = loopCheck.truncated ? loopCheck.text : rawContent;
+    if (loopCheck.truncated) {
+      console.log(`${C.yellow}  ⚠ LLM output loop detected (${loopCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
+    }
+    // Then apply sentence-window repetition detection (catches multi-sentence loops)
+    const repCheck = detectAndTruncateRepetition(afterLoopCheck || '');
+    const content = repCheck.truncated ? repCheck.text : afterLoopCheck;
     if (repCheck.truncated) {
-      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
+      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated window) — response truncated${C.reset}`);
     }
 
     // Build assistant message for history
@@ -2600,6 +2664,8 @@ module.exports = {
   getProjectContextHash,
   // Export for testing
   buildUserContent,
+  // Export loop detection for testing and external use
+  detectAndTruncateLoop,
   // Mid-run input injection
   injectMidRunNote,
 };
