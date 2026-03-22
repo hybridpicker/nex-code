@@ -787,6 +787,7 @@ const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
+const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
 const _sessionLastEditFailed = new Map(); // path → true when last edit_file on that file failed with "old_text not found"
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
@@ -1219,6 +1220,7 @@ function clearConversation() {
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
+  _sessionFileReadRanges.clear();
   _sessionFileEditCounts.clear();
   _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
@@ -2391,6 +2393,31 @@ async function processInput(userInput, serverHooks = null) {
           const shortPath = path.split('/').slice(-2).join('/');
           console.log(`${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`);
           _sessionLastEditFailed.delete(path);
+        } else {
+          // Check if this targeted re-read overlaps significantly with a range already read.
+          // >70% overlap means the model is re-reading content it already has in context.
+          const newStart = prep.args.line_start || 1;
+          const newEnd   = prep.args.line_end   || newStart + 350;
+          const prevRanges = _sessionFileReadRanges.get(path) || [];
+          for (const [ps, pe] of prevRanges) {
+            const overlapStart = Math.max(newStart, ps);
+            const overlapEnd   = Math.min(newEnd, pe);
+            if (overlapEnd > overlapStart) {
+              const overlapLen = overlapEnd - overlapStart;
+              const newLen     = newEnd - newStart || 1;
+              if (overlapLen / newLen >= 0.7) {
+                const shortPath = path.split('/').slice(-2).join('/');
+                console.log(`${C.yellow}  ⚠ Targeted re-read overlap: "${shortPath}" lines ${newStart}-${newEnd} overlaps lines ${ps}-${pe} already in context${C.reset}`);
+                const overlapWarning = {
+                  role: 'user',
+                  content: `[SYSTEM WARNING] read_file("${path}", lines ${newStart}-${newEnd}) overlaps lines ${ps}-${pe} you already read. This content is already in your context — do not re-read the same range. Use grep to find specific content instead.`,
+                };
+                conversationMessages.push(overlapWarning);
+                apiMessages.push(overlapWarning);
+                break;
+              }
+            }
+          }
         }
         // else: normal targeted section read of a large file — let through silently
       } else if (alreadyRead >= 1) {
@@ -2603,6 +2630,23 @@ async function processInput(userInput, serverHooks = null) {
           _sessionLastEditFailed.set(prep.args.path, true);
         }
       }
+      if (isOk && prep.fnName === 'write_file' && prep.args?.path) {
+        // Warn when a temp/test/demo file is created outside the tests/ directory.
+        // These files are typically written, run once, then deleted — wasting tool calls
+        // and leaving orphans if the session is interrupted.
+        const wfBase = prep.args.path.split('/').pop();
+        const wfInTestsDir = prep.args.path.includes('/tests/') || prep.args.path.includes('\\tests\\');
+        const isTempPattern = /^(test_|demo_|temp_|tmp_|scratch_)/.test(wfBase);
+        if (isTempPattern && !wfInTestsDir) {
+          console.log(`${C.yellow}  ⚠ Temp file: "${wfBase}" — delete with bash rm when done to keep the workspace clean${C.reset}`);
+          const tempHint = {
+            role: 'user',
+            content: `[HINT] "${prep.args.path}" looks like a temporary test/demo file. Delete it with bash("rm ${prep.args.path}") as soon as you're done — orphaned temp files count against session quality.`,
+          };
+          conversationMessages.push(tempHint);
+          apiMessages.push(tempHint);
+        }
+      }
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
           _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
@@ -2794,6 +2838,13 @@ async function processInput(userInput, serverHooks = null) {
           filesRead.add(prep.args.path);
           const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
           fileReadCounts.set(prep.args.path, readCount);
+          // Record targeted read range so overlap detection can warn on duplicates
+          if (prep.args.line_start != null) {
+            const rs = prep.args.line_start || 1;
+            const re = prep.args.line_end   || rs + 350;
+            if (!_sessionFileReadRanges.has(prep.args.path)) _sessionFileReadRanges.set(prep.args.path, []);
+            _sessionFileReadRanges.get(prep.args.path).push([rs, re]);
+          }
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
           // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
           // are legitimate when navigating a large file beyond the 350-line cap.
