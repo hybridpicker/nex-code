@@ -2225,7 +2225,11 @@ async function processInput(userInput, serverHooks = null) {
           conversationMessages.push(sshStormWarning);
           apiMessages.push(sshStormWarning);
         }
-      } else {
+      } else if (prep.canExecute) {
+        // Only reset on tools that actually executed — blocked tools (canExecute=false)
+        // don't constitute real work and shouldn't reset the consecutive SSH counter.
+        // Without this, a blocked bash/read_file lets the agent bypass the storm cap
+        // by doing nothing and then immediately issuing another 7 SSH calls.
         _sessionConsecutiveSshCalls = 0;
       }
       // Grep pattern loop detection — repeated identical patterns waste context
