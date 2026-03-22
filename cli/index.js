@@ -2522,10 +2522,12 @@ async function startREPL() {
           const trimmed = msgs.length > MAX_RESTORE ? msgs.slice(-MAX_RESTORE) : msgs;
           setConversationMessages(trimmed);
 
-          // Option 1: auto-compress if restored session already fills >50% context
+          // Option 1: auto-compress if restored session already fills >30% context.
+          // Threshold lowered from 50% → 30%: SSH-heavy sessions can hit 50%+ before
+          // the first new LLM call, causing an immediate 400 on session resume.
           const { getUsage, forceCompress } = require('./context-engine');
           const usage = getUsage(trimmed, []);
-          if (usage.percentage >= 50) {
+          if (usage.percentage >= 30) {
             const { messages: compressed } = forceCompress(trimmed, []);
             setConversationMessages(compressed);
           }
