@@ -461,7 +461,7 @@ function scoreMessages(messages) {
     });
     const hasPlanText = messages.some(m =>
       m.role === 'assistant' && typeof m.content === 'string' &&
-      (m.content.includes('## Steps') || m.content.includes('#### ') || m.content.includes('/plan approve'))
+      (m.content.includes('## Steps') || m.content.includes('/plan approve'))
     );
     if (hasPlanText && !hasReadCalls) {
       score -= 2.0;

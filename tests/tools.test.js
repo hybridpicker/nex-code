@@ -2479,8 +2479,9 @@ describe('tools.js', () => {
     it('cancels pending ask_user', async () => {
       setAskUserHandler((question, options) => {
         return new Promise((resolve) => {
-          // never resolves naturally
-          setTimeout(() => resolve('late'), 60000);
+          // never resolves naturally — unref so Jest can exit after cancel
+          const t = setTimeout(() => resolve('late'), 60000);
+          if (t && t.unref) t.unref();
         });
       });
 
