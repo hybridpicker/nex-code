@@ -293,3 +293,73 @@ messages, and a deadlock where files couldn't be re-read after context wipe.
 **Impact:** ~3000-4000 fewer tokens wasted per problematic session.
 Session output is significantly cleaner — no more message spam on re-reads
 or compression cascades.
+
+### 2026-03-22 — v0.3.73–0.3.75: Read-Loop Fixes, File-Scroll Detection & Auto-Daemon
+
+**Context:** Session analysis (Jarvis device-status debug, 7/10) revealed two
+remaining loop patterns not caught by existing detection, plus the manual
+improvement loop workflow was replaced with a fully automated daemon.
+
+#### `e234556` — Targeted re-read overlap: warn → hard block
+
+Session showed `modules/query-processor.js` read at line 420 three times in a
+row (turns 56, 60, 84). The overlap check was warn-only — LLM ignored it.
+Changed to hard BLOCKED (matching the unbounded re-read behavior).
+
+#### `93ee645` — Temp-file pattern prevention
+
+Sessions repeatedly created `test_*.js` / `demo_*.js` scripts, ran them, then
+deleted them. Added proactive system prompt rule forbidding this pattern.
+Scorer rule 16: penalize write-then-delete temp files (-0.25 each, max -0.5).
+
+#### `7b4462e` — File-scroll detection (new pattern)
+
+**Root cause:** Agent read `modules/system-prompt.js` in 4 sequential windows
+(lines 1-150, 150-250, 250-350, 350-420). Each adjacent window shares only a
+boundary point (0% actual overlap) — the 70%-overlap block never fired.
+The agent effectively read the entire file in chunks without any friction.
+
+**Fix in `agent.js`:**
+- After allowing a targeted read (no overlap), count total unique sections
+  read for this file in the current session
+- Warn at 3rd section: inject `[SYSTEM WARNING]` nudging toward `grep_search`
+- Hard-block at 4th section: `BLOCKED — file-scroll pattern`
+
+**Fix in `session-scorer.js` (rule 10b):**
+- After the overlap-loop check, second pass detects 4+ non-overlapping sections
+- Penalty: -0.5 per file with scroll pattern
+- Retroactive score for that session: 6.5/10 (was 7/10 before this rule)
+
+#### `85a26ef` + `f3f0de1` — Auto-improvement daemon
+
+Replaced the manual `/loop 20m` cron with a persistent file-watcher daemon
+(`scripts/improve-daemon.js`) that triggers automatically when nex-code
+sessions complete.
+
+**Flow:**
+```
+nex-code session ends → _autosave.json changes
+→ 90s debounce (waits for session to fully settle)
+→ Score session via session-scorer.js
+→ Run one improvement pass: claude --print --dangerously-skip-permissions
+→ Commit fixes to devel → CI → npm publish (auto via post-merge hook)
+```
+
+**Stop conditions (automatic):**
+- Score plateau: same score 2× in a row → stop
+- Max passes: 8 passes reached → stop
+- Excellent score: ≥ 9.5/10 → stop
+
+**Notification:** Matrix message via Jarvis (`/matrix/notify`) when loop ends,
+showing final score and "run `/nex-improve stop` to merge".
+
+**LaunchAgent:** `com.nex-code.improve-daemon` starts daemon at login.
+Server address via `JARVIS_SSH_HOST` env var (not hardcoded).
+
+**State file:** `~/Coding/jarvis-agent/.nex/loop-state.json`
+```json
+{ "pass": 3, "scores": [7.0, 7.5, 7.5], "lastHash": "...", "startedAt": "..." }
+```
+
+**Impact:** Zero manual steps for improvement cycles. Lukas uses nex-code
+normally; fixes commit automatically; Matrix notification signals when done.
