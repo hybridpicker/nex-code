@@ -1766,7 +1766,25 @@ async function processInput(userInput, serverHooks = null) {
           i--;
           continue;
         }
-        // All compress retries exhausted — give up with informative message
+        // All compress retries exhausted — last resort: keep only system + first task message.
+        // This is more aggressive than nuclear (which keeps ~35% of context) — it drops
+        // everything except the origin user message so the agent can at least continue.
+        {
+          const _sys = apiMessages.find(m => m.role === 'system');
+          const _firstTask = apiMessages.find(m => m.role === 'user' &&
+            !String(m.content).startsWith('[SYSTEM') && !String(m.content).startsWith('BLOCKED:'));
+          const _superNuclear = [_sys, _firstTask].filter(Boolean);
+          const { getUsage: _gu } = require('./context-engine');
+          const _afterTokens = require('./context-engine').estimateMessagesTokens(_superNuclear);
+          const _beforeTokens = require('./context-engine').estimateMessagesTokens(apiMessages);
+          if (_afterTokens < _beforeTokens) {
+            apiMessages = _superNuclear;
+            console.log(`${C.yellow}  ⚠ Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)${C.reset}`);
+            contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
+            i--;
+            continue;
+          }
+        }
         userMessage = 'Context too large to compress — use /clear to start fresh';
       } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
         userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
@@ -2027,6 +2045,33 @@ async function processInput(userInput, serverHooks = null) {
       }
     }
 
+    // ─── Jarvis-local guard (pre-execution) ─────────────────────────────────────
+    // If this is a Jarvis-debugging task (first user message contains Jarvis error
+    // keywords), block the first local bash/read_file/find_files call and set an
+    // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
+    // locally. Fires once per session. Must be pre-execution (before executeBatch)
+    // — post-execution warnings can't prevent the tool from running.
+    if (_isJarvisDebugging && !_jarvisLocalWarnFired) {
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (!['bash', 'read_file', 'find_files'].includes(prep.fnName)) continue;
+        _jarvisLocalWarnFired = true;
+        {
+          const _allTools = getAllToolDefinitions();
+          const { messages: _c } = forceCompress(apiMessages, _allTools);
+          apiMessages = _c;
+        }
+        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`);
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: ${prep.fnName} was denied. You are debugging a Jarvis SERVER error — Jarvis runs on the DEPLOYED server at 94.130.37.43, not locally. The local jarvis-agent/ directory is just source code. STOP running local tools. Use ssh_exec instead:\n- ssh_exec: tail -50 /home/jarvis/jarvis-agent/logs/api.log\n- ssh_exec: grep -r "pattern" /home/jarvis/jarvis-agent/\nAll Jarvis investigation MUST go through ssh_exec on 94.130.37.43.`,
+          tool_call_id: prep.callId,
+        };
+        break; // one block per batch is enough to redirect the agent
+      }
+    }
+
     // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
     const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
     // ask_user renders its own UI — skip the normal section header for it
@@ -2130,25 +2175,6 @@ async function processInput(userInput, serverHooks = null) {
         conversationMessages.push(sedWarning);
         apiMessages.push(sedWarning);
       }
-      // Jarvis-local guard — if this is a Jarvis debugging task, block local bash/read_file
-      // and redirect to ssh_exec. Fires once per session, on the first local tool call.
-      if (_isJarvisDebugging && !_jarvisLocalWarnFired && (prep.fnName === 'bash' || prep.fnName === 'read_file' || prep.fnName === 'find_files')) {
-        _jarvisLocalWarnFired = true;
-        {
-          const _allTools = getAllToolDefinitions();
-          const { messages: _c } = forceCompress(apiMessages, _allTools);
-          apiMessages = _c;
-        }
-        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local tool call — redirecting to ssh_exec${C.reset}`);
-        const jarvisWarning = {
-          role: 'user',
-          content: `[SYSTEM WARNING] You are debugging a Jarvis server error but you just tried to run a LOCAL tool (${prep.fnName}). Jarvis runs on the DEPLOYED SERVER at 94.130.37.43 — the local jarvis-agent/ directory is just source code. STOP. Do NOT read local files to debug server errors. Instead use ssh_exec:\n- Check server logs: ssh_exec → tail -50 /home/jarvis/jarvis-agent/logs/api.log\n- Read server files: ssh_exec → cat /home/jarvis/jarvis-agent/<path>\n- Check running code: ssh_exec → grep -r "pattern" /home/jarvis/jarvis-agent/\nAll investigation MUST go through ssh_exec on 94.130.37.43.`,
-        };
-        conversationMessages.push(jarvisWarning);
-        apiMessages.push(jarvisWarning);
-        // Skip executing this local tool — the warning will cause the LLM to use ssh_exec instead
-        continue;
-      }
       // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
       if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
         const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
@@ -2184,6 +2210,13 @@ async function processInput(userInput, serverHooks = null) {
           saveNow(conversationMessages);
           return;
         } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
+          // Pre-compress before injecting warning — 5 SSH results fill context fast,
+          // and adding the warning on top can tip a full context into a 400 cascade.
+          {
+            const _allTools = getAllToolDefinitions();
+            const { messages: _c } = forceCompress(apiMessages, _allTools);
+            apiMessages = _c;
+          }
           console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
           const sshStormWarning = {
             role: 'user',
