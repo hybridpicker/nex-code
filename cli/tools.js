@@ -2242,7 +2242,12 @@ async function _executeToolInner(name, args, options = {}) {
       // LLM tool-result context — equivalent to printing them in the chat.
       const sshForbidden = isSSHForbidden(cmd);
       if (sshForbidden) {
-        return `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+        // Give a specific, actionable hint based on which pattern matched
+        const isSedN = /\bsed\s+-n\s+['"]?\d+,\d+p/.test(cmd);
+        const hint = isSedN
+          ? `BLOCKED: sed -n line-range is blocked (floods context). To read specific lines from a remote file use:\n  grep -n "pattern" /path/to/file -A 50\nor to read the whole file:\n  cat /path/to/file\nNEVER use sed -n again — it will always be blocked.`
+          : `BLOCKED: Remote command matches SSH secret-exposure pattern: ${sshForbidden}\nHINT: Do not read .env, credentials, or private key files via ssh_exec — secrets would appear in tool output. Reference variable names or file paths instead.`;
+        return hint;
       }
 
       // Cap grep context flags in ssh_exec commands — mirrors the grep tool's own 20-line cap.
