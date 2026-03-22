@@ -3,10 +3,10 @@
 .PHONY: all build test clean
 
 # Default target
-all: clean build test
+all: build test
 
 # Build target - uses esbuild directly as defined in package.json
-build:
+build: clean
 	npm run build
 
 # Test target - runs Jest tests
