@@ -776,6 +776,7 @@ const _sessionLastEditFailed = new Map(); // path → true when last edit_file o
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
+let _planRejectionCount = 0;  // times plan-without-reads was rejected this session (cap: 2)
 let _lastCompressionMsg = '';  // deduplicate consecutive identical compression messages
 let _compressionMsgCount = 0;  // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
@@ -1207,6 +1208,7 @@ function clearConversation() {
   _sessionReReadBlockShown.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
+  _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _lastCompressionMsg = '';
   _compressionMsgCount = 0;
@@ -1574,8 +1576,8 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
   const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file (early warning before context floods)
-  const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
+  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -2133,15 +2135,23 @@ async function processInput(userInput, serverHooks = null) {
       // In plan mode: if the LLM presented a plan without reading ANY files first,
       // reject it and force investigation. A plan based on zero tool calls is pure
       // hallucination — the LLM invented data structures, file locations, etc.
+      // Cap at 2 rejections — on the 3rd attempt accept the plan to prevent an
+      // infinite investigation loop (LLM may be unable to read relevant files).
       if (isPlanMode() && hasText && totalSteps === 0) {
-        const investigateNudge = {
-          role: 'user',
-          content: `[SYSTEM] You wrote a plan without reading any files. This plan may be based on incorrect assumptions (wrong database type, wrong file structure, etc.).\n\nMANDATORY: Use read_file, glob, or grep to investigate the actual codebase first. Read at least the relevant module file and route file before writing the plan.`,
-        };
-        conversationMessages.push(investigateNudge);
-        apiMessages.push(investigateNudge);
-        console.log(`${C.yellow}  ⚠ Plan rejected: no files read before planning — forcing investigation${C.reset}`);
-        continue;
+        _planRejectionCount++;
+        if (_planRejectionCount > 2) {
+          console.log(`${C.yellow}  ⚠ Plan accepted despite no file reads (rejection loop cap reached)${C.reset}`);
+          // Fall through to normal plan handling below
+        } else {
+          const investigateNudge = {
+            role: 'user',
+            content: `[SYSTEM] You wrote a plan without reading any files. This plan may be based on incorrect assumptions (wrong database type, wrong file structure, etc.).\n\nMANDATORY: Use read_file, glob, or grep to investigate the actual codebase first. Read at least the relevant module file and route file before writing the plan.`,
+          };
+          conversationMessages.push(investigateNudge);
+          apiMessages.push(investigateNudge);
+          console.log(`${C.yellow}  ⚠ Plan rejected (${_planRejectionCount}/2): no files read — forcing investigation${C.reset}`);
+          continue;
+        }
       }
 
       // In plan mode: save the plan text output to disk and extract structured steps
@@ -2240,13 +2250,15 @@ async function processInput(userInput, serverHooks = null) {
       const hasUnboundedRead = prepared.some(p =>
         p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
       );
-      // Detect re-reads: any read_file call for a file that was already read at least once
+      // Detect unbounded re-reads: read_file without line_start for a file already read.
+      // Targeted re-reads (with line_start) are now allowed (reading new sections after 350-line cap).
       const reReadFiles = prepared
-        .filter(p => p.canExecute && p.fnName === 'read_file' && p.args?.path && fileReadCounts.get(p.args.path) >= 1)
+        .filter(p => p.canExecute && p.fnName === 'read_file' && p.args?.path
+          && fileReadCounts.get(p.args.path) >= 1 && !p.args?.line_start)
         .map(p => p.args.path.split('/').slice(-2).join('/'));
       const hasReRead = reReadFiles.length > 0;
       // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always;
-      // also warn unconditionally if re-reading a file already in context.
+      // also warn unconditionally on unbounded re-reads of files already in context.
       const warnNow =
         (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
         (ctxPct >= 85 && contextPressureWarnedAt < 85) ||
@@ -2257,7 +2269,7 @@ async function processInput(userInput, serverHooks = null) {
         let advice;
         if (hasReRead) {
           urgency = 'WARNING';
-          advice = `Re-reading ${reReadFiles.join(', ')} — already in context. Use grep or line ranges instead.`;
+          advice = `Unbounded re-read of ${reReadFiles.join(', ')} — already in context. Use line_start/line_end to read specific sections instead.`;
         } else if (hasUnboundedRead) {
           advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
         } else {
@@ -2292,29 +2304,34 @@ async function processInput(userInput, serverHooks = null) {
       const path = prep.args?.path;
       if (!path) continue;
       const alreadyRead = fileReadCounts.get(path) || 0;
-      // Allow ONE targeted re-read (line_start provided) after edit failure on same file.
-      // This lets the agent recover its exact context when edit_file returned "old_text not found".
+      // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
+      // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
+      // (no line_start) since those re-flood the context with the same content.
       const isTargetedReRead = prep.args?.line_start != null;
       const lastEditFailed = _sessionLastEditFailed.get(path) === true;
-      if (alreadyRead >= 1 && !(isTargetedReRead && lastEditFailed)) {
+
+      if (alreadyRead >= 1 && isTargetedReRead) {
+        // Allow targeted re-reads through. Clear edit-failure flag when used.
+        if (lastEditFailed) {
+          const shortPath = path.split('/').slice(-2).join('/');
+          console.log(`${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`);
+          _sessionLastEditFailed.delete(path);
+        }
+        // else: normal targeted section read — just let it through silently
+      } else if (alreadyRead >= 1) {
+        // Unbounded re-read — block to prevent context flood
         const shortPath = path.split('/').slice(-2).join('/');
         const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
         _sessionReReadBlockShown.set(path, blockShownCount);
-        // Only show full message on first block; suppress subsequent ones (LLM still gets BLOCKED error)
         if (blockShownCount === 1) {
-          console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" — already in context${C.reset}`);
+          console.log(`${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`);
         }
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use grep or line ranges instead.`,
+          content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
           tool_call_id: prep.callId,
         };
-      } else if (alreadyRead >= 1 && isTargetedReRead && lastEditFailed) {
-        // Targeted recovery re-read after edit failure — allow but clear the failure flag so it only works once
-        const shortPath = path.split('/').slice(-2).join('/');
-        console.log(`${C.cyan}  ↩ Allowing targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — recovery after edit failure${C.reset}`);
-        _sessionLastEditFailed.delete(path);
       }
     }
 
@@ -2688,7 +2705,10 @@ async function processInput(userInput, serverHooks = null) {
           const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
           fileReadCounts.set(prep.args.path, readCount);
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
-          if (readCount === LOOP_WARN_READS) {
+          // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
+          // are legitimate when navigating a large file beyond the 350-line cap.
+          const wasUnbounded = !prep.args?.line_start && !prep.args?.line_end;
+          if (wasUnbounded && readCount === LOOP_WARN_READS) {
             // Pre-compress before injecting warning — prevents the warning itself from
             // triggering a 400-cascade when context is already near capacity.
             {
@@ -2699,15 +2719,15 @@ async function processInput(userInput, serverHooks = null) {
                 apiMessages = _c;
               }
             }
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read ${readCount}× — already in context${C.reset}`);
+            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read unbounded ${readCount}× — use line_start/line_end${C.reset}`);
             const readWarning = {
               role: 'user',
-              content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}×. File in context — use grep or line ranges instead.`,
+              content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}× without line ranges. Use line_start/line_end to read specific sections — do not re-read the full file.`,
             };
             conversationMessages.push(readWarning);
             apiMessages.push(readWarning);
-          } else if (readCount >= LOOP_ABORT_READS) {
-            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read ${readCount}× — aborting runaway read loop${C.reset}`);
+          } else if (wasUnbounded && readCount >= LOOP_ABORT_READS) {
+            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`);
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
             _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });

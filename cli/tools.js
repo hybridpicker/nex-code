@@ -1397,15 +1397,25 @@ async function _executeToolInner(name, args, options = {}) {
             console.log(`${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`);
             return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
           }
-          // Provide helpful error with most similar text + grep hint for recovery
+          // Provide helpful error with surrounding context so LLM can fix old_text without re-reading.
+          // Include ±10 lines around the most similar match — this is often enough to correct the edit
+          // directly without needing another read_file call (which may be blocked or flood context).
           const similar = findMostSimilar(content, args.old_text);
+          if (similar) {
+            const allFileLines = content.split('\n');
+            const ctxStart = Math.max(0, similar.line - 6);
+            const ctxEnd = Math.min(allFileLines.length, similar.line + 10);
+            const surroundingCtx = allFileLines
+              .slice(ctxStart, ctxEnd)
+              .map((l, i) => `${ctxStart + i + 1}: ${l}`)
+              .join('\n');
+            const reReadHint = `line_start=${Math.max(1, similar.line - 5)} line_end=${Math.min(allFileLines.length, similar.line + 15)}`;
+            return `ERROR: old_text not found in ${fp} (most similar at line ${similar.line}, distance ${similar.distance})\n\nActual file content around line ${similar.line} — use this to correct old_text:\n${surroundingCtx}\n\nFix: update old_text to match the exact lines above, then retry. If you need more context: read_file with ${reReadHint}`;
+          }
           const firstLine = (args.old_text || '').trim().split('\n')[0].slice(0, 60);
           const grepHint = firstLine
-            ? `\nRecovery: use grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to locate the exact text, then re-read with line_start/line_end.`
-            : '\nRecovery: use grep -n to locate the exact text, then re-read that section with line_start/line_end.';
-          if (similar) {
-            return `ERROR: old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}${grepHint}`;
-          }
+            ? `\nRecovery: grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to find the line, then re-read that section with line_start/line_end.`
+            : '\nRecovery: use grep -n to locate the text, then re-read that section with line_start/line_end.';
           return `ERROR: old_text not found in ${fp}${grepHint}`;
         }
       }
