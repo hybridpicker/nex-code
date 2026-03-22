@@ -2113,7 +2113,7 @@ async function startREPL() {
   // Load persistent undo history from previous sessions
   const { loadPersistedHistory, pruneHistory: pruneUndoHistory } = require('./file-history');
   loadPersistedHistory().then(count => {
-    if (count > 0) console.log(`${C.dim}Loaded ${count} undo entries from previous session${C.reset}`);
+    // suppressed: undo entries startup message
   });
   pruneUndoHistory().catch(() => {});
 
@@ -2517,7 +2517,7 @@ async function startREPL() {
         const resume = await confirm(`Previous session found. Resume?`);
         if (resume) {
           setConversationMessages(lastSession.messages);
-          console.log(`${C.green}Session restored (${lastSession.messages.length} messages)${C.reset}\n`);
+          // suppressed: session restored message
         }
       }
     }
