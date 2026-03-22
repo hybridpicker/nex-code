@@ -715,9 +715,26 @@ const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
+const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
+let _lastCompressionMsg = '';  // deduplicate consecutive identical compression messages
+let _compressionMsgCount = 0;  // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
+
+// Helper: deduplicate consecutive identical compression messages for cleaner output.
+// Shows the first occurrence normally, then updates with a counter on repeats.
+function _logCompression(msg, color) {
+  if (msg === _lastCompressionMsg) {
+    _compressionMsgCount++;
+    // Overwrite the previous line with updated counter
+    process.stdout.write(`\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`);
+  } else {
+    _lastCompressionMsg = msg;
+    _compressionMsgCount = 1;
+    console.log(`${color}  ⚠ ${msg}${C.reset}`);
+  }
+}
 
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
@@ -1124,9 +1141,12 @@ function clearConversation() {
   _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
+  _sessionReReadBlockShown.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _sshBlockedAfterStorm = false;
+  _lastCompressionMsg = '';
+  _compressionMsgCount = 0;
 }
 
 function trimConversationHistory() {
@@ -1665,7 +1685,7 @@ async function processInput(userInput, serverHooks = null) {
           // Last-resort: force-compress once, then reset for fresh attempts
           if (contextRetries < 1) {
             contextRetries++;
-            console.log(`${C.yellow}  ⚠ Stale retries exhausted — last-resort force-compress...${C.reset}`);
+            _logCompression('Stale retries exhausted — last-resort force-compress...', C.yellow);
             const allTools = getAllToolDefinitions();
             const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
             apiMessages = compressedMsgs;
@@ -1702,7 +1722,7 @@ async function processInput(userInput, serverHooks = null) {
         // so aggressively trim to 35% to give the (possibly smaller) fast model headroom.
         if (staleRetries >= 1 && staleCompressUsed < 1) {
           staleCompressUsed++;
-          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...${C.reset}`);
+          _logCompression(`Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...`, C.yellow);
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
           apiMessages = compressedMsgs;
@@ -1761,9 +1781,9 @@ async function processInput(userInput, serverHooks = null) {
           totalContextRetries++;
           const nuclear = contextRetries === 3 || staleCompressUsed > 0;
           if (nuclear) {
-            console.log(`${C.yellow}  ⚠ Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...${C.reset}`);
+            _logCompression(`Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`, C.yellow);
           } else {
-            console.log(`${C.yellow}  ⚠ Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)${C.reset}`);
+            _logCompression(`Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)`, C.yellow);
           }
           const allTools = getAllToolDefinitions();
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
@@ -1821,7 +1841,7 @@ async function processInput(userInput, serverHooks = null) {
             // so the agent can't immediately repeat the same storm after context wipe.
             // SSH unblocks naturally when the agent sends a text-only response.
             _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
-            console.log(`${C.yellow}  ⚠ Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)${C.reset}`);
+            _logCompression(`Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`, C.yellow);
             // After 2 super-nuclear fires, inject a "last chance" warning so the agent
             // knows it must be surgical and stop after a minimal investigation.
             if (_superNuclearFires >= 2) {
@@ -2063,10 +2083,13 @@ async function processInput(userInput, serverHooks = null) {
         };
         conversationMessages.push(pressureMsg);
         apiMessages.push(pressureMsg);
-        if (ctxPct >= 85 || hasReRead) {
+        if (ctxPct >= 85) {
           const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
           console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
+        // For re-reads at low context usage, don't show misleading "Context X% used" — the
+        // hard-block message (below) already handles display for the user.
+        // The system warning is still injected into the LLM conversation above.
       }
     }
 
@@ -2085,7 +2108,12 @@ async function processInput(userInput, serverHooks = null) {
       const alreadyRead = fileReadCounts.get(path) || 0;
       if (alreadyRead >= 1) {
         const shortPath = path.split('/').slice(-2).join('/');
-        console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" already read ${alreadyRead}× — file is in context, use grep or line ranges${C.reset}`);
+        const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
+        _sessionReReadBlockShown.set(path, blockShownCount);
+        // Only show full message on first block; suppress subsequent ones (LLM still gets BLOCKED error)
+        if (blockShownCount === 1) {
+          console.log(`${C.red}  ✖ Blocked re-read: "${shortPath}" — already in context${C.reset}`);
+        }
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
