@@ -578,7 +578,7 @@ describe('agent.js', () => {
       mockStream('OK');
       await processInput('test');
       expect(logOutput()).toContain('Context');
-      expect(logOutput()).toContain('full');
+      expect(logOutput()).toContain('used');
     });
   });
 
