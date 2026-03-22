@@ -2113,7 +2113,7 @@ async function startREPL() {
   // Load persistent undo history from previous sessions
   const { loadPersistedHistory, pruneHistory: pruneUndoHistory } = require('./file-history');
   loadPersistedHistory().then(count => {
-    if (count > 0) console.log(`${C.dim}Loaded ${count} undo entries from previous session${C.reset}`);
+    // suppressed: undo entries startup message
   });
   pruneUndoHistory().catch(() => {});
 
@@ -2516,8 +2516,22 @@ async function startREPL() {
         const { confirm } = require('./safety');
         const resume = await confirm(`Previous session found. Resume?`);
         if (resume) {
-          setConversationMessages(lastSession.messages);
-          console.log(`${C.green}Session restored (${lastSession.messages.length} messages)${C.reset}\n`);
+          // Option 2: cap restored messages to last 20 to avoid flooding context
+          const MAX_RESTORE = 20;
+          const msgs = lastSession.messages;
+          const trimmed = msgs.length > MAX_RESTORE ? msgs.slice(-MAX_RESTORE) : msgs;
+          setConversationMessages(trimmed);
+
+          // Option 1: auto-compress if restored session already fills >30% context.
+          // Threshold lowered from 50% → 30%: SSH-heavy sessions can hit 50%+ before
+          // the first new LLM call, causing an immediate 400 on session resume.
+          const { getUsage, forceCompress } = require('./context-engine');
+          const usage = getUsage(trimmed, []);
+          if (usage.percentage >= 30) {
+            const { messages: compressed } = forceCompress(trimmed, []);
+            setConversationMessages(compressed);
+          }
+          // suppressed: session restored message
         }
       }
     }
