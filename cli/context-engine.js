@@ -721,12 +721,24 @@ function forceCompress(messages, tools, nuclear = false) {
 
   result = buildResult(system, compressed, recentMessages);
 
-  // Preserve the last user message — it contains the current task context.
-  // Nuclear compression may have reduced recentMessages to an empty array or
-  // dropped the triggering user message entirely, causing the LLM to see only
-  // the system prompt and respond with a generic greeting.
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-  if (lastUserMsg && !result.find(m => m === lastUserMsg)) {
+  // Preserve task context across nuclear compression.
+  // The "last user message" is often a system-injected warning (BLOCKED:, SYSTEM WARNING:)
+  // rather than the original task. We preserve the FIRST user message (original task)
+  // so the LLM can resume work, not just respond to a warning injection.
+  const userMessages = messages.filter(m => m.role === 'user');
+  // First real user message = original task (skip if it looks like a system injection)
+  const isSystemInjection = (m) => {
+    const text = typeof m.content === 'string' ? m.content : '';
+    return text.startsWith('[SYSTEM WARNING]') || text.startsWith('[SYSTEM:') || text.startsWith('BLOCKED:');
+  };
+  const firstTaskMsg = userMessages.find(m => !isSystemInjection(m));
+  const lastUserMsg = [...userMessages].reverse().find(m => !isSystemInjection(m));
+  // Always include the first task message so the LLM knows what it was doing
+  if (firstTaskMsg && !result.find(m => m === firstTaskMsg)) {
+    result.unshift(firstTaskMsg); // prepend so it comes before any recent messages
+  }
+  // Also include the last real user message if different from first
+  if (lastUserMsg && lastUserMsg !== firstTaskMsg && !result.find(m => m === lastUserMsg)) {
     result.push(lastUserMsg);
   }
 

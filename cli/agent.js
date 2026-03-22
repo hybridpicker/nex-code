@@ -1448,6 +1448,16 @@ async function processInput(userInput, serverHooks = null) {
   const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
 
+  // ─── Jarvis-local guard: detect if this task is Jarvis server debugging ───
+  // If the first user message mentions Jarvis error keywords, flag so we can
+  // intercept local tool calls and redirect to ssh_exec.
+  const _firstUserText = (() => {
+    const m = conversationMessages.find(r => r.role === 'user');
+    return typeof m?.content === 'string' ? m.content : '';
+  })();
+  const _isJarvisDebugging = /jarvis|set_reminder|google.?auth|cron:|fehler|server.*error|api\.log/i.test(_firstUserText);
+  let _jarvisLocalWarnFired = false; // only inject once per session
+
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
   const toolCounts = new Map();
@@ -2119,6 +2129,25 @@ async function processInput(userInput, serverHooks = null) {
         };
         conversationMessages.push(sedWarning);
         apiMessages.push(sedWarning);
+      }
+      // Jarvis-local guard — if this is a Jarvis debugging task, block local bash/read_file
+      // and redirect to ssh_exec. Fires once per session, on the first local tool call.
+      if (_isJarvisDebugging && !_jarvisLocalWarnFired && (prep.fnName === 'bash' || prep.fnName === 'read_file' || prep.fnName === 'find_files')) {
+        _jarvisLocalWarnFired = true;
+        {
+          const _allTools = getAllToolDefinitions();
+          const { messages: _c } = forceCompress(apiMessages, _allTools);
+          apiMessages = _c;
+        }
+        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local tool call — redirecting to ssh_exec${C.reset}`);
+        const jarvisWarning = {
+          role: 'user',
+          content: `[SYSTEM WARNING] You are debugging a Jarvis server error but you just tried to run a LOCAL tool (${prep.fnName}). Jarvis runs on the DEPLOYED SERVER at 94.130.37.43 — the local jarvis-agent/ directory is just source code. STOP. Do NOT read local files to debug server errors. Instead use ssh_exec:\n- Check server logs: ssh_exec → tail -50 /home/jarvis/jarvis-agent/logs/api.log\n- Read server files: ssh_exec → cat /home/jarvis/jarvis-agent/<path>\n- Check running code: ssh_exec → grep -r "pattern" /home/jarvis/jarvis-agent/\nAll investigation MUST go through ssh_exec on 94.130.37.43.`,
+        };
+        conversationMessages.push(jarvisWarning);
+        apiMessages.push(jarvisWarning);
+        // Skip executing this local tool — the warning will cause the LLM to use ssh_exec instead
+        continue;
       }
       // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
       if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
