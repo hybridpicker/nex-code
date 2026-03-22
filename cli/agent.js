@@ -1415,7 +1415,7 @@ async function processInput(userInput, serverHooks = null) {
     console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
   }
   if (usage.percentage > 85) {
-    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% full — consider /clear or /save + start fresh${C.reset}`);
+    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`);
   }
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
@@ -1451,7 +1451,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
   const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_WARN_READS = 3;  // warn after 3 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 4; // abort after 4 reads of the same file
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
@@ -1481,13 +1481,13 @@ async function processInput(userInput, serverHooks = null) {
     // rather than waiting for a 400 error. This prevents the nuclear-compression
     // cascade that occurs when a bloated session is resumed.
     {
-      const _autoCtx = getUsage(apiMessages, []);
+      const _allTools = getAllToolDefinitions();
+      const _autoCtx = getUsage(apiMessages, _allTools);
       if (_autoCtx.percentage >= 78) {
-        const _allTools = getAllToolDefinitions();
         const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
         if (_freed > 0) {
           apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`);
         }
       }
     }
@@ -1909,7 +1909,7 @@ async function processInput(userInput, serverHooks = null) {
     // Warn the LLM before it executes tool calls that could overflow context.
     // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
     {
-      const ctxUsage = getUsage(apiMessages, []);
+      const ctxUsage = getUsage(apiMessages, getAllToolDefinitions());
       const ctxPct = ctxUsage.percentage;
       const hasUnboundedRead = prepared.some(p =>
         p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
@@ -1933,19 +1933,19 @@ async function processInput(userInput, serverHooks = null) {
           urgency = 'WARNING';
           advice = `You are about to re-read file(s) already in your context: ${reReadFiles.join(', ')}. This adds NO new information and wastes context tokens. STOP. Use grep or targeted line ranges (line_start/line_end) to find specific sections instead of re-reading the whole file.`;
         } else if (hasUnboundedRead) {
-          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% context this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
+          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% used this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
         } else {
-          advice = `Context is ${Math.round(ctxPct)}% full. Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+          advice = `Context is ${Math.round(ctxPct)}% used (${Math.round(100 - ctxPct)}% remaining). Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
         }
         const pressureMsg = {
           role: 'user',
-          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% full (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
+          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% used (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
         };
         conversationMessages.push(pressureMsg);
         apiMessages.push(pressureMsg);
         if (ctxPct >= 85 || hasReRead) {
           const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% full — agent warned to use targeted reads${reReadLabel}${C.reset}`);
+          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
       }
     }
@@ -2190,13 +2190,13 @@ async function processInput(userInput, serverHooks = null) {
         // ≥60% after the tool result was appended, adding another message would push
         // it over the limit and trigger a 400 cascade on the next LLM call.
         {
-          const _stopCtx = getUsage(apiMessages, []);
+          const _allToolsStop = getAllToolDefinitions();
+          const _stopCtx = getUsage(apiMessages, _allToolsStop);
           if (_stopCtx.percentage >= 60) {
-            const _allTools = getAllToolDefinitions();
-            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsStop);
             if (_freed > 0) {
               apiMessages = _compressed;
-              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, _allToolsStop).percentage)}%]${C.reset}`);
             }
           }
         }
@@ -2241,10 +2241,10 @@ async function processInput(userInput, serverHooks = null) {
             // Pre-compress before injecting warning — prevents the warning itself from
             // triggering a 400-cascade when context is already near capacity.
             {
-              const _readCtx = getUsage(apiMessages, []);
+              const _allToolsRead = getAllToolDefinitions();
+              const _readCtx = getUsage(apiMessages, _allToolsRead);
               if (_readCtx.percentage >= 60) {
-                const _allTools = getAllToolDefinitions();
-                const { messages: _c } = forceCompress(apiMessages, _allTools);
+                const { messages: _c } = forceCompress(apiMessages, _allToolsRead);
                 apiMessages = _c;
               }
             }
@@ -2303,13 +2303,13 @@ async function processInput(userInput, serverHooks = null) {
     // limit between iterations. Compress immediately after appending so the next
     // LLM call never hits a 400 context-overflow error.
     {
-      const _postCtx = getUsage(apiMessages, []);
+      const _allToolsPost = getAllToolDefinitions();
+      const _postCtx = getUsage(apiMessages, _allToolsPost);
       if (_postCtx.percentage >= 78) {
-        const _allTools = getAllToolDefinitions();
-        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools);
+        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsPost);
         if (_freed > 0) {
           apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, []).percentage)}%]${C.reset}`);
+          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`);
         }
       }
     }
