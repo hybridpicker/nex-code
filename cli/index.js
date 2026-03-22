@@ -997,6 +997,7 @@ async function handleSlashCommand(input, rl) {
         return true;
       }
       if (arg === 'approve') {
+        const planContent = getPlanContent();
         if (approvePlan()) {
           startExecution();
           setPlanMode(false);
@@ -1004,10 +1005,19 @@ async function handleSlashCommand(input, rl) {
           invalidateSystemPromptCache();
           const plan = getActivePlan();
           const stepCount = plan?.steps?.length || 0;
-          const hasContent = !!getPlanContent();
           const stepLabel = stepCount > 0 ? ` (${stepCount} steps)` : '';
-          console.log(`${C.green}${C.bold}Plan approved!${C.reset}${stepLabel} ${hasContent ? 'Executing the planned steps...' : 'Starting execution...'}`);
+          console.log(`${C.green}${C.bold}Plan approved!${C.reset}${stepLabel} Executing...`);
           console.log(`${C.dim}Plan mode disabled — all tools now available.${C.reset}`);
+          // AUTO-EXECUTE: trigger the agent with the approved plan as context
+          if (planContent) {
+            const { processInput: _pi } = require('./agent');
+            const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planContent}`;
+            try {
+              await _pi(execPrompt);
+            } catch (err) {
+              console.log(`${C.red}Error: ${err.message?.split('\n')[0]}${C.reset}`);
+            }
+          }
         } else {
           console.log(`${C.red}No plan to approve. Enter plan mode first with /plan${C.reset}`);
         }

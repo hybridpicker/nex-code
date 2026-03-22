@@ -2152,7 +2152,45 @@ async function processInput(userInput, serverHooks = null) {
             : 'Task';
           createPlan(taskDesc, extractedSteps);
           const stepWord = extractedSteps.length === 1 ? 'step' : 'steps';
-          console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
+          // Interactive approval prompt (TTY only)
+          if (process.stdout.isTTY && process.stdin.isTTY) {
+            const { approvePlan, startExecution, setPlanMode } = require('./planner');
+            const readline = require('readline');
+            const rlChoice = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[Enter] to approve:${C.reset} `);
+            const choice = await new Promise(resolve => {
+              const onData = (ch) => {
+                const key = ch.toString().toLowerCase().trim();
+                process.stdin.setRawMode?.(false);
+                process.stdin.removeListener('data', onData);
+                rlChoice.close();
+                resolve(key || 'a');
+              };
+              process.stdin.setRawMode?.(true);
+              process.stdin.resume();
+              process.stdin.once('data', onData);
+            });
+            console.log('');
+            if (choice === 'r') {
+              console.log(`${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`);
+            } else if (choice === 'e') {
+              console.log(`${C.yellow}Type /plan edit to open in editor, or give feedback to refine.${C.reset}`);
+            } else {
+              // Approve and auto-execute
+              if (approvePlan()) {
+                startExecution();
+                setPlanMode(false);
+                if (typeof invalidateSystemPromptCache === 'function') invalidateSystemPromptCache();
+                console.log(`${C.green}${C.bold}Approved!${C.reset} Executing ${extractedSteps.length} ${stepWord}...`);
+                const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText}`;
+                conversationMessages.push({ role: 'user', content: execPrompt });
+                apiMessages.push({ role: 'user', content: execPrompt });
+                continue; // re-enter the agent loop to execute
+              }
+            }
+          } else {
+            console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
+          }
         } else {
           console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
         }
