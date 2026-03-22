@@ -2152,44 +2152,51 @@ async function processInput(userInput, serverHooks = null) {
             : 'Task';
           createPlan(taskDesc, extractedSteps);
           const stepWord = extractedSteps.length === 1 ? 'step' : 'steps';
-          // Interactive approval prompt (TTY only)
+          // Interactive approval prompt (TTY only).
+          // We read stdin directly without creating a new readline interface —
+          // the main REPL readline is paused while processInput() runs, so
+          // direct stdin access is safe here and avoids stream conflicts.
+          let _autoApproved = false;
           if (process.stdout.isTTY && process.stdin.isTTY) {
             const { approvePlan, startExecution, setPlanMode } = require('./planner');
-            const readline = require('readline');
-            const rlChoice = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[Enter] to approve:${C.reset} `);
+            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `);
+            const wasRaw = process.stdin.isRaw;
             const choice = await new Promise(resolve => {
-              const onData = (ch) => {
-                const key = ch.toString().toLowerCase().trim();
-                process.stdin.setRawMode?.(false);
-                process.stdin.removeListener('data', onData);
-                rlChoice.close();
-                resolve(key || 'a');
-              };
-              process.stdin.setRawMode?.(true);
+              try { process.stdin.setRawMode(true); } catch (_) { /* no tty */ }
               process.stdin.resume();
-              process.stdin.once('data', onData);
+              process.stdin.once('data', (ch) => {
+                try { process.stdin.setRawMode(wasRaw || false); } catch (_) { /* ignore */ }
+                // Do NOT pause stdin — the main readline needs it flowing after we return
+                const k = ch.toString().toLowerCase()[0] || '\r';
+                resolve(k);
+              });
             });
-            console.log('');
+            process.stdout.write('\n');
             if (choice === 'r') {
               console.log(`${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`);
             } else if (choice === 'e') {
-              console.log(`${C.yellow}Type /plan edit to open in editor, or give feedback to refine.${C.reset}`);
+              console.log(`${C.yellow}Type /plan edit to open in editor, or give feedback.${C.reset}`);
             } else {
-              // Approve and auto-execute
+              // 'a', Enter (\r), space, or anything else → approve
               if (approvePlan()) {
                 startExecution();
                 setPlanMode(false);
-                if (typeof invalidateSystemPromptCache === 'function') invalidateSystemPromptCache();
+                invalidateSystemPromptCache();
                 console.log(`${C.green}${C.bold}Approved!${C.reset} Executing ${extractedSteps.length} ${stepWord}...`);
                 const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText}`;
                 conversationMessages.push({ role: 'user', content: execPrompt });
                 apiMessages.push({ role: 'user', content: execPrompt });
-                continue; // re-enter the agent loop to execute
+                _autoApproved = true;
               }
             }
           } else {
             console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
+          }
+          if (_autoApproved) {
+            // Clean up progress state before re-entering the loop
+            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            i--; // don't count the plan turn as a step
+            continue;
           }
         } else {
           console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
