@@ -441,6 +441,27 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 14a. Plan written without reading files (-2.0) ───────────────────────
+  // Detect when a plan was presented without any prior tool calls (totalToolCalls
+  // near zero). This means the LLM invented data structures, routes, and db types
+  // from training knowledge rather than reading the actual codebase.
+  {
+    const readToolNames = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'grep']);
+    const hasReadCalls = messages.some(m => {
+      if (Array.isArray(m.tool_calls)) return m.tool_calls.some(tc => readToolNames.has(tc.function?.name));
+      if (Array.isArray(m.content)) return m.content.some(b => b.type === 'tool_use' && readToolNames.has(b.name));
+      return false;
+    });
+    const hasPlanText = messages.some(m =>
+      m.role === 'assistant' && typeof m.content === 'string' &&
+      (m.content.includes('## Steps') || m.content.includes('#### ') || m.content.includes('/plan approve'))
+    );
+    if (hasPlanText && !hasReadCalls) {
+      score -= 2.0;
+      issues.push('plan written without reading any files — LLM invented data structures from training knowledge (hallucination risk)');
+    }
+  }
+
   // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
   // A BLOCKED message means the agent attempted something it shouldn't have.
   const blockedResults = toolResults.filter((tr) => tr.content.startsWith('BLOCKED:'));

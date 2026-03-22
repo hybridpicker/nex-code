@@ -847,8 +847,8 @@ describe('tools.js', () => {
         old_text: 'const xyz = "world";',
         new_text: 'const hello = "earth";',
       });
-      expect(result).toContain('Most similar text');
-      expect(result).toContain('line');
+      expect(result).toContain('most similar at line');
+      expect(result).toContain('Actual file content around line');
     });
   });
 
