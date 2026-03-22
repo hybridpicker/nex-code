@@ -1843,6 +1843,16 @@ async function processInput(userInput, serverHooks = null) {
         userMessage = 'Authentication failed — please check your API key in the .env file';
       } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
         userMessage = 'Access denied — your API key may not have permission for this model';
+      } else if (err.message.includes('404')) {
+        // 404 = model not found on Ollama/OpenAI-compat provider — fatal, don't retry
+        const modelId = getActiveModelId ? getActiveModelId() : 'unknown';
+        userMessage = `Model not found (404): ${modelId} — check your .env MODEL setting or run /models to list available models`;
+        console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
+        if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+        setOnChange(null);
+        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+        saveNow(conversationMessages);
+        break;
       } else if (err.message.includes('400')) {
         // On any 400, always try force-compress first — the most common cause is a context
         // overflow where Ollama returns a bare 400 with no useful message. Token-count
@@ -1906,6 +1916,11 @@ async function processInput(userInput, serverHooks = null) {
             if (_toolResults.length > 0) {
               _findingParts.push('Tool results summary:\n' + _toolResults.map(t => `- ${t}`).join('\n'));
             }
+            // Prepend already-modified files so LLM knows what it already did
+            if (filesModified.size > 0) {
+              const _modifiedList = [...filesModified].map(f => f.split('/').slice(-2).join('/')).join(', ');
+              _findingParts.unshift(`Already modified: ${_modifiedList} — use edit_file to add missing pieces only, DO NOT use write_file on these files.`);
+            }
             if (_findingParts.length > 0) {
               const _findingsMsg = {
                 role: 'user',
@@ -1913,6 +1928,21 @@ async function processInput(userInput, serverHooks = null) {
               };
               _superNuclear.push(_findingsMsg);
             }
+            // Hard cap: after 3 super-nuclear wipes, abort — repeated context collapse
+            // is a sign the task is too large for the current context window.
+            if (_superNuclearFires >= 3) {
+              const modList = filesModified.size > 0
+                ? `\nFiles modified so far: ${[...filesModified].map(f => f.split('/').slice(-1)[0]).join(', ')}`
+                : '';
+              console.log(`${C.red}  ✗ Super-nuclear limit reached (3×) — aborting to prevent runaway context loop${C.reset}`);
+              console.log(`${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ''}${C.reset}`);
+              if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+              setOnChange(null);
+              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+              saveNow(conversationMessages);
+              break;
+            }
+
             apiMessages = _superNuclear;
             _superNuclearFires++;
             _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
@@ -1924,16 +1954,16 @@ async function processInput(userInput, serverHooks = null) {
             _sessionFileReadCounts.clear();  // file content is gone after wipe — allow re-reads
             _sessionReReadBlockShown.clear();
             _sessionGrepFileCounts.clear();  // same for grep flood counters
+
             _logCompression(`Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`, C.yellow);
-            // After 2 super-nuclear fires, inject a "last chance" warning so the agent
-            // knows it must be surgical and stop after a minimal investigation.
-            if (_superNuclearFires >= 2) {
-              const lastChanceMsg = {
+            // After 1st super-nuclear, inject a skip-investigation hint (_superNuclearFires already incremented)
+            if (_superNuclearFires >= 1) {
+              const skipMsg = {
                 role: 'user',
-                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. LAST CHANCE: max 3 tool calls, then synthesize and answer. No more investigation.`,
+                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.`,
               };
-              conversationMessages.push(lastChanceMsg);
-              apiMessages.push(lastChanceMsg);
+              conversationMessages.push(skipMsg);
+              apiMessages.push(skipMsg);
             }
             contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
             i--;
