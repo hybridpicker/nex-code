@@ -1420,6 +1420,19 @@ async function processInput(userInput, serverHooks = null) {
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
   let apiMessages = fittedMessages;
+
+  // Pre-flight context check — compress immediately if already over threshold
+  {
+    const _preCtx = getUsage(apiMessages, getAllToolDefinitions());
+    if (_preCtx.percentage >= 65) {
+      const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, getAllToolDefinitions());
+      if (_freed > 0) {
+        apiMessages = _compressed;
+        console.log(`${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, getAllToolDefinitions()).percentage)}% used]${C.reset}`);
+      }
+    }
+  }
+
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
