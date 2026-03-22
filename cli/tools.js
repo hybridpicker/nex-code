@@ -1269,22 +1269,38 @@ async function _executeToolInner(name, args, options = {}) {
       const content = await fs.readFile(fp, 'utf-8');
       if (!content && (await fs.stat(fp)).size > 0) return `WARNING: ${fp} is empty or unreadable`;
       const lines = content.split('\n');
-      const start = (args.line_start || 1) - 1;
-      const end = args.line_end || lines.length;
       const stats = await fs.stat(fp);
       const lineCount = lines.length;
-      const summary = `File: ${path.relative(process.cwd(), fp)} (${lineCount} lines, ${stats.size} bytes)`;
+
+      // Hard cap: unbounded reads are limited to 350 lines (like Claude Code's pagination).
+      // This prevents large files from flooding the context window and causing 400 errors.
+      // The model must use line_start/line_end to read specific sections of large files.
+      const FULL_READ_CAP = 350;
+      const isFullRead = !args.line_start && !args.line_end;
+      const isTruncated = isFullRead && lineCount > FULL_READ_CAP;
+
+      const start = (args.line_start || 1) - 1;
+      const end = isTruncated ? FULL_READ_CAP : (args.line_end || lines.length);
+
+      const shortPath = path.relative(process.cwd(), fp);
+      const rangeLabel = isTruncated
+        ? `showing lines 1-${FULL_READ_CAP} of ${lineCount}`
+        : (args.line_start || args.line_end)
+          ? `lines ${start + 1}-${end} of ${lineCount}`
+          : `${lineCount} lines`;
+      const summary = `File: ${shortPath} (${rangeLabel}, ${stats.size} bytes)`;
+
       const numberedLines = lines
         .slice(start, end)
         .map((l, i) => `${start + i + 1}: ${l}`)
         .join('\n');
-      // Append a targeted-read hint when a large file is read without a line range,
-      // so the LLM knows to use line_start/line_end on subsequent reads.
-      const wasFullRead = !args.line_start && !args.line_end;
-      const rangeHint = wasFullRead && lineCount > 150
-        ? `\n[LARGE FILE: ${lineCount} lines returned in full. For subsequent reads use line_start/line_end to avoid context overflow.]`
-        : '';
-      return `${summary}\n${numberedLines}${rangeHint}`;
+
+      const truncationNote = isTruncated
+        ? `\n\n[File truncated: showing lines 1-${FULL_READ_CAP} of ${lineCount} total. Use line_start/line_end to read other sections, e.g. line_start=${FULL_READ_CAP + 1} line_end=${Math.min(FULL_READ_CAP * 2, lineCount)}]`
+        : (!isFullRead && lineCount > FULL_READ_CAP)
+          ? `\n[Large file (${lineCount} lines total) — use line_start/line_end for other sections]`
+          : '';
+      return `${summary}\n${numberedLines}${truncationNote}`;
     }
 
     case 'write_file': {
@@ -1381,12 +1397,26 @@ async function _executeToolInner(name, args, options = {}) {
             console.log(`${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`);
             return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
           }
-          // Provide helpful error with most similar text
+          // Provide helpful error with surrounding context so LLM can fix old_text without re-reading.
+          // Include ±10 lines around the most similar match — this is often enough to correct the edit
+          // directly without needing another read_file call (which may be blocked or flood context).
           const similar = findMostSimilar(content, args.old_text);
           if (similar) {
-            return `ERROR: old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+            const allFileLines = content.split('\n');
+            const ctxStart = Math.max(0, similar.line - 6);
+            const ctxEnd = Math.min(allFileLines.length, similar.line + 10);
+            const surroundingCtx = allFileLines
+              .slice(ctxStart, ctxEnd)
+              .map((l, i) => `${ctxStart + i + 1}: ${l}`)
+              .join('\n');
+            const reReadHint = `line_start=${Math.max(1, similar.line - 5)} line_end=${Math.min(allFileLines.length, similar.line + 15)}`;
+            return `ERROR: old_text not found in ${fp} (most similar at line ${similar.line}, distance ${similar.distance})\n\nActual file content around line ${similar.line} — use this to correct old_text:\n${surroundingCtx}\n\nFix: update old_text to match the exact lines above, then retry. If you need more context: read_file with ${reReadHint}`;
           }
-          return `ERROR: old_text not found in ${fp}`;
+          const firstLine = (args.old_text || '').trim().split('\n')[0].slice(0, 60);
+          const grepHint = firstLine
+            ? `\nRecovery: grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to find the line, then re-read that section with line_start/line_end.`
+            : '\nRecovery: use grep -n to locate the text, then re-read that section with line_start/line_end.';
+          return `ERROR: old_text not found in ${fp}${grepHint}`;
         }
       }
 
