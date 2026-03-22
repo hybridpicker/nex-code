@@ -471,6 +471,19 @@ function scoreMessages(messages) {
     issues.push(`${blockedResults.length} tool call${blockedResults.length === 1 ? '' : 's'} blocked (agent attempted denied actions)`);
   }
 
+  // ── 15. Super-nuclear context wipes (-1.0 per wipe, max -2.0) ─────────────
+  // Super-nuclear fires indicate the session collapsed under context pressure.
+  // Detected via the warning messages injected after each wipe.
+  const superNuclearCount = messages.filter((msg) => {
+    const text = typeof msg.content === 'string' ? msg.content : '';
+    return /\[SYSTEM WARNING\] Context wiped \d+×/.test(text);
+  }).length;
+  if (superNuclearCount > 0) {
+    const penalty = Math.min(superNuclearCount * 1.0, 2.0);
+    score -= penalty;
+    issues.push(`Super-nuclear context wipe fired ${superNuclearCount}× (context collapse — task too large or read loops)`);
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place

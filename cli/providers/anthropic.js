@@ -114,6 +114,18 @@ class AnthropicProvider extends BaseProvider {
       formatted.push(formattedMsg);
     }
 
+    // Anthropic requires strictly alternating user/assistant roles.
+    // The super-nuclear recovery path can produce consecutive user messages
+    // (task + findings + skip-hint). Insert empty assistant turns to fix.
+    for (let i = formatted.length - 1; i > 0; i--) {
+      if (formatted[i].role === 'user' && formatted[i - 1].role === 'user') {
+        formatted.splice(i, 0, {
+          role: 'assistant',
+          content: [{ type: 'text', text: '[continuing]' }],
+        });
+      }
+    }
+
     return { messages: formatted, system };
   }
 
