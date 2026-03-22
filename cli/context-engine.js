@@ -721,6 +721,15 @@ function forceCompress(messages, tools, nuclear = false) {
 
   result = buildResult(system, compressed, recentMessages);
 
+  // Preserve the last user message — it contains the current task context.
+  // Nuclear compression may have reduced recentMessages to an empty array or
+  // dropped the triggering user message entirely, causing the LLM to see only
+  // the system prompt and respond with a generic greeting.
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (lastUserMsg && !result.find(m => m === lastUserMsg)) {
+    result.push(lastUserMsg);
+  }
+
   return {
     messages: result,
     tokensRemoved: originalTokens - estimateMessagesTokens(result),
