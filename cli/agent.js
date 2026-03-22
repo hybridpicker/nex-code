@@ -186,7 +186,7 @@ function detectAndTruncateRepetition(text) {
   if (maxCount < 3) return { text, truncated: false, repeatCount: maxCount };
 
   // Repetition detected — truncate to first 2 occurrences
-  const SYSTEM_NOTE = `\n\n[SYSTEM: Output-Wiederholung erkannt — Antwort gekürzt (${maxCount}× gleicher Paragraph)]`;
+  const SYSTEM_NOTE = `\n\n[SYSTEM: Output repetition detected — response truncated (${maxCount}× repeated paragraph)]`;
 
   let truncated;
   if (text.length > 8000) {
