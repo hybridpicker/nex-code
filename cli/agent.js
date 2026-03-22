@@ -862,13 +862,15 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n` : ''}# Jarvis Debugging Rules
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ''}# Jarvis Debugging Rules
 
 - Jarvis errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
 - ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/jarvis/jarvis-agent/logs/
 - NEVER run local bash/find/sqlite3 commands when debugging Jarvis issues
 - Local jarvis-agent/ is just source code — the running system is on the server
 - CRITICAL: When the user pastes a Jarvis error message ("jarvisFehler:", "jarvisEinige Fehler", error logs), this is NEVER a "simple question" to answer from training knowledge. You MUST ssh_exec to verify if the error is still occurring BEFORE writing any explanation. Do NOT explain from memory — investigate first, always.
+- LOG FILES: Always check the CURRENT log first: /home/jarvis/jarvis-agent/logs/api-error.log (no date suffix). Log files WITH a date suffix (e.g. api-error.log-20260322) are ROTATED/OLD — errors there may already be fixed. Only look at dated logs if the current log is empty or the error is absent from the current log.
+- FIX WORKFLOW (YOLO): Once you identify a fixable bug via SSH investigation: (1) edit the file on server using ssh_exec with tee or sed -i (NOT sed -n), (2) restart the affected service with systemctl restart, (3) verify with tail logs. Do NOT produce a report — execute the fix.
 
 # Core Behavior
 
