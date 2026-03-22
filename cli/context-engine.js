@@ -733,9 +733,12 @@ function forceCompress(messages, tools, nuclear = false) {
   };
   const firstTaskMsg = userMessages.find(m => !isSystemInjection(m));
   const lastUserMsg = [...userMessages].reverse().find(m => !isSystemInjection(m));
-  // Always include the first task message so the LLM knows what it was doing
+  // Always include the first task message so the LLM knows what it was doing.
+  // Insert AFTER the system prompt (index 1), never before it — system must stay first.
   if (firstTaskMsg && !result.find(m => m === firstTaskMsg)) {
-    result.unshift(firstTaskMsg); // prepend so it comes before any recent messages
+    const sysIdx = result.findIndex(m => m.role === 'system');
+    const insertAt = sysIdx >= 0 ? sysIdx + 1 : 0;
+    result.splice(insertAt, 0, firstTaskMsg);
   }
   // Also include the last real user message if different from first
   if (lastUserMsg && lastUserMsg !== firstTaskMsg && !result.find(m => m === lastUserMsg)) {
