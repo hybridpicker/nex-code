@@ -1157,6 +1157,10 @@ This applies to bash output, SSH output, grep results, and all other tool output
   - Good for: reading multiple files, analyzing separate modules.
   - Bad for: tasks that depend on each other or modify the same file.
   - Max 5 parallel agents.
+- NEVER write temporary test/demo scripts (test_*.js, demo_*.js, scratch_*.js) just to run once and delete.
+  - Instead: use bash with inline node -e '...' for quick one-off checks.
+  - If the test is worth keeping, write it to tests/ with a proper name.
+  - Write-then-delete patterns waste 3 tool calls and leave orphans if the session is interrupted.
 ${_buildModelRoutingGuide()}
 
 # Edit Reliability (Critical)
@@ -2395,10 +2399,13 @@ async function processInput(userInput, serverHooks = null) {
           _sessionLastEditFailed.delete(path);
         } else {
           // Check if this targeted re-read overlaps significantly with a range already read.
-          // >70% overlap means the model is re-reading content it already has in context.
+          // ≥70% overlap means the model is re-reading content it already has in context.
+          // Block the read outright — a warning-only approach is insufficient because the
+          // LLM can ignore injected warnings and still execute the duplicate read.
           const newStart = prep.args.line_start || 1;
           const newEnd   = prep.args.line_end   || newStart + 350;
           const prevRanges = _sessionFileReadRanges.get(path) || [];
+          let blocked = false;
           for (const [ps, pe] of prevRanges) {
             const overlapStart = Math.max(newStart, ps);
             const overlapEnd   = Math.min(newEnd, pe);
@@ -2407,16 +2414,20 @@ async function processInput(userInput, serverHooks = null) {
               const newLen     = newEnd - newStart || 1;
               if (overlapLen / newLen >= 0.7) {
                 const shortPath = path.split('/').slice(-2).join('/');
-                console.log(`${C.yellow}  ⚠ Targeted re-read overlap: "${shortPath}" lines ${newStart}-${newEnd} overlaps lines ${ps}-${pe} already in context${C.reset}`);
-                const overlapWarning = {
-                  role: 'user',
-                  content: `[SYSTEM WARNING] read_file("${path}", lines ${newStart}-${newEnd}) overlaps lines ${ps}-${pe} you already read. This content is already in your context — do not re-read the same range. Use grep to find specific content instead.`,
+                console.log(`${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`);
+                prep.canExecute = false;
+                prep.errorResult = {
+                  role: 'tool',
+                  content: `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) is a duplicate — lines ${ps}-${pe} are already in your context (≥70% overlap). Use grep to find specific content instead of re-reading.`,
+                  tool_call_id: prep.callId,
                 };
-                conversationMessages.push(overlapWarning);
-                apiMessages.push(overlapWarning);
+                blocked = true;
                 break;
               }
             }
+          }
+          if (!blocked) {
+            // no significant overlap — normal targeted section read of a large file, let through
           }
         }
         // else: normal targeted section read of a large file — let through silently
