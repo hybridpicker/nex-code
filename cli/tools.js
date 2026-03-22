@@ -3052,7 +3052,12 @@ async function _executeToolInner(name, args, options = {}) {
         } else {
           const { stdout, stderr, exitCode, error } = await sshExec(sysProfile, cmd, { timeout });
           const out = [stdout, stderr].filter(Boolean).join('\n').trim();
-          return { out: error && exitCode !== 0 ? (error + '\n' + out).trim() : out, exitCode };
+          // Only prepend the SSH error when stdout is empty — if stdout has content,
+          // the command produced useful output despite a non-zero exit (e.g. openssl
+          // s_client pipeline in ssl_check exits 1 even when cert data was extracted).
+          // Prepending the full SSH error+script in that case floods the tool result
+          // with multi-KB noise and causes the script to appear twice in context.
+          return { out: error && exitCode !== 0 && !stdout.trim() ? (error + '\n' + out).trim() : out, exitCode };
         }
       };
 
