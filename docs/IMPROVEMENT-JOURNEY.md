@@ -257,3 +257,39 @@ When adding a new tool or modifying the agentic loop:
       (bash-style normalized key or a dedicated counter).
 - [ ] Does the tool inject messages into the conversation? Pre-compress first.
 - [ ] Run `/bench` and verify no score regression.
+
+### 2026-03-22 — v0.3.72: Terminal Noise Reduction & Deadlock Fix
+
+**Context:** Session analysis showed 3/10 and 5/10 scores on Jarvis debug
+scenarios. Root causes: read_file loops (13× same file), cascading compression
+messages, and a deadlock where files couldn't be re-read after context wipe.
+
+#### `7738538` — Cleaner terminal output
+
+- Re-read block message shown only once per file (was: every attempt)
+- Removed misleading "Context 7% used" warning on re-reads at low context
+- Compression messages deduplicated with `×N` counter via `_logCompression()`
+
+#### `3a27080` — Deadlock fix + noise reduction
+
+- **Critical:** Reset `_sessionFileReadCounts` and `_sessionGrepFileCounts`
+  after super-nuclear compression — file content is gone from context after
+  wipe, so blocking re-reads caused a deadlock
+- Suppress `[force-compressed — ~X tokens freed]` when X < 50
+- Shorten all BLOCKED error messages from 200-400 to ~60-100 chars
+
+#### `366d3eb` — System warning shortening + scorer rule #14
+
+- Shortened 9 verbose `[SYSTEM WARNING]` messages (saves ~2000 tokens/session)
+- Session scorer rule #14: penalize BLOCKED tool calls (-0.5 each, max -1.5)
+
+#### `d6a2cb0` — First-call 400 fix
+
+- On first LLM call 400 (system prompt too large): skip gentle compression,
+  go straight to nuclear. Shows 1 clean message instead of 3-step cascade.
+- Lower proactive auto-compress threshold from 78% to 65% for first call
+  to catch oversized system prompts before they hit 400.
+
+**Impact:** ~3000-4000 fewer tokens wasted per problematic session.
+Session output is significantly cleaner — no more message spam on re-reads
+or compression cascades.
