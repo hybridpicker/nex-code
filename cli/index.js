@@ -2516,7 +2516,19 @@ async function startREPL() {
         const { confirm } = require('./safety');
         const resume = await confirm(`Previous session found. Resume?`);
         if (resume) {
-          setConversationMessages(lastSession.messages);
+          // Option 2: cap restored messages to last 20 to avoid flooding context
+          const MAX_RESTORE = 20;
+          const msgs = lastSession.messages;
+          const trimmed = msgs.length > MAX_RESTORE ? msgs.slice(-MAX_RESTORE) : msgs;
+          setConversationMessages(trimmed);
+
+          // Option 1: auto-compress if restored session already fills >50% context
+          const { getUsage, forceCompress } = require('./context-engine');
+          const usage = getUsage(trimmed, []);
+          if (usage.percentage >= 50) {
+            const { messages: compressed } = forceCompress(trimmed, []);
+            setConversationMessages(compressed);
+          }
           // suppressed: session restored message
         }
       }
