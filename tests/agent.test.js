@@ -1133,6 +1133,9 @@ describe('agent.js', () => {
       getPlanModePrompt.mockReturnValue('Plan mode active');
       const { extractStepsFromText, setPlanContent, createPlan } = require('../cli/planner');
       extractStepsFromText.mockReturnValueOnce(['Step 1: do thing', 'Step 2: do other']);
+      // Must read at least one file before plan is accepted — mock investigation step first
+      executeTool.mockResolvedValueOnce('file contents');
+      mockStream('', [{ function: { name: 'read_file', arguments: { path: 'modules/fitness.js' } }, id: 'r1' }]);
       mockStream('Here is my plan:\n1. Do thing\n2. Do other');
       await processInput('plan this');
       expect(setPlanContent).toHaveBeenCalled();
@@ -1146,6 +1149,9 @@ describe('agent.js', () => {
       getPlanModePrompt.mockReturnValue('Plan mode active');
       const { extractStepsFromText, setPlanContent } = require('../cli/planner');
       extractStepsFromText.mockReturnValueOnce([]);
+      // Must read at least one file before plan is accepted — mock investigation step first
+      executeTool.mockResolvedValueOnce('file contents');
+      mockStream('', [{ function: { name: 'read_file', arguments: { path: 'modules/fitness.js' } }, id: 'r1' }]);
       mockStream('Here is a vague plan');
       await processInput('plan this');
       expect(setPlanContent).toHaveBeenCalled();
