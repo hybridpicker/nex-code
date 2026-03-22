@@ -5,9 +5,9 @@
 ```
 
 <p align="center">
-  <b>The open-source agentic coding assistant for Ollama Cloud — and every other provider.</b><br>
+  <b>The open-source agentic coding CLI for Ollama Cloud.</b><br>
   Use it in the terminal or install the built-in <b>VS Code extension</b> for a sidebar chat panel.<br>
-  Free by default with Ollama. Switch to OpenAI, Anthropic, or Gemini anytime.
+  Built and optimized for <a href="https://ollama.com">Ollama Cloud</a> — OpenAI, Anthropic, and Gemini are also supported.
 </p>
 
 <p align="center">
@@ -66,9 +66,11 @@ npm update -g nex-code
 
 ## Why nex-code?
 
-**Provider-agnostic by design.** Run fully free with a local Ollama server, use Ollama Cloud's 47+ models on a flat-rate plan, or connect OpenAI, Anthropic, or Gemini — switch at runtime with `/model`, no restart needed. The fallback chain automatically retries failed requests on the next configured provider.
+**Ollama Cloud first.** nex-code is built and optimized for [Ollama Cloud](https://ollama.com) — the flat-rate platform that runs devstral, Kimi K2, Qwen3-Coder, and 47+ other open models. All behavioral tuning (loop detection, context compression, tool-call repair) is done against real Ollama Cloud sessions. Other providers (OpenAI, Anthropic, Gemini) work via the same interface but are not the primary target.
 
-**Open-model first.** nex-code was built around open models, not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
+**Recommended model: `devstral-2:123b`** — purpose-built for agentic coding, highest score on nex-code's own benchmark, best tool-call reliability.
+
+**Open-model first.** Not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
 
 **Smart model routing.** The built-in `/benchmark` system tests all configured models against 33 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
 
