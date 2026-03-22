@@ -1581,6 +1581,8 @@ async function processInput(userInput, serverHooks = null) {
   let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
+  let consecutiveBlocks = 0;  // consecutive BLOCKED tool results — model ignoring block messages
+  const LOOP_ABORT_BLOCKS = 5; // abort after 5 consecutive blocked tool calls (model stuck)
   let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
@@ -2310,16 +2312,35 @@ async function processInput(userInput, serverHooks = null) {
       const isTargetedReRead = prep.args?.line_start != null;
       const lastEditFailed = _sessionLastEditFailed.get(path) === true;
 
-      if (alreadyRead >= 1 && isTargetedReRead) {
-        // Allow targeted re-reads through. Clear edit-failure flag when used.
+      // Hard cap: block if total reads (unbounded + targeted) >= 6 — prevents 13× read loops.
+      // Between 1 and 5: unbounded re-reads are blocked immediately; targeted reads are allowed
+      // since the model may need to navigate a large file in multiple sections.
+      const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file
+
+      if (alreadyRead >= TARGETED_READ_HARD_CAP) {
+        // Hard cap exceeded — block regardless of targeted/unbounded
+        const shortPath = path.split('/').slice(-2).join('/');
+        const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
+        _sessionReReadBlockShown.set(path, blockShownCount);
+        if (blockShownCount === 1) {
+          console.log(`${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`);
+        }
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: read_file("${path}") denied — file already read ${alreadyRead}× (hard cap: ${TARGETED_READ_HARD_CAP}). You have seen enough of this file. Use grep to find specific content or proceed with what you know.`,
+          tool_call_id: prep.callId,
+        };
+      } else if (alreadyRead >= 1 && isTargetedReRead) {
+        // Targeted re-read within cap — allow. Clear edit-failure flag when used.
         if (lastEditFailed) {
           const shortPath = path.split('/').slice(-2).join('/');
           console.log(`${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`);
           _sessionLastEditFailed.delete(path);
         }
-        // else: normal targeted section read — just let it through silently
+        // else: normal targeted section read of a large file — let through silently
       } else if (alreadyRead >= 1) {
-        // Unbounded re-read — block to prevent context flood
+        // Unbounded re-read — block immediately to prevent context flood
         const shortPath = path.split('/').slice(-2).join('/');
         const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
         _sessionReReadBlockShown.set(path, blockShownCount);
@@ -2333,6 +2354,23 @@ async function processInput(userInput, serverHooks = null) {
           tool_call_id: prep.callId,
         };
       }
+    }
+
+    // ─── sed -n pre-execution block ──────────────────────────────────────────
+    // Block sed -n line-range commands BEFORE they execute. Previously only a
+    // post-execution warning was injected — the command still ran and flooded context.
+    // Now block it outright so the model is forced to use grep instead.
+    for (const prep of prepared) {
+      if (!prep.canExecute) continue;
+      if (prep.fnName !== 'ssh_exec' && prep.fnName !== 'bash') continue;
+      if (!/\bsed\s+-n\b/.test(prep.args?.command || '')) continue;
+      console.log(`${C.red}  ✖ Blocked sed -n: use grep -n "pattern" <file> | head -30 instead${C.reset}`);
+      prep.canExecute = false;
+      prep.errorResult = {
+        role: 'tool',
+        content: `BLOCKED: sed -n is forbidden — it floods context with line ranges. Use grep -n "pattern" <file> | head -30 to read a specific section, or cat <file> for the full file.`,
+        tool_call_id: prep.callId,
+      };
     }
 
     // ─── write_file shrink guard ─────────────────────────────────────────────
@@ -2536,24 +2574,7 @@ async function processInput(userInput, serverHooks = null) {
           }
         }
       }
-      // sed -n pattern detection — warn immediately when the model uses sed line-range scrolling
-      if ((prep.fnName === 'ssh_exec' || prep.fnName === 'bash') && prep.args && /\bsed\s+-n\b/.test(prep.args.command || '')) {
-        // Always pre-compress before injecting warning — the warning itself can tip an
-        // already-large context over the limit, triggering a 400 cascade. The compress
-        // is a no-op when context is small, so there is no downside to always running it.
-        {
-          const _allTools = getAllToolDefinitions();
-          const { messages: _c } = forceCompress(apiMessages, _allTools);
-          apiMessages = _c;
-        }
-        console.log(`${C.yellow}  ⚠ sed -n detected in command — injecting anti-pattern warning${C.reset}`);
-        const sedWarning = {
-          role: 'user',
-          content: `[SYSTEM WARNING] sed -n forbidden — floods context. Use grep -n "pattern" <file> | tail -20 instead.`,
-        };
-        conversationMessages.push(sedWarning);
-        apiMessages.push(sedWarning);
-      }
+      // sed -n is now blocked in the pre-batch phase — no post-execution action needed here
       // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
       if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
         const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
@@ -2675,6 +2696,21 @@ async function processInput(userInput, serverHooks = null) {
         conversationMessages.push(stopMsg);
         apiMessages.push(stopMsg);
         console.log(`${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`);
+      }
+      // Consecutive BLOCKED tool call detection — model ignoring block messages
+      const wasBlocked = res.startsWith('BLOCKED:');
+      if (wasBlocked) {
+        consecutiveBlocks++;
+        if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        }
+      } else {
+        consecutiveBlocks = 0; // reset on any non-blocked result
       }
       // Consecutive error detection
       if (!isOk) {
