@@ -1782,6 +1782,33 @@ async function processInput(userInput, serverHooks = null) {
           const _afterTokens = require('./context-engine').estimateMessagesTokens(_superNuclear);
           const _beforeTokens = require('./context-engine').estimateMessagesTokens(apiMessages);
           if (_afterTokens < _beforeTokens) {
+            // Extract investigation findings before wiping history so the agent
+            // can continue implementing fixes instead of re-investigating from scratch.
+            const _findingParts = [];
+            // Last 3 assistant messages with actual text content (skip pure tool-call turns)
+            const _assistantTexts = conversationMessages
+              .filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 30)
+              .slice(-3)
+              .map(m => m.content.trim().slice(0, 120).replace(/\n+/g, ' '));
+            if (_assistantTexts.length > 0) {
+              _findingParts.push('Key findings:\n' + _assistantTexts.map(t => `- ${t}`).join('\n'));
+            }
+            // Last 2-3 tool result messages with meaningful output (skip BLOCKED: messages)
+            const _toolResults = conversationMessages
+              .filter(m => m.role === 'tool' && typeof m.content === 'string' &&
+                !m.content.startsWith('BLOCKED:') && m.content.trim().length > 10)
+              .slice(-3)
+              .map(m => m.content.trim().split('\n').slice(0, 3).join('\n').slice(0, 200));
+            if (_toolResults.length > 0) {
+              _findingParts.push('Tool results summary:\n' + _toolResults.map(t => `- ${t}`).join('\n'));
+            }
+            if (_findingParts.length > 0) {
+              const _findingsMsg = {
+                role: 'user',
+                content: `[SYSTEM: Findings from investigation before context wipe]\n${_findingParts.join('\n')}\nContinue implementing the fixes based on these findings.`,
+              };
+              _superNuclear.push(_findingsMsg);
+            }
             apiMessages = _superNuclear;
             _superNuclearFires++;
             _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
@@ -1926,9 +1953,24 @@ async function processInput(userInput, serverHooks = null) {
     if (!tool_calls || tool_calls.length === 0) {
       const hasText = (content || '').trim().length > 0 || streamedText.trim().length > 0;
       // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
+      let _justUnblockedSsh = false;
       if (_sshBlockedAfterStorm && hasText) {
         _sshBlockedAfterStorm = false;
         _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
+        _justUnblockedSsh = true;
+      }
+      // If the agent just got unblocked but responded with a question instead of acting,
+      // nudge it to continue implementing the fix without asking.
+      if (_justUnblockedSsh && hasText) {
+        const synthText = (content || '').trim();
+        const endsWithQuestion = synthText.endsWith('?') ||
+          /\b(Wo |Bitte |Kannst du|Soll ich)\b/.test(synthText.slice(-200));
+        if (endsWithQuestion) {
+          const continueNudge = { role: 'user', content: '[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is at 94.130.37.43.' };
+          apiMessages.push(continueNudge);
+          conversationMessages.push(continueNudge);
+          continue; // let the loop proceed without counting as a new step
+        }
       }
       // If we just ran tools but the LLM produced no text → nudge it to summarize
       if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
