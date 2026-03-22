@@ -1879,7 +1879,8 @@ async function processInput(userInput, serverHooks = null) {
           if (isFirstCall) {
             // First-call 400: system prompt too large for model. Skip to attempt 3.
             contextRetries = 3;
-            _logCompression('Bad request (400) — system prompt too large, compressing...', C.yellow);
+            const _errDetail = err.message.replace(/^API Error(\s*\[HTTP \d+\])?:\s*/i, '').slice(0, 150);
+            _logCompression(`Bad request (400) — ${_errDetail || 'system prompt too large'}, compressing...`, C.yellow);
           } else if (nuclear) {
             _logCompression(`Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`, C.yellow);
           } else {
