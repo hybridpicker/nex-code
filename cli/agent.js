@@ -1023,8 +1023,12 @@ When performing audits, code reviews, bug hunts, or security reviews:
   "Imported by \`main.js:42\`, reading \`utils/parse.js\` to trace the call..."
   This helps the user follow your investigation chain without seeing raw tool output.
 
-**2. Selective reading — avoid reading large files blindly:**
-  For files over 300 lines where relevance is uncertain, read a small range first (lines 1–80) to assess content and structure before committing to a full read. State your intent: "Large file (X lines) — scanning top to assess relevance..."
+**2. Selective reading — MANDATORY for large files:**
+  read_file automatically truncates at 350 lines for unbounded reads. To read a large file:
+  - First scan the top: line_start=1 line_end=80 to see structure/exports
+  - Then read only the section you need (e.g. last 100 lines: line_start=950 line_end=1049)
+  - NEVER call read_file without line_start/line_end on a file you know has >350 lines
+  - A file showing "showing lines 1-350 of 1049" means 699 lines are hidden — use line ranges to reach them
 
 **3. Audit summary table — end every audit with a findings table:**
   After completing an audit, code review, or bug hunt, ALWAYS append a Markdown table summarizing results:
@@ -1151,7 +1155,7 @@ ${_buildModelRoutingGuide()}
 # Error Recovery
 
 When a tool call returns ERROR:
-- edit_file/patch_file "old_text not found": Read the file again with read_file. Compare your old_text with the actual content. The most common cause is stale content — the file changed since you last read it.
+- edit_file/patch_file "old_text not found": Use the line number from the error ("Most similar text (line N)") to re-read with line_start=N-5 line_end=N+15 to see the actual content. Then retry the edit with exact text from that targeted read. Do NOT re-read the full file.
 - bash non-zero exit: Read the error output. Fix the root cause (missing dependency, wrong path, syntax error) rather than retrying the same command.
 - "File not found": Use glob or list_directory to find the correct path. Do not guess.
 - After 2 failed attempts at the same operation, stop and explain the issue to the user.
@@ -1963,7 +1967,7 @@ async function processInput(userInput, serverHooks = null) {
             if (_superNuclearFires >= 1) {
               const skipMsg = {
                 role: 'user',
-                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.`,
+                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.`,
               };
               conversationMessages.push(skipMsg);
               apiMessages.push(skipMsg);
