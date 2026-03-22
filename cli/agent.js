@@ -1689,7 +1689,7 @@ async function processInput(userInput, serverHooks = null) {
             const allTools = getAllToolDefinitions();
             const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
             apiMessages = compressedMsgs;
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
             staleRetries = 0; // Reset so compressed context gets full retry attempts
             i--;
             continue;
@@ -1727,7 +1727,7 @@ async function processInput(userInput, serverHooks = null) {
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           if (STALE_AUTO_SWITCH) {
             const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
@@ -1789,7 +1789,7 @@ async function processInput(userInput, serverHooks = null) {
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           i--;
           continue;
@@ -1841,6 +1841,9 @@ async function processInput(userInput, serverHooks = null) {
             // so the agent can't immediately repeat the same storm after context wipe.
             // SSH unblocks naturally when the agent sends a text-only response.
             _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
+            _sessionFileReadCounts.clear();  // file content is gone after wipe — allow re-reads
+            _sessionReReadBlockShown.clear();
+            _sessionGrepFileCounts.clear();  // same for grep flood counters
             _logCompression(`Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`, C.yellow);
             // After 2 super-nuclear fires, inject a "last chance" warning so the agent
             // knows it must be surgical and stop after a minimal investigation.
@@ -2071,11 +2074,11 @@ async function processInput(userInput, serverHooks = null) {
         let advice;
         if (hasReRead) {
           urgency = 'WARNING';
-          advice = `You are about to re-read file(s) already in your context: ${reReadFiles.join(', ')}. This adds NO new information and wastes context tokens. STOP. Use grep or targeted line ranges (line_start/line_end) to find specific sections instead of re-reading the whole file.`;
+          advice = `Re-reading ${reReadFiles.join(', ')} — already in context. Use grep or line ranges instead.`;
         } else if (hasUnboundedRead) {
-          advice = `You are about to read a file without line_start/line_end. At ${Math.round(ctxPct)}% used this risks a 400 context-overflow error. Read only the specific lines you need (use line_start/line_end). Do NOT re-read files already in context.`;
+          advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
         } else {
-          advice = `Context is ${Math.round(ctxPct)}% used (${Math.round(100 - ctxPct)}% remaining). Avoid large file reads. Wrap up exploration and complete the task with what you know.`;
+          advice = `Context ${Math.round(ctxPct)}% used. Avoid large reads, wrap up with what you have.`;
         }
         const pressureMsg = {
           role: 'user',
@@ -2117,7 +2120,7 @@ async function processInput(userInput, serverHooks = null) {
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: read_file("${path}") was denied. You have already read this file ${alreadyRead} time${alreadyRead === 1 ? '' : 's'} — it is fully in your context. Reading it again adds nothing new and wastes tokens. Use grep with a specific pattern, or reference the line numbers you already have. Do NOT re-read this file.`,
+          content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use grep or line ranges instead.`,
           tool_call_id: prep.callId,
         };
       }
@@ -2139,7 +2142,7 @@ async function processInput(userInput, serverHooks = null) {
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: grep("${grepPath}") was denied. You have already searched this file ${alreadyGrepped} time${alreadyGrepped === 1 ? '' : 's'} with different patterns — the file content is in your context. Stop searching and use the data you already have. Reference the line numbers from previous reads instead of issuing more grep calls.`,
+          content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results.`,
           tool_call_id: prep.callId,
         };
       }
@@ -2156,7 +2159,7 @@ async function processInput(userInput, serverHooks = null) {
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: ssh_exec was denied. You have already been warned about SSH storm (${SSH_STORM_WARN}+ consecutive SSH calls). You MUST stop making SSH calls and synthesize your findings now. Answer the user with what you already found. Do not issue any more SSH commands.`,
+          content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
           tool_call_id: prep.callId,
         };
       }
@@ -2182,7 +2185,7 @@ async function processInput(userInput, serverHooks = null) {
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
-          content: `BLOCKED: ${prep.fnName} was denied. You are debugging a Jarvis SERVER error — Jarvis runs on the DEPLOYED server at 94.130.37.43, not locally. The local jarvis-agent/ directory is just source code. STOP running local tools. Use ssh_exec instead:\n- ssh_exec: tail -50 /home/jarvis/jarvis-agent/logs/api.log\n- ssh_exec: grep -r "pattern" /home/jarvis/jarvis-agent/\nAll Jarvis investigation MUST go through ssh_exec on 94.130.37.43.`,
+          content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
           tool_call_id: prep.callId,
         };
         break; // one block per batch is enough to redirect the agent
