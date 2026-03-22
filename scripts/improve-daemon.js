@@ -32,6 +32,7 @@ const SESSION_FILE = path.join(HOME, 'Coding/remote-service/.nex/sessions/_autos
 const STATE_FILE   = path.join(HOME, 'Coding/remote-service/.nex/loop-state.json');
 const NEX_DIR      = path.join(HOME, 'Coding/nex-code');
 const CLAUDE_BIN   = path.join(HOME, '.local/bin/claude');
+const JARVIS_SSH   = process.env.JARVIS_SSH_HOST || 'jarvis@203.0.113.10'; // override via env
 const NODE_BIN     = process.execPath;
 
 const DEBOUNCE_MS   = 90_000;  // wait 90s after last write before treating session as complete
@@ -89,7 +90,7 @@ function sendMatrix(message) {
     // Escape single quotes for the shell command
     const escaped = payload.replace(/'/g, `'"'"'`);
     execSync(
-      `ssh -o ConnectTimeout=10 -o BatchMode=yes jarvis@203.0.113.10 ` +
+      `ssh -o ConnectTimeout=10 -o BatchMode=yes ${JARVIS_SSH} ` +
       `"curl -sf -X POST http://localhost:3000/matrix/notify ` +
       `-H 'Content-Type: application/json' -d '${escaped}'"`,
       { timeout: 20_000 }
