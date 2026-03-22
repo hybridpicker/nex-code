@@ -716,6 +716,8 @@ const _sessionGrepFileCounts = new Map();   // per-file grep count (different pa
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
 let _sessionConsecutiveSshCalls = 0;
+let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
+let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 
 // Mid-run user input buffer: notes injected by the user while the agent is running
 const _midRunBuffer = [];
@@ -1119,6 +1121,8 @@ function clearConversation() {
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
   _sessionConsecutiveSshCalls = 0;
+  _superNuclearFires = 0;
+  _sshBlockedAfterStorm = false;
 }
 
 function trimConversationHistory() {
@@ -1779,9 +1783,22 @@ async function processInput(userInput, serverHooks = null) {
           const _beforeTokens = require('./context-engine').estimateMessagesTokens(apiMessages);
           if (_afterTokens < _beforeTokens) {
             apiMessages = _superNuclear;
+            _superNuclearFires++;
+            _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
+            _sshBlockedAfterStorm = false;   // unblock SSH so agent can re-investigate
+            _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
             console.log(`${C.yellow}  ⚠ Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)${C.reset}`);
+            // After 2 super-nuclear fires, inject a "last chance" warning so the agent
+            // knows it must be surgical and stop after a minimal investigation.
+            if (_superNuclearFires >= 2) {
+              const lastChanceMsg = {
+                role: 'user',
+                content: `[SYSTEM WARNING] Context has been wiped ${_superNuclearFires} times. This is your LAST CHANCE. You MUST: (1) Make at most 3 SSH calls — be surgical, get only the essential facts. (2) Immediately synthesize and answer — DO NOT keep investigating. (3) If you cannot answer with 3 SSH calls, give the best partial answer you have. Further context overflow will hard-abort the session.`,
+              };
+              conversationMessages.push(lastChanceMsg);
+              apiMessages.push(lastChanceMsg);
+            }
             contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
-            _jarvisLocalWarnFired = 0; // reset so the guard re-fires if agent goes local again
             i--;
             continue;
           }
@@ -1905,6 +1922,11 @@ async function processInput(userInput, serverHooks = null) {
     // No tool calls → response complete (or nudge if empty after tools)
     if (!tool_calls || tool_calls.length === 0) {
       const hasText = (content || '').trim().length > 0 || streamedText.trim().length > 0;
+      // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
+      if (_sshBlockedAfterStorm && hasText) {
+        _sshBlockedAfterStorm = false;
+        _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
+      }
       // If we just ran tools but the LLM produced no text → nudge it to summarize
       if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
         const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
@@ -2041,6 +2063,23 @@ async function processInput(userInput, serverHooks = null) {
         prep.errorResult = {
           role: 'tool',
           content: `BLOCKED: grep("${grepPath}") was denied. You have already searched this file ${alreadyGrepped} time${alreadyGrepped === 1 ? '' : 's'} with different patterns — the file content is in your context. Stop searching and use the data you already have. Reference the line numbers from previous reads instead of issuing more grep calls.`,
+          tool_call_id: prep.callId,
+        };
+      }
+    }
+
+    // ─── SSH block after storm warning ──────────────────────────────────────────
+    // After SSH storm warning fires, block all further ssh_exec calls. The agent
+    // MUST synthesize with what it already has. Unblocked when the agent produces
+    // a text-only LLM response (no tool calls) — see below in the LLM response handler.
+    if (_sshBlockedAfterStorm) {
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== 'ssh_exec') continue;
+        prep.canExecute = false;
+        prep.errorResult = {
+          role: 'tool',
+          content: `BLOCKED: ssh_exec was denied. You have already been warned about SSH storm (${SSH_STORM_WARN}+ consecutive SSH calls). You MUST stop making SSH calls and synthesize your findings now. Answer the user with what you already found. Do not issue any more SSH commands.`,
           tool_call_id: prep.callId,
         };
       }
@@ -2218,7 +2257,8 @@ async function processInput(userInput, serverHooks = null) {
             const { messages: _c } = forceCompress(apiMessages, _allTools);
             apiMessages = _c;
           }
-          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — injecting synthesis prompt${C.reset}`);
+          _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
+          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`);
           const sshStormWarning = {
             role: 'user',
             content: `[SYSTEM WARNING] You have made ${_sessionConsecutiveSshCalls} consecutive SSH calls. STOP issuing more SSH commands. Synthesize the findings from the SSH output already in context and answer the user's question directly. Only make one more SSH call if a single specific piece of information is genuinely missing — state what it is first.`,
