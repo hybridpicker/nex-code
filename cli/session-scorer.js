@@ -441,6 +441,15 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
+  // A BLOCKED message means the agent attempted something it shouldn't have.
+  const blockedResults = toolResults.filter((tr) => tr.content.startsWith('BLOCKED:'));
+  if (blockedResults.length > 0) {
+    const penalty = Math.min(blockedResults.length * 0.5, 1.5);
+    score -= penalty;
+    issues.push(`${blockedResults.length} tool call${blockedResults.length === 1 ? '' : 's'} blocked (agent attempted denied actions)`);
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
