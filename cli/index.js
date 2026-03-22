@@ -2155,47 +2155,28 @@ async function startREPL() {
     process.stdout.write(`  ${C_dim}${options.length + 1}${C_reset}  ${C_dim}Eigene Antwort…${C_reset}\n`);
     process.stdout.write(`\n  ${C_cyan}[1-${options.length + 1}]${C_reset} › `);
 
+    // Use readline line mode — raw stdin is unreliable mid-session (state conflicts).
     return new Promise((resolve) => {
-      rl.pause();
-      if (process.stdin.isTTY) process.stdin.setRawMode(true);
-
-      const onData = (buf) => {
-        const ch = buf.toString();
-
-        // Ctrl+C
-        if (ch === '\u0003') {
-          process.stdout.write('\n');
-          cleanup();
-          resolve('');
-          return;
-        }
-
-        const n = parseInt(ch);
-
+      rl.resume();
+      rl.once('line', (line) => {
+        const trimmed = line.trim();
+        const n = parseInt(trimmed);
         if (n >= 1 && n <= options.length) {
-          process.stdout.write(`${C_bold}${options[n - 1]}${C_reset}\n\n`);
-          cleanup();
+          process.stdout.write(`\n`);
           resolve(options[n - 1]);
-        } else if (n === options.length + 1 || ch === '\r' || ch === '\n') {
-          process.stdout.write('\n');
-          if (process.stdin.isTTY) process.stdin.setRawMode(false);
-          process.stdin.removeListener('data', onData);
+        } else if (n === options.length + 1 || trimmed === '') {
+          // "Eigene Antwort" or blank → prompt for free text
           process.stdout.write(`  ${C_cyan}›${C_reset} `);
-          rl.resume();
-          rl.once('line', (line) => {
+          rl.once('line', (line2) => {
             process.stdout.write('\n');
-            resolve(line.trim() || '');
+            resolve(line2.trim() || '');
           });
+        } else {
+          // Non-numeric input treated as free-text answer
+          process.stdout.write('\n');
+          resolve(trimmed);
         }
-      };
-
-      function cleanup() {
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
-        process.stdin.removeListener('data', onData);
-        rl.resume();
-      }
-
-      process.stdin.on('data', onData);
+      });
     });
   });
 
