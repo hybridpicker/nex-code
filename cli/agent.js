@@ -772,6 +772,7 @@ const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileEditCounts = new Map();
+const _sessionLastEditFailed = new Map(); // path → true when last edit_file on that file failed with "old_text not found"
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
@@ -1198,6 +1199,7 @@ function clearConversation() {
   _sessionGrepFileCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileEditCounts.clear();
+  _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
@@ -1952,6 +1954,7 @@ async function processInput(userInput, serverHooks = null) {
             // SSH unblocks naturally when the agent sends a text-only response.
             _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
             _sessionFileReadCounts.clear();  // file content is gone after wipe — allow re-reads
+            _sessionLastEditFailed.clear();
             _sessionReReadBlockShown.clear();
             _sessionGrepFileCounts.clear();  // same for grep flood counters
 
@@ -2285,7 +2288,11 @@ async function processInput(userInput, serverHooks = null) {
       const path = prep.args?.path;
       if (!path) continue;
       const alreadyRead = fileReadCounts.get(path) || 0;
-      if (alreadyRead >= 1) {
+      // Allow ONE targeted re-read (line_start provided) after edit failure on same file.
+      // This lets the agent recover its exact context when edit_file returned "old_text not found".
+      const isTargetedReRead = prep.args?.line_start != null;
+      const lastEditFailed = _sessionLastEditFailed.get(path) === true;
+      if (alreadyRead >= 1 && !(isTargetedReRead && lastEditFailed)) {
         const shortPath = path.split('/').slice(-2).join('/');
         const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
         _sessionReReadBlockShown.set(path, blockShownCount);
@@ -2299,6 +2306,11 @@ async function processInput(userInput, serverHooks = null) {
           content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use grep or line ranges instead.`,
           tool_call_id: prep.callId,
         };
+      } else if (alreadyRead >= 1 && isTargetedReRead && lastEditFailed) {
+        // Targeted recovery re-read after edit failure — allow but clear the failure flag so it only works once
+        const shortPath = path.split('/').slice(-2).join('/');
+        console.log(`${C.cyan}  ↩ Allowing targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — recovery after edit failure${C.reset}`);
+        _sessionLastEditFailed.delete(path);
       }
     }
 
@@ -2472,8 +2484,15 @@ async function processInput(userInput, serverHooks = null) {
       // and must also be treated as an error for consecutive-error counting.
       const firstLine = res.split('\n')[0];
       const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed') && !firstLine.startsWith('EXIT');
+      // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
+      if (!isOk && (prep.fnName === 'edit_file' || prep.fnName === 'patch_file') && prep.args?.path) {
+        if (firstLine.includes('old_text not found')) {
+          _sessionLastEditFailed.set(prep.args.path, true);
+        }
+      }
       if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
         if (prep.args && prep.args.path) {
+          _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
           filesModified.add(prep.args.path);
           const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
           fileEditCounts.set(prep.args.path, count);

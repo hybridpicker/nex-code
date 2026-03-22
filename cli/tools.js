@@ -1381,12 +1381,16 @@ async function _executeToolInner(name, args, options = {}) {
             console.log(`${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`);
             return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
           }
-          // Provide helpful error with most similar text
+          // Provide helpful error with most similar text + grep hint for recovery
           const similar = findMostSimilar(content, args.old_text);
+          const firstLine = (args.old_text || '').trim().split('\n')[0].slice(0, 60);
+          const grepHint = firstLine
+            ? `\nRecovery: use grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to locate the exact text, then re-read with line_start/line_end.`
+            : '\nRecovery: use grep -n to locate the exact text, then re-read that section with line_start/line_end.';
           if (similar) {
-            return `ERROR: old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+            return `ERROR: old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}${grepHint}`;
           }
-          return `ERROR: old_text not found in ${fp}`;
+          return `ERROR: old_text not found in ${fp}${grepHint}`;
         }
       }
 
