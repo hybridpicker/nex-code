@@ -347,17 +347,64 @@ function scoreMessages(messages) {
 
   // ── 10. Repeated read_file on same file (-1.0) ────────────────────────────
   // Detect read loops: same file read 3+ times (agent ignores context).
-  const readFileCounts = new Map();
+  // Exception: targeted reads (line_start provided) covering genuinely distinct
+  // non-overlapping ranges are legitimate large-file navigation — only penalize
+  // when targeted reads overlap significantly (>70% of the new range covered by
+  // a previously read range), which means the agent forgot and re-read the same
+  // section.
+  const readFileData = new Map(); // path → { count, ranges: [[start, end], ...] }
   for (const tc of toolCalls) {
     if (tc.name === 'read_file' && tc.input?.path) {
       const p = tc.input.path;
-      readFileCounts.set(p, (readFileCounts.get(p) || 0) + 1);
+      if (!readFileData.has(p)) readFileData.set(p, { count: 0, ranges: [] });
+      const d = readFileData.get(p);
+      d.count++;
+      if (tc.input.line_start != null) {
+        const rs = tc.input.line_start || 1;
+        const re = tc.input.line_end   || rs + 350;
+        d.ranges.push([rs, re]);
+      }
     }
   }
+
+  /**
+   * Returns true if a new [ns, ne] range overlaps >70% with any range in prevRanges.
+   */
+  function hasSignificantOverlap(newStart, newEnd, prevRanges) {
+    for (const [ps, pe] of prevRanges) {
+      const oStart = Math.max(newStart, ps);
+      const oEnd   = Math.min(newEnd, pe);
+      if (oEnd > oStart) {
+        const overlapLen = oEnd - oStart;
+        const newLen     = (newEnd - newStart) || 1;
+        if (overlapLen / newLen >= 0.7) return true;
+      }
+    }
+    return false;
+  }
+
   let worstReadCount = 0;
   let worstReadPath = '';
-  for (const [p, count] of readFileCounts) {
-    if (count > worstReadCount) { worstReadCount = count; worstReadPath = p; }
+  for (const [p, d] of readFileData) {
+    if (d.count < 3) continue;
+
+    // All reads are targeted → check whether any read overlaps a previous one.
+    // If every read covers a genuinely new section, it's legitimate navigation.
+    const allTargeted = d.ranges.length === d.count; // every read had line_start
+    if (allTargeted) {
+      let hasLoop = false;
+      const seen = [];
+      for (const [rs, re] of d.ranges) {
+        if (seen.length > 0 && hasSignificantOverlap(rs, re, seen)) {
+          hasLoop = true;
+          break;
+        }
+        seen.push([rs, re]);
+      }
+      if (!hasLoop) continue; // distinct non-overlapping sections — not a loop
+    }
+
+    if (d.count > worstReadCount) { worstReadCount = d.count; worstReadPath = p; }
   }
   if (worstReadCount >= 3) {
     score -= 1.0;
@@ -388,6 +435,44 @@ function scoreMessages(messages) {
     score -= 0.75;
     const shortPath = worstGrepFile.split('/').slice(-2).join('/');
     issues.push(`grep flood on single file: "${shortPath}" searched ${worstGrepFileCount}× with different patterns (file already in context)`);
+  }
+
+  // ── 12a. Write-then-delete temp file waste (-0.25 per file, max -0.5) ──────
+  // Detect write_file on a temp/test/demo file outside tests/ followed by bash
+  // rm of the same file.  This wastes tool calls and leaves orphans on crash.
+  {
+    const writtenTempFiles = new Set();
+    const deletedTempFiles = new Set();
+    const TEMP_RE = /^(test_|demo_|temp_|tmp_|scratch_)/;
+    for (const tc of toolCalls) {
+      if (tc.name === 'write_file' && tc.input?.path) {
+        const base = tc.input.path.split('/').pop();
+        const inTests = tc.input.path.includes('/tests/');
+        if (TEMP_RE.test(base) && !inTests) writtenTempFiles.add(tc.input.path);
+      }
+      if ((tc.name === 'bash' || tc.name === 'ssh_exec') && tc.input?.command) {
+        // match: rm <path> or rm -f <path>
+        const rmMatch = tc.input.command.match(/\brm\s+(?:-\w+\s+)?(\S+)/g);
+        if (rmMatch) {
+          for (const m of rmMatch) {
+            const parts = m.split(/\s+/);
+            const rmPath = parts[parts.length - 1];
+            for (const wPath of writtenTempFiles) {
+              if (wPath.endsWith(rmPath) || rmPath.endsWith(wPath.split('/').pop())) {
+                deletedTempFiles.add(wPath);
+              }
+            }
+          }
+        }
+      }
+    }
+    const wastedCount = deletedTempFiles.size;
+    if (wastedCount >= 1) {
+      const penalty = Math.min(wastedCount * 0.25, 0.5);
+      score -= penalty;
+      const names = [...deletedTempFiles].map((p) => p.split('/').pop()).join(', ');
+      issues.push(`Temp file write-then-delete: ${names} — write inline logic or use tests/ instead`);
+    }
   }
 
   // ── 12. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
