@@ -67,7 +67,7 @@ function _scoreAndPrint(messages) {
 const { getMemoryContext } = require('./memory');
 const { getDeploymentContextBlock } = require('./server-context');
 const { checkPermission, setPermission, savePermissions } = require('./permissions');
-const { confirm, setAllowAlwaysHandler } = require('./safety');
+const { confirm, setAllowAlwaysHandler, getAutoConfirm } = require('./safety');
 const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
 const { StreamRenderer } = require('./render');
 const { runHooks } = require('./hooks');
@@ -860,7 +860,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Jarvis Debugging Rules
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n\n` : ''}# Jarvis Debugging Rules
 
 - Jarvis errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
 - ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/jarvis/jarvis-agent/logs/
@@ -1490,7 +1490,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 5;   // warn after 5 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_WARN = 7;   // warn after 7 consecutive ssh_exec calls (matches scorer penalty threshold)
   const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
