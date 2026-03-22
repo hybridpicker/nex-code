@@ -1634,6 +1634,7 @@ async function processInput(userInput, serverHooks = null) {
     }
     let firstToken = true;
     let streamedText = '';
+    let _streamLoopSuppressed = false; // suppress display once loop detected mid-stream
     const stream = new StreamRenderer();
 
     let result;
@@ -1696,6 +1697,19 @@ async function processInput(userInput, serverHooks = null) {
             return;
           }
 
+          // Mid-stream loop detection: suppress display once repetition is detected.
+          // The post-stream detectAndTruncateLoop will truncate before storing to history.
+          streamedText += text;
+          if (!_streamLoopSuppressed && streamedText.length > 400 && streamedText.length % 250 < text.length + 1) {
+            const q = detectAndTruncateLoop(streamedText, 3);
+            if (q.truncated) {
+              _streamLoopSuppressed = true;
+              stream._clearCursorLine?.();
+              console.log(`${C.yellow}  ⚠ LLM stream loop detected (${q.repeatCount}× repeated) — suppressing display${C.reset}`);
+            }
+          }
+          if (_streamLoopSuppressed) return;
+
           // In non-TTY (headless) mode: flush immediately — no buffering needed
           // In TTY mode: batch tokens for 100ms to reduce cursor flicker
           tokenBuffer += text;
@@ -1725,7 +1739,6 @@ async function processInput(userInput, serverHooks = null) {
             stream.startCursor();
             firstToken = false;
           }
-          streamedText += text;
         },
       });
     } catch (err) {
