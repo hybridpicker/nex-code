@@ -93,10 +93,11 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
   if (isFirstRun) console.log(`  Let's set you up in 60 seconds.\n`);
 
   console.log(`  ${B}Which AI provider do you want to use?${R}\n`);
-  console.log(`  ${G}1)${R} Ollama        ${D}local/cloud — no API key needed${R}`);
-  console.log(`  ${CY}2)${R} Anthropic     ${D}Claude (claude-sonnet-4-6 etc.)${R}`);
-  console.log(`  ${CY}3)${R} OpenAI        ${D}GPT-4o, GPT-4.1 etc.${R}`);
-  console.log(`  ${CY}4)${R} Gemini        ${D}Google Gemini 2.x${R}`);
+  console.log(`  ${G}1)${R} ${B}Ollama Cloud${R}  ${D}recommended — devstral-2:123b, no API key needed${R}`);
+  console.log(`  ${D}   (also works with a local Ollama server)${R}`);
+  console.log(`  ${D}2)  Anthropic     Claude (claude-sonnet-4-6 etc.)${R}`);
+  console.log(`  ${D}3)  OpenAI        GPT-4o, GPT-4.1 etc.${R}`);
+  console.log(`  ${D}4)  Gemini        Google Gemini 2.x${R}`);
   console.log(`  ${D}5)  Skip / Cancel${R}`);
   console.log();
 
@@ -111,12 +112,17 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
 
   if (choice === '1') {
     console.log();
-    const host  = await ask('Ollama host',    'http://localhost:11434');
-    const model = await ask('Default model',  'qwen3-coder');
+    console.log(`\n  ${G}Ollama Cloud${R} ${D}(recommended): uses ollama.com API — flat-rate, 47+ models.${R}`);
+    console.log(`  ${D}Get your API key at: https://ollama.com/settings/api-keys${R}\n`);
+    const cloudKey = await askSecret('OLLAMA_API_KEY (leave blank for local)', replRL);
+    const host  = cloudKey ? 'https://ollama.com' : await ask('Ollama host', 'http://localhost:11434');
+    const model = await ask('Default model', cloudKey ? 'devstral-2:123b' : 'qwen3-coder');
     envLines.push('DEFAULT_PROVIDER=ollama', `DEFAULT_MODEL=${model}`, `OLLAMA_HOST=${host}`);
+    if (cloudKey) envLines.push(`OLLAMA_API_KEY=${cloudKey}`);
     process.env.DEFAULT_PROVIDER = 'ollama';
     process.env.DEFAULT_MODEL    = model;
     process.env.OLLAMA_HOST      = host;
+    if (cloudKey) process.env.OLLAMA_API_KEY = cloudKey;
 
   } else if (choice === '2') {
     console.log();
