@@ -235,6 +235,11 @@ function enrichBashError(errorOutput, command) {
     hints.push('HINT: SSH connection timed out. Check if the host is reachable: ping <host> and verify the port with: nc -zv <host> 22');
   }
 
+  // Working directory deleted — bash cannot spawn a shell when cwd no longer exists
+  if (/spawn \/bin\/sh ENOENT|spawn sh ENOENT/i.test(errorOutput)) {
+    hints.push('HINT: The working directory was deleted during this session — bash cannot execute commands in a non-existent cwd. Previous rm/delete commands succeeded. Use list_directory or glob to verify the state instead of retrying bash.');
+  }
+
   // Backup pattern warnings
   if (/cp.*\$f.*\$f\.bak.*sed.*-i\.bak|sed.*-i\.bak.*cp.*\$f.*\$f\.bak/i.test(command)) {
     hints.push('HINT: Using both cp with .bak and sed -i.bak creates double backups (.bak.bak). Choose one method: either cp "$f" "$f.bak" OR sed -i.bak, not both.');
