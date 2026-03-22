@@ -1456,7 +1456,7 @@ async function processInput(userInput, serverHooks = null) {
     return typeof m?.content === 'string' ? m.content : '';
   })();
   const _isJarvisDebugging = /jarvis|set_reminder|google.?auth|cron:|fehler|server.*error|api\.log/i.test(_firstUserText);
-  let _jarvisLocalWarnFired = false; // only inject once per session
+  let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -1490,7 +1490,7 @@ async function processInput(userInput, serverHooks = null) {
   const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 7;   // warn after 7 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_WARN = 8;   // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
   const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
@@ -1781,6 +1781,7 @@ async function processInput(userInput, serverHooks = null) {
             apiMessages = _superNuclear;
             console.log(`${C.yellow}  ⚠ Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)${C.reset}`);
             contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
+            _jarvisLocalWarnFired = 0; // reset so the guard re-fires if agent goes local again
             i--;
             continue;
           }
@@ -2051,11 +2052,11 @@ async function processInput(userInput, serverHooks = null) {
     // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
     // locally. Fires once per session. Must be pre-execution (before executeBatch)
     // — post-execution warnings can't prevent the tool from running.
-    if (_isJarvisDebugging && !_jarvisLocalWarnFired) {
+    if (_isJarvisDebugging && _jarvisLocalWarnFired < 3) {
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
         if (!['bash', 'read_file', 'find_files'].includes(prep.fnName)) continue;
-        _jarvisLocalWarnFired = true;
+        _jarvisLocalWarnFired++;
         {
           const _allTools = getAllToolDefinitions();
           const { messages: _c } = forceCompress(apiMessages, _allTools);

@@ -2290,10 +2290,30 @@ async function _executeToolInner(name, args, options = {}) {
       const outputLines = processedOutput.split('\n');
       if (outputLines.length > SSH_MAX_LINES) {
         const dropped = outputLines.length - SSH_MAX_LINES;
-        return `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
+        processedOutput = `(${dropped} earlier lines omitted — showing last ${SSH_MAX_LINES})\n` +
           outputLines.slice(-SSH_MAX_LINES).join('\n');
       }
-      return processedOutput || '(command completed, no output)';
+
+      // Deduplicate repeated lines — log files often have 100+ identical error lines
+      // (e.g., "Cannot find module" firing every minute). These flood the LLM context
+      // with zero additional information. Collapse runs of >4 identical lines.
+      const SSH_DEDUP_THRESHOLD = 4;
+      const dedupLines = processedOutput.split('\n');
+      const deduped = [];
+      let i = 0;
+      while (i < dedupLines.length) {
+        let j = i + 1;
+        while (j < dedupLines.length && dedupLines[j] === dedupLines[i]) j++;
+        const count = j - i;
+        deduped.push(dedupLines[i]);
+        if (count > SSH_DEDUP_THRESHOLD) {
+          deduped.push(`... (${count - 1} identical lines omitted)`);
+        } else {
+          for (let k = 1; k < count; k++) deduped.push(dedupLines[i]);
+        }
+        i = j;
+      }
+      return deduped.join('\n') || '(command completed, no output)';
     }
 
     case 'ssh_upload': {
