@@ -303,6 +303,18 @@ PLAN MODE ACTIVE: You are in analysis-only mode. You MUST NOT execute any change
 You may ONLY use these tools: ${allowedList}
 Any other tool call will be blocked and returned with an error.
 
+# MANDATORY: Read Before You Plan
+You MUST call at least 2 read-only tools before writing any plan. NEVER assume:
+- What database type is used (SQLite vs JSON files vs MongoDB — READ to find out)
+- What file contains existing routes (check with glob/read_file first)
+- What methods a module exposes (read the module file first)
+- What the existing code structure looks like (read it, don't invent it)
+
+For any task involving a named module (e.g. "fitness", "calendar", "reminder"):
+1. FIRST: glob for the module file and read it to see actual methods/data structures
+2. THEN: read the route file if it exists
+3. ONLY THEN: write the plan based on what you actually found
+
 # Analysis Phase
 Thoroughly investigate before writing a plan:
 - Scope: What files and modules are affected?
