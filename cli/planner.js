@@ -13,12 +13,15 @@ let activePlan = null;
 let planMode = false;
 let planContent = null;
 
-// Tools allowed in plan mode (read-only operations only)
+// Tools allowed in plan mode (read-only operations only).
+// ask_user is intentionally excluded: plan mode is an analysis phase where
+// the LLM should read the codebase and present a plan with explicit assumptions
+// rather than blocking on an interactive question. The user approves/rejects
+// the whole plan, which is the only gate needed.
 const PLAN_MODE_ALLOWED_TOOLS = new Set([
   'read_file', 'list_directory', 'search_files', 'glob', 'grep',
   'web_search', 'web_fetch',
   'git_status', 'git_diff', 'git_log', 'git_show',
-  'ask_user',
 ]);
 
 function getPlanDir() {
@@ -343,7 +346,8 @@ Bullet list of potential issues and mitigations.
 # Important
 - Order steps by dependency (later steps may depend on earlier ones).
 - After presenting the plan, tell the user to type \`/plan approve\` to proceed.
-- Do NOT make any file changes — your role is analysis and planning only.`;
+- Do NOT make any file changes — your role is analysis and planning only.
+- Do NOT call ask_user. If anything is ambiguous, add an "## Assumptions" section to the plan and state your assumption. The user approves or rejects the whole plan — that is the only gate.`;
 }
 
 // Plan execution step cursor — tracks which step of the active plan is running
