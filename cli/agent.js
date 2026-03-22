@@ -860,7 +860,14 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Core Behavior
+${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}# Jarvis Debugging Rules
+
+- Jarvis errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
+- ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/jarvis/jarvis-agent/logs/
+- NEVER run local bash/find/sqlite3 commands when debugging Jarvis issues
+- Local jarvis-agent/ is just source code — the running system is on the server
+
+# Core Behavior
 
 - You can use tools OR respond with text. For simple questions, answer directly.
 - For coding tasks, use tools to read files, make changes, run tests, etc.
