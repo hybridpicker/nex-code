@@ -2427,7 +2427,27 @@ async function processInput(userInput, serverHooks = null) {
             }
           }
           if (!blocked) {
-            // no significant overlap — normal targeted section read of a large file, let through
+            // No significant overlap with any single previous range — but check for scroll pattern.
+            // If the agent has read 3+ non-overlapping sections of the same file without an edit
+            // in between, it is scrolling through the file chunk-by-chunk. Scrolling accumulates
+            // context faster than grep and usually means the agent lost track of what it already read.
+            // Warn at section 3, hard-block at section 4.
+            const sectionCount = prevRanges.length; // sections already committed
+            const SCROLL_WARN_SECTIONS  = 2; // after 2 prior sections (3rd read) — warn
+            const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
+            if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
+              const shortPath = path.split('/').slice(-2).join('/');
+              console.log(`${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`);
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: 'tool',
+                content: `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
+                tool_call_id: prep.callId,
+              };
+            } else if (sectionCount >= SCROLL_WARN_SECTIONS) {
+              // Allow but inject a warning into the result (done post-execution via flag)
+              prep._scrollWarn = { sectionCount: sectionCount + 1, path };
+            }
           }
         }
         // else: normal targeted section read of a large file — let through silently
@@ -2855,6 +2875,17 @@ async function processInput(userInput, serverHooks = null) {
             const re = prep.args.line_end   || rs + 350;
             if (!_sessionFileReadRanges.has(prep.args.path)) _sessionFileReadRanges.set(prep.args.path, []);
             _sessionFileReadRanges.get(prep.args.path).push([rs, re]);
+          }
+          // Inject scroll warning if flagged during pre-execution check
+          if (prep._scrollWarn) {
+            const { sectionCount, path: warnPath } = prep._scrollWarn;
+            const scrollWarning = {
+              role: 'user',
+              content: `[SYSTEM WARNING] "${warnPath}" — you have now read ${sectionCount} different sections of this file. This is a file-scroll pattern. Stop reading sections and use grep_search to find the specific lines you need instead.`,
+            };
+            conversationMessages.push(scrollWarning);
+            apiMessages.push(scrollWarning);
+            console.log(`${C.yellow}  ⚠ Scroll warning: "${warnPath.split('/').slice(-2).join('/')}" — ${sectionCount} sections read — use grep instead${C.reset}`);
           }
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
           // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
