@@ -31,6 +31,7 @@ jest.mock('../cli/context-engine', () => ({
   fitToContext: jest.fn().mockImplementation(async (messages) => ({ messages, compressed: false, compacted: false, tokensRemoved: 0 })),
   getUsage: jest.fn().mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),
   estimateTokens: jest.fn().mockImplementation((text) => text ? text.length / 4 : 0),
+  estimateMessagesTokens: jest.fn().mockImplementation((messages) => (messages || []).length * 100),
   compressToolResult: jest.fn().mockImplementation((content) => content),
   forceCompress: jest.fn().mockImplementation((messages) => ({ messages, tokensRemoved: 0 })),
 }));
