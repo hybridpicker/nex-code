@@ -40,6 +40,21 @@ function saveNow(messages) {
 }
 
 /**
+ * Returns true when a final assistant message is too terse to be useful —
+ * e.g. "Done.", "Analysis complete", or any text under 80 chars.
+ * Used by the post-turn enforcement hook to trigger a summary request.
+ */
+function isTooShort(text) {
+  if (!text || typeof text !== "string") return true;
+  const trimmed = text.trim();
+  if (trimmed.length < 80) return true;
+  const terse =
+    /^(done|complete|finished|all done|analysis complete|finally done)[.!]*$/i;
+  if (terse.test(trimmed)) return true;
+  return false;
+}
+
+/**
  * Score the current session and print the result, then persist score into
  * the autosave metadata.  Only runs when there were actual tool calls.
  */
@@ -3070,6 +3085,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           filesRead,
           startTime,
         );
+        // ─── Post-turn enforcement: daemon session summary ─────────────────────
+        // If the model ran tool calls (totalSteps > 0) but ended with a terse
+        // "Done." message, make one direct LLM call for a proper summary.
+        // Only runs in auto-confirm (daemon/headless) mode — interactive
+        // sessions let the user ask follow-up questions themselves.
+        // Does NOT use processInput() to avoid touching conversationMessages.
+        if (
+          totalSteps > 0 &&
+          !opts._isSummaryTurn &&
+          getAutoConfirm() &&
+          isTooShort(content)
+        ) {
+          try {
+            debugLog(
+              `${C.dim}  [post-turn] terse ending — requesting summary${C.reset}`,
+            );
+            const summaryMessages = [
+              ...apiMessages,
+              {
+                role: "user",
+                content:
+                  "Please summarize what you just did in 2-3 sentences.",
+              },
+            ];
+            const summaryRes = await callStream(summaryMessages, [], {});
+            const summaryText = (summaryRes?.content || "").trim();
+            if (summaryText) {
+              console.log(`\n${summaryText}`);
+            }
+          } catch {
+            /* summary enforcement is non-critical — ignore errors */
+          }
+        }
         saveNow(conversationMessages);
         _scoreAndPrint(conversationMessages);
         return;
