@@ -246,16 +246,21 @@ log(`Stop conditions: plateau=${PLATEAU_COUNT}× | max=${MAX_PASSES} passes | sc
 const initialState = readState();
 lastHash = initialState.lastHash || '';
 
+// fs.watch on macOS can miss events for atomically-written files (write+rename).
+// Use fs.watchFile (polling) as primary watcher for reliability.
+const POLL_INTERVAL_MS = 5000; // poll every 5s
+fs.watchFile(SESSION_FILE, { persistent: true, interval: POLL_INTERVAL_MS }, (curr, prev) => {
+  if (curr.mtimeMs !== prev.mtimeMs) onSessionChange();
+});
+
+// Also keep fs.watch as a fast-path for editors that modify in-place
 const watcher = fs.watch(SESSION_FILE, { persistent: true }, (event) => {
   if (event === 'change') onSessionChange();
 });
-
-watcher.on('error', (err) => {
-  log('Watcher error:', err.message);
-});
+watcher.on('error', () => {}); // silently ignore — watchFile is the reliable fallback
 
 // Graceful shutdown
-process.on('SIGTERM', () => { log('SIGTERM — shutting down.'); process.exit(0); });
-process.on('SIGINT',  () => { log('SIGINT — shutting down.');  process.exit(0); });
+process.on('SIGTERM', () => { fs.unwatchFile(SESSION_FILE); log('SIGTERM — shutting down.'); process.exit(0); });
+process.on('SIGINT',  () => { fs.unwatchFile(SESSION_FILE); log('SIGINT — shutting down.');  process.exit(0); });
 
-log('Ready. Waiting for session changes...');
+log('Ready. Watching for session changes (poll every 5s + fs.watch)...');
