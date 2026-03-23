@@ -124,7 +124,13 @@ const {
   getSkillToolDefinitions,
   routeSkillCall,
 } = require("./skills");
-const { trackUsage, estimateTokens } = require("./costs");
+const { trackUsage, estimateTokens: _estimateTokens } = require("./costs");
+/** Fallback token estimator (~4 chars per token). Works even when costs mock omits estimateTokens. */
+function _estTok(text) {
+  if (!text || typeof text !== "string") return 0;
+  if (typeof _estimateTokens === "function") return _estimateTokens(text);
+  return Math.ceil(text.length / 4);
+}
 const { validateToolArgs } = require("./tool-validator");
 const {
   filterToolsForModel,
@@ -2764,21 +2770,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       staleRetries = 0;
 
       // Track token usage for cost dashboard
-      // Fall back to character-based estimation when provider omits usage data.
-      if (result) {
-        let inputT = result.usage?.prompt_tokens || 0;
-        let outputT = result.usage?.completion_tokens || 0;
-        if (inputT === 0 && outputT === 0) {
-          // Estimate: input from all messages sent, output from the response content
-          const ctxText = apiMessages.map((m) => {
-            if (typeof m.content === "string") return m.content;
-            if (Array.isArray(m.content))
-              return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
-            return "";
-          }).join(" ");
-          inputT = estimateTokens(ctxText);
-          outputT = estimateTokens(result.content || streamedText || "");
-        }
+      // When provider returns usage data: use it directly (even if zero).
+      // When provider omits usage entirely (e.g. Ollama Cloud): estimate from text.
+      if (result && result.usage) {
+        const inputT = result.usage.prompt_tokens || 0;
+        const outputT = result.usage.completion_tokens || 0;
         trackUsage(
           getActiveProviderName(),
           getActiveModelId(),
@@ -2786,6 +2782,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           outputT,
         );
         cumulativeTokens += inputT + outputT;
+        if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
+      } else if (result && !result.usage) {
+        // No usage data — estimate from message context and response content
+        const ctxText = apiMessages.map((m) => {
+          if (typeof m.content === "string") return m.content;
+          if (Array.isArray(m.content))
+            return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
+          return "";
+        }).join(" ");
+        const inputEst = _estTok(ctxText);
+        const outputEst = _estTok(result.content || streamedText || "");
+        trackUsage(
+          getActiveProviderName(),
+          getActiveModelId(),
+          inputEst,
+          outputEst,
+        );
+        cumulativeTokens += inputEst + outputEst;
         if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
       }
 

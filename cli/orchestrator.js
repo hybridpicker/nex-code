@@ -512,6 +512,7 @@ RULES:
       progress.update(idx, result.status === "failed" ? "error" : "done");
       totalTokens.input += result.tokensUsed?.input || 0;
       totalTokens.output += result.tokensUsed?.output || 0;
+      if (result.tokensUsed?._estimated) totalTokens._estimated = true;
       return { ...result, _scope: st.scope, _idx: idx };
     } catch (err) {
       progress.update(idx, "error");
@@ -591,7 +592,9 @@ RULES:
   const tokenDisplay =
     totalTokens.input === 0 && totalTokens.output === 0
       ? "n/a (provider does not report token counts)"
-      : `${totalTokens.input} input + ${totalTokens.output} output`;
+      : totalTokens._estimated
+        ? `~${totalTokens.input} input / ~${totalTokens.output} output (est.)`
+        : `${totalTokens.input} input + ${totalTokens.output} output`;
   console.log(`${C.dim}Tokens: ${tokenDisplay}${C.reset}\n`);
 
   return { results, synthesis, totalTokens };

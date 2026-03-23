@@ -169,6 +169,17 @@ function formatCosts() {
 }
 
 /**
+ * Rough character-based token estimation (~4 chars per token, GPT-style average).
+ * Used as fallback when the API does not return token counts.
+ * @param {string} text
+ * @returns {number}
+ */
+function estimateTokens(text) {
+  if (!text || typeof text !== "string") return 0;
+  return Math.ceil(text.length / 4);
+}
+
+/**
  * Format a short cost hint for inline display after responses.
  * @returns {string} e.g. "[~$0.003]" or "" if free
  */
@@ -309,4 +320,5 @@ module.exports = {
   loadCostLimits,
   saveCostLimits,
   resetCostLimits,
+  estimateTokens,
 };
