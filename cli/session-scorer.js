@@ -273,7 +273,7 @@ function scoreMessages(messages) {
   const endsWithoutDiagnosis =
     hasAnyAssistantMsg &&
     !hasSubstantiveDiagnosis &&
-    (lastAssistantText.length < 50 ||
+    (lastAssistantText.length < 80 ||
       /^[^.!]{0,40}\?$/.test(lastAssistantText));
   if (endsWithoutDiagnosis) {
     score -= 2.0;
