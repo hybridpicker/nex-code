@@ -478,7 +478,10 @@ async function installSkill(url, options = {}) {
 
   // Clone
   try {
-    execSync(`git clone --depth 1 ${gitUrl} ${targetDir}`, {
+    if (!/^https?:\/\/[a-zA-Z0-9._\-/:@#?=&%+~]+$/.test(gitUrl))
+      throw new Error(`Invalid git URL: ${gitUrl}`);
+    const safeTarget = targetDir.replace(/'/g, "'\\''");
+    execSync(`git clone --depth 1 '${gitUrl}' '${safeTarget}'`, {
       timeout: 30000,
       stdio: "pipe",
     });
