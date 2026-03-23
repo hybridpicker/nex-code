@@ -4,27 +4,27 @@
  * Team permission presets: readonly, developer, admin
  */
 
-const fs = require('fs');
-const path = require('path');
-const { C } = require('./ui');
-const { atomicWrite, withFileLockSync } = require('./filelock');
+const fs = require("fs");
+const path = require("path");
+const { C } = require("./ui");
+const { atomicWrite, withFileLockSync } = require("./filelock");
 
 // Default permissions: read ops auto, write/bash ask
 const DEFAULT_PERMISSIONS = {
-  bash: 'ask',
-  read_file: 'allow',
-  write_file: 'ask',
-  edit_file: 'ask',
-  list_directory: 'allow',
-  search_files: 'allow',
-  glob: 'allow',
-  grep: 'allow',
-  patch_file: 'ask',
-  web_fetch: 'allow',
-  web_search: 'allow',
-  ask_user: 'allow',
-  task_list: 'allow',
-  spawn_agents: 'ask',
+  bash: "ask",
+  read_file: "allow",
+  write_file: "ask",
+  edit_file: "ask",
+  list_directory: "allow",
+  search_files: "allow",
+  glob: "allow",
+  grep: "allow",
+  patch_file: "ask",
+  web_fetch: "allow",
+  web_search: "allow",
+  ask_user: "allow",
+  task_list: "allow",
+  spawn_agents: "ask",
 };
 
 let permissions = { ...DEFAULT_PERMISSIONS };
@@ -33,10 +33,10 @@ let permissions = { ...DEFAULT_PERMISSIONS };
  * Load permissions from .nex/config.json if it exists
  */
 function loadPermissions() {
-  const configPath = path.join(process.cwd(), '.nex', 'config.json');
+  const configPath = path.join(process.cwd(), ".nex", "config.json");
   if (!fs.existsSync(configPath)) return;
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     if (config.permissions) {
       permissions = { ...DEFAULT_PERMISSIONS, ...config.permissions };
     }
@@ -49,14 +49,18 @@ function loadPermissions() {
  * Save current permissions to .nex/config.json
  */
 function savePermissions() {
-  const configDir = path.join(process.cwd(), '.nex');
-  const configPath = path.join(configDir, 'config.json');
+  const configDir = path.join(process.cwd(), ".nex");
+  const configPath = path.join(configDir, "config.json");
   if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
 
   withFileLockSync(configPath, () => {
     let config = {};
     if (fs.existsSync(configPath)) {
-      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      } catch {
+        config = {};
+      }
     }
     config.permissions = permissions;
     atomicWrite(configPath, JSON.stringify(config, null, 2));
@@ -69,7 +73,7 @@ function savePermissions() {
  * @returns {'allow'|'ask'|'deny'}
  */
 function getPermission(toolName) {
-  return permissions[toolName] || 'ask';
+  return permissions[toolName] || "ask";
 }
 
 /**
@@ -79,7 +83,7 @@ function getPermission(toolName) {
  * @returns {boolean} true if valid
  */
 function setPermission(toolName, mode) {
-  if (!['allow', 'ask', 'deny'].includes(mode)) return false;
+  if (!["allow", "ask", "deny"].includes(mode)) return false;
   permissions[toolName] = mode;
   return true;
 }
@@ -115,31 +119,56 @@ function resetPermissions() {
  */
 const PERMISSION_PRESETS = {
   readonly: {
-    description: 'Read-only access — can search and read but not modify',
+    description: "Read-only access — can search and read but not modify",
     allowedTools: [
-      'read_file', 'list_directory', 'search_files', 'glob', 'grep',
-      'git_status', 'git_diff', 'git_log', 'ask_user',
-      'web_fetch', 'web_search',
-      'browser_open', 'browser_screenshot',
-      'task_list',
+      "read_file",
+      "list_directory",
+      "search_files",
+      "glob",
+      "grep",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "ask_user",
+      "web_fetch",
+      "web_search",
+      "browser_open",
+      "browser_screenshot",
+      "task_list",
     ],
-    blockedTools: ['bash', 'write_file', 'edit_file', 'patch_file', 'deploy',
-      'ssh_exec', 'service_manage', 'container_manage', 'container_exec',
-      'remote_agent'],
+    blockedTools: [
+      "bash",
+      "write_file",
+      "edit_file",
+      "patch_file",
+      "deploy",
+      "ssh_exec",
+      "service_manage",
+      "container_manage",
+      "container_exec",
+      "remote_agent",
+    ],
     autoConfirm: false,
     allowDangerous: false,
   },
 
   developer: {
-    description: 'Standard developer access — can read, write, and run commands',
+    description:
+      "Standard developer access — can read, write, and run commands",
     allowedTools: null, // null = all tools allowed
-    blockedTools: ['deploy', 'service_manage', 'container_manage', 'remote_agent'],
+    blockedTools: [
+      "deploy",
+      "service_manage",
+      "container_manage",
+      "remote_agent",
+    ],
     autoConfirm: false,
     allowDangerous: false,
   },
 
   admin: {
-    description: 'Full access — all tools, including deployment and infrastructure',
+    description:
+      "Full access — all tools, including deployment and infrastructure",
     allowedTools: null,
     blockedTools: [],
     autoConfirm: false,
@@ -152,10 +181,10 @@ const PERMISSION_PRESETS = {
  * @returns {{ role: string, overrides: object } | null}
  */
 function loadPresetConfig() {
-  const configPath = path.join(process.cwd(), '.nex', 'config.json');
+  const configPath = path.join(process.cwd(), ".nex", "config.json");
   try {
     if (!fs.existsSync(configPath)) return null;
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     return config.teamPermissions || null;
   } catch {
     return null;
@@ -167,21 +196,21 @@ function loadPresetConfig() {
  * @param {object} teamPermissions
  */
 function savePresetConfig(teamPermissions) {
-  const configDir = path.join(process.cwd(), '.nex');
-  const configPath = path.join(configDir, 'config.json');
+  const configDir = path.join(process.cwd(), ".nex");
+  const configPath = path.join(configDir, "config.json");
   if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
 
   let config = {};
   try {
     if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     }
   } catch {
     config = {};
   }
 
   config.teamPermissions = teamPermissions;
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
 /**
@@ -192,7 +221,7 @@ function getEffectivePreset() {
   const config = loadPresetConfig();
   if (!config) return PERMISSION_PRESETS.admin; // Default: full access
 
-  const role = config.role || 'admin';
+  const role = config.role || "admin";
   const preset = PERMISSION_PRESETS[role] || PERMISSION_PRESETS.admin;
 
   // Merge overrides
@@ -217,12 +246,18 @@ function isToolAllowed(toolName) {
 
   // Check blocked list first
   if (perms.blockedTools && perms.blockedTools.includes(toolName)) {
-    return { allowed: false, reason: `Tool "${toolName}" is blocked by permission preset "${perms.description || 'custom'}"` };
+    return {
+      allowed: false,
+      reason: `Tool "${toolName}" is blocked by permission preset "${perms.description || "custom"}"`,
+    };
   }
 
   // Check allowed list (if set)
   if (perms.allowedTools && !perms.allowedTools.includes(toolName)) {
-    return { allowed: false, reason: `Tool "${toolName}" is not in the allowed list for this permission level` };
+    return {
+      allowed: false,
+      reason: `Tool "${toolName}" is not in the allowed list for this permission level`,
+    };
   }
 
   return { allowed: true };
@@ -236,7 +271,9 @@ function listPresets() {
   return Object.entries(PERMISSION_PRESETS).map(([name, preset]) => ({
     name,
     description: preset.description,
-    toolCount: preset.allowedTools ? `${preset.allowedTools.length} allowed` : 'all allowed',
+    toolCount: preset.allowedTools
+      ? `${preset.allowedTools.length} allowed`
+      : "all allowed",
     blockedCount: preset.blockedTools.length,
   }));
 }

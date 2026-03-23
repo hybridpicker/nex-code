@@ -5,11 +5,15 @@
  * Exports the same API for backward compatibility.
  */
 
-const registry = require('./providers/registry');
+const registry = require("./providers/registry");
 
 const MODELS = {
-  'kimi-k2.5': { id: 'kimi-k2.5', name: 'Kimi K2.5', max_tokens: 16384 },
-  'qwen3-coder:480b': { id: 'qwen3-coder:480b', name: 'Qwen3 Coder 480B', max_tokens: 16384 },
+  "kimi-k2.5": { id: "kimi-k2.5", name: "Kimi K2.5", max_tokens: 16384 },
+  "qwen3-coder:480b": {
+    id: "qwen3-coder:480b",
+    name: "Qwen3 Coder 480B",
+    max_tokens: 16384,
+  },
 };
 
 function getActiveModel() {
@@ -30,14 +34,14 @@ function getModelNames() {
  */
 function parseToolArgs(raw) {
   if (!raw) return null;
-  if (typeof raw === 'object') return raw;
+  if (typeof raw === "object") return raw;
   try {
     return JSON.parse(raw);
   } catch {
     /* continue */
   }
   try {
-    const fixed = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
+    const fixed = raw.replace(/,\s*([}\]])/g, "$1").replace(/'/g, '"');
     return JSON.parse(fixed);
   } catch {
     /* continue */
@@ -77,13 +81,13 @@ function parseToolArgs(raw) {
  * Streaming call through the active provider.
  */
 async function callOllamaStream(messages, tools) {
-  const { C } = require('./ui');
-  const { Spinner } = require('./ui');
+  const { C } = require("./ui");
+  const { Spinner } = require("./ui");
 
-  const spinner = new Spinner('Thinking...');
+  const spinner = new Spinner("Thinking...");
   spinner.start();
   let firstToken = true;
-  let contentStr = '';
+  let contentStr = "";
 
   try {
     const result = await registry.callStream(messages, tools, {

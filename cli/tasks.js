@@ -3,10 +3,10 @@
  * Create, update, and render task lists for complex multi-step operations.
  */
 
-const { C } = require('./ui');
+const { C } = require("./ui");
 
 // Active task list state
-let taskListName = '';
+let taskListName = "";
 let tasks = [];
 let taskIdCounter = 0;
 
@@ -37,15 +37,20 @@ function createTasks(name, taskDefs) {
     const id = `t${taskIdCounter}`;
     tasks.push({
       id,
-      description: def.description || def.title || def.name || def.task || `Task ${taskIdCounter}`,
-      status: 'pending',
+      description:
+        def.description ||
+        def.title ||
+        def.name ||
+        def.task ||
+        `Task ${taskIdCounter}`,
+      status: "pending",
       dependsOn: def.depends_on || [],
       result: null,
     });
   }
 
-  const snapshot = tasks.map(t => ({ ...t }));
-  if (_onChange) _onChange('create', { name, tasks: snapshot });
+  const snapshot = tasks.map((t) => ({ ...t }));
+  if (_onChange) _onChange("create", { name, tasks: snapshot });
   return snapshot;
 }
 
@@ -57,13 +62,13 @@ function createTasks(name, taskDefs) {
  * @returns {object|null} Updated task or null if not found
  */
 function updateTask(id, status, result) {
-  const task = tasks.find(t => t.id === id);
+  const task = tasks.find((t) => t.id === id);
   if (!task) return null;
 
   task.status = status;
   if (result !== undefined) task.result = result;
 
-  if (_onChange) _onChange('update', { id, status, result });
+  if (_onChange) _onChange("update", { id, status, result });
   return { ...task };
 }
 
@@ -74,7 +79,7 @@ function updateTask(id, status, result) {
 function getTaskList() {
   return {
     name: taskListName,
-    tasks: tasks.map(t => ({ ...t })),
+    tasks: tasks.map((t) => ({ ...t })),
   };
 }
 
@@ -82,10 +87,10 @@ function getTaskList() {
  * Clear all tasks.
  */
 function clearTasks() {
-  taskListName = '';
+  taskListName = "";
   tasks = [];
   taskIdCounter = 0;
-  if (_onChange) _onChange('clear', {});
+  if (_onChange) _onChange("clear", {});
 }
 
 /**
@@ -93,12 +98,12 @@ function clearTasks() {
  * @returns {Array<object>}
  */
 function getReadyTasks() {
-  return tasks.filter(t => {
-    if (t.status !== 'pending') return false;
+  return tasks.filter((t) => {
+    if (t.status !== "pending") return false;
     if (t.dependsOn.length === 0) return true;
-    return t.dependsOn.every(depId => {
-      const dep = tasks.find(d => d.id === depId);
-      return dep && dep.status === 'done';
+    return t.dependsOn.every((depId) => {
+      const dep = tasks.find((d) => d.id === depId);
+      return dep && dep.status === "done";
     });
   });
 }
@@ -114,49 +119,60 @@ function renderTaskList() {
 
   if (taskListName) {
     lines.push(`  ${C.bold}${C.cyan}Tasks: ${taskListName}${C.reset}`);
-    lines.push(`  ${C.dim}${'─'.repeat(40)}${C.reset}`);
+    lines.push(`  ${C.dim}${"─".repeat(40)}${C.reset}`);
   }
 
   for (const t of tasks) {
     let icon, color;
     switch (t.status) {
-      case 'done':
-        icon = '✓';
+      case "done":
+        icon = "✓";
         color = C.green;
         break;
-      case 'in_progress':
-        icon = '→';
+      case "in_progress":
+        icon = "→";
         color = C.cyan;
         break;
-      case 'failed':
-        icon = '✗';
+      case "failed":
+        icon = "✗";
         color = C.red;
         break;
       default:
-        icon = '·';
+        icon = "·";
         color = C.dim;
     }
 
-    const deps = t.dependsOn.length > 0 ? ` ${C.dim}(after: ${t.dependsOn.join(', ')})${C.reset}` : '';
+    const deps =
+      t.dependsOn.length > 0
+        ? ` ${C.dim}(after: ${t.dependsOn.join(", ")})${C.reset}`
+        : "";
     const status = `[${t.status}]`;
-    const desc = t.description.length > 50 ? t.description.substring(0, 47) + '...' : t.description;
+    const desc =
+      t.description.length > 50
+        ? t.description.substring(0, 47) + "..."
+        : t.description;
 
-    lines.push(`  ${color}${icon}${C.reset} ${C.bold}${t.id}${C.reset}  ${desc.padEnd(40)} ${color}${status}${C.reset}${deps}`);
+    lines.push(
+      `  ${color}${icon}${C.reset} ${C.bold}${t.id}${C.reset}  ${desc.padEnd(40)} ${color}${status}${C.reset}${deps}`,
+    );
 
-    if (t.result && t.status === 'done') {
-      const shortResult = t.result.length > 60 ? t.result.substring(0, 57) + '...' : t.result;
+    if (t.result && t.status === "done") {
+      const shortResult =
+        t.result.length > 60 ? t.result.substring(0, 57) + "..." : t.result;
       lines.push(`       ${C.dim}→ ${shortResult}${C.reset}`);
     }
   }
 
   // Summary
-  const done = tasks.filter(t => t.status === 'done').length;
-  const failed = tasks.filter(t => t.status === 'failed').length;
+  const done = tasks.filter((t) => t.status === "done").length;
+  const failed = tasks.filter((t) => t.status === "failed").length;
   const total = tasks.length;
-  lines.push(`  ${C.dim}${'─'.repeat(40)}${C.reset}`);
-  lines.push(`  ${C.dim}${done}/${total} done${failed > 0 ? `, ${failed} failed` : ''}${C.reset}`);
+  lines.push(`  ${C.dim}${"─".repeat(40)}${C.reset}`);
+  lines.push(
+    `  ${C.dim}${done}/${total} done${failed > 0 ? `, ${failed} failed` : ""}${C.reset}`,
+  );
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -164,7 +180,10 @@ function renderTaskList() {
  * @returns {boolean}
  */
 function hasActiveTasks() {
-  return tasks.length > 0 && tasks.some(t => t.status === 'pending' || t.status === 'in_progress');
+  return (
+    tasks.length > 0 &&
+    tasks.some((t) => t.status === "pending" || t.status === "in_progress")
+  );
 }
 
 module.exports = {

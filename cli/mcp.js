@@ -3,15 +3,15 @@
  * Discovers and invokes tools from external MCP servers via JSON-RPC over stdio.
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+const { spawn } = require("child_process");
+const path = require("path");
+const fs = require("fs");
 
 // Active MCP server connections
 const activeServers = new Map();
 
 function getConfigPath() {
-  return path.join(process.cwd(), '.nex', 'config.json');
+  return path.join(process.cwd(), ".nex", "config.json");
 }
 
 /**
@@ -22,7 +22,7 @@ function loadMCPConfig() {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) return {};
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     return config.mcpServers || {};
   } catch {
     return {};
@@ -40,9 +40,10 @@ function loadMCPConfig() {
 function sendRequest(proc, method, params = {}, timeout = 10000) {
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const request = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
+    const request =
+      JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
 
-    let buffer = '';
+    let buffer = "";
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`MCP request timeout: ${method}`));
@@ -50,7 +51,7 @@ function sendRequest(proc, method, params = {}, timeout = 10000) {
 
     function onData(data) {
       buffer += data.toString();
-      const lines = buffer.split('\n');
+      const lines = buffer.split("\n");
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -58,7 +59,11 @@ function sendRequest(proc, method, params = {}, timeout = 10000) {
           if (msg.id === id) {
             cleanup();
             if (msg.error) {
-              reject(new Error(`MCP error: ${msg.error.message || JSON.stringify(msg.error)}`));
+              reject(
+                new Error(
+                  `MCP error: ${msg.error.message || JSON.stringify(msg.error)}`,
+                ),
+              );
             } else {
               resolve(msg.result);
             }
@@ -69,15 +74,15 @@ function sendRequest(proc, method, params = {}, timeout = 10000) {
         }
       }
       // Keep only the last incomplete line
-      buffer = lines[lines.length - 1] || '';
+      buffer = lines[lines.length - 1] || "";
     }
 
     function cleanup() {
       clearTimeout(timer);
-      proc.stdout.removeListener('data', onData);
+      proc.stdout.removeListener("data", onData);
     }
 
-    proc.stdout.on('data', onData);
+    proc.stdout.on("data", onData);
     try {
       proc.stdin.write(request);
     } catch (e) {
@@ -99,13 +104,21 @@ async function connectServer(name, config) {
   }
 
   // Allowlist safe env vars to prevent API key leakage
-  const SAFE_ENV_KEYS = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'NODE_ENV'];
+  const SAFE_ENV_KEYS = [
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "TERM",
+    "NODE_ENV",
+  ];
   const filteredEnv = {};
   for (const key of SAFE_ENV_KEYS) {
     if (process.env[key]) filteredEnv[key] = process.env[key];
   }
   const proc = spawn(config.command, config.args || [], {
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ["pipe", "pipe", "pipe"],
     env: { ...filteredEnv, ...(config.env || {}) },
   });
 
@@ -113,14 +126,14 @@ async function connectServer(name, config) {
 
   // Initialize with JSON-RPC
   try {
-    await sendRequest(proc, 'initialize', {
-      protocolVersion: '2024-11-05',
+    await sendRequest(proc, "initialize", {
+      protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: 'nex-code', version: '0.2.0' },
+      clientInfo: { name: "nex-code", version: "0.2.0" },
     });
 
     // Discover tools
-    const toolsResult = await sendRequest(proc, 'tools/list', {});
+    const toolsResult = await sendRequest(proc, "tools/list", {});
     server.tools = (toolsResult && toolsResult.tools) || [];
 
     activeServers.set(name, server);
@@ -167,7 +180,7 @@ async function callTool(serverName, toolName, args = {}) {
   const server = activeServers.get(serverName);
   if (!server) throw new Error(`MCP server not connected: ${serverName}`);
 
-  const result = await sendRequest(server.proc, 'tools/call', {
+  const result = await sendRequest(server.proc, "tools/call", {
     name: toolName,
     arguments: args,
   });
@@ -175,9 +188,9 @@ async function callTool(serverName, toolName, args = {}) {
   // MCP returns content array — extract text
   if (result && Array.isArray(result.content)) {
     return result.content
-      .filter((c) => c.type === 'text')
+      .filter((c) => c.type === "text")
       .map((c) => c.text)
-      .join('\n');
+      .join("\n");
   }
   return JSON.stringify(result);
 }
@@ -193,8 +206,8 @@ function getAllTools() {
       tools.push({
         server: serverName,
         name: tool.name,
-        description: tool.description || '',
-        inputSchema: tool.inputSchema || { type: 'object', properties: {} },
+        description: tool.description || "",
+        inputSchema: tool.inputSchema || { type: "object", properties: {} },
       });
     }
   }
@@ -207,7 +220,7 @@ function getAllTools() {
  */
 function getMCPToolDefinitions() {
   return getAllTools().map((t) => ({
-    type: 'function',
+    type: "function",
     function: {
       name: `mcp_${t.server}_${t.name}`,
       description: `[MCP:${t.server}] ${t.description}`,
@@ -223,13 +236,13 @@ function getMCPToolDefinitions() {
  * @returns {Promise<string|null>} — null if not an MCP tool
  */
 async function routeMCPCall(fnName, args) {
-  if (!fnName.startsWith('mcp_')) return null;
+  if (!fnName.startsWith("mcp_")) return null;
 
-  const parts = fnName.substring(4).split('_');
+  const parts = fnName.substring(4).split("_");
   if (parts.length < 2) return null;
 
   const serverName = parts[0];
-  const toolName = parts.slice(1).join('_');
+  const toolName = parts.slice(1).join("_");
 
   return callTool(serverName, toolName, args);
 }

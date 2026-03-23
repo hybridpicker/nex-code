@@ -1,6 +1,6 @@
 module.exports = {
-  name: 'docker-deploy',
-  description: 'Docker deployment helpers for containerized applications',
+  name: "docker-deploy",
+  description: "Docker deployment helpers for containerized applications",
   instructions: `When deploying Docker containers:
 1. Always build with --no-cache for production images
 2. Use multi-stage builds to minimize image size
@@ -9,8 +9,8 @@ module.exports = {
 5. Keep the previous image as rollback target`,
   commands: [
     {
-      cmd: '/docker-build',
-      desc: 'Build and tag Docker image',
+      cmd: "/docker-build",
+      desc: "Build and tag Docker image",
     },
   ],
   tools: [],
