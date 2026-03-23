@@ -466,6 +466,7 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/hooks`                                      | Show configured hooks                                                                                                                              |
 | `/skills`                                     | List, enable, disable skills                                                                                                                       |
 | `/tree [depth]`                               | Show project file tree (default depth 3)                                                                                                           |
+| `/retry [--model <id>]`                       | Retry the last user turn; optionally switch model first (`/retry --model kimi-k2.5`)                                                               |
 | `/undo`                                       | Undo last file change                                                                                                                              |
 | `/redo`                                       | Redo last undone change                                                                                                                            |
 | `/history`                                    | Show file change history                                                                                                                           |
