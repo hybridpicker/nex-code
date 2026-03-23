@@ -415,7 +415,7 @@ RULES:
 - If your task says "fix typos" — read the file, find typos yourself, edit them.
 - If your task says "add X to README" — add it, don't check if it exists first.
 - Max 10 tool calls. If you need more, you are doing too much — narrow your scope.
-- When done: call {"valid": true} to signal completion.
+- When done: stop calling tools and write a one-line summary of what you changed.
 `;
 
   const agentPromises = subTasks.map(async (st, idx) => {
