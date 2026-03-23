@@ -1997,7 +1997,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               const modList = filesModified.size > 0
                 ? `\nFiles modified so far: ${[...filesModified].map(f => f.split('/').slice(-1)[0]).join(', ')}`
                 : '';
-              console.log(`${C.red}  ✗ Super-nuclear limit reached (3×) — aborting to prevent runaway context loop${C.reset}`);
+              debugLog(`${C.red}  ✗ Super-nuclear limit reached (3×) — aborting to prevent runaway context loop${C.reset}`);
               console.log(`${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ''}${C.reset}`);
               if (taskProgress) { taskProgress.stop(); taskProgress = null; }
               setOnChange(null);
@@ -2413,7 +2413,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
         _sessionReReadBlockShown.set(path, blockShownCount);
         if (blockShownCount === 1) {
-          console.log(`${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`);
+          debugLog(`${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`);
         }
         prep.canExecute = false;
         prep.errorResult = {
@@ -2444,7 +2444,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               const newLen     = newEnd - newStart || 1;
               if (overlapLen / newLen >= 0.7) {
                 const shortPath = path.split('/').slice(-2).join('/');
-                console.log(`${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`);
+                debugLog(`${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`);
                 prep.canExecute = false;
                 prep.errorResult = {
                   role: 'tool',
@@ -2467,7 +2467,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
             if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
               const shortPath = path.split('/').slice(-2).join('/');
-              console.log(`${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`);
+              debugLog(`${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`);
               prep.canExecute = false;
               prep.errorResult = {
                 role: 'tool',
@@ -2487,7 +2487,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
         _sessionReReadBlockShown.set(path, blockShownCount);
         if (blockShownCount === 1) {
-          console.log(`${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`);
+          debugLog(`${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`);
         }
         prep.canExecute = false;
         prep.errorResult = {
@@ -2506,7 +2506,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       if (!prep.canExecute) continue;
       if (prep.fnName !== 'ssh_exec' && prep.fnName !== 'bash') continue;
       if (!/\bsed\s+-n\b/.test(prep.args?.command || '')) continue;
-      console.log(`${C.red}  ✖ Blocked sed -n: use grep -n "pattern" <file> | head -30 instead${C.reset}`);
+      debugLog(`${C.red}  ✖ Blocked sed -n: use grep -n "pattern" <file> | head -30 instead${C.reset}`);
       prep.canExecute = false;
       prep.errorResult = {
         role: 'tool',
@@ -2557,7 +2557,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
       if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
         const shortPath = grepPath.split('/').slice(-2).join('/');
-        console.log(`${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`);
+        debugLog(`${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`);
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',

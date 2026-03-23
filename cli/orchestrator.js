@@ -114,8 +114,8 @@ function detectComplexPrompt(prompt) {
   let goals = 0;
   const reasons = [];
 
-  // Numbered list items: "1.", "2.", "(1)", "(a)"
-  const numberedItems = prompt.match(/(?:^|\n)\s*(?:\d+[.)]\s|[(]\d+[)]\s|[(][a-z][)]\s)/g);
+  // Numbered list items: "1.", "2.", "(1)", "(a)" — matches both inline and line-start
+  const numberedItems = prompt.match(/(?:(?:^|\n)\s*|\s)(?:\d+[.)]\s|[(]\d+[)][\s,]|[(][a-z][)][\s,])/g);
   if (numberedItems && numberedItems.length >= 2) {
     goals = Math.max(goals, numberedItems.length);
     reasons.push(`${numberedItems.length} numbered items`);
@@ -199,9 +199,33 @@ function extractJSON(text) {
 
 /**
  * Decompose a complex prompt into independent sub-tasks via an LLM call.
- * @param {string} prompt - The user's complex prompt
- * @param {string} model - Orchestrator model spec (e.g. 'kimi-k2.5')
- * @param {{ maxSubTasks?: number }} opts
+ * 
+ * This function uses an LLM to break down a complex prompt into smaller,
+ * independent tasks that can be executed in parallel by worker agents.
+ * 
+ * @param {string} prompt - The user's complex prompt containing multiple goals
+ * @param {string} model - Orchestrator model spec (e.g., 'kimi-k2.5')
+ * @param {{ maxSubTasks?: number }} opts - Options for decomposition
+ * @param {number} [opts.maxSubTasks] - Maximum number of sub-tasks to create (default: 4)
+ * @returns {Promise<Array<{
+ *   id: string,                     - Unique task identifier
+ *   task: string,                   - Task description
+ *   scope: string[],                - Files/directories to focus on
+ *   estimatedCalls: number,        - Estimated number of tool calls needed
+ *   priority: number                - Execution priority (1 = highest)
+ * }>>}
+ * 
+ * @example
+ * const tasks = await decompose('Fix bug A, add feature B, update docs', 'kimi-k2.5', {
+ *   maxSubTasks: 4
+ * });
+ */
+/**
+ * Decompose a complex prompt into smaller sub-tasks.
+ * @param {string} prompt - The user's original prompt
+ * @param {string} [model] - Orchestrator model spec (provider:model)
+ * @param {Object} [opts] - Options
+ * @param {number} [opts.maxSubTasks=4] - Maximum number of sub-tasks to generate
  * @returns {Promise<Array<{ id: string, task: string, scope: string[], estimatedCalls: number, priority: number }>>}
  */
 async function decompose(prompt, model, opts = {}) {
@@ -304,15 +328,32 @@ async function synthesize(subTaskResults, originalPrompt, model) {
 
 /**
  * Run a full orchestrated multi-agent flow.
- * @param {string} prompt
+ * 
+ * This function orchestrates the complete workflow:
+ * 1. Decomposes a complex prompt into independent sub-tasks
+ * 2. Executes sub-tasks in parallel using worker agents
+ * 3. Synthesizes results into a unified summary
+ * 
+ * @param {string} prompt - The user's complex prompt containing multiple goals
  * @param {{
- *   orchestratorModel?: string,
- *   workerModel?: string,
- *   maxParallel?: number,
- *   maxSubTasks?: number,
- *   onProgress?: (status: string) => void,
- * }} opts
- * @returns {Promise<{ results: Array, synthesis: object, totalTokens: { input: number, output: number } }>}
+ *   orchestratorModel?: string,     - Model for decomposition/synthesis (e.g., 'kimi-k2.5')
+ *   workerModel?: string,           - Model for executing sub-tasks (e.g., 'devstral-2:123b')
+ *   maxParallel?: number,          - Maximum parallel workers (default: 3)
+ *   maxSubTasks?: number,          - Maximum sub-tasks to create (default: 4)
+ *   onProgress?: (status: string) => void, - Progress callback
+ * }} opts - Configuration options
+ * @returns {Promise<{
+ *   results: Array,                          - Array of sub-agent results
+ *   synthesis: object,                      - Synthesized summary with conflicts, commit message, etc.
+ *   totalTokens: { input: number, output: number } - Token usage statistics
+ * }>}
+ * 
+ * @example
+ * const result = await runOrchestrated('Fix bug A, add feature B, update docs', {
+ *   orchestratorModel: 'kimi-k2.5',
+ *   workerModel: 'devstral-2:123b',
+ *   maxParallel: 3
+ * });
  */
 async function runOrchestrated(prompt, opts = {}) {
   const orchestratorModel = opts.orchestratorModel
