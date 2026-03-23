@@ -146,7 +146,7 @@ function runImprovementPass(score, issues) {
     {
       cwd: NEX_DIR,
       stdio: 'inherit',
-      timeout: 360_000, // 6 min max
+      timeout: 900_000, // 15 min max
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: undefined,
