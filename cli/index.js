@@ -90,6 +90,8 @@ const SLASH_COMMANDS = [
   { cmd: '/history', desc: 'Show file change history' },
   { cmd: '/snapshot [name]', desc: 'Create a named git snapshot of current changes' },
   { cmd: '/restore [name|last]', desc: 'Restore a previously created snapshot' },
+  { cmd: '/orchestrate <prompt>', desc: 'Decompose prompt into parallel sub-tasks, run, synthesize' },
+  { cmd: '/bench-orchestrator', desc: 'Benchmark models for orchestrator role' },
   { cmd: '/audit', desc: 'Show tool execution audit log' },
   { cmd: '/k8s', desc: 'Kubernetes overview: namespaces and pods' },
   { cmd: '/exit', desc: 'Quit' },
@@ -1952,6 +1954,38 @@ For each issue, include:
       const { showScoreTrend } = require('./benchmark');
       const n = parseInt(rest[0], 10) || 10;
       showScoreTrend(n);
+      return true;
+    }
+
+    case '/orchestrate': {
+      const prompt = rest.join(' ').trim();
+      if (!prompt) {
+        console.log(`${C.yellow}Usage: /orchestrate <prompt>${C.reset}`);
+        console.log(`${C.dim}Example: /orchestrate fix login bug, update docs, add dark mode${C.reset}`);
+        return true;
+      }
+      const { runOrchestrated } = require('./orchestrator');
+      await runOrchestrated(prompt);
+      return true;
+    }
+
+    case '/bench-orchestrator': {
+      const { runOrchestratorBenchmark, printResults } = require('./orchestrator-bench');
+      const mFlag = rest.find(r => r.startsWith('--models='));
+      const models = mFlag ? mFlag.replace('--models=', '').split(',').map(s => s.trim()) : undefined;
+      const results = await runOrchestratorBenchmark({
+        models,
+        onProgress: ({ model, scenario, done, score, error }) => {
+          if (!done) {
+            process.stdout.write(`${C.dim}  → ${model}: ${scenario}...${C.reset}`);
+          } else if (error) {
+            process.stdout.write(` ${C.red}ERR${C.reset}\n`);
+          } else {
+            process.stdout.write(` ${C.green}${score}/10${C.reset}\n`);
+          }
+        },
+      });
+      printResults(results);
       return true;
     }
 

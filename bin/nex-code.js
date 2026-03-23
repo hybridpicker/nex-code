@@ -26,6 +26,8 @@ Options:
   --server                 Start JSON-lines IPC server (used by VS Code extension)
   --model <spec>           Set model (e.g. openai:gpt-4o)
   --max-turns <n>          Max agentic loop iterations (default: 50)
+  --orchestrate            Use multi-agent orchestrator (with --task)
+  --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
   --json                   Output result as JSON (for CI parsing)
   -h, --help               Show this help
   -v, --version            Show version
@@ -196,7 +198,19 @@ if (promptFileIdx !== -1) {
       process.exit(1);
     }
     preventSleep();
-    runHeadlessTask(task);
+    if (args.includes('--orchestrate')) {
+      const orchModelIdx = args.indexOf('--orchestrator-model');
+      const orchModel = orchModelIdx !== -1 ? args[orchModelIdx + 1] : undefined;
+      const { runOrchestrated } = require('../cli/orchestrator');
+      runOrchestrated(task, { orchestratorModel: orchModel }).then(() => {
+        process.exit(0);
+      }).catch((err) => {
+        console.error(`Orchestrator error: ${err.message}`);
+        process.exit(1);
+      });
+    } else {
+      runHeadlessTask(task);
+    }
   } else {
     // Normal REPL mode — run interactive setup if needed, then start REPL
     checkSetup().then(() => {
