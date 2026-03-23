@@ -1,5 +1,24 @@
 /* Markdown-specific overrides — loaded alongside main styles */
-.message table { border-collapse: collapse; width: 100%; margin: 6px 0; }
-.message th, .message td { border: 1px solid var(--vscode-sideBar-border, rgba(128,128,128,0.3)); padding: 4px 8px; text-align: left; }
-.message th { background: var(--vscode-editorGroupHeader-tabsBackground, rgba(0,0,0,0.2)); }
-.message blockquote { border-left: 3px solid var(--vscode-focusBorder); padding-left: 8px; margin: 4px 0; color: var(--vscode-descriptionForeground); }
+.message table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+}
+.message th,
+.message td {
+  border: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.3));
+  padding: 4px 8px;
+  text-align: left;
+}
+.message th {
+  background: var(
+    --vscode-editorGroupHeader-tabsBackground,
+    rgba(0, 0, 0, 0.2)
+  );
+}
+.message blockquote {
+  border-left: 3px solid var(--vscode-focusBorder);
+  padding-left: 8px;
+  margin: 4px 0;
+  color: var(--vscode-descriptionForeground);
+}

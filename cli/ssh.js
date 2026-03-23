@@ -18,21 +18,21 @@
  * }
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
 
-const GLOBAL_SERVERS_FILE = path.join(os.homedir(), '.nex', 'servers.json');
-const SSH_SOCKET_DIR = path.join(os.tmpdir(), 'nex-ssh-sockets');
+const GLOBAL_SERVERS_FILE = path.join(os.homedir(), ".nex", "servers.json");
+const SSH_SOCKET_DIR = path.join(os.tmpdir(), "nex-ssh-sockets");
 
 // ─── Profile Management ───────────────────────────────────────
 
 function getServersPath() {
-  return path.join(process.cwd(), '.nex', 'servers.json');
+  return path.join(process.cwd(), ".nex", "servers.json");
 }
 
 /**
@@ -44,10 +44,14 @@ function getServersPath() {
 function loadServerProfiles() {
   const readJson = (p) => {
     if (!fs.existsSync(p)) return {};
-    try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return {}; }
+    try {
+      return JSON.parse(fs.readFileSync(p, "utf-8"));
+    } catch {
+      return {};
+    }
   };
   const global = readJson(GLOBAL_SERVERS_FILE);
-  const local  = readJson(getServersPath());
+  const local = readJson(getServersPath());
   return { ...global, ...local };
 }
 
@@ -61,18 +65,25 @@ function resolveProfile(nameOrHost) {
   const profiles = loadServerProfiles();
 
   // Named profile
-  if (profiles[nameOrHost]) return { ...profiles[nameOrHost], _name: nameOrHost };
+  if (profiles[nameOrHost])
+    return { ...profiles[nameOrHost], _name: nameOrHost };
 
   // user@host or host.with.dots or localhost
-  if (/^[\w.-]+@[\w.-]+$/.test(nameOrHost) || /[\w-]+\.[\w.-]+/.test(nameOrHost) || nameOrHost === 'localhost') {
-    const [user, host] = nameOrHost.includes('@') ? nameOrHost.split('@') : [undefined, nameOrHost];
+  if (
+    /^[\w.-]+@[\w.-]+$/.test(nameOrHost) ||
+    /[\w-]+\.[\w.-]+/.test(nameOrHost) ||
+    nameOrHost === "localhost"
+  ) {
+    const [user, host] = nameOrHost.includes("@")
+      ? nameOrHost.split("@")
+      : [undefined, nameOrHost];
     return { host, user };
   }
 
   const available = Object.keys(profiles);
   const hint = available.length
-    ? `Available profiles: ${available.join(', ')}`
-    : 'No profiles configured. Create .nex/servers.json (project) or ~/.nex/servers.json (global)';
+    ? `Available profiles: ${available.join(", ")}`
+    : "No profiles configured. Create .nex/servers.json (project) or ~/.nex/servers.json (global)";
   throw new Error(`Unknown server: "${nameOrHost}". ${hint}`);
 }
 
@@ -95,28 +106,37 @@ function ensureSocketDir() {
  */
 function buildSSHArgs(profile) {
   const args = [
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=15',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'ServerAliveInterval=30',
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ServerAliveInterval=30",
   ];
 
   if (profile.key) {
-    args.push('-i', profile.key.replace(/^~/, os.homedir()));
+    args.push("-i", profile.key.replace(/^~/, os.homedir()));
   }
 
   if (profile.port && Number(profile.port) !== 22) {
-    args.push('-p', String(profile.port));
+    args.push("-p", String(profile.port));
   }
 
   // ControlMaster: reuse existing connection if available
   ensureSocketDir();
-  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
-  const socketPath = path.join(SSH_SOCKET_DIR, target.replace(/[@.:]/g, '_'));
+  const target = profile.user
+    ? `${profile.user}@${profile.host}`
+    : profile.host;
+  const socketPath = path.join(SSH_SOCKET_DIR, target.replace(/[@.:]/g, "_"));
   args.push(
-    '-o', 'ControlMaster=auto',
-    '-o', `ControlPath=${socketPath}`,
-    '-o', 'ControlPersist=120',
+    "-o",
+    "ControlMaster=auto",
+    "-o",
+    `ControlPath=${socketPath}`,
+    "-o",
+    "ControlPersist=120",
   );
 
   args.push(target);
@@ -130,18 +150,21 @@ function buildSSHArgs(profile) {
  */
 function buildSCPArgs(profile) {
   const args = [
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=15',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-r', // recursive by default (handles files + dirs)
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-r", // recursive by default (handles files + dirs)
   ];
 
   if (profile.key) {
-    args.push('-i', profile.key.replace(/^~/, os.homedir()));
+    args.push("-i", profile.key.replace(/^~/, os.homedir()));
   }
 
   if (profile.port && Number(profile.port) !== 22) {
-    args.push('-P', String(profile.port));
+    args.push("-P", String(profile.port));
   }
 
   return args;
@@ -156,20 +179,29 @@ function buildSCPArgs(profile) {
  * @param {boolean} [opts.sudo=false] - Wrap in sudo if profile.sudo=true
  * @returns {Promise<{stdout: string, stderr: string, exitCode: number, error?: string}>}
  */
-async function sshExec(profile, command, { timeout = 30000, sudo = false } = {}) {
+async function sshExec(
+  profile,
+  command,
+  { timeout = 30000, sudo = false } = {},
+) {
   const { args } = buildSSHArgs(profile);
-  const remoteCmd = (sudo && profile.sudo) ? `sudo sh -c ${JSON.stringify(command)}` : command;
+  const remoteCmd =
+    sudo && profile.sudo ? `sudo sh -c ${JSON.stringify(command)}` : command;
 
   try {
-    const { stdout, stderr } = await execFileAsync('ssh', [...args, remoteCmd], {
-      timeout,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    return { stdout: stdout || '', stderr: stderr || '', exitCode: 0 };
+    const { stdout, stderr } = await execFileAsync(
+      "ssh",
+      [...args, remoteCmd],
+      {
+        timeout,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+    return { stdout: stdout || "", stderr: stderr || "", exitCode: 0 };
   } catch (e) {
-    const exitCode = typeof e.code === 'number' ? e.code : 1;
-    const stderr = (e.stderr || e.message || '').toString();
-    const stdout = (e.stdout || '').toString();
+    const exitCode = typeof e.code === "number" ? e.code : 1;
+    const stderr = (e.stderr || e.message || "").toString();
+    const stdout = (e.stdout || "").toString();
     return {
       stdout,
       stderr,
@@ -188,16 +220,28 @@ async function sshExec(profile, command, { timeout = 30000, sudo = false } = {})
  * @param {number} [opts.timeout=120000]
  * @returns {Promise<string>} Result message
  */
-async function scpUpload(profile, localPath, remotePath, { timeout = 120000 } = {}) {
+async function scpUpload(
+  profile,
+  localPath,
+  remotePath,
+  { timeout = 120000 } = {},
+) {
   const args = buildSCPArgs(profile);
-  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+  const target = profile.user
+    ? `${profile.user}@${profile.host}`
+    : profile.host;
   args.push(localPath, `${target}:${remotePath}`);
 
   try {
-    const { stdout, stderr } = await execFileAsync('scp', args, { timeout, maxBuffer: 1024 * 1024 });
-    return stdout || stderr || `Uploaded ${localPath} → ${target}:${remotePath}`;
+    const { stdout, stderr } = await execFileAsync("scp", args, {
+      timeout,
+      maxBuffer: 1024 * 1024,
+    });
+    return (
+      stdout || stderr || `Uploaded ${localPath} → ${target}:${remotePath}`
+    );
   } catch (e) {
-    const err = (e.stderr || e.message || '').toString();
+    const err = (e.stderr || e.message || "").toString();
     throw new Error(enrichSSHError(err, profile) || err);
   }
 }
@@ -211,16 +255,28 @@ async function scpUpload(profile, localPath, remotePath, { timeout = 120000 } = 
  * @param {number} [opts.timeout=120000]
  * @returns {Promise<string>} Result message
  */
-async function scpDownload(profile, remotePath, localPath, { timeout = 120000 } = {}) {
+async function scpDownload(
+  profile,
+  remotePath,
+  localPath,
+  { timeout = 120000 } = {},
+) {
   const args = buildSCPArgs(profile);
-  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+  const target = profile.user
+    ? `${profile.user}@${profile.host}`
+    : profile.host;
   args.push(`${target}:${remotePath}`, localPath);
 
   try {
-    const { stdout, stderr } = await execFileAsync('scp', args, { timeout, maxBuffer: 1024 * 1024 });
-    return stdout || stderr || `Downloaded ${target}:${remotePath} → ${localPath}`;
+    const { stdout, stderr } = await execFileAsync("scp", args, {
+      timeout,
+      maxBuffer: 1024 * 1024,
+    });
+    return (
+      stdout || stderr || `Downloaded ${target}:${remotePath} → ${localPath}`
+    );
   } catch (e) {
-    const err = (e.stderr || e.message || '').toString();
+    const err = (e.stderr || e.message || "").toString();
     throw new Error(enrichSSHError(err, profile) || err);
   }
 }
@@ -234,7 +290,7 @@ async function scpDownload(profile, remotePath, localPath, { timeout = 120000 } 
  * @returns {string} Enriched error message
  */
 function enrichSSHError(stderr, profile) {
-  if (!stderr) return '';
+  if (!stderr) return "";
 
   if (/connection refused/i.test(stderr)) {
     const port = profile.port || 22;
@@ -242,11 +298,15 @@ function enrichSSHError(stderr, profile) {
   }
 
   if (/permission denied/i.test(stderr)) {
-    const keyInfo = profile.key ? `key: ${profile.key}` : 'SSH agent';
-    return `${stderr}\nHINT: Auth failed using ${keyInfo} as user "${profile.user || 'root'}". Check: authorized_keys on server, correct username, key passphrase.`;
+    const keyInfo = profile.key ? `key: ${profile.key}` : "SSH agent";
+    return `${stderr}\nHINT: Auth failed using ${keyInfo} as user "${profile.user || "root"}". Check: authorized_keys on server, correct username, key passphrase.`;
   }
 
-  if (/no route to host|network unreachable|name or service not known/i.test(stderr)) {
+  if (
+    /no route to host|network unreachable|name or service not known/i.test(
+      stderr,
+    )
+  ) {
     return `${stderr}\nHINT: Cannot reach ${profile.host}. Check: network connection, correct hostname/IP, DNS resolution.`;
   }
 
@@ -259,7 +319,7 @@ function enrichSSHError(stderr, profile) {
   }
 
   if (/too many authentication failures/i.test(stderr)) {
-    return `${stderr}\nHINT: Too many auth attempts. Add "-o IdentitiesOnly=yes -i ${profile.key || '~/.ssh/id_rsa'}" or clear your SSH agent keys.`;
+    return `${stderr}\nHINT: Too many auth attempts. Add "-o IdentitiesOnly=yes -i ${profile.key || "~/.ssh/id_rsa"}" or clear your SSH agent keys.`;
   }
 
   return stderr;
@@ -274,11 +334,14 @@ function enrichSSHError(stderr, profile) {
  * @returns {string}
  */
 function formatProfile(name, profile) {
-  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
-  const portStr = profile.port && Number(profile.port) !== 22 ? `:${profile.port}` : '';
-  const osStr = profile.os ? ` [${profile.os}]` : '';
-  const keyStr = profile.key ? ` key:${profile.key}` : '';
-  const sudoStr = profile.sudo ? ' sudo:yes' : '';
+  const target = profile.user
+    ? `${profile.user}@${profile.host}`
+    : profile.host;
+  const portStr =
+    profile.port && Number(profile.port) !== 22 ? `:${profile.port}` : "";
+  const osStr = profile.os ? ` [${profile.os}]` : "";
+  const keyStr = profile.key ? ` key:${profile.key}` : "";
+  const sudoStr = profile.sudo ? " sudo:yes" : "";
   return `${name}: ${target}${portStr}${osStr}${keyStr}${sudoStr}`;
 }
 

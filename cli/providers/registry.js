@@ -6,21 +6,36 @@
  * Short specs: 'model' (resolved against active provider)
  */
 
-const { OllamaProvider } = require('./ollama');
-const { OpenAIProvider } = require('./openai');
-const { AnthropicProvider } = require('./anthropic');
-const { GeminiProvider } = require('./gemini');
-const { LocalProvider } = require('./local');
-const { checkBudget } = require('../costs');
+const { OllamaProvider } = require("./ollama");
+const { OpenAIProvider } = require("./openai");
+const { AnthropicProvider } = require("./anthropic");
+const { GeminiProvider } = require("./gemini");
+const { LocalProvider } = require("./local");
+const { checkBudget } = require("../costs");
 
 // ─── Model Equivalence Map ─────────────────────────────────────
 // Maps models across providers by capability tier (top/strong/fast).
 // Used during fallback to pick an equivalent model on a different provider.
 
 const MODEL_EQUIVALENTS = {
-  top:    { ollama: 'kimi-k2:1t',       openai: 'gpt-4.1',      anthropic: 'claude-sonnet-4-5', gemini: 'gemini-2.5-pro' },
-  strong: { ollama: 'qwen3-coder:480b', openai: 'gpt-4o',        anthropic: 'claude-sonnet',     gemini: 'gemini-2.5-flash' },
-  fast:   { ollama: 'devstral-small-2:24b', openai: 'gpt-4.1-mini', anthropic: 'claude-haiku',   gemini: 'gemini-2.0-flash' },
+  top: {
+    ollama: "kimi-k2:1t",
+    openai: "gpt-4.1",
+    anthropic: "claude-sonnet-4-5",
+    gemini: "gemini-2.5-pro",
+  },
+  strong: {
+    ollama: "qwen3-coder:480b",
+    openai: "gpt-4o",
+    anthropic: "claude-sonnet",
+    gemini: "gemini-2.5-flash",
+  },
+  fast: {
+    ollama: "devstral-small-2:24b",
+    openai: "gpt-4.1-mini",
+    anthropic: "claude-haiku",
+    gemini: "gemini-2.0-flash",
+  },
 };
 
 // Reverse lookup: model → tier
@@ -59,28 +74,31 @@ let fallbackChain = [];
 function initDefaults() {
   if (Object.keys(providers).length > 0) return;
 
-  registerProvider('ollama', new OllamaProvider());
-  registerProvider('openai', new OpenAIProvider());
-  registerProvider('anthropic', new AnthropicProvider());
-  registerProvider('gemini', new GeminiProvider());
-  registerProvider('local', new LocalProvider());
+  registerProvider("ollama", new OllamaProvider());
+  registerProvider("openai", new OpenAIProvider());
+  registerProvider("anthropic", new AnthropicProvider());
+  registerProvider("gemini", new GeminiProvider());
+  registerProvider("local", new LocalProvider());
 
   // Determine active provider from env or default to ollama
-  const defaultProvider = process.env.DEFAULT_PROVIDER || 'ollama';
+  const defaultProvider = process.env.DEFAULT_PROVIDER || "ollama";
   const defaultModel = process.env.DEFAULT_MODEL || null;
 
   if (providers[defaultProvider]) {
     activeProviderName = defaultProvider;
     activeModelId = defaultModel || providers[defaultProvider].defaultModel;
   } else {
-    activeProviderName = 'ollama';
-    activeModelId = 'kimi-k2.5';
+    activeProviderName = "ollama";
+    activeModelId = "kimi-k2.5";
   }
 
   // Initialize fallback chain from env
   const envChain = process.env.FALLBACK_CHAIN;
   if (envChain) {
-    fallbackChain = envChain.split(',').map((s) => s.trim()).filter(Boolean);
+    fallbackChain = envChain
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 }
 
@@ -117,14 +135,23 @@ function getActiveModelId() {
 function getActiveModel() {
   initDefaults();
   const provider = getActiveProvider();
-  if (!provider) return { id: activeModelId, name: activeModelId, provider: activeProviderName };
+  if (!provider)
+    return {
+      id: activeModelId,
+      name: activeModelId,
+      provider: activeProviderName,
+    };
 
   const model = provider.getModel(activeModelId);
   if (model) {
     return { ...model, provider: activeProviderName };
   }
 
-  return { id: activeModelId, name: activeModelId, provider: activeProviderName };
+  return {
+    id: activeModelId,
+    name: activeModelId,
+    provider: activeProviderName,
+  };
 }
 
 // ─── Model Resolution ──────────────────────────────────────────
@@ -136,11 +163,14 @@ function getActiveModel() {
  */
 function parseModelSpec(spec) {
   if (!spec) return { provider: null, model: null };
-  const colonIdx = spec.indexOf(':');
+  const colonIdx = spec.indexOf(":");
   if (colonIdx > 0) {
     const prefix = spec.slice(0, colonIdx);
     // Only treat as provider:model if prefix is a known provider name
-    if (providers[prefix] || ['ollama', 'openai', 'anthropic', 'gemini', 'local'].includes(prefix)) {
+    if (
+      providers[prefix] ||
+      ["ollama", "openai", "anthropic", "gemini", "local"].includes(prefix)
+    ) {
       return { provider: prefix, model: spec.slice(colonIdx + 1) };
     }
   }
@@ -165,7 +195,7 @@ function setActiveModel(spec) {
       // Allow setting model even if not in predefined list:
       // - 'local': custom local models
       // - 'ollama': dynamically discovered cloud models not yet in hardcoded list
-      if (providerName === 'local' || providerName === 'ollama') {
+      if (providerName === "local" || providerName === "ollama") {
         activeProviderName = providerName;
         activeModelId = modelId;
         // Invalidate caches on model change
@@ -209,14 +239,17 @@ function setActiveModel(spec) {
  */
 function invalidateCaches() {
   try {
-    const { invalidateSystemPromptCache, clearToolFilterCache } = require('../agent');
+    const {
+      invalidateSystemPromptCache,
+      clearToolFilterCache,
+    } = require("../agent");
     invalidateSystemPromptCache();
     clearToolFilterCache();
   } catch {
     // Ignore if agent module not loaded yet
   }
   try {
-    const { invalidateTokenRatioCache } = require('../context-engine');
+    const { invalidateTokenRatioCache } = require("../context-engine");
     invalidateTokenRatioCache();
   } catch {
     // Ignore if context-engine not loaded yet
@@ -291,21 +324,41 @@ function getFallbackChain() {
  * Check if an error is retryable (rate limit, server error, or network failure).
  */
 function isRetryableError(err) {
-  const msg = err.message || '';
-  const code = err.code || '';
+  const msg = err.message || "";
+  const code = err.code || "";
 
   // HTTP status errors
-  if (msg.includes('429') || msg.includes('500') || msg.includes('502') ||
-      msg.includes('503') || msg.includes('504')) return true;
+  if (
+    msg.includes("429") ||
+    msg.includes("500") ||
+    msg.includes("502") ||
+    msg.includes("503") ||
+    msg.includes("504")
+  )
+    return true;
 
   // Network/TLS/socket errors — transient, retryable
-  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' ||
-      code === 'ECONNRESET' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH' ||
-      code === 'EPIPE' || code === 'ERR_SOCKET_CONNECTION_TIMEOUT') return true;
+  if (
+    code === "ECONNABORTED" ||
+    code === "ETIMEDOUT" ||
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "EHOSTUNREACH" ||
+    code === "ENETUNREACH" ||
+    code === "EPIPE" ||
+    code === "ERR_SOCKET_CONNECTION_TIMEOUT"
+  )
+    return true;
 
-  if (msg.includes('socket disconnected') || msg.includes('TLS') ||
-      msg.includes('ECONNRESET') || msg.includes('ECONNABORTED') ||
-      msg.includes('network') || msg.includes('ETIMEDOUT')) return true;
+  if (
+    msg.includes("socket disconnected") ||
+    msg.includes("TLS") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("ECONNABORTED") ||
+    msg.includes("network") ||
+    msg.includes("ETIMEDOUT")
+  )
+    return true;
 
   return false;
 }
@@ -319,7 +372,10 @@ function isRetryableError(err) {
  * @returns {Promise<*>}
  */
 async function _tryProviders(callFn) {
-  const providersToTry = [activeProviderName, ...fallbackChain.filter((p) => p !== activeProviderName)];
+  const providersToTry = [
+    activeProviderName,
+    ...fallbackChain.filter((p) => p !== activeProviderName),
+  ];
 
   let lastError;
   let budgetBlockedCount = 0;
@@ -334,13 +390,17 @@ async function _tryProviders(callFn) {
     const budget = checkBudget(provName);
     if (!budget.allowed) {
       budgetBlockedCount++;
-      lastError = new Error(`Budget limit reached for ${provName}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}`);
+      lastError = new Error(
+        `Budget limit reached for ${provName}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}`,
+      );
       continue;
     }
 
     try {
       const isFallback = idx > 0;
-      const model = isFallback ? resolveModelForProvider(activeModelId, provName) : activeModelId;
+      const model = isFallback
+        ? resolveModelForProvider(activeModelId, provName)
+        : activeModelId;
       if (isFallback && model !== activeModelId) {
         process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
       }
@@ -353,12 +413,14 @@ async function _tryProviders(callFn) {
   }
 
   if (budgetBlockedCount > 0 && budgetBlockedCount === configuredCount) {
-    throw new Error('All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.');
+    throw new Error(
+      "All providers are over budget. Use /budget to check limits or /budget <provider> off to remove a limit.",
+    );
   }
   if (configuredCount === 0) {
-    throw new Error('No configured provider available');
+    throw new Error("No configured provider available");
   }
-  throw lastError || new Error('No configured provider available');
+  throw lastError || new Error("No configured provider available");
 }
 
 /**
@@ -369,7 +431,11 @@ async function _tryProviders(callFn) {
 async function callStream(messages, tools, options = {}) {
   initDefaults();
   return _tryProviders((provider, _provName, model) =>
-    provider.stream(messages, tools, { model, signal: options.signal, ...options })
+    provider.stream(messages, tools, {
+      model,
+      signal: options.signal,
+      ...options,
+    }),
   );
 }
 
@@ -393,10 +459,15 @@ async function callChat(messages, tools, options = {}) {
     } catch (chatErr) {
       // Fallback: some providers handle stream:true better than stream:false
       // Use streaming endpoint but collect the full response silently
-      if (typeof provider.stream === 'function') {
+      if (typeof provider.stream === "function") {
         try {
-          return await provider.stream(messages, tools, { ...chatOpts, onToken: () => {} });
-        } catch { /* stream fallback also failed — throw original error */ }
+          return await provider.stream(messages, tools, {
+            ...chatOpts,
+            onToken: () => {},
+          });
+        } catch {
+          /* stream fallback also failed — throw original error */
+        }
       }
       throw chatErr;
     }
@@ -407,10 +478,16 @@ async function callChat(messages, tools, options = {}) {
       return await provider.chat(messages, tools, { model, ...options });
     } catch (err) {
       // Fallback: try streaming endpoint before giving up on this provider
-      if (typeof provider.stream === 'function') {
+      if (typeof provider.stream === "function") {
         try {
-          return await provider.stream(messages, tools, { model, ...options, onToken: () => {} });
-        } catch { /* stream fallback also failed — rethrow original */ }
+          return await provider.stream(messages, tools, {
+            model,
+            ...options,
+            onToken: () => {},
+          });
+        } catch {
+          /* stream fallback also failed — rethrow original */
+        }
       }
       throw err;
     }

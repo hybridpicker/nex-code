@@ -5,19 +5,19 @@
  * - Script Skills (.js): provide instructions, commands, and tools
  */
 
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, withFileLockSync } = require('./filelock');
+const fs = require("fs");
+const path = require("path");
+const { atomicWrite, withFileLockSync } = require("./filelock");
 
 // Loaded skills registry
 let loadedSkills = [];
 
 function getSkillsDir() {
-  return path.join(process.cwd(), '.nex', 'skills');
+  return path.join(process.cwd(), ".nex", "skills");
 }
 
 function getConfigPath() {
-  return path.join(process.cwd(), '.nex', 'config.json');
+  return path.join(process.cwd(), ".nex", "config.json");
 }
 
 /**
@@ -40,8 +40,10 @@ function getDisabledSkills() {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) return [];
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    return (config.skills && Array.isArray(config.skills.disabled)) ? config.skills.disabled : [];
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    return config.skills && Array.isArray(config.skills.disabled)
+      ? config.skills.disabled
+      : [];
   } catch {
     return [];
   }
@@ -59,7 +61,11 @@ function saveDisabledSkills(disabled) {
   withFileLockSync(configPath, () => {
     let config = {};
     if (fs.existsSync(configPath)) {
-      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      } catch {
+        config = {};
+      }
     }
     if (!config.skills) config.skills = {};
     config.skills.disabled = disabled;
@@ -76,32 +82,32 @@ function saveDisabledSkills(disabled) {
 function validateScriptSkill(mod, filePath) {
   const errors = [];
 
-  if (typeof mod !== 'object' || mod === null) {
-    return { valid: false, errors: ['Module must export an object'] };
+  if (typeof mod !== "object" || mod === null) {
+    return { valid: false, errors: ["Module must export an object"] };
   }
 
-  if (mod.name !== undefined && typeof mod.name !== 'string') {
-    errors.push('name must be a string');
+  if (mod.name !== undefined && typeof mod.name !== "string") {
+    errors.push("name must be a string");
   }
 
-  if (mod.description !== undefined && typeof mod.description !== 'string') {
-    errors.push('description must be a string');
+  if (mod.description !== undefined && typeof mod.description !== "string") {
+    errors.push("description must be a string");
   }
 
-  if (mod.instructions !== undefined && typeof mod.instructions !== 'string') {
-    errors.push('instructions must be a string');
+  if (mod.instructions !== undefined && typeof mod.instructions !== "string") {
+    errors.push("instructions must be a string");
   }
 
   if (mod.commands !== undefined) {
     if (!Array.isArray(mod.commands)) {
-      errors.push('commands must be an array');
+      errors.push("commands must be an array");
     } else {
       for (let i = 0; i < mod.commands.length; i++) {
         const c = mod.commands[i];
-        if (!c.cmd || typeof c.cmd !== 'string') {
+        if (!c.cmd || typeof c.cmd !== "string") {
           errors.push(`commands[${i}].cmd must be a non-empty string`);
         }
-        if (c.handler !== undefined && typeof c.handler !== 'function') {
+        if (c.handler !== undefined && typeof c.handler !== "function") {
           errors.push(`commands[${i}].handler must be a function`);
         }
       }
@@ -110,14 +116,18 @@ function validateScriptSkill(mod, filePath) {
 
   if (mod.tools !== undefined) {
     if (!Array.isArray(mod.tools)) {
-      errors.push('tools must be an array');
+      errors.push("tools must be an array");
     } else {
       for (let i = 0; i < mod.tools.length; i++) {
         const t = mod.tools[i];
-        if (!t.function || !t.function.name || typeof t.function.name !== 'string') {
+        if (
+          !t.function ||
+          !t.function.name ||
+          typeof t.function.name !== "string"
+        ) {
           errors.push(`tools[${i}].function.name must be a non-empty string`);
         }
-        if (t.execute !== undefined && typeof t.execute !== 'function') {
+        if (t.execute !== undefined && typeof t.execute !== "function") {
           errors.push(`tools[${i}].execute must be a function`);
         }
       }
@@ -134,12 +144,12 @@ function validateScriptSkill(mod, filePath) {
  */
 function loadMarkdownSkill(filePath) {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8').trim();
+    const content = fs.readFileSync(filePath, "utf-8").trim();
     if (!content) return null;
-    const name = path.basename(filePath, '.md');
+    const name = path.basename(filePath, ".md");
     return {
       name,
-      type: 'prompt',
+      type: "prompt",
       filePath,
       instructions: content,
       commands: [],
@@ -160,27 +170,32 @@ function loadScriptSkill(filePath) {
     const mod = require(filePath);
     const { valid, errors } = validateScriptSkill(mod, filePath);
     if (!valid) {
-      console.error(`Skill validation failed: ${filePath}\n  ${errors.join('\n  ')}`);
+      console.error(
+        `Skill validation failed: ${filePath}\n  ${errors.join("\n  ")}`,
+      );
       return null;
     }
-    const name = mod.name || path.basename(filePath, '.js');
+    const name = mod.name || path.basename(filePath, ".js");
     return {
       name,
-      type: 'script',
+      type: "script",
       filePath,
-      description: mod.description || '',
-      instructions: mod.instructions || '',
+      description: mod.description || "",
+      instructions: mod.instructions || "",
       commands: (mod.commands || []).map((c) => ({
-        cmd: c.cmd.startsWith('/') ? c.cmd : `/${c.cmd}`,
-        desc: c.desc || c.description || '',
+        cmd: c.cmd.startsWith("/") ? c.cmd : `/${c.cmd}`,
+        desc: c.desc || c.description || "",
         handler: c.handler || null,
       })),
       tools: (mod.tools || []).map((t) => ({
-        type: t.type || 'function',
+        type: t.type || "function",
         function: {
           name: t.function.name,
-          description: t.function.description || '',
-          parameters: t.function.parameters || { type: 'object', properties: {} },
+          description: t.function.description || "",
+          parameters: t.function.parameters || {
+            type: "object",
+            properties: {},
+          },
         },
         execute: t.execute || null,
       })),
@@ -220,9 +235,9 @@ function loadAllSkills() {
     if (!stat.isFile()) continue;
 
     let skill = null;
-    if (entry.endsWith('.md')) {
+    if (entry.endsWith(".md")) {
       skill = loadMarkdownSkill(filePath);
-    } else if (entry.endsWith('.js')) {
+    } else if (entry.endsWith(".js")) {
       skill = loadScriptSkill(filePath);
     }
 
@@ -233,11 +248,13 @@ function loadAllSkills() {
   }
 
   // Load built-in skills from cli/skills/ (skip in test environments)
-  const builtinDir = path.join(__dirname, 'skills');
+  const builtinDir = path.join(__dirname, "skills");
   if (!process.env.NEX_SKIP_BUILTIN_SKILLS && fs.existsSync(builtinDir)) {
     let builtinFiles;
     try {
-      builtinFiles = fs.readdirSync(builtinDir).filter(f => f.endsWith('.md') || f.endsWith('.js'));
+      builtinFiles = fs
+        .readdirSync(builtinDir)
+        .filter((f) => f.endsWith(".md") || f.endsWith(".js"));
     } catch {
       builtinFiles = [];
     }
@@ -245,13 +262,19 @@ function loadAllSkills() {
       const filePath = path.join(builtinDir, file);
       // Don't load if user has a skill with the same name (user overrides built-in)
       const name = path.basename(file, path.extname(file));
-      if (loadedSkills.some(s => s.name === name)) continue;
+      if (loadedSkills.some((s) => s.name === name)) continue;
 
       let stat;
-      try { stat = fs.statSync(filePath); } catch { continue; }
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
       if (!stat.isFile()) continue;
 
-      const skill = file.endsWith('.md') ? loadMarkdownSkill(filePath) : loadScriptSkill(filePath);
+      const skill = file.endsWith(".md")
+        ? loadMarkdownSkill(filePath)
+        : loadScriptSkill(filePath);
       if (skill) {
         skill._builtin = true;
         skill.enabled = !disabled.includes(skill.name);
@@ -273,8 +296,8 @@ function getSkillInstructions() {
     if (!skill.enabled || !skill.instructions) continue;
     parts.push(`[Skill: ${skill.name}]\n${skill.instructions}`);
   }
-  if (parts.length === 0) return '';
-  return `SKILL INSTRUCTIONS:\n${parts.join('\n\n')}`;
+  if (parts.length === 0) return "";
+  return `SKILL INSTRUCTIONS:\n${parts.join("\n\n")}`;
 }
 
 /**
@@ -302,7 +325,7 @@ function getSkillToolDefinitions() {
     if (!skill.enabled) continue;
     for (const t of skill.tools) {
       defs.push({
-        type: 'function',
+        type: "function",
         function: {
           name: `skill_${t.function.name}`,
           description: `[Skill:${skill.name}] ${t.function.description}`,
@@ -321,7 +344,7 @@ function getSkillToolDefinitions() {
  * @returns {Promise<string|null>} null if not a skill tool
  */
 async function routeSkillCall(fnName, args) {
-  if (!fnName.startsWith('skill_')) return null;
+  if (!fnName.startsWith("skill_")) return null;
   const toolName = fnName.substring(6);
 
   for (const skill of loadedSkills) {
@@ -330,7 +353,7 @@ async function routeSkillCall(fnName, args) {
       if (t.function.name === toolName && t.execute) {
         try {
           const result = await t.execute(args);
-          return typeof result === 'string' ? result : JSON.stringify(result);
+          return typeof result === "string" ? result : JSON.stringify(result);
         } catch (err) {
           return `ERROR: Skill tool '${toolName}' failed: ${err.message}`;
         }
@@ -348,7 +371,7 @@ async function routeSkillCall(fnName, args) {
  */
 function handleSkillCommand(input) {
   const [cmd, ...rest] = input.split(/\s+/);
-  const args = rest.join(' ').trim();
+  const args = rest.join(" ").trim();
 
   for (const skill of loadedSkills) {
     if (!skill.enabled) continue;
@@ -375,7 +398,7 @@ function listSkills() {
     name: s.name,
     type: s.type,
     enabled: s.enabled,
-    description: s.description || '',
+    description: s.description || "",
     commands: s.commands.length,
     tools: s.tools.length,
     filePath: s.filePath,
@@ -430,7 +453,7 @@ function getLoadedSkills() {
  * @returns {Promise<{ ok: boolean, name: string, error?: string }>}
  */
 async function installSkill(url, options = {}) {
-  const { execSync } = require('child_process');
+  const { execSync } = require("child_process");
   const dir = initSkillsDir();
 
   // Normalize URL: support shorthand "user/repo" → GitHub URL
@@ -440,45 +463,64 @@ async function installSkill(url, options = {}) {
   }
 
   // Determine skill name from URL or options
-  const name = options.name || path.basename(gitUrl, '.git').replace(/^nex-skill-/, '');
+  const name =
+    options.name || path.basename(gitUrl, ".git").replace(/^nex-skill-/, "");
   const targetDir = path.join(dir, name);
 
   // Check if already installed
   if (fs.existsSync(targetDir)) {
-    return { ok: false, name, error: `Skill "${name}" is already installed at ${targetDir}. Remove it first to reinstall.` };
+    return {
+      ok: false,
+      name,
+      error: `Skill "${name}" is already installed at ${targetDir}. Remove it first to reinstall.`,
+    };
   }
 
   // Clone
   try {
     execSync(`git clone --depth 1 ${gitUrl} ${targetDir}`, {
       timeout: 30000,
-      stdio: 'pipe',
+      stdio: "pipe",
     });
   } catch (err) {
-    return { ok: false, name, error: `Git clone failed: ${err.stderr?.toString().trim() || err.message}` };
+    return {
+      ok: false,
+      name,
+      error: `Git clone failed: ${err.stderr?.toString().trim() || err.message}`,
+    };
   }
 
   // Validate: check for skill.json manifest or .md/.js skill file
-  const manifestPath = path.join(targetDir, 'skill.json');
+  const manifestPath = path.join(targetDir, "skill.json");
   const hasManifest = fs.existsSync(manifestPath);
-  const hasSkillFile = fs.readdirSync(targetDir).some(f =>
-    (f.endsWith('.md') || f.endsWith('.js')) && !f.startsWith('.')
-  );
+  const hasSkillFile = fs
+    .readdirSync(targetDir)
+    .some(
+      (f) => (f.endsWith(".md") || f.endsWith(".js")) && !f.startsWith("."),
+    );
 
   if (!hasManifest && !hasSkillFile) {
     // Clean up invalid skill
-    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
-    return { ok: false, name, error: 'No skill.json manifest or .md/.js skill file found in repository' };
+    try {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    } catch {}
+    return {
+      ok: false,
+      name,
+      error: "No skill.json manifest or .md/.js skill file found in repository",
+    };
   }
 
   // If manifest exists, validate it
   if (hasManifest) {
     try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
       if (!manifest.name) manifest.name = name;
     } catch {
-      try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
-      return { ok: false, name, error: 'Invalid skill.json — not valid JSON' };
+      try {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+      } catch {}
+      return { ok: false, name, error: "Invalid skill.json — not valid JSON" };
     }
   }
 
@@ -496,23 +538,36 @@ async function installSkill(url, options = {}) {
  * @returns {Promise<Array<{ name: string, description: string, url: string, stars: number }>>}
  */
 async function searchSkills(query) {
-  const axios = require('axios');
+  const axios = require("axios");
   try {
-    const searchQuery = encodeURIComponent(`nex-skill ${query} OR nex-code-skill ${query}`);
-    const resp = await axios.get(`https://api.github.com/search/repositories?q=${searchQuery}&sort=stars&per_page=10`, {
-      timeout: 10000,
-      headers: { 'Accept': 'application/vnd.github.v3+json' },
-    });
+    const searchQuery = encodeURIComponent(
+      `nex-skill ${query} OR nex-code-skill ${query}`,
+    );
+    const resp = await axios.get(
+      `https://api.github.com/search/repositories?q=${searchQuery}&sort=stars&per_page=10`,
+      {
+        timeout: 10000,
+        headers: { Accept: "application/vnd.github.v3+json" },
+      },
+    );
 
-    return (resp.data.items || []).map(repo => ({
-      name: repo.name.replace(/^nex-skill-/, ''),
-      description: repo.description || '(no description)',
+    return (resp.data.items || []).map((repo) => ({
+      name: repo.name.replace(/^nex-skill-/, ""),
+      description: repo.description || "(no description)",
       url: repo.clone_url,
       stars: repo.stargazers_count,
       owner: repo.owner.login,
     }));
   } catch (err) {
-    return [{ name: 'error', description: `Search failed: ${err.message}`, url: '', stars: 0, owner: '' }];
+    return [
+      {
+        name: "error",
+        description: `Search failed: ${err.message}`,
+        url: "",
+        stars: 0,
+        owner: "",
+      },
+    ];
   }
 }
 
@@ -524,7 +579,10 @@ async function searchSkills(query) {
 function removeSkill(name) {
   const dir = path.join(getSkillsDir(), name);
   if (!fs.existsSync(dir)) {
-    return { ok: false, error: `Skill "${name}" not found in ${getSkillsDir()}` };
+    return {
+      ok: false,
+      error: `Skill "${name}" not found in ${getSkillsDir()}`,
+    };
   }
   try {
     fs.rmSync(dir, { recursive: true, force: true });

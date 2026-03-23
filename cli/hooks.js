@@ -4,28 +4,28 @@
  * Hook scripts live in .nex/hooks/ or are configured in .nex/config.json
  */
 
-const { execSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+const { execSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
 
 /**
  * Valid hook events
  */
 const HOOK_EVENTS = [
-  'pre-tool',      // Before any tool execution
-  'post-tool',     // After tool execution
-  'pre-commit',    // Before git commit
-  'post-response', // After LLM response
-  'session-start', // When REPL starts
-  'session-end',   // When REPL exits
+  "pre-tool", // Before any tool execution
+  "post-tool", // After tool execution
+  "pre-commit", // Before git commit
+  "post-response", // After LLM response
+  "session-start", // When REPL starts
+  "session-end", // When REPL exits
 ];
 
 function getHooksDir() {
-  return path.join(process.cwd(), '.nex', 'hooks');
+  return path.join(process.cwd(), ".nex", "hooks");
 }
 
 function getConfigPath() {
-  return path.join(process.cwd(), '.nex', 'config.json');
+  return path.join(process.cwd(), ".nex", "config.json");
 }
 
 /**
@@ -36,7 +36,7 @@ function loadHookConfig() {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) return {};
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     return config.hooks || {};
   } catch {
     return {};
@@ -82,10 +82,10 @@ function executeHook(command, env = {}, timeout = 30000) {
   try {
     const output = execSync(command, {
       cwd: process.cwd(),
-      encoding: 'utf-8',
+      encoding: "utf-8",
       timeout,
       env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     return { success: true, output: output.trim() };
   } catch (err) {
@@ -118,7 +118,7 @@ function runHooks(event, context = {}) {
     results.push({ command, ...result });
 
     // Stop on failure for pre-* hooks (they can block)
-    if (!result.success && event.startsWith('pre-')) {
+    if (!result.success && event.startsWith("pre-")) {
       break;
     }
   }

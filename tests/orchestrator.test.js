@@ -2,35 +2,46 @@
  * tests/orchestrator.test.js — Multi-Agent Orchestrator tests
  */
 
-jest.mock('../cli/providers/registry', () => ({
+jest.mock("../cli/providers/registry", () => ({
   callStream: jest.fn(),
-  parseModelSpec: jest.fn().mockReturnValue({ provider: 'ollama', model: 'test-model' }),
-  getActiveProviderName: jest.fn().mockReturnValue('ollama'),
-  getActiveModelId: jest.fn().mockReturnValue('test-model'),
+  parseModelSpec: jest
+    .fn()
+    .mockReturnValue({ provider: "ollama", model: "test-model" }),
+  getActiveProviderName: jest.fn().mockReturnValue("ollama"),
+  getActiveModelId: jest.fn().mockReturnValue("test-model"),
   getConfiguredProviders: jest.fn().mockReturnValue([]),
   getProvider: jest.fn(),
   getActiveProvider: jest.fn(),
 }));
-jest.mock('../cli/ollama', () => ({ parseToolArgs: jest.fn(a => a) }));
-jest.mock('../cli/tool-tiers', () => ({
-  filterToolsForModel: jest.fn(t => t),
-  getModelTier: jest.fn().mockReturnValue('standard'),
+jest.mock("../cli/ollama", () => ({ parseToolArgs: jest.fn((a) => a) }));
+jest.mock("../cli/tool-tiers", () => ({
+  filterToolsForModel: jest.fn((t) => t),
+  getModelTier: jest.fn().mockReturnValue("standard"),
 }));
-jest.mock('../cli/costs', () => ({ trackUsage: jest.fn() }));
-jest.mock('../cli/ui', () => ({
+jest.mock("../cli/costs", () => ({ trackUsage: jest.fn() }));
+jest.mock("../cli/ui", () => ({
   MultiProgress: jest.fn().mockImplementation(() => ({
     start: jest.fn(),
     update: jest.fn(),
     stop: jest.fn(),
   })),
-  C: { dim: '', reset: '', red: '', green: '', yellow: '', cyan: '', blue: '', bold: '' },
+  C: {
+    dim: "",
+    reset: "",
+    red: "",
+    green: "",
+    yellow: "",
+    cyan: "",
+    blue: "",
+    bold: "",
+  },
 }));
-jest.mock('../cli/tools', () => ({
+jest.mock("../cli/tools", () => ({
   TOOL_DEFINITIONS: [],
-  executeTool: jest.fn().mockResolvedValue('ok'),
+  executeTool: jest.fn().mockResolvedValue("ok"),
 }));
 
-const { callStream } = require('../cli/providers/registry');
+const { callStream } = require("../cli/providers/registry");
 
 const {
   decompose,
@@ -45,12 +56,12 @@ const {
   DEFAULT_MAX_PARALLEL,
   DEFAULT_MAX_SUBTASKS,
   runOrchestrated,
-} = require('../cli/orchestrator');
+} = require("../cli/orchestrator");
 
 // Suppress console output during tests
 beforeEach(() => {
-  jest.spyOn(console, 'log').mockImplementation(() => {});
-  jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+  jest.spyOn(console, "log").mockImplementation(() => {});
+  jest.spyOn(process.stderr, "write").mockImplementation(() => {});
   callStream.mockReset();
 });
 afterEach(() => {
@@ -59,78 +70,80 @@ afterEach(() => {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-describe('constants', () => {
-  test('DEFAULT_ORCHESTRATOR_MODEL is kimi-k2.5', () => {
-    expect(DEFAULT_ORCHESTRATOR_MODEL).toBe('kimi-k2.5');
+describe("constants", () => {
+  test("DEFAULT_ORCHESTRATOR_MODEL is kimi-k2.5", () => {
+    expect(DEFAULT_ORCHESTRATOR_MODEL).toBe("kimi-k2.5");
   });
 
-  test('DEFAULT_WORKER_MODEL is devstral-2:123b', () => {
-    expect(DEFAULT_WORKER_MODEL).toBe('devstral-2:123b');
+  test("DEFAULT_WORKER_MODEL is devstral-2:123b", () => {
+    expect(DEFAULT_WORKER_MODEL).toBe("devstral-2:123b");
   });
 
-  test('DEFAULT_MAX_PARALLEL is 3', () => {
+  test("DEFAULT_MAX_PARALLEL is 3", () => {
     expect(DEFAULT_MAX_PARALLEL).toBe(3);
   });
 
-  test('DEFAULT_MAX_SUBTASKS is 4', () => {
+  test("DEFAULT_MAX_SUBTASKS is 4", () => {
     expect(DEFAULT_MAX_SUBTASKS).toBe(4);
   });
 
-  test('DECOMPOSE_PROMPT contains {maxSubTasks} placeholder', () => {
-    expect(DECOMPOSE_PROMPT).toContain('{maxSubTasks}');
+  test("DECOMPOSE_PROMPT contains {maxSubTasks} placeholder", () => {
+    expect(DECOMPOSE_PROMPT).toContain("{maxSubTasks}");
   });
 
-  test('SYNTHESIZE_PROMPT contains {prompt} and {results} placeholders', () => {
-    expect(SYNTHESIZE_PROMPT).toContain('{prompt}');
-    expect(SYNTHESIZE_PROMPT).toContain('{results}');
+  test("SYNTHESIZE_PROMPT contains {prompt} and {results} placeholders", () => {
+    expect(SYNTHESIZE_PROMPT).toContain("{prompt}");
+    expect(SYNTHESIZE_PROMPT).toContain("{results}");
   });
 });
 
 // ─── extractJSON ─────────────────────────────────────────────────────────────
 
-describe('extractJSON', () => {
-  test('parses plain JSON array', () => {
+describe("extractJSON", () => {
+  test("parses plain JSON array", () => {
     const result = extractJSON('[{"id": "t1", "task": "fix bug"}]');
-    expect(result).toEqual([{ id: 't1', task: 'fix bug' }]);
+    expect(result).toEqual([{ id: "t1", task: "fix bug" }]);
   });
 
-  test('parses plain JSON object', () => {
+  test("parses plain JSON object", () => {
     const result = extractJSON('{"summary": "done"}');
-    expect(result).toEqual({ summary: 'done' });
+    expect(result).toEqual({ summary: "done" });
   });
 
-  test('extracts JSON from markdown code block', () => {
+  test("extracts JSON from markdown code block", () => {
     const text = 'Here is the result:\n```json\n[{"id": "t1"}]\n```\nDone.';
-    expect(extractJSON(text)).toEqual([{ id: 't1' }]);
+    expect(extractJSON(text)).toEqual([{ id: "t1" }]);
   });
 
-  test('extracts JSON from fenced block without language tag', () => {
+  test("extracts JSON from fenced block without language tag", () => {
     const text = '```\n{"key": "val"}\n```';
-    expect(extractJSON(text)).toEqual({ key: 'val' });
+    expect(extractJSON(text)).toEqual({ key: "val" });
   });
 
-  test('finds JSON starting with [ amid surrounding text', () => {
+  test("finds JSON starting with [ amid surrounding text", () => {
     const text = 'The tasks are: [{"id":"t1","task":"a"}]';
-    expect(extractJSON(text)).toEqual([{ id: 't1', task: 'a' }]);
+    expect(extractJSON(text)).toEqual([{ id: "t1", task: "a" }]);
   });
 
-  test('throws on empty input', () => {
-    expect(() => extractJSON('')).toThrow('Empty response');
+  test("throws on empty input", () => {
+    expect(() => extractJSON("")).toThrow("Empty response");
   });
 
-  test('throws on non-string input', () => {
-    expect(() => extractJSON(null)).toThrow('Empty response');
+  test("throws on non-string input", () => {
+    expect(() => extractJSON(null)).toThrow("Empty response");
   });
 
-  test('throws on invalid JSON', () => {
-    expect(() => extractJSON('not json at all')).toThrow('Could not extract valid JSON');
+  test("throws on invalid JSON", () => {
+    expect(() => extractJSON("not json at all")).toThrow(
+      "Could not extract valid JSON",
+    );
   });
 });
 
 // ─── createSemaphore ─────────────────────────────────────────────────────────
 
-describe('createSemaphore', () => {
-  test('limits concurrent operations', async () => {
+describe("createSemaphore", () => {
+  test("limits concurrent operations", async () => {
     const acquire = createSemaphore(2);
     let active = 0;
     let maxActive = 0;
@@ -139,7 +152,7 @@ describe('createSemaphore', () => {
       const release = await acquire();
       active++;
       maxActive = Math.max(maxActive, active);
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10));
       active--;
       release();
     };
@@ -148,88 +161,91 @@ describe('createSemaphore', () => {
     expect(maxActive).toBe(2);
   });
 
-  test('semaphore with limit 1 is sequential', async () => {
+  test("semaphore with limit 1 is sequential", async () => {
     const acquire = createSemaphore(1);
     const order = [];
 
     const work = async (id) => {
       const release = await acquire();
       order.push(`start-${id}`);
-      await new Promise(r => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 5));
       order.push(`end-${id}`);
       release();
     };
 
-    await Promise.all([work('a'), work('b')]);
-    expect(order).toEqual(['start-a', 'end-a', 'start-b', 'end-b']);
+    await Promise.all([work("a"), work("b")]);
+    expect(order).toEqual(["start-a", "end-a", "start-b", "end-b"]);
   });
 });
 
 // ─── detectComplexPrompt ─────────────────────────────────────────────────────
 
-describe('detectComplexPrompt', () => {
-  test('empty prompt is not complex', () => {
-    const r = detectComplexPrompt('');
+describe("detectComplexPrompt", () => {
+  test("empty prompt is not complex", () => {
+    const r = detectComplexPrompt("");
     expect(r.isComplex).toBe(false);
     expect(r.estimatedGoals).toBe(0);
   });
 
-  test('null input is not complex', () => {
+  test("null input is not complex", () => {
     const r = detectComplexPrompt(null);
     expect(r.isComplex).toBe(false);
   });
 
-  test('simple single task is not complex', () => {
-    const r = detectComplexPrompt('Fix the login bug on the dashboard page');
+  test("simple single task is not complex", () => {
+    const r = detectComplexPrompt("Fix the login bug on the dashboard page");
     expect(r.isComplex).toBe(false);
   });
 
-  test('numbered list with 4 items is complex', () => {
-    const prompt = '1. Fix login bug\n2. Update the API docs\n3. Refactor the auth module\n4. Add dark mode';
+  test("numbered list with 4 items is complex", () => {
+    const prompt =
+      "1. Fix login bug\n2. Update the API docs\n3. Refactor the auth module\n4. Add dark mode";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(4);
   });
 
-  test('three numbered items is complex', () => {
-    const prompt = '1. Fix bug A\n2. Fix bug B\n3. Fix bug C';
+  test("three numbered items is complex", () => {
+    const prompt = "1. Fix bug A\n2. Fix bug B\n3. Fix bug C";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
   });
 
-  test('semicolon-separated goals', () => {
-    const prompt = 'fix the login page rendering; update the API response format; refactor the auth middleware';
+  test("semicolon-separated goals", () => {
+    const prompt =
+      "fix the login page rendering; update the API response format; refactor the auth middleware";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
   });
 
-  test('transition keywords (also, additionally)', () => {
-    const prompt = 'Fix the login bug, also add dark mode support, and fix the broken search, and update the docs';
+  test("transition keywords (also, additionally)", () => {
+    const prompt =
+      "Fix the login bug, also add dark mode support, and fix the broken search, and update the docs";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
   });
 
-  test('bullet points', () => {
-    const prompt = '- Fix login bug\n- Update API docs\n- Refactor auth module';
+  test("bullet points", () => {
+    const prompt = "- Fix login bug\n- Update API docs\n- Refactor auth module";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
   });
 
-  test('two numbered items is not complex (threshold is 3)', () => {
-    const prompt = '1. Fix login\n2. Fix logout';
+  test("two numbered items is not complex (threshold is 3)", () => {
+    const prompt = "1. Fix login\n2. Fix logout";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(false);
   });
 
-  test('respects NEX_ORCHESTRATE_THRESHOLD=2: two items become complex', () => {
+  test("respects NEX_ORCHESTRATE_THRESHOLD=2: two items become complex", () => {
     const original = process.env.NEX_ORCHESTRATE_THRESHOLD;
-    process.env.NEX_ORCHESTRATE_THRESHOLD = '2';
+    process.env.NEX_ORCHESTRATE_THRESHOLD = "2";
     jest.resetModules();
-    const { detectComplexPrompt: dcp2 } = require('../cli/orchestrator');
-    const prompt = '1. Fix login\n2. Fix logout';
+    const { detectComplexPrompt: dcp2 } = require("../cli/orchestrator");
+    const prompt = "1. Fix login\n2. Fix logout";
     const r = dcp2(prompt);
     expect(r.isComplex).toBe(true);
     if (original === undefined) {
@@ -240,12 +256,12 @@ describe('detectComplexPrompt', () => {
     jest.resetModules();
   });
 
-  test('respects NEX_ORCHESTRATE_THRESHOLD=5: 3 goals not complex', () => {
+  test("respects NEX_ORCHESTRATE_THRESHOLD=5: 3 goals not complex", () => {
     const original = process.env.NEX_ORCHESTRATE_THRESHOLD;
-    process.env.NEX_ORCHESTRATE_THRESHOLD = '5';
+    process.env.NEX_ORCHESTRATE_THRESHOLD = "5";
     jest.resetModules();
-    const { detectComplexPrompt: dcp5 } = require('../cli/orchestrator');
-    const prompt = '1. Fix login\n2. Fix logout\n3. Fix signup';
+    const { detectComplexPrompt: dcp5 } = require("../cli/orchestrator");
+    const prompt = "1. Fix login\n2. Fix logout\n3. Fix signup";
     const r = dcp5(prompt);
     expect(r.isComplex).toBe(false);
     if (original === undefined) {
@@ -259,7 +275,7 @@ describe('detectComplexPrompt', () => {
 
 // ─── Auto-Orchestrate ────────────────────────────────────────────────────────
 
-describe('Auto-Orchestrate', () => {
+describe("Auto-Orchestrate", () => {
   let savedEnv;
 
   beforeEach(() => {
@@ -280,12 +296,13 @@ describe('Auto-Orchestrate', () => {
     if (savedEnv.NEX_ORCHESTRATE_THRESHOLD === undefined) {
       delete process.env.NEX_ORCHESTRATE_THRESHOLD;
     } else {
-      process.env.NEX_ORCHESTRATE_THRESHOLD = savedEnv.NEX_ORCHESTRATE_THRESHOLD;
+      process.env.NEX_ORCHESTRATE_THRESHOLD =
+        savedEnv.NEX_ORCHESTRATE_THRESHOLD;
     }
   });
 
-  test('shows hint without --auto-orchestrate flag when goals >= 3', () => {
-    const prompt = '1. Fix login\n2. Fix logout\n3. Fix signup';
+  test("shows hint without --auto-orchestrate flag when goals >= 3", () => {
+    const prompt = "1. Fix login\n2. Fix logout\n3. Fix signup";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
@@ -293,32 +310,32 @@ describe('Auto-Orchestrate', () => {
     // (The actual console.log behavior is tested in agent.js integration tests)
   });
 
-  test('NEX_ORCHESTRATE_THRESHOLD=2 makes two items complex', () => {
-    process.env.NEX_ORCHESTRATE_THRESHOLD = '2';
+  test("NEX_ORCHESTRATE_THRESHOLD=2 makes two items complex", () => {
+    process.env.NEX_ORCHESTRATE_THRESHOLD = "2";
     jest.resetModules();
-    const { detectComplexPrompt: dcp } = require('../cli/orchestrator');
-    const prompt = '1. Fix the login bug\n2. Add dark mode support';
+    const { detectComplexPrompt: dcp } = require("../cli/orchestrator");
+    const prompt = "1. Fix the login bug\n2. Add dark mode support";
     const r = dcp(prompt);
     expect(r.isComplex).toBe(true);
     jest.resetModules();
     delete process.env.NEX_ORCHESTRATE_THRESHOLD;
   });
 
-  test('NEX_AUTO_ORCHESTRATE=true is respected as env var trigger', () => {
-    process.env.NEX_AUTO_ORCHESTRATE = 'true';
+  test("NEX_AUTO_ORCHESTRATE=true is respected as env var trigger", () => {
+    process.env.NEX_AUTO_ORCHESTRATE = "true";
     // Verify the env var is recognized (actual agent behavior tested separately)
-    expect(process.env.NEX_AUTO_ORCHESTRATE).toBe('true');
+    expect(process.env.NEX_AUTO_ORCHESTRATE).toBe("true");
   });
 
-  test('detectComplexPrompt threshold defaults to 3', () => {
+  test("detectComplexPrompt threshold defaults to 3", () => {
     delete process.env.NEX_ORCHESTRATE_THRESHOLD;
     jest.resetModules();
-    const { detectComplexPrompt: dcp } = require('../cli/orchestrator');
+    const { detectComplexPrompt: dcp } = require("../cli/orchestrator");
     // 2 goals — not complex at default threshold 3
-    const notComplex = dcp('1. Fix login\n2. Fix logout');
+    const notComplex = dcp("1. Fix login\n2. Fix logout");
     expect(notComplex.isComplex).toBe(false);
     // 3 goals — complex at default threshold 3
-    const complex = dcp('1. Fix login\n2. Fix logout\n3. Fix signup');
+    const complex = dcp("1. Fix login\n2. Fix logout\n3. Fix signup");
     expect(complex.isComplex).toBe(true);
     jest.resetModules();
   });
@@ -326,7 +343,7 @@ describe('Auto-Orchestrate', () => {
 
 // ─── decompose ───────────────────────────────────────────────────────────────
 
-describe('decompose', () => {
+describe("decompose", () => {
   function mockDecomposeResponse(tasks) {
     callStream.mockResolvedValueOnce({
       content: JSON.stringify(tasks),
@@ -335,89 +352,114 @@ describe('decompose', () => {
     });
   }
 
-  test('returns array with correct structure', async () => {
+  test("returns array with correct structure", async () => {
     mockDecomposeResponse([
-      { id: 't1', task: 'Fix login', scope: ['auth.js'], estimatedCalls: 5, priority: 1 },
-      { id: 't2', task: 'Fix search', scope: ['search.js'], estimatedCalls: 3, priority: 2 },
+      {
+        id: "t1",
+        task: "Fix login",
+        scope: ["auth.js"],
+        estimatedCalls: 5,
+        priority: 1,
+      },
+      {
+        id: "t2",
+        task: "Fix search",
+        scope: ["search.js"],
+        estimatedCalls: 3,
+        priority: 2,
+      },
     ]);
 
-    const result = await decompose('Fix login and search', 'test-model');
+    const result = await decompose("Fix login and search", "test-model");
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({
-      id: 't1',
-      task: 'Fix login',
-      scope: ['auth.js'],
+      id: "t1",
+      task: "Fix login",
+      scope: ["auth.js"],
       estimatedCalls: 5,
       priority: 1,
     });
   });
 
-  test('respects maxSubTasks limit', async () => {
+  test("respects maxSubTasks limit", async () => {
     mockDecomposeResponse([
-      { id: 't1', task: 'Task 1', scope: [], estimatedCalls: 5, priority: 1 },
-      { id: 't2', task: 'Task 2', scope: [], estimatedCalls: 5, priority: 2 },
-      { id: 't3', task: 'Task 3', scope: [], estimatedCalls: 5, priority: 3 },
+      { id: "t1", task: "Task 1", scope: [], estimatedCalls: 5, priority: 1 },
+      { id: "t2", task: "Task 2", scope: [], estimatedCalls: 5, priority: 2 },
+      { id: "t3", task: "Task 3", scope: [], estimatedCalls: 5, priority: 3 },
     ]);
 
-    const result = await decompose('many tasks', 'test-model', { maxSubTasks: 2 });
+    const result = await decompose("many tasks", "test-model", {
+      maxSubTasks: 2,
+    });
     expect(result).toHaveLength(2);
   });
 
-  test('fills in missing fields with defaults', async () => {
-    mockDecomposeResponse([
-      { task: 'Do something' },
-    ]);
+  test("fills in missing fields with defaults", async () => {
+    mockDecomposeResponse([{ task: "Do something" }]);
 
-    const result = await decompose('test', 'test-model');
-    expect(result[0].id).toBe('t1');
+    const result = await decompose("test", "test-model");
+    expect(result[0].id).toBe("t1");
     expect(result[0].scope).toEqual([]);
     expect(result[0].estimatedCalls).toBe(10);
     expect(result[0].priority).toBe(1);
   });
 
-  test('caps estimatedCalls at 15', async () => {
+  test("caps estimatedCalls at 15", async () => {
     mockDecomposeResponse([
-      { id: 't1', task: 'Big task', scope: [], estimatedCalls: 50, priority: 1 },
+      {
+        id: "t1",
+        task: "Big task",
+        scope: [],
+        estimatedCalls: 50,
+        priority: 1,
+      },
     ]);
 
-    const result = await decompose('test', 'test-model');
+    const result = await decompose("test", "test-model");
     expect(result[0].estimatedCalls).toBe(15);
   });
 
-  test('filters out empty tasks', async () => {
+  test("filters out empty tasks", async () => {
     mockDecomposeResponse([
-      { id: 't1', task: 'Valid task', scope: [], estimatedCalls: 5, priority: 1 },
-      { id: 't2', task: '', scope: [], estimatedCalls: 5, priority: 2 },
+      {
+        id: "t1",
+        task: "Valid task",
+        scope: [],
+        estimatedCalls: 5,
+        priority: 1,
+      },
+      { id: "t2", task: "", scope: [], estimatedCalls: 5, priority: 2 },
     ]);
 
-    const result = await decompose('test', 'test-model');
+    const result = await decompose("test", "test-model");
     expect(result).toHaveLength(1);
   });
 
-  test('throws on non-array response', async () => {
+  test("throws on non-array response", async () => {
     callStream.mockResolvedValueOnce({
       content: '{"not": "an array"}',
       tool_calls: [],
     });
 
-    await expect(decompose('test', 'test-model')).rejects.toThrow('non-array');
+    await expect(decompose("test", "test-model")).rejects.toThrow("non-array");
   });
 
-  test('handles JSON in markdown code block', async () => {
+  test("handles JSON in markdown code block", async () => {
     callStream.mockResolvedValueOnce({
-      content: '```json\n[{"id":"t1","task":"fix bug","scope":[],"estimatedCalls":5,"priority":1}]\n```',
+      content:
+        '```json\n[{"id":"t1","task":"fix bug","scope":[],"estimatedCalls":5,"priority":1}]\n```',
       tool_calls: [],
     });
 
-    const result = await decompose('fix bug', 'test-model');
+    const result = await decompose("fix bug", "test-model");
     expect(result).toHaveLength(1);
-    expect(result[0].task).toBe('fix bug');
+    expect(result[0].task).toBe("fix bug");
   });
 });
 
 // ─── synthesize ──────────────────────────────────────────────────────────────
 
-describe('synthesize', () => {
+describe("synthesize", () => {
   function mockSynthesizeResponse(synthesis) {
     callStream.mockResolvedValueOnce({
       content: JSON.stringify(synthesis),
@@ -426,94 +468,123 @@ describe('synthesize', () => {
     });
   }
 
-  test('produces required fields', async () => {
+  test("produces required fields", async () => {
     mockSynthesizeResponse({
-      summary: 'Fixed two bugs',
+      summary: "Fixed two bugs",
       conflicts: [],
-      commitMessage: 'fix: resolve login and search bugs',
-      filesChanged: ['auth.js', 'search.js'],
-    });
-
-    const result = await synthesize(
-      [{ task: 'Fix login', status: 'done', result: 'Fixed', toolsUsed: ['edit_file'] }],
-      'Fix login and search',
-      'test-model'
-    );
-
-    expect(result.summary).toBe('Fixed two bugs');
-    expect(result.conflicts).toEqual([]);
-    expect(result.commitMessage).toBe('fix: resolve login and search bugs');
-    expect(result.filesChanged).toEqual(['auth.js', 'search.js']);
-  });
-
-  test('detects file conflicts', async () => {
-    mockSynthesizeResponse({
-      summary: 'Both agents modified config.js',
-      conflicts: ['config.js: agent 1 changed line 10, agent 2 changed line 10'],
-      commitMessage: 'fix: multiple fixes with conflict in config.js',
-      filesChanged: ['config.js'],
+      commitMessage: "fix: resolve login and search bugs",
+      filesChanged: ["auth.js", "search.js"],
     });
 
     const result = await synthesize(
       [
-        { task: 'Fix A', status: 'done', result: 'Changed config.js', toolsUsed: ['edit_file'] },
-        { task: 'Fix B', status: 'done', result: 'Changed config.js', toolsUsed: ['edit_file'] },
+        {
+          task: "Fix login",
+          status: "done",
+          result: "Fixed",
+          toolsUsed: ["edit_file"],
+        },
       ],
-      'Fix A and B',
-      'test-model'
+      "Fix login and search",
+      "test-model",
+    );
+
+    expect(result.summary).toBe("Fixed two bugs");
+    expect(result.conflicts).toEqual([]);
+    expect(result.commitMessage).toBe("fix: resolve login and search bugs");
+    expect(result.filesChanged).toEqual(["auth.js", "search.js"]);
+  });
+
+  test("detects file conflicts", async () => {
+    mockSynthesizeResponse({
+      summary: "Both agents modified config.js",
+      conflicts: [
+        "config.js: agent 1 changed line 10, agent 2 changed line 10",
+      ],
+      commitMessage: "fix: multiple fixes with conflict in config.js",
+      filesChanged: ["config.js"],
+    });
+
+    const result = await synthesize(
+      [
+        {
+          task: "Fix A",
+          status: "done",
+          result: "Changed config.js",
+          toolsUsed: ["edit_file"],
+        },
+        {
+          task: "Fix B",
+          status: "done",
+          result: "Changed config.js",
+          toolsUsed: ["edit_file"],
+        },
+      ],
+      "Fix A and B",
+      "test-model",
     );
 
     expect(result.conflicts).toHaveLength(1);
-    expect(result.conflicts[0]).toContain('config.js');
+    expect(result.conflicts[0]).toContain("config.js");
   });
 
-  test('handles empty results array gracefully', async () => {
-    const result = await synthesize([], 'test', 'test-model');
-    expect(result.summary).toBe('No sub-tasks were executed.');
+  test("handles empty results array gracefully", async () => {
+    const result = await synthesize([], "test", "test-model");
+    expect(result.summary).toBe("No sub-tasks were executed.");
     expect(result.conflicts).toEqual([]);
   });
 
-  test('handles all-failed sub-agents', async () => {
+  test("handles all-failed sub-agents", async () => {
     mockSynthesizeResponse({
-      summary: 'All tasks failed',
+      summary: "All tasks failed",
       conflicts: [],
-      commitMessage: '',
+      commitMessage: "",
       filesChanged: [],
     });
 
     const result = await synthesize(
       [
-        { task: 'Fix A', status: 'failed', result: 'Error: timeout', toolsUsed: [] },
-        { task: 'Fix B', status: 'failed', result: 'Error: parse error', toolsUsed: [] },
+        {
+          task: "Fix A",
+          status: "failed",
+          result: "Error: timeout",
+          toolsUsed: [],
+        },
+        {
+          task: "Fix B",
+          status: "failed",
+          result: "Error: parse error",
+          toolsUsed: [],
+        },
       ],
-      'Fix A and B',
-      'test-model'
+      "Fix A and B",
+      "test-model",
     );
 
-    expect(result.summary).toContain('failed');
+    expect(result.summary).toContain("failed");
   });
 
-  test('normalizes missing fields in LLM response', async () => {
+  test("normalizes missing fields in LLM response", async () => {
     callStream.mockResolvedValueOnce({
       content: '{"summary": "done"}',
       tool_calls: [],
     });
 
     const result = await synthesize(
-      [{ task: 'test', status: 'done', result: 'ok', toolsUsed: [] }],
-      'test',
-      'model'
+      [{ task: "test", status: "done", result: "ok", toolsUsed: [] }],
+      "test",
+      "model",
     );
 
     expect(result.conflicts).toEqual([]);
-    expect(result.commitMessage).toBe('');
+    expect(result.commitMessage).toBe("");
     expect(result.filesChanged).toEqual([]);
   });
 });
 
 // ─── runOrchestrated ─────────────────────────────────────────────────────────
 
-describe('runOrchestrated', () => {
+describe("runOrchestrated", () => {
   function mockDecompose(tasks) {
     callStream.mockResolvedValueOnce({
       content: JSON.stringify(tasks),
@@ -522,7 +593,7 @@ describe('runOrchestrated', () => {
     });
   }
 
-  function mockAgentDone(content = 'Done') {
+  function mockAgentDone(content = "Done") {
     // Sub-agent: first call returns text (no tool calls) → agent finishes
     callStream.mockResolvedValueOnce({
       content,
@@ -539,96 +610,114 @@ describe('runOrchestrated', () => {
     });
   }
 
-  test('full flow: decompose → agents → synthesize', async () => {
+  test("full flow: decompose → agents → synthesize", async () => {
     // 1. Decompose returns 2 tasks
     mockDecompose([
-      { id: 't1', task: 'Fix login', scope: ['auth.js'], estimatedCalls: 3, priority: 1 },
-      { id: 't2', task: 'Fix search', scope: ['search.js'], estimatedCalls: 3, priority: 2 },
+      {
+        id: "t1",
+        task: "Fix login",
+        scope: ["auth.js"],
+        estimatedCalls: 3,
+        priority: 1,
+      },
+      {
+        id: "t2",
+        task: "Fix search",
+        scope: ["search.js"],
+        estimatedCalls: 3,
+        priority: 2,
+      },
     ]);
     // 2. Each sub-agent runs and finishes immediately
-    mockAgentDone('Fixed login');
-    mockAgentDone('Fixed search');
+    mockAgentDone("Fixed login");
+    mockAgentDone("Fixed search");
     // 3. Synthesize
     mockSynthesize({
-      summary: 'Fixed both bugs',
+      summary: "Fixed both bugs",
       conflicts: [],
-      commitMessage: 'fix: resolve login and search bugs',
-      filesChanged: ['auth.js', 'search.js'],
+      commitMessage: "fix: resolve login and search bugs",
+      filesChanged: ["auth.js", "search.js"],
     });
 
-    const result = await runOrchestrated('Fix login and search bugs');
+    const result = await runOrchestrated("Fix login and search bugs");
 
     expect(result.results).toHaveLength(2);
-    expect(result.results[0].status).toBe('done');
-    expect(result.results[1].status).toBe('done');
-    expect(result.synthesis.summary).toBe('Fixed both bugs');
-    expect(result.synthesis.filesChanged).toEqual(['auth.js', 'search.js']);
+    expect(result.results[0].status).toBe("done");
+    expect(result.results[1].status).toBe("done");
+    expect(result.synthesis.summary).toBe("Fixed both bugs");
+    expect(result.synthesis.filesChanged).toEqual(["auth.js", "search.js"]);
   });
 
-  test('returns empty results when decompose fails', async () => {
-    callStream.mockRejectedValueOnce(new Error('model timeout'));
+  test("returns empty results when decompose fails", async () => {
+    callStream.mockRejectedValueOnce(new Error("model timeout"));
 
-    const result = await runOrchestrated('test');
+    const result = await runOrchestrated("test");
 
     expect(result.results).toEqual([]);
-    expect(result.synthesis.summary).toContain('Decompose failed');
+    expect(result.synthesis.summary).toContain("Decompose failed");
   });
 
-  test('returns empty results when no sub-tasks generated', async () => {
+  test("returns empty results when no sub-tasks generated", async () => {
     mockDecompose([]);
 
-    const result = await runOrchestrated('test');
+    const result = await runOrchestrated("test");
 
     expect(result.results).toEqual([]);
   });
 
-  test('handles agent failure gracefully', async () => {
+  test("handles agent failure gracefully", async () => {
     mockDecompose([
-      { id: 't1', task: 'Fail task', scope: [], estimatedCalls: 3, priority: 1 },
+      {
+        id: "t1",
+        task: "Fail task",
+        scope: [],
+        estimatedCalls: 3,
+        priority: 1,
+      },
     ]);
     // Agent throws
-    callStream.mockRejectedValueOnce(new Error('agent crash'));
+    callStream.mockRejectedValueOnce(new Error("agent crash"));
     // Synthesize
     mockSynthesize({
-      summary: 'One task failed',
+      summary: "One task failed",
       conflicts: [],
-      commitMessage: '',
+      commitMessage: "",
       filesChanged: [],
     });
 
-    const result = await runOrchestrated('test');
+    const result = await runOrchestrated("test");
 
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].status).toBe('failed');
+    expect(result.results[0].status).toBe("failed");
   });
 
-  test('aggregates token counts', async () => {
+  test("aggregates token counts", async () => {
     mockDecompose([
-      { id: 't1', task: 'Task 1', scope: [], estimatedCalls: 3, priority: 1 },
+      { id: "t1", task: "Task 1", scope: [], estimatedCalls: 3, priority: 1 },
     ]);
-    mockAgentDone('Done');
+    mockAgentDone("Done");
     mockSynthesize({
-      summary: 'Done',
+      summary: "Done",
       conflicts: [],
-      commitMessage: 'fix: stuff',
+      commitMessage: "fix: stuff",
       filesChanged: [],
     });
 
-    const result = await runOrchestrated('test');
+    const result = await runOrchestrated("test");
 
     expect(result.totalTokens.input).toBeGreaterThan(0);
     expect(result.totalTokens.output).toBeGreaterThan(0);
   });
 
-  test('handles synthesize failure gracefully', async () => {
+  test("handles synthesize failure gracefully", async () => {
     mockDecompose([
-      { id: 't1', task: 'Task 1', scope: [], estimatedCalls: 3, priority: 1 },
+      { id: "t1", task: "Task 1", scope: [], estimatedCalls: 3, priority: 1 },
     ]);
-    mockAgentDone('Done');
+    mockAgentDone("Done");
     // Synthesize fails
-    callStream.mockRejectedValueOnce(new Error('synthesis timeout'));
+    callStream.mockRejectedValueOnce(new Error("synthesis timeout"));
 
-    const result = await runOrchestrated('test');
+    const result = await runOrchestrated("test");
 
     expect(result.results).toHaveLength(1);
     // Should have fallback synthesis
@@ -642,94 +731,157 @@ const {
   scoreDecompose,
   scoreSynthesize,
   ORCHESTRATOR_SCENARIOS,
-} = require('../cli/orchestrator-bench');
+} = require("../cli/orchestrator-bench");
 
-describe('orchestrator-bench scoring', () => {
-  describe('scoreDecompose', () => {
+describe("orchestrator-bench scoring", () => {
+  describe("scoreDecompose", () => {
     const scenario = { expectedSubTasks: 4, maxSubTasks: 5 };
 
-    test('perfect decomposition scores high', () => {
+    test("perfect decomposition scores high", () => {
       const result = [
-        { id: 't1', task: 'Fix login', scope: ['auth.js'], estimatedCalls: 5, priority: 1 },
-        { id: 't2', task: 'Fix search', scope: ['search.js'], estimatedCalls: 3, priority: 2 },
-        { id: 't3', task: 'Fix API', scope: ['api.js'], estimatedCalls: 4, priority: 3 },
-        { id: 't4', task: 'Fix UI', scope: ['ui.js'], estimatedCalls: 2, priority: 4 },
+        {
+          id: "t1",
+          task: "Fix login",
+          scope: ["auth.js"],
+          estimatedCalls: 5,
+          priority: 1,
+        },
+        {
+          id: "t2",
+          task: "Fix search",
+          scope: ["search.js"],
+          estimatedCalls: 3,
+          priority: 2,
+        },
+        {
+          id: "t3",
+          task: "Fix API",
+          scope: ["api.js"],
+          estimatedCalls: 4,
+          priority: 3,
+        },
+        {
+          id: "t4",
+          task: "Fix UI",
+          scope: ["ui.js"],
+          estimatedCalls: 2,
+          priority: 4,
+        },
       ];
       const score = scoreDecompose(result, scenario);
       expect(score).toBeGreaterThanOrEqual(8);
     });
 
-    test('wrong count gets penalized', () => {
+    test("wrong count gets penalized", () => {
       const result = [
-        { id: 't1', task: 'Fix everything', scope: [], estimatedCalls: 10, priority: 1 },
+        {
+          id: "t1",
+          task: "Fix everything",
+          scope: [],
+          estimatedCalls: 10,
+          priority: 1,
+        },
       ];
-      const score = scoreDecompose(result, { expectedSubTasks: 4, maxSubTasks: 5 });
+      const score = scoreDecompose(result, {
+        expectedSubTasks: 4,
+        maxSubTasks: 5,
+      });
       expect(score).toBeLessThanOrEqual(7);
     });
 
-    test('non-array returns 0', () => {
-      expect(scoreDecompose('invalid', scenario)).toBe(0);
+    test("non-array returns 0", () => {
+      expect(scoreDecompose("invalid", scenario)).toBe(0);
       expect(scoreDecompose(null, scenario)).toBe(0);
     });
 
-    test('overlapping scopes get penalized', () => {
+    test("overlapping scopes get penalized", () => {
       const result = [
-        { id: 't1', task: 'Fix A', scope: ['shared.js'], estimatedCalls: 5, priority: 1 },
-        { id: 't2', task: 'Fix B', scope: ['shared.js'], estimatedCalls: 5, priority: 2 },
+        {
+          id: "t1",
+          task: "Fix A",
+          scope: ["shared.js"],
+          estimatedCalls: 5,
+          priority: 1,
+        },
+        {
+          id: "t2",
+          task: "Fix B",
+          scope: ["shared.js"],
+          estimatedCalls: 5,
+          priority: 2,
+        },
       ];
-      const score = scoreDecompose(result, { expectedSubTasks: 2, maxSubTasks: 4 });
+      const score = scoreDecompose(result, {
+        expectedSubTasks: 2,
+        maxSubTasks: 4,
+      });
       const noOverlap = [
-        { id: 't1', task: 'Fix A', scope: ['a.js'], estimatedCalls: 5, priority: 1 },
-        { id: 't2', task: 'Fix B', scope: ['b.js'], estimatedCalls: 5, priority: 2 },
+        {
+          id: "t1",
+          task: "Fix A",
+          scope: ["a.js"],
+          estimatedCalls: 5,
+          priority: 1,
+        },
+        {
+          id: "t2",
+          task: "Fix B",
+          scope: ["b.js"],
+          estimatedCalls: 5,
+          priority: 2,
+        },
       ];
-      const scoreNoOverlap = scoreDecompose(noOverlap, { expectedSubTasks: 2, maxSubTasks: 4 });
+      const scoreNoOverlap = scoreDecompose(noOverlap, {
+        expectedSubTasks: 2,
+        maxSubTasks: 4,
+      });
       expect(scoreNoOverlap).toBeGreaterThan(score);
     });
   });
 
-  describe('scoreSynthesize', () => {
-    test('perfect synthesis scores high', () => {
+  describe("scoreSynthesize", () => {
+    test("perfect synthesis scores high", () => {
       const result = {
-        summary: 'Fixed all bugs successfully across two files',
+        summary: "Fixed all bugs successfully across two files",
         conflicts: [],
-        commitMessage: 'fix: resolve login and search bugs',
-        filesChanged: ['auth.js', 'search.js'],
+        commitMessage: "fix: resolve login and search bugs",
+        filesChanged: ["auth.js", "search.js"],
       };
       const score = scoreSynthesize(result, { expectedConflicts: 0 });
       expect(score).toBeGreaterThanOrEqual(8);
     });
 
-    test('detects conflicts correctly', () => {
+    test("detects conflicts correctly", () => {
       const result = {
-        summary: 'Both agents modified the config file',
-        conflicts: ['config.js: both agents changed loadConfig()'],
-        commitMessage: 'fix: merged config changes',
-        filesChanged: ['config.js'],
+        summary: "Both agents modified the config file",
+        conflicts: ["config.js: both agents changed loadConfig()"],
+        commitMessage: "fix: merged config changes",
+        filesChanged: ["config.js"],
       };
       const score = scoreSynthesize(result, { expectedConflicts: 1 });
       expect(score).toBeGreaterThanOrEqual(8);
     });
 
-    test('missing conflicts when expected gets penalized', () => {
+    test("missing conflicts when expected gets penalized", () => {
       const result = {
-        summary: 'Done',
+        summary: "Done",
         conflicts: [],
-        commitMessage: 'fix: stuff',
-        filesChanged: ['config.js'],
+        commitMessage: "fix: stuff",
+        filesChanged: ["config.js"],
       };
       const withConflicts = scoreSynthesize(result, { expectedConflicts: 1 });
       const noConflicts = scoreSynthesize(result, { expectedConflicts: 0 });
       expect(noConflicts).toBeGreaterThan(withConflicts);
     });
 
-    test('non-object returns 0', () => {
+    test("non-object returns 0", () => {
       expect(scoreSynthesize(null, { expectedConflicts: 0 })).toBe(0);
-      expect(scoreSynthesize('string', { expectedConflicts: 0 })).toBe(0);
+      expect(scoreSynthesize("string", { expectedConflicts: 0 })).toBe(0);
     });
   });
 
-  describe('ORCHESTRATOR_SCENARIOS', () => {
-    test('all scenarios have required fields', () => {
+  describe("ORCHESTRATOR_SCENARIOS", () => {
+    test("all scenarios have required fields", () => {
       for (const s of ORCHESTRATOR_SCENARIOS) {
         expect(s.id).toBeTruthy();
         expect(s.type).toMatch(/^(decompose|synthesize)$/);
@@ -737,13 +889,13 @@ describe('orchestrator-bench scoring', () => {
       }
     });
 
-    test('has both decompose and synthesize scenarios', () => {
-      const types = new Set(ORCHESTRATOR_SCENARIOS.map(s => s.type));
-      expect(types.has('decompose')).toBe(true);
-      expect(types.has('synthesize')).toBe(true);
+    test("has both decompose and synthesize scenarios", () => {
+      const types = new Set(ORCHESTRATOR_SCENARIOS.map((s) => s.type));
+      expect(types.has("decompose")).toBe(true);
+      expect(types.has("synthesize")).toBe(true);
     });
 
-    test('has at least 6 scenarios', () => {
+    test("has at least 6 scenarios", () => {
       expect(ORCHESTRATOR_SCENARIOS.length).toBeGreaterThanOrEqual(6);
     });
   });

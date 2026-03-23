@@ -4,25 +4,25 @@
  * Also loads NEX.md from project root for project-level instructions
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { atomicWrite, withFileLockSync } = require('./filelock');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { atomicWrite, withFileLockSync } = require("./filelock");
 
 function getMemoryDir() {
-  return path.join(process.cwd(), '.nex', 'memory');
+  return path.join(process.cwd(), ".nex", "memory");
 }
 
 function getMemoryFile() {
-  return path.join(getMemoryDir(), 'memory.json');
+  return path.join(getMemoryDir(), "memory.json");
 }
 
 function getNexMdPath() {
-  return path.join(process.cwd(), 'NEX.md');
+  return path.join(process.cwd(), "NEX.md");
 }
 
 function getGlobalNexMdPath() {
-  return path.join(os.homedir(), '.nex', 'NEX.md');
+  return path.join(os.homedir(), ".nex", "NEX.md");
 }
 
 function ensureDir() {
@@ -36,7 +36,7 @@ function readMemoryFile() {
   const file = getMemoryFile();
   if (!fs.existsSync(file)) return {};
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
   } catch {
     return {};
   }
@@ -110,11 +110,11 @@ function listMemories() {
  */
 function loadGlobalInstructions() {
   const globalMd = getGlobalNexMdPath();
-  if (!fs.existsSync(globalMd)) return '';
+  if (!fs.existsSync(globalMd)) return "";
   try {
-    return fs.readFileSync(globalMd, 'utf-8').trim();
+    return fs.readFileSync(globalMd, "utf-8").trim();
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -124,11 +124,11 @@ function loadGlobalInstructions() {
  */
 function loadProjectInstructions() {
   const nexMd = getNexMdPath();
-  if (!fs.existsSync(nexMd)) return '';
+  if (!fs.existsSync(nexMd)) return "";
   try {
-    return fs.readFileSync(nexMd, 'utf-8').trim();
+    return fs.readFileSync(nexMd, "utf-8").trim();
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -155,11 +155,11 @@ function getMemoryContext() {
   // Load memories
   const memories = listMemories();
   if (memories.length > 0) {
-    const memStr = memories.map((m) => `  ${m.key}: ${m.value}`).join('\n');
+    const memStr = memories.map((m) => `  ${m.key}: ${m.value}`).join("\n");
     parts.push(`PROJECT MEMORY:\n${memStr}`);
   }
 
-  return parts.join('\n\n');
+  return parts.join("\n\n");
 }
 
 module.exports = {

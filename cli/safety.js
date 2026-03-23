@@ -2,8 +2,8 @@
  * cli/safety.js — Forbidden Patterns, Dangerous Commands, Confirm Logic
  */
 
-const readline = require('readline');
-const { C } = require('./ui');
+const readline = require("readline");
+const { C } = require("./ui");
 
 const FORBIDDEN_PATTERNS = [
   /rm\s+-rf\s+\/(?:\s|$)/,
@@ -171,18 +171,21 @@ const SSH_SAFE_PATTERNS = [
 
 function isSSHReadOnly(command) {
   // Extract the remote command from ssh ... "remote command"
-  const remoteCmd = command.match(/ssh\s+[^"]*"([^"]+)"/)?.[1] ||
-                    command.match(/ssh\s+[^']*'([^']+)'/)?.[1];
+  const remoteCmd =
+    command.match(/ssh\s+[^"]*"([^"]+)"/)?.[1] ||
+    command.match(/ssh\s+[^']*'([^']+)'/)?.[1];
   if (!remoteCmd) return false;
 
   // Collapse for/while loops into single tokens before splitting on && ;
   // This prevents "for x in a; do cmd; done" from being split incorrectly
-  const collapsed = remoteCmd.replace(/\bfor\s[\s\S]*?\bdone\b/g, m => m.replace(/;/g, '\x00'))
-                             .replace(/\bwhile\s[\s\S]*?\bdone\b/g, m => m.replace(/;/g, '\x00'));
+  const collapsed = remoteCmd
+    .replace(/\bfor\s[\s\S]*?\bdone\b/g, (m) => m.replace(/;/g, "\x00"))
+    .replace(/\bwhile\s[\s\S]*?\bdone\b/g, (m) => m.replace(/;/g, "\x00"));
 
   // Split compound commands on && ; and check each part
-  const parts = collapsed.split(/\s*(?:&&|;)\s*/)
-    .map(s => s.replace(/\x00/g, ';').trim())
+  const parts = collapsed
+    .split(/\s*(?:&&|;)\s*/)
+    .map((s) => s.replace(/\x00/g, ";").trim())
     .filter(Boolean);
 
   // If there are no parts, not safe
@@ -190,7 +193,10 @@ function isSSHReadOnly(command) {
 
   const isSafePart = (part) => {
     // Strip sudo prefix: -u/-g/-C/-D take an argument, other flags don't
-    const cleaned = part.replace(/^sudo\s+(?:-[ugCD]\s+\S+\s+|-[A-Za-z]+\s+)*/, '');
+    const cleaned = part.replace(
+      /^sudo\s+(?:-[ugCD]\s+\S+\s+|-[A-Za-z]+\s+)*/,
+      "",
+    );
     // Allow echo/printf (output helpers)
     if (/^\s*(?:echo|printf)\s/.test(cleaned)) return true;
     // Allow for/while loops — check the loop body
@@ -198,15 +204,23 @@ function isSSHReadOnly(command) {
       // Extract the do...done body and check inner commands
       const body = part.match(/\bdo\s+([\s\S]*?)\s*(?:done|$)/)?.[1];
       if (body) {
-        const innerParts = body.split(/\s*;\s*/).map(s => s.trim()).filter(Boolean);
-        return innerParts.every(ip => isSafePart(ip));
+        const innerParts = body
+          .split(/\s*;\s*/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        return innerParts.every((ip) => isSafePart(ip));
       }
       // If we can't parse the body, check if any safe pattern matches anywhere in the loop
-      return SSH_SAFE_PATTERNS.some(pat => pat.test(part));
+      return SSH_SAFE_PATTERNS.some((pat) => pat.test(part));
     }
     // Allow variable assignments
-    if (/^\w+=\$?\(/.test(cleaned) || /^\w+=["']/.test(cleaned) || /^\w+=\S/.test(cleaned)) return true;
-    return SSH_SAFE_PATTERNS.some(pat => pat.test(cleaned));
+    if (
+      /^\w+=\$?\(/.test(cleaned) ||
+      /^\w+=["']/.test(cleaned) ||
+      /^\w+=\S/.test(cleaned)
+    )
+      return true;
+    return SSH_SAFE_PATTERNS.some((pat) => pat.test(cleaned));
   };
 
   return parts.every(isSafePart);
@@ -222,8 +236,8 @@ const CRITICAL_BASH = [
   /--no-verify\b/,
   // Destructive git operations — discard local work
   /git\s+reset\s+--hard\b/,
-  /git\s+clean\s+-[a-z]*f/,      // git clean -f, -fd, -ffd, etc.
-  /git\s+checkout\s+--\s/,        // git checkout -- <path> (discard changes)
+  /git\s+clean\s+-[a-z]*f/, // git clean -f, -fd, -ffd, etc.
+  /git\s+checkout\s+--\s/, // git checkout -- <path> (discard changes)
   /git\s+push\s+(?:--force\b|-f\b)/, // force push (overwrites remote history)
 ];
 
@@ -298,7 +312,7 @@ function isCritical(command) {
  * Returns the matched path pattern or null.
  */
 function isBashPathForbidden(command) {
-  if (process.env.NEX_UNPROTECT === '1') return null;
+  if (process.env.NEX_UNPROTECT === "1") return null;
   if (!DESTRUCTIVE_CMDS.test(command)) return null;
   for (const pat of BASH_PROTECTED_PATHS) {
     if (pat.test(command)) return pat;
@@ -323,9 +337,7 @@ function confirm(question, opts = {}) {
     return _confirmText(question, opts);
   }
 
-  const options = opts.toolName
-    ? ['Yes', 'No', 'Always allow']
-    : ['Yes', 'No'];
+  const options = opts.toolName ? ["Yes", "No", "Always allow"] : ["Yes", "No"];
 
   return new Promise((resolve) => {
     let selected = 0;
@@ -350,7 +362,7 @@ function confirm(question, opts = {}) {
       let buf = `\x1b[${startRow};1H\x1b[2K${C.yellow}${question}${C.reset}`;
       for (let i = 0; i < options.length; i++) {
         const sel = i === selected;
-        const cursor = sel ? `${C.yellow}❯${C.reset}` : ' ';
+        const cursor = sel ? `${C.yellow}❯${C.reset}` : " ";
         const label = sel ? `${C.yellow}${options[i]}${C.reset}` : options[i];
         buf += `\x1b[${startRow + 1 + i};1H\x1b[2K  ${cursor} ${label}`;
       }
@@ -360,12 +372,12 @@ function confirm(question, opts = {}) {
     const cleanup = (result) => {
       process.stdin.setRawMode(false);
       process.stdin.pause();
-      process.stdin.removeListener('data', onKey);
+      process.stdin.removeListener("data", onKey);
       // Erase each dialog row via absolute positioning — no \n, no cursor-relative
       // moves — so the row tracker and scroll region are completely unaffected.
       const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
       const startRow = _dialogStartRow();
-      let buf = '';
+      let buf = "";
       for (let i = 0; i < options.length + 1; i++) {
         buf += `\x1b[${startRow + i};1H\x1b[2K`;
       }
@@ -377,48 +389,78 @@ function confirm(question, opts = {}) {
     };
 
     const choose = (idx) => {
-      if (idx === 1) { cleanup(false); return; }
+      if (idx === 1) {
+        cleanup(false);
+        return;
+      }
       if (idx === 2 && opts.toolName) _onAllowAlways(opts.toolName);
       cleanup(true);
     };
 
     const onKey = (key) => {
-      if (key[0] === 0x03) { cleanup(false); return; } // Ctrl+C → No
+      if (key[0] === 0x03) {
+        cleanup(false);
+        return;
+      } // Ctrl+C → No
       const str = key.toString();
-      if (str === '\r' || str === '\n') { choose(selected); return; }
-      if (str === '\x1b[A') { selected = (selected - 1 + options.length) % options.length; render(); return; } // ↑
-      if (str === '\x1b[B') { selected = (selected + 1) % options.length; render(); return; } // ↓
+      if (str === "\r" || str === "\n") {
+        choose(selected);
+        return;
+      }
+      if (str === "\x1b[A") {
+        selected = (selected - 1 + options.length) % options.length;
+        render();
+        return;
+      } // ↑
+      if (str === "\x1b[B") {
+        selected = (selected + 1) % options.length;
+        render();
+        return;
+      } // ↓
       // Keyboard shortcuts
       const a = str.toLowerCase().trim();
-      if (a === 'y') { cleanup(true); return; }
-      if (a === 'n') { cleanup(false); return; }
-      if (a === 'a' && opts.toolName) { _onAllowAlways(opts.toolName); cleanup(true); return; }
+      if (a === "y") {
+        cleanup(true);
+        return;
+      }
+      if (a === "n") {
+        cleanup(false);
+        return;
+      }
+      if (a === "a" && opts.toolName) {
+        _onAllowAlways(opts.toolName);
+        cleanup(true);
+        return;
+      }
     };
 
     render();
     process.stdin.setRawMode(true);
     process.stdin.resume();
-    process.stdin.on('data', onKey);
+    process.stdin.on("data", onKey);
   });
 }
 
 /** Text-input fallback for non-TTY environments */
 function _confirmText(question, opts) {
-  const hint = opts.toolName ? '[Y/n/a] ' : '[Y/n] ';
+  const hint = opts.toolName ? "[Y/n/a] " : "[Y/n] ";
   return new Promise((resolve) => {
     const handler = (answer) => {
       const a = answer.trim().toLowerCase();
-      if (a === 'a' && opts.toolName) {
+      if (a === "a" && opts.toolName) {
         _onAllowAlways(opts.toolName);
         resolve(true);
       } else {
-        resolve(a !== 'n');
+        resolve(a !== "n");
       }
     };
     if (_rl) {
       _rl.question(`${C.yellow}${question} ${hint}${C.reset}`, handler);
     } else {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
       rl.question(`${C.yellow}${question} ${hint}${C.reset}`, (answer) => {
         rl.close();
         handler(answer);
@@ -428,7 +470,9 @@ function _confirmText(question, opts) {
 }
 
 let _onAllowAlways = () => {}; // set from outside
-function setAllowAlwaysHandler(fn) { _onAllowAlways = fn; }
+function setAllowAlwaysHandler(fn) {
+  _onAllowAlways = fn;
+}
 
 module.exports = {
   FORBIDDEN_PATTERNS,

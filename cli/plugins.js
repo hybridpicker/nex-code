@@ -3,8 +3,8 @@
  * Load plugins from .nex/plugins/*.js and provide registration APIs.
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 // Plugin registry
 const _plugins = [];
@@ -13,13 +13,13 @@ const _hooks = {};
 
 // Event types
 const EVENTS = [
-  'onToolResult',     // After a tool executes
-  'onModelResponse',  // After model responds
-  'onSessionStart',   // When session starts
-  'onSessionEnd',     // When session ends
-  'onFileChange',     // When a file is modified
-  'beforeToolExec',   // Before tool executes (can modify args)
-  'afterToolExec',    // After tool executes (can modify result)
+  "onToolResult", // After a tool executes
+  "onModelResponse", // After model responds
+  "onSessionStart", // When session starts
+  "onSessionEnd", // When session ends
+  "onFileChange", // When a file is modified
+  "beforeToolExec", // Before tool executes (can modify args)
+  "afterToolExec", // After tool executes (can modify result)
 ];
 
 /**
@@ -30,22 +30,22 @@ const EVENTS = [
  */
 function registerTool(definition, handler) {
   if (!definition || !definition.function || !definition.function.name) {
-    return { ok: false, error: 'Tool definition must have function.name' };
+    return { ok: false, error: "Tool definition must have function.name" };
   }
-  if (typeof handler !== 'function') {
-    return { ok: false, error: 'Handler must be a function' };
+  if (typeof handler !== "function") {
+    return { ok: false, error: "Handler must be a function" };
   }
 
   const name = definition.function.name;
 
   // Check for conflicts
-  if (_registeredTools.some(t => t.definition.function.name === name)) {
+  if (_registeredTools.some((t) => t.definition.function.name === name)) {
     return { ok: false, error: `Tool "${name}" is already registered` };
   }
 
   _registeredTools.push({
     definition: {
-      type: 'function',
+      type: "function",
       ...definition,
     },
     handler,
@@ -62,10 +62,13 @@ function registerTool(definition, handler) {
  */
 function registerHook(event, handler) {
   if (!EVENTS.includes(event)) {
-    return { ok: false, error: `Unknown event "${event}". Available: ${EVENTS.join(', ')}` };
+    return {
+      ok: false,
+      error: `Unknown event "${event}". Available: ${EVENTS.join(", ")}`,
+    };
   }
-  if (typeof handler !== 'function') {
-    return { ok: false, error: 'Handler must be a function' };
+  if (typeof handler !== "function") {
+    return { ok: false, error: "Handler must be a function" };
   }
 
   if (!_hooks[event]) _hooks[event] = [];
@@ -105,14 +108,14 @@ async function emit(event, data) {
  * @returns {{ loaded: number, errors: string[] }}
  */
 function loadPlugins() {
-  const pluginsDir = path.join(process.cwd(), '.nex', 'plugins');
+  const pluginsDir = path.join(process.cwd(), ".nex", "plugins");
   const errors = [];
 
   if (!fs.existsSync(pluginsDir)) {
     return { loaded: 0, errors: [] };
   }
 
-  const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith('.js'));
+  const files = fs.readdirSync(pluginsDir).filter((f) => f.endsWith(".js"));
 
   const context = {
     registerTool,
@@ -125,19 +128,21 @@ function loadPlugins() {
     try {
       const plugin = require(filePath);
 
-      if (typeof plugin === 'function') {
+      if (typeof plugin === "function") {
         // Plugin exports a setup function
         plugin(context);
-      } else if (typeof plugin.setup === 'function') {
+      } else if (typeof plugin.setup === "function") {
         // Plugin exports an object with setup()
         plugin.setup(context);
       } else {
-        errors.push(`${file}: Plugin must export a function or { setup: function }`);
+        errors.push(
+          `${file}: Plugin must export a function or { setup: function }`,
+        );
         continue;
       }
 
       _plugins.push({
-        name: plugin.name || path.basename(file, '.js'),
+        name: plugin.name || path.basename(file, ".js"),
         filePath,
       });
     } catch (err) {
@@ -153,7 +158,7 @@ function loadPlugins() {
  * @returns {Array} Tool definitions
  */
 function getPluginToolDefinitions() {
-  return _registeredTools.map(t => t.definition);
+  return _registeredTools.map((t) => t.definition);
 }
 
 /**
@@ -164,16 +169,18 @@ function getPluginToolDefinitions() {
  * @returns {Promise<string|null>} Result or null if not a plugin tool
  */
 async function executePluginTool(name, args, options = {}) {
-  const tool = _registeredTools.find(t => t.definition.function.name === name);
+  const tool = _registeredTools.find(
+    (t) => t.definition.function.name === name,
+  );
   if (!tool) return null;
 
   // Emit beforeToolExec
-  const modifiedArgs = await emit('beforeToolExec', { name, args, options });
+  const modifiedArgs = await emit("beforeToolExec", { name, args, options });
 
   const result = await tool.handler(modifiedArgs.args || args, options);
 
   // Emit afterToolExec
-  const modifiedResult = await emit('afterToolExec', { name, args, result });
+  const modifiedResult = await emit("afterToolExec", { name, args, result });
 
   return modifiedResult.result || result;
 }

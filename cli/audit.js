@@ -3,10 +3,10 @@
  * Logs all tool executions to .nex/audit/YYYY-MM-DD.jsonl
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-let _auditEnabled = process.env.NEX_AUDIT !== 'false';
+let _auditEnabled = process.env.NEX_AUDIT !== "false";
 let _auditDir = null;
 
 /**
@@ -14,7 +14,7 @@ let _auditDir = null;
  */
 function getAuditDir() {
   if (_auditDir) return _auditDir;
-  _auditDir = path.join(process.cwd(), '.nex', 'audit');
+  _auditDir = path.join(process.cwd(), ".nex", "audit");
   if (!fs.existsSync(_auditDir)) {
     fs.mkdirSync(_auditDir, { recursive: true });
   }
@@ -25,7 +25,7 @@ function getAuditDir() {
  * Get today's audit log file path.
  */
 function getAuditLogPath() {
-  const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
   return path.join(getAuditDir(), `${date}.jsonl`);
 }
 
@@ -48,16 +48,17 @@ function logToolExecution(entry) {
       timestamp: new Date().toISOString(),
       tool: entry.tool,
       args: sanitizeArgs(entry.args),
-      resultLength: typeof entry.result === 'string' ? entry.result.length : 0,
-      resultPreview: typeof entry.result === 'string' ? entry.result.substring(0, 200) : '',
+      resultLength: typeof entry.result === "string" ? entry.result.length : 0,
+      resultPreview:
+        typeof entry.result === "string" ? entry.result.substring(0, 200) : "",
       duration: entry.duration || 0,
       success: entry.success !== false,
       model: entry.model || null,
       provider: entry.provider || null,
     };
 
-    const line = JSON.stringify(record) + '\n';
-    fs.appendFileSync(getAuditLogPath(), line, 'utf-8');
+    const line = JSON.stringify(record) + "\n";
+    fs.appendFileSync(getAuditLogPath(), line, "utf-8");
   } catch {
     // Audit logging should never break the tool
   }
@@ -67,14 +68,14 @@ function logToolExecution(entry) {
  * Sanitize tool arguments to avoid logging sensitive data.
  */
 function sanitizeArgs(args) {
-  if (!args || typeof args !== 'object') return {};
+  if (!args || typeof args !== "object") return {};
 
   const sanitized = {};
   for (const [key, value] of Object.entries(args)) {
     // Mask potential secrets
     if (/key|token|password|secret|credential/i.test(key)) {
-      sanitized[key] = '***';
-    } else if (typeof value === 'string' && value.length > 500) {
+      sanitized[key] = "***";
+    } else if (typeof value === "string" && value.length > 500) {
       sanitized[key] = value.substring(0, 500) + `... (${value.length} chars)`;
     } else {
       sanitized[key] = value;
@@ -98,12 +99,17 @@ function readAuditLog(options = {}) {
   const entries = [];
 
   for (let i = 0; i < days; i++) {
-    const date = options.date || new Date(Date.now() - i * 86400000).toISOString().split('T')[0];
+    const date =
+      options.date ||
+      new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
     const logPath = path.join(dir, `${date}.jsonl`);
 
     if (!fs.existsSync(logPath)) continue;
 
-    const lines = fs.readFileSync(logPath, 'utf-8').split('\n').filter(l => l.trim());
+    const lines = fs
+      .readFileSync(logPath, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim());
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);

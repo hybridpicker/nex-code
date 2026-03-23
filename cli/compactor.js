@@ -5,10 +5,10 @@
  * preserving context while freeing tokens. Silent fallback on any error.
  */
 
-const { callChat } = require('./providers/registry');
-const { estimateTokens } = require('./context-engine');
+const { callChat } = require("./providers/registry");
+const { estimateTokens } = require("./context-engine");
 
-const COMPACTION_ENABLED = process.env.NEX_COMPACTION !== 'false';
+const COMPACTION_ENABLED = process.env.NEX_COMPACTION !== "false";
 const COMPACTION_MIN_MESSAGES = 6;
 const COMPACTION_SUMMARY_BUDGET = 500;
 
@@ -25,11 +25,12 @@ Be factual and brief. Use bullet points. Max 300 words.`;
  * @returns {Promise<{ message: object, tokensRemoved: number } | null>}
  */
 async function compactMessages(messages) {
-  if (!COMPACTION_ENABLED || messages.length < COMPACTION_MIN_MESSAGES) return null;
+  if (!COMPACTION_ENABLED || messages.length < COMPACTION_MIN_MESSAGES)
+    return null;
 
   const summaryMessages = [
-    { role: 'system', content: COMPACT_PROMPT },
-    { role: 'user', content: formatMessagesForSummary(messages) },
+    { role: "system", content: COMPACT_PROMPT },
+    { role: "user", content: formatMessagesForSummary(messages) },
   ];
 
   try {
@@ -37,18 +38,23 @@ async function compactMessages(messages) {
       temperature: 0,
       maxTokens: COMPACTION_SUMMARY_BUDGET,
     });
-    const summary = (result.content || '').trim();
+    const summary = (result.content || "").trim();
     if (!summary) return null;
 
-    const originalTokens = messages.reduce((sum, m) =>
-      sum + estimateTokens(m.content || '') + (m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0), 0);
+    const originalTokens = messages.reduce(
+      (sum, m) =>
+        sum +
+        estimateTokens(m.content || "") +
+        (m.tool_calls ? estimateTokens(JSON.stringify(m.tool_calls)) : 0),
+      0,
+    );
     const summaryTokens = estimateTokens(summary);
 
     if (summaryTokens >= originalTokens * 0.8) return null;
 
     return {
       message: {
-        role: 'system',
+        role: "system",
         content: `[Conversation Summary — ${messages.length} messages compacted]\n${summary}`,
         _compacted: true,
         _originalCount: messages.length,
@@ -65,15 +71,17 @@ async function compactMessages(messages) {
  * Each message is truncated to 500 chars to control input budget.
  */
 function formatMessagesForSummary(messages) {
-  return messages.map(m => {
-    const role = m.role === 'tool' ? 'tool_result' : m.role;
-    const content = (m.content || '').substring(0, 500);
-    if (m.tool_calls) {
-      const tools = m.tool_calls.map(tc => tc.function?.name).join(', ');
-      return `[${role}] ${content}\n  tools: ${tools}`;
-    }
-    return `[${role}] ${content}`;
-  }).join('\n\n');
+  return messages
+    .map((m) => {
+      const role = m.role === "tool" ? "tool_result" : m.role;
+      const content = (m.content || "").substring(0, 500);
+      if (m.tool_calls) {
+        const tools = m.tool_calls.map((tc) => tc.function?.name).join(", ");
+        return `[${role}] ${content}\n  tools: ${tools}`;
+      }
+      return `[${role}] ${content}`;
+    })
+    .join("\n\n");
 }
 
 module.exports = {

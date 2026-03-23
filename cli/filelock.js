@@ -14,10 +14,10 @@
  *     Safe to call from the Node.js main thread (uses Atomics.wait for sleep).
  */
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ function isProcessRunning(pid) {
     return true;
   } catch (err) {
     // EPERM means the process exists but we cannot signal it — still alive
-    return err.code === 'EPERM';
+    return err.code === "EPERM";
   }
 }
 
@@ -48,7 +48,9 @@ function sleepSync(ms) {
   } catch {
     // Fallback: yield CPU for a short busy-wait
     const end = Date.now() + ms;
-    while (Date.now() < end) { /* busy yield */ }
+    while (Date.now() < end) {
+      /* busy yield */
+    }
   }
 }
 
@@ -67,10 +69,14 @@ function atomicWrite(filePath, content) {
   const tmp = path.join(dir, `.nex-tmp.${process.pid}.${Date.now()}`);
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, content, 'utf-8');
+    fs.writeFileSync(tmp, content, "utf-8");
     fs.renameSync(tmp, filePath);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* best-effort cleanup */
+    }
     throw err;
   }
 }
@@ -94,14 +100,14 @@ function atomicWrite(filePath, content) {
  * @returns {*} Return value of fn()
  */
 function withFileLockSync(filePath, fn, { timeout = 5000, retryMs = 50 } = {}) {
-  const lockPath = filePath + '.lock';
+  const lockPath = filePath + ".lock";
   const deadline = Date.now() + timeout;
 
   while (true) {
     let fd = -1;
     try {
       // O_WRONLY | O_CREAT | O_EXCL — fails with EEXIST if lock already held
-      fd = fs.openSync(lockPath, 'wx');
+      fd = fs.openSync(lockPath, "wx");
       fs.writeSync(fd, Buffer.from(String(process.pid)));
       fs.closeSync(fd);
       fd = -1;
@@ -110,31 +116,49 @@ function withFileLockSync(filePath, fn, { timeout = 5000, retryMs = 50 } = {}) {
       try {
         return fn();
       } finally {
-        try { fs.unlinkSync(lockPath); } catch { /* best-effort */ }
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          /* best-effort */
+        }
       }
     } catch (err) {
-      if (fd !== -1) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+      if (fd !== -1) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* ignore */
+        }
+      }
 
-      if (err.code !== 'EEXIST') throw err;
+      if (err.code !== "EEXIST") throw err;
 
       // Lock exists — check for stale lock (dead process)
       try {
-        const raw = fs.readFileSync(lockPath, 'utf-8').trim();
+        const raw = fs.readFileSync(lockPath, "utf-8").trim();
         const pid = parseInt(raw, 10);
         if (!isProcessRunning(pid)) {
-          try { fs.unlinkSync(lockPath); } catch { /* may already be gone */ }
+          try {
+            fs.unlinkSync(lockPath);
+          } catch {
+            /* may already be gone */
+          }
           continue; // retry immediately
         }
       } catch (readErr) {
         // EISDIR / EACCES: the lock "file" is actually a directory or unreadable — propagate
-        if (readErr.code && readErr.code !== 'ENOENT') throw readErr;
+        if (readErr.code && readErr.code !== "ENOENT") throw readErr;
         // ENOENT: lock file disappeared between EEXIST and readFileSync — retry
         continue;
       }
 
       if (Date.now() >= deadline) {
         // Timeout: force-remove stale lock and proceed to avoid deadlock
-        try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          /* ignore */
+        }
         return fn();
       }
 
