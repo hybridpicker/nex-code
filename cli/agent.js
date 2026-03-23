@@ -3113,6 +3113,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const summaryText = (summaryRes?.content || "").trim();
             if (summaryText) {
               console.log(`\n${summaryText}`);
+              // Save to conversationMessages so scorer sees the summary
+              conversationMessages.push(
+                { role: "user", content: "Please summarize what you just did in 2-3 sentences." },
+                { role: "assistant", content: summaryText }
+              );
             }
           } catch {
             /* summary enforcement is non-critical — ignore errors */
