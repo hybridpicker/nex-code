@@ -2690,8 +2690,10 @@ async function startREPL() {
       });
     }
 
-    // Auto-activate plan mode for implementation tasks (interactive only, opt-out: NEX_AUTO_PLAN=0)
-    if (process.env.NEX_AUTO_PLAN !== '0') {
+    // Auto-activate plan mode for implementation tasks (interactive only, opt-out: NEX_AUTO_PLAN=0).
+    // Skip in YOLO/autoConfirm mode: when the user has pre-approved all actions, plan mode defeats
+    // the purpose by blocking tool execution — the agent must act, not plan.
+    if (process.env.NEX_AUTO_PLAN !== '0' && !getAutoConfirm()) {
       const { isPlanMode: _isPM, setPlanMode: _setPM } = require('./planner');
       const { invalidateSystemPromptCache: _inv } = require('./agent');
       const STRONG_IMPL = /\b(implement|refactor|migrate|redesign)\b/i;
