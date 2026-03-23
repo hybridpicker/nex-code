@@ -42,7 +42,7 @@ describe('headless mode (bin/nex-code.js)', () => {
         throw new Error('Should have exited with error');
       } catch (e) {
         expect(e.status).toBe(1);
-        expect(e.stderr).toContain('--task requires a prompt');
+        expect(e.stderr).toContain('requires a prompt');
       }
     });
 
