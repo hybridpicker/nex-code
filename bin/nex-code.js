@@ -31,6 +31,7 @@ Options:
   --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
   --debug                  Show internal diagnostic messages (compression, loop detection, guards)
   --json                   Output result as JSON (for CI parsing)
+  --mcp-config <path>      Path to MCP server config (default: .nex/mcp.json)
   -h, --help               Show this help
   -v, --version            Show version
 `);
@@ -99,6 +100,13 @@ if (maxTurnsIdx !== -1 && args[maxTurnsIdx + 1]) {
   } catch {
     /* ignore malformed config */
   }
+}
+
+// ─── --mcp-config ─────────────────────────────────────────────
+const mcpConfigIdx = args.indexOf("--mcp-config");
+if (mcpConfigIdx !== -1 && args[mcpConfigIdx + 1]) {
+  // Store path in env so mcp-client can pick it up without extra wiring
+  process.env.NEX_MCP_CONFIG = args[mcpConfigIdx + 1];
 }
 
 // ─── macOS: prevent sleep while running ──────────────────────

@@ -90,6 +90,8 @@ const SLASH_COMMANDS = [
   },
   { cmd: "/branch", desc: "Create feature branch" },
   { cmd: "/mcp", desc: "MCP servers and tools" },
+  { cmd: "/mcp list", desc: "List connected MCP servers and their tools" },
+  { cmd: "/mcp status", desc: "Show which MCP servers are running" },
   { cmd: "/hooks", desc: "Show configured hooks" },
   { cmd: "/skills", desc: "List, enable, disable skills" },
   {
@@ -273,6 +275,8 @@ ${C.bold}${C.cyan}Git:${C.reset}
 
 ${C.bold}${C.cyan}Extensibility:${C.reset}
   ${C.cyan}/mcp${C.reset}              ${C.dim}Show MCP servers and tools${C.reset}
+  ${C.cyan}/mcp list${C.reset}         ${C.dim}List connected servers and their tools${C.reset}
+  ${C.cyan}/mcp status${C.reset}       ${C.dim}Show which MCP servers are running${C.reset}
   ${C.cyan}/mcp connect${C.reset}      ${C.dim}Connect all configured MCP servers${C.reset}
   ${C.cyan}/hooks${C.reset}            ${C.dim}Show configured hooks${C.reset}
   ${C.cyan}/skills${C.reset}           ${C.dim}List loaded skills${C.reset}
@@ -1685,7 +1689,75 @@ For each issue, include:
 
     case "/mcp": {
       const { listServers, connectAll, disconnectAll } = require("../mcp");
+      const { getMcpTools, listMcpServers } = require("../mcp-client");
       const mcpArg = rest.join(" ").trim();
+
+      if (mcpArg === "list") {
+        // List all connected MCP servers and their tools (from mcp-client)
+        const connected = listMcpServers();
+        const configured = listServers();
+        if (connected.length === 0 && configured.length === 0) {
+          console.log(`${C.dim}No MCP servers connected${C.reset}`);
+          console.log(
+            `${C.dim}Configure servers in .nex/mcp.json then run /mcp connect${C.reset}`,
+          );
+          return true;
+        }
+        console.log(`\n${C.bold}${C.cyan}Connected MCP Servers:${C.reset}`);
+        if (connected.length === 0) {
+          console.log(`  ${C.dim}(none connected — run /mcp connect)${C.reset}`);
+        }
+        for (const s of connected) {
+          console.log(
+            `  ${C.green}✓${C.reset} ${C.bold}${s.name}${C.reset} — ${s.toolCount} tool(s)`,
+          );
+          const tools = getMcpTools().filter((t) =>
+            t.function.name.startsWith(`mcp_${s.name}_`),
+          );
+          for (const t of tools) {
+            console.log(
+              `      ${C.cyan}${t.function.name}${C.reset}  ${C.dim}${t.function.description}${C.reset}`,
+            );
+          }
+        }
+        console.log();
+        return true;
+      }
+
+      if (mcpArg === "status") {
+        // Show connection status for all configured servers
+        const configured = listServers();
+        const connected = listMcpServers();
+        const connectedNames = new Set(connected.map((s) => s.name));
+        if (configured.length === 0 && connected.length === 0) {
+          console.log(`${C.dim}No MCP servers configured${C.reset}`);
+          console.log(
+            `${C.dim}Add a .nex/mcp.json file with a "servers" block${C.reset}`,
+          );
+          return true;
+        }
+        console.log(`\n${C.bold}${C.cyan}MCP Server Status:${C.reset}`);
+        // Show servers from legacy config.json mcpServers
+        for (const s of configured) {
+          const status = s.connected
+            ? `${C.green}✓ connected${C.reset}`
+            : `${C.dim}○ disconnected${C.reset}`;
+          console.log(
+            `  ${status} ${C.bold}${s.name}${C.reset} (${s.command}) — ${s.toolCount} tools`,
+          );
+        }
+        // Show servers from mcp-client (mcp.json) not already listed
+        for (const s of connected) {
+          if (!configured.find((c) => c.name === s.name)) {
+            console.log(
+              `  ${C.green}✓ connected${C.reset} ${C.bold}${s.name}${C.reset} — ${s.toolCount} tools`,
+            );
+          }
+        }
+        console.log();
+        return true;
+      }
+
       if (mcpArg === "connect") {
         console.log(`${C.dim}Connecting MCP servers...${C.reset}`);
         connectAll()
