@@ -87,14 +87,16 @@ function scoreSession() {
 function sendMatrix(message) {
   try {
     const payload = JSON.stringify({ message });
-    // Escape single quotes for the shell command
-    const escaped = payload.replace(/'/g, `'"'"'`);
+    // Write payload to a temp file to avoid shell quoting issues
+    const tmpFile = `/tmp/nex-matrix-${Date.now()}.json`;
+    require('fs').writeFileSync(tmpFile, payload);
     execSync(
       `ssh -o ConnectTimeout=10 -o BatchMode=yes ${JARVIS_SSH} ` +
       `"curl -sf -X POST http://localhost:3000/matrix/notify ` +
-      `-H 'Content-Type: application/json' -d '${escaped}'"`,
+      `-H 'Content-Type: application/json' -d @-" < ${tmpFile}`,
       { timeout: 20_000 }
     );
+    require('fs').unlinkSync(tmpFile);
     log('Matrix notification sent.');
   } catch (e) {
     log(`Matrix notification failed: ${e.message}`);
@@ -196,7 +198,7 @@ function onSessionChange() {
     if (score >= SCORE_TARGET) {
       sendMatrix(
         `✅ nex-code auto-improve: Score erreicht ${score}/10 ${grade} — kein weiterer Fix nötig.\n` +
-        `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`/nex-improve stop\` zum Mergen.`
+        `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`
       );
       log('Score target reached. Daemon will wait for next session.');
       return;
@@ -218,7 +220,7 @@ function onSessionChange() {
       sendMatrix(
         `📊 nex-code auto-improve: Score Plateau bei ${score}/10 (${PLATEAU_COUNT}× gleich).\n` +
         `Pass ${state.pass}/${MAX_PASSES}. Weitere Fixes brauchen neue Sessions.\n` +
-        `Devel bereit → \`/nex-improve stop\` zum Mergen.`
+        `Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`
       );
       log('Score plateau detected. Stopping improvement loop.');
       writeState({ pass: 0, scores: [], lastHash: hash, startedAt: new Date().toISOString() });
