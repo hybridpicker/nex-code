@@ -2652,6 +2652,27 @@ async function processInput(userInput, serverHooks = null) {
       if (ms) _emitMilestone(ms);
     }
 
+    // Count pre-execution blocks (canExecute=false with errorResult) toward consecutiveBlocks.
+    // These are calls blocked BEFORE executeBatch by guards like SSH storm, plan mode, etc.
+    // They're skipped in the main post-execution loop below, so without this count they never
+    // contribute to the abort threshold — letting the model send infinite blocked batches.
+    for (const prep of prepared) {
+      if (prep.canExecute) continue; // executed — handled below
+      if (!prep.errorResult) continue; // truly skipped (no errorResult) — don't count
+      const preBlockContent = typeof prep.errorResult.content === 'string' ? prep.errorResult.content : '';
+      if (preBlockContent.startsWith('BLOCKED:') || preBlockContent.startsWith('PLAN MODE:')) {
+        consecutiveBlocks++;
+        if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`);
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+          saveNow(conversationMessages);
+          return;
+        }
+      }
+    }
+
     // Track modified and read files
     for (let j = 0; j < prepared.length; j++) {
       const prep = prepared[j];
