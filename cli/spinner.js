@@ -122,6 +122,10 @@ class MultiProgress {
           icon = `${C.red}✗${C.reset}`;
           color = C.dim;
           break;
+        case "retry":
+          icon = `${C.yellow}↻${C.reset}`;
+          color = C.yellow;
+          break;
         default:
           icon = i === pos ? ball : " ";
           color = "";
@@ -154,7 +158,7 @@ class MultiProgress {
 
   /**
    * @param {number} index - Index of the task to update
-   * @param {'running'|'done'|'error'} status
+   * @param {'running'|'done'|'error'|'retry'} status
    */
   update(index, status) {
     if (index >= 0 && index < this.statuses.length) {
@@ -193,6 +197,9 @@ class MultiProgress {
           break;
         case "error":
           icon = `${C.red}✗${C.reset}`;
+          break;
+        case "retry":
+          icon = `${C.yellow}↻${C.reset}`;
           break;
         default:
           icon = `${C.yellow}○${C.reset}`;
