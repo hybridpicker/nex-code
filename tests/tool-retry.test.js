@@ -173,6 +173,7 @@ describe('Tool Call Retry with Schema Hints', () => {
   });
 
   it('shows warning in console output for malformed args', async () => {
+    process.env.NEX_DEBUG = 'true';
     mockStreamResponse('', [
       { function: { name: 'bash', arguments: null }, id: 'call-3' },
     ]);
@@ -182,6 +183,7 @@ describe('Tool Call Retry with Schema Hints', () => {
 
     const output = logSpy.mock.calls.map(c => c[0]).join('\n');
     expect(output).toContain('malformed arguments, sending schema hint');
+    delete process.env.NEX_DEBUG;
   });
 
   it('model can retry successfully after schema hint', async () => {
