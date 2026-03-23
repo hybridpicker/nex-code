@@ -133,7 +133,11 @@ function runImprovementPass(score, issues) {
     `für das wichtigste offene Problem in /Users/lukasschonsgibl/Coding/nex-code/cli/. ` +
     `Teste mit: node -e "require('./cli/agent.js')". ` +
     `Führe npm test -- --forceExit aus und committe + pushe nach devel wenn alle Tests grünen. ` +
-    `Fokus: NUR das wichtigste Issue beheben, nicht alles auf einmal.`;
+    `Fokus: NUR das wichtigste Issue beheben, nicht alles auf einmal. ` +
+    `\n\nWhen finished, write a 2-3 sentence summary covering: (1) what you changed, ` +
+    `(2) why you changed it, (3) what the expected impact is. ` +
+    `Do NOT end with just "Done", "Analysis complete", "Finished", or any single word or short phrase. ` +
+    `Always write a substantive closing paragraph of at least 2 sentences.`;
 
   log('Running improvement pass via Claude Code headless...');
   const res = spawnSync(
