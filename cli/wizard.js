@@ -6,20 +6,22 @@
  * or creates a temporary one.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const readline = require('readline');
-const { C } = require('./ui');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const readline = require("readline");
+const { C } = require("./ui");
 
-const NEX_DIR = '.nex';
+const NEX_DIR = ".nex";
 
 // ─── Readline helper ──────────────────────────────────────────
 
 let _rl = null;
 
 /** Set the active readline interface (called from index.js REPL setup). */
-function setWizardRL(rl) { _rl = rl; }
+function setWizardRL(rl) {
+  _rl = rl;
+}
 
 /**
  * Prompt for a value with optional default.
@@ -27,8 +29,8 @@ function setWizardRL(rl) { _rl = rl; }
  * @param {string} [defaultVal]
  * @returns {Promise<string>}
  */
-function ask(question, defaultVal = '') {
-  const hint = defaultVal ? ` ${C.dim}[${defaultVal}]${C.reset}` : '';
+function ask(question, defaultVal = "") {
+  const hint = defaultVal ? ` ${C.dim}[${defaultVal}]${C.reset}` : "";
   const prompt = `  ${C.cyan}${question}${hint}${C.reset}: `;
   return new Promise((resolve) => {
     const handler = (answer) => {
@@ -38,8 +40,14 @@ function ask(question, defaultVal = '') {
     if (_rl) {
       _rl.question(prompt, handler);
     } else {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      rl.question(prompt, (a) => { rl.close(); handler(a); });
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      rl.question(prompt, (a) => {
+        rl.close();
+        handler(a);
+      });
     }
   });
 }
@@ -51,9 +59,10 @@ function ask(question, defaultVal = '') {
  * @returns {Promise<boolean>}
  */
 function askBool(question, defaultYes = true) {
-  const hint = defaultYes ? 'Y/n' : 'y/N';
-  return ask(`${question} (${hint})`, defaultYes ? 'y' : 'n')
-    .then((v) => v.toLowerCase() !== 'n' && v.toLowerCase() !== 'no');
+  const hint = defaultYes ? "Y/n" : "y/N";
+  return ask(`${question} (${hint})`, defaultYes ? "y" : "n").then(
+    (v) => v.toLowerCase() !== "n" && v.toLowerCase() !== "no",
+  );
 }
 
 /**
@@ -64,11 +73,13 @@ function askBool(question, defaultYes = true) {
  * @returns {Promise<string>}
  */
 async function askChoice(question, options, defaultVal) {
-  const optStr = options.map((o, i) => `${C.dim}${i + 1})${C.reset} ${o}`).join('  ');
+  const optStr = options
+    .map((o, i) => `${C.dim}${i + 1})${C.reset} ${o}`)
+    .join("  ");
   console.log(`  ${C.cyan}${question}${C.reset}`);
   console.log(`  ${optStr}`);
   const defaultIdx = defaultVal ? options.indexOf(defaultVal) + 1 : 1;
-  const raw = await ask('Enter number', String(defaultIdx));
+  const raw = await ask("Enter number", String(defaultIdx));
   const idx = parseInt(raw, 10) - 1;
   return options[Math.max(0, Math.min(idx, options.length - 1))];
 }
@@ -81,23 +92,38 @@ async function askChoice(question, options, defaultVal) {
  */
 async function runServerWizard() {
   const nexDir = path.join(process.cwd(), NEX_DIR);
-  const serversPath = path.join(nexDir, 'servers.json');
+  const serversPath = path.join(nexDir, "servers.json");
 
   // Load existing configs
   let existing = {};
   if (fs.existsSync(serversPath)) {
-    try { existing = JSON.parse(fs.readFileSync(serversPath, 'utf-8')); } catch { /* ignore */ }
+    try {
+      existing = JSON.parse(fs.readFileSync(serversPath, "utf-8"));
+    } catch {
+      /* ignore */
+    }
   }
 
-  console.log(`\n${C.bold}${C.cyan}╔══════════════════════════════════════╗${C.reset}`);
-  console.log(`${C.bold}${C.cyan}║   nex-code Server Setup Wizard       ║${C.reset}`);
-  console.log(`${C.bold}${C.cyan}╚══════════════════════════════════════╝${C.reset}\n`);
+  console.log(
+    `\n${C.bold}${C.cyan}╔══════════════════════════════════════╗${C.reset}`,
+  );
+  console.log(
+    `${C.bold}${C.cyan}║   nex-code Server Setup Wizard       ║${C.reset}`,
+  );
+  console.log(
+    `${C.bold}${C.cyan}╚══════════════════════════════════════╝${C.reset}\n`,
+  );
 
   const existingNames = Object.keys(existing);
   if (existingNames.length > 0) {
-    console.log(`${C.dim}Existing profiles: ${existingNames.join(', ')}${C.reset}`);
-    const addMore = await askBool('Add or update a server profile?', true);
-    if (!addMore) { console.log(`${C.dim}No changes made.${C.reset}\n`); return; }
+    console.log(
+      `${C.dim}Existing profiles: ${existingNames.join(", ")}${C.reset}`,
+    );
+    const addMore = await askBool("Add or update a server profile?", true);
+    if (!addMore) {
+      console.log(`${C.dim}No changes made.${C.reset}\n`);
+      return;
+    }
   }
 
   const profiles = { ...existing };
@@ -106,54 +132,77 @@ async function runServerWizard() {
   while (addAnother) {
     console.log(`\n${C.bold}─── New Server Profile ───${C.reset}`);
 
-    const name = await ask('Profile name (e.g. prod, staging, macbook)');
-    if (!name) { console.log(`${C.red}  Name is required.${C.reset}`); continue; }
+    const name = await ask("Profile name (e.g. prod, staging, macbook)");
+    if (!name) {
+      console.log(`${C.red}  Name is required.${C.reset}`);
+      continue;
+    }
 
-    const host = await ask('Host / IP address');
-    if (!host) { console.log(`${C.red}  Host is required.${C.reset}`); continue; }
+    const host = await ask("Host / IP address");
+    if (!host) {
+      console.log(`${C.red}  Host is required.${C.reset}`);
+      continue;
+    }
 
-    const user = await ask('SSH user', 'root');
-    const portStr = await ask('SSH port', '22');
+    const user = await ask("SSH user", "root");
+    const portStr = await ask("SSH port", "22");
     const port = parseInt(portStr, 10) || 22;
-    const key = await ask('SSH key path (leave empty for SSH agent)', '');
-    const osType = await askChoice('Operating system', ['almalinux9', 'macos', 'ubuntu', 'debian', 'other'], 'almalinux9');
-    const sudo = await askBool('Allow sudo commands?', true);
+    const key = await ask("SSH key path (leave empty for SSH agent)", "");
+    const osType = await askChoice(
+      "Operating system",
+      ["almalinux9", "macos", "ubuntu", "debian", "other"],
+      "almalinux9",
+    );
+    const sudo = await askBool("Allow sudo commands?", true);
 
     const profile = { host, user };
     if (port !== 22) profile.port = port;
     if (key) profile.key = key;
-    if (osType !== 'other') profile.os = osType;
+    if (osType !== "other") profile.os = osType;
     if (sudo) profile.sudo = true;
 
     profiles[name] = profile;
-    console.log(`\n  ${C.green}✓${C.reset} Profile "${name}" added: ${user}@${host}${port !== 22 ? `:${port}` : ''}${osType !== 'other' ? ` [${osType}]` : ''}`);
+    console.log(
+      `\n  ${C.green}✓${C.reset} Profile "${name}" added: ${user}@${host}${port !== 22 ? `:${port}` : ""}${osType !== "other" ? ` [${osType}]` : ""}`,
+    );
 
-    addAnother = await askBool('\nAdd another server?', false);
+    addAnother = await askBool("\nAdd another server?", false);
   }
 
   // Save servers.json
   if (!fs.existsSync(nexDir)) fs.mkdirSync(nexDir, { recursive: true });
-  fs.writeFileSync(serversPath, JSON.stringify(profiles, null, 2) + '\n', 'utf-8');
-  console.log(`\n${C.green}✓ Saved .nex/servers.json (${Object.keys(profiles).length} profile${Object.keys(profiles).length !== 1 ? 's' : ''})${C.reset}`);
+  fs.writeFileSync(
+    serversPath,
+    JSON.stringify(profiles, null, 2) + "\n",
+    "utf-8",
+  );
+  console.log(
+    `\n${C.green}✓ Saved .nex/servers.json (${Object.keys(profiles).length} profile${Object.keys(profiles).length !== 1 ? "s" : ""})${C.reset}`,
+  );
 
   // Offer .gitignore update
-  const giPath = path.join(process.cwd(), '.gitignore');
+  const giPath = path.join(process.cwd(), ".gitignore");
   if (fs.existsSync(giPath)) {
-    const gi = fs.readFileSync(giPath, 'utf-8');
-    if (!gi.includes('.nex/')) {
-      const addGi = await askBool('Add .nex/ to .gitignore?', true);
+    const gi = fs.readFileSync(giPath, "utf-8");
+    if (!gi.includes(".nex/")) {
+      const addGi = await askBool("Add .nex/ to .gitignore?", true);
       if (addGi) {
-        fs.appendFileSync(giPath, '\n# nex-code server profiles\n.nex/\n');
+        fs.appendFileSync(giPath, "\n# nex-code server profiles\n.nex/\n");
         console.log(`${C.green}✓ Added .nex/ to .gitignore${C.reset}`);
       }
     }
   }
 
   // Offer deploy config wizard
-  const setupDeploy = await askBool('\nSet up deploy configs (.nex/deploy.json)?', false);
+  const setupDeploy = await askBool(
+    "\nSet up deploy configs (.nex/deploy.json)?",
+    false,
+  );
   if (setupDeploy) await runDeployWizard(profiles, nexDir);
 
-  console.log(`\n${C.dim}Use /servers to list profiles, /servers ping to check connectivity.${C.reset}\n`);
+  console.log(
+    `\n${C.dim}Use /servers to list profiles, /servers ping to check connectivity.${C.reset}\n`,
+  );
 }
 
 /**
@@ -164,17 +213,25 @@ async function runServerWizard() {
  */
 async function runDeployWizard(serverProfiles, nexDir) {
   const dir = nexDir || path.join(process.cwd(), NEX_DIR);
-  const deployPath = path.join(dir, 'deploy.json');
+  const deployPath = path.join(dir, "deploy.json");
 
   let existing = {};
   if (fs.existsSync(deployPath)) {
-    try { existing = JSON.parse(fs.readFileSync(deployPath, 'utf-8')); } catch { /* ignore */ }
+    try {
+      existing = JSON.parse(fs.readFileSync(deployPath, "utf-8"));
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!serverProfiles) {
-    const serversPath = path.join(dir, 'servers.json');
+    const serversPath = path.join(dir, "servers.json");
     if (fs.existsSync(serversPath)) {
-      try { serverProfiles = JSON.parse(fs.readFileSync(serversPath, 'utf-8')); } catch { serverProfiles = {}; }
+      try {
+        serverProfiles = JSON.parse(fs.readFileSync(serversPath, "utf-8"));
+      } catch {
+        serverProfiles = {};
+      }
     } else {
       serverProfiles = {};
     }
@@ -182,13 +239,21 @@ async function runDeployWizard(serverProfiles, nexDir) {
 
   const serverNames = Object.keys(serverProfiles);
 
-  console.log(`\n${C.bold}${C.cyan}╔══════════════════════════════════════╗${C.reset}`);
-  console.log(`${C.bold}${C.cyan}║   Deploy Config Wizard               ║${C.reset}`);
-  console.log(`${C.bold}${C.cyan}╚══════════════════════════════════════╝${C.reset}\n`);
+  console.log(
+    `\n${C.bold}${C.cyan}╔══════════════════════════════════════╗${C.reset}`,
+  );
+  console.log(
+    `${C.bold}${C.cyan}║   Deploy Config Wizard               ║${C.reset}`,
+  );
+  console.log(
+    `${C.bold}${C.cyan}╚══════════════════════════════════════╝${C.reset}\n`,
+  );
 
   const existingNames = Object.keys(existing);
   if (existingNames.length > 0) {
-    console.log(`${C.dim}Existing deploy configs: ${existingNames.join(', ')}${C.reset}`);
+    console.log(
+      `${C.dim}Existing deploy configs: ${existingNames.join(", ")}${C.reset}`,
+    );
   }
 
   const configs = { ...existing };
@@ -197,40 +262,68 @@ async function runDeployWizard(serverProfiles, nexDir) {
   while (addAnother) {
     console.log(`\n${C.bold}─── New Deploy Config ───${C.reset}`);
 
-    const name = await ask('Config name (e.g. prod, staging)');
-    if (!name) { console.log(`${C.red}  Name is required.${C.reset}`); continue; }
+    const name = await ask("Config name (e.g. prod, staging)");
+    if (!name) {
+      console.log(`${C.red}  Name is required.${C.reset}`);
+      continue;
+    }
 
     let server;
     if (serverNames.length > 0) {
-      server = await askChoice('Target server', serverNames, serverNames[0]);
+      server = await askChoice("Target server", serverNames, serverNames[0]);
     } else {
-      server = await ask('Target server (profile name or user@host)');
+      server = await ask("Target server (profile name or user@host)");
     }
 
-    const method = await askChoice('Deploy method', ['rsync', 'git'], 'rsync');
+    const method = await askChoice("Deploy method", ["rsync", "git"], "rsync");
 
-    let localPath = '';
+    let localPath = "";
     let exclude = [];
-    let branch = '';
+    let branch = "";
 
-    if (method === 'rsync') {
-      localPath = await ask('Local path to sync (e.g. dist/ or ./build)', 'dist/');
-      const excludeStr = await ask('Exclude paths (comma-separated, e.g. node_modules,.env)', 'node_modules,.env');
-      exclude = excludeStr ? excludeStr.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    if (method === "rsync") {
+      localPath = await ask(
+        "Local path to sync (e.g. dist/ or ./build)",
+        "dist/",
+      );
+      const excludeStr = await ask(
+        "Exclude paths (comma-separated, e.g. node_modules,.env)",
+        "node_modules,.env",
+      );
+      exclude = excludeStr
+        ? excludeStr
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
     } else {
-      branch = await ask('Branch to pull (leave empty for current remote branch)', 'main');
+      branch = await ask(
+        "Branch to pull (leave empty for current remote branch)",
+        "main",
+      );
     }
 
     const remotePath = await ask(
-      method === 'git' ? 'Remote repo path (e.g. /home/jarvis/my-app)' : 'Remote destination path (e.g. /var/www/app)'
+      method === "git"
+        ? "Remote repo path (e.g. /home/jarvis/my-app)"
+        : "Remote destination path (e.g. /var/www/app)",
     );
-    if (!remotePath) { console.log(`${C.red}  Remote path is required.${C.reset}`); continue; }
+    if (!remotePath) {
+      console.log(`${C.red}  Remote path is required.${C.reset}`);
+      continue;
+    }
 
-    const deployScript = await ask('Command to run on remote after deploy (leave empty to skip)', '');
-    const healthCheck = await ask('Health check URL or remote command (leave empty to skip)', '');
+    const deployScript = await ask(
+      "Command to run on remote after deploy (leave empty to skip)",
+      "",
+    );
+    const healthCheck = await ask(
+      "Health check URL or remote command (leave empty to skip)",
+      "",
+    );
 
     const config = { server, method, remote_path: remotePath };
-    if (method === 'rsync') {
+    if (method === "rsync") {
       config.local_path = localPath;
       if (exclude.length > 0) config.exclude = exclude;
     } else {
@@ -241,20 +334,33 @@ async function runDeployWizard(serverProfiles, nexDir) {
 
     configs[name] = config;
 
-    const targetLabel = method === 'git'
-      ? `${server}:${remotePath}${branch ? ` (${branch})` : ''}`
-      : `${localPath.endsWith('/') ? localPath : localPath + '/'} → ${server}:${remotePath}`;
-    console.log(`\n  ${C.green}✓${C.reset} Deploy config "${name}": [${method}] ${targetLabel}`);
-    if (deployScript) console.log(`  ${C.dim}  Then: ${deployScript}${C.reset}`);
-    if (healthCheck) console.log(`  ${C.dim}  Health: ${healthCheck}${C.reset}`);
+    const targetLabel =
+      method === "git"
+        ? `${server}:${remotePath}${branch ? ` (${branch})` : ""}`
+        : `${localPath.endsWith("/") ? localPath : localPath + "/"} → ${server}:${remotePath}`;
+    console.log(
+      `\n  ${C.green}✓${C.reset} Deploy config "${name}": [${method}] ${targetLabel}`,
+    );
+    if (deployScript)
+      console.log(`  ${C.dim}  Then: ${deployScript}${C.reset}`);
+    if (healthCheck)
+      console.log(`  ${C.dim}  Health: ${healthCheck}${C.reset}`);
 
-    addAnother = await askBool('\nAdd another deploy config?', false);
+    addAnother = await askBool("\nAdd another deploy config?", false);
   }
 
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(deployPath, JSON.stringify(configs, null, 2) + '\n', 'utf-8');
-  console.log(`\n${C.green}✓ Saved .nex/deploy.json (${Object.keys(configs).length} config${Object.keys(configs).length !== 1 ? 's' : ''})${C.reset}`);
-  console.log(`${C.dim}Use: deploy prod  (or with explicit params)${C.reset}\n`);
+  fs.writeFileSync(
+    deployPath,
+    JSON.stringify(configs, null, 2) + "\n",
+    "utf-8",
+  );
+  console.log(
+    `\n${C.green}✓ Saved .nex/deploy.json (${Object.keys(configs).length} config${Object.keys(configs).length !== 1 ? "s" : ""})${C.reset}`,
+  );
+  console.log(
+    `${C.dim}Use: deploy prod  (or with explicit params)${C.reset}\n`,
+  );
 }
 
 module.exports = { runServerWizard, runDeployWizard, setWizardRL };

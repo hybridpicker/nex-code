@@ -2,11 +2,11 @@
  * cli/file-history.js — In-session undo/redo for file changes + named git snapshots
  */
 
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { execSync } = require('child_process');
+const fs = require("fs").promises;
+const fsSync = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const { execSync } = require("child_process");
 
 const BLOB_THRESHOLD = 100 * 1024; // 100 KB
 
@@ -48,9 +48,13 @@ async function undo() {
 
   if (entry.oldContent === null) {
     // File was newly created — delete it
-    try { await fs.unlink(entry.filePath); } catch { /* ignore */ }
+    try {
+      await fs.unlink(entry.filePath);
+    } catch {
+      /* ignore */
+    }
   } else {
-    await fs.writeFile(entry.filePath, entry.oldContent, 'utf-8');
+    await fs.writeFile(entry.filePath, entry.oldContent, "utf-8");
   }
 
   redoStack.push(entry);
@@ -69,7 +73,7 @@ async function redo() {
   if (redoStack.length === 0) return null;
   const entry = redoStack.pop();
 
-  await fs.writeFile(entry.filePath, entry.newContent, 'utf-8');
+  await fs.writeFile(entry.filePath, entry.newContent, "utf-8");
   undoStack.push(entry);
 
   return {
@@ -84,15 +88,22 @@ async function redo() {
  * @returns {Array<{ tool: string, filePath: string, timestamp: number }>}
  */
 function getHistory(limit = 10) {
-  return undoStack.slice(-limit).reverse().map((e) => ({
-    tool: e.tool,
-    filePath: e.filePath,
-    timestamp: e.timestamp,
-  }));
+  return undoStack
+    .slice(-limit)
+    .reverse()
+    .map((e) => ({
+      tool: e.tool,
+      filePath: e.filePath,
+      timestamp: e.timestamp,
+    }));
 }
 
-function getUndoCount() { return undoStack.length; }
-function getRedoCount() { return redoStack.length; }
+function getUndoCount() {
+  return undoStack.length;
+}
+function getRedoCount() {
+  return redoStack.length;
+}
 
 function clearHistory({ diskToo = true } = {}) {
   undoStack.length = 0;
@@ -100,22 +111,24 @@ function clearHistory({ diskToo = true } = {}) {
   // Also wipe persisted entries so they don't reload on next startup
   if (diskToo) {
     const dir = historyDir();
-    fs.readdir(dir).then(files => {
-      for (const f of files) {
-        if (f.endsWith('.json')) fs.unlink(path.join(dir, f)).catch(() => {});
-      }
-    }).catch(() => {});
+    fs.readdir(dir)
+      .then((files) => {
+        for (const f of files) {
+          if (f.endsWith(".json")) fs.unlink(path.join(dir, f)).catch(() => {});
+        }
+      })
+      .catch(() => {});
   }
 }
 
 // ─── Persistent History ───────────────────────────────────────────────────────
 
 function historyDir() {
-  return path.join(process.cwd(), '.nex', 'history');
+  return path.join(process.cwd(), ".nex", "history");
 }
 
 function blobDir() {
-  return path.join(historyDir(), 'blobs');
+  return path.join(historyDir(), "blobs");
 }
 
 /**
@@ -123,14 +136,18 @@ function blobDir() {
  * Returns { inline: true, content } or { inline: false, hash }.
  */
 async function maybeStoreBlob(content, dir) {
-  if (content === null || content === undefined) return { inline: true, content };
-  if (Buffer.byteLength(content, 'utf-8') <= BLOB_THRESHOLD) {
+  if (content === null || content === undefined)
+    return { inline: true, content };
+  if (Buffer.byteLength(content, "utf-8") <= BLOB_THRESHOLD) {
     return { inline: true, content };
   }
-  const hash = crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
-  const bDir = path.join(dir, 'blobs');
+  const hash = crypto
+    .createHash("sha256")
+    .update(content, "utf-8")
+    .digest("hex");
+  const bDir = path.join(dir, "blobs");
   await fs.mkdir(bDir, { recursive: true });
-  await fs.writeFile(path.join(bDir, hash), content, 'utf-8');
+  await fs.writeFile(path.join(bDir, hash), content, "utf-8");
   return { inline: false, hash };
 }
 
@@ -142,7 +159,7 @@ async function persistEntry(entry) {
   const dir = historyDir();
   await fs.mkdir(dir, { recursive: true });
 
-  const safeName = path.basename(entry.filePath).replace(/[^a-zA-Z0-9]/g, '-');
+  const safeName = path.basename(entry.filePath).replace(/[^a-zA-Z0-9]/g, "-");
   const filename = `${entry.timestamp}-${safeName}.json`;
 
   const oldRef = await maybeStoreBlob(entry.oldContent, dir);
@@ -152,11 +169,15 @@ async function persistEntry(entry) {
     tool: entry.tool,
     filePath: entry.filePath,
     timestamp: entry.timestamp,
-    oldContent: oldRef.inline ? { inline: true, content: oldRef.content } : { inline: false, hash: oldRef.hash },
-    newContent: newRef.inline ? { inline: true, content: newRef.content } : { inline: false, hash: newRef.hash },
+    oldContent: oldRef.inline
+      ? { inline: true, content: oldRef.content }
+      : { inline: false, hash: oldRef.hash },
+    newContent: newRef.inline
+      ? { inline: true, content: newRef.content }
+      : { inline: false, hash: newRef.hash },
   };
 
-  await fs.writeFile(path.join(dir, filename), JSON.stringify(record), 'utf-8');
+  await fs.writeFile(path.join(dir, filename), JSON.stringify(record), "utf-8");
 }
 
 /**
@@ -166,8 +187,8 @@ async function resolveContent(ref, dir) {
   if (!ref) return null;
   if (ref.inline) return ref.content;
   // Read from blob
-  const blobPath = path.join(dir, 'blobs', ref.hash);
-  return fs.readFile(blobPath, 'utf-8');
+  const blobPath = path.join(dir, "blobs", ref.hash);
+  return fs.readFile(blobPath, "utf-8");
 }
 
 /**
@@ -183,12 +204,12 @@ async function loadPersistedHistory() {
     return 0; // directory doesn't exist yet
   }
 
-  const jsonFiles = files.filter(f => f.endsWith('.json')).sort(); // ascending by timestamp prefix
+  const jsonFiles = files.filter((f) => f.endsWith(".json")).sort(); // ascending by timestamp prefix
   let count = 0;
 
   for (const file of jsonFiles) {
     try {
-      const raw = await fs.readFile(path.join(dir, file), 'utf-8');
+      const raw = await fs.readFile(path.join(dir, file), "utf-8");
       const record = JSON.parse(raw);
       const oldContent = await resolveContent(record.oldContent, dir);
       const newContent = await resolveContent(record.newContent, dir);
@@ -226,24 +247,32 @@ async function pruneHistory(maxAgeDays = 7) {
   }
 
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-  const jsonFiles = files.filter(f => f.endsWith('.json'));
+  const jsonFiles = files.filter((f) => f.endsWith(".json"));
   let pruned = 0;
   const referencedHashes = new Set();
   const toDelete = [];
 
   for (const file of jsonFiles) {
     try {
-      const raw = await fs.readFile(path.join(dir, file), 'utf-8');
+      const raw = await fs.readFile(path.join(dir, file), "utf-8");
       const record = JSON.parse(raw);
       if (record.timestamp < cutoff) {
         toDelete.push(file);
         pruned++;
       } else {
         // Track referenced blobs
-        if (record.oldContent && !record.oldContent.inline && record.oldContent.hash) {
+        if (
+          record.oldContent &&
+          !record.oldContent.inline &&
+          record.oldContent.hash
+        ) {
           referencedHashes.add(record.oldContent.hash);
         }
-        if (record.newContent && !record.newContent.inline && record.newContent.hash) {
+        if (
+          record.newContent &&
+          !record.newContent.inline &&
+          record.newContent.hash
+        ) {
           referencedHashes.add(record.newContent.hash);
         }
       }
@@ -254,16 +283,24 @@ async function pruneHistory(maxAgeDays = 7) {
 
   // Delete old entries
   for (const file of toDelete) {
-    try { await fs.unlink(path.join(dir, file)); } catch { /* ignore */ }
+    try {
+      await fs.unlink(path.join(dir, file));
+    } catch {
+      /* ignore */
+    }
   }
 
   // Delete orphaned blobs
-  const bDir = path.join(dir, 'blobs');
+  const bDir = path.join(dir, "blobs");
   try {
     const blobs = await fs.readdir(bDir);
     for (const blob of blobs) {
       if (!referencedHashes.has(blob)) {
-        try { await fs.unlink(path.join(bDir, blob)); } catch { /* ignore */ }
+        try {
+          await fs.unlink(path.join(bDir, blob));
+        } catch {
+          /* ignore */
+        }
       }
     }
   } catch {
@@ -275,7 +312,7 @@ async function pruneHistory(maxAgeDays = 7) {
 
 // ─── Named Git Snapshots ──────────────────────────────────────────────────────
 
-const SNAPSHOT_PREFIX = 'nex-snapshot';
+const SNAPSHOT_PREFIX = "nex-snapshot";
 
 /**
  * Create a named git snapshot using git stash.
@@ -287,17 +324,24 @@ const SNAPSHOT_PREFIX = 'nex-snapshot';
  */
 function createSnapshot(name, cwd = process.cwd()) {
   const label = name
-    ? `${SNAPSHOT_PREFIX}-${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    ? `${SNAPSHOT_PREFIX}-${name.replace(/[^a-zA-Z0-9_-]/g, "-")}`
     : `${SNAPSHOT_PREFIX}-${Date.now()}`;
   try {
     // Check if there's anything to stash
-    const status = execSync('git status --porcelain', { cwd, timeout: 10000 }).toString().trim();
+    const status = execSync("git status --porcelain", { cwd, timeout: 10000 })
+      .toString()
+      .trim();
     if (!status) {
-      return { name: label, label, ok: false, error: 'No changes to snapshot (working tree clean)' };
+      return {
+        name: label,
+        label,
+        ok: false,
+        error: "No changes to snapshot (working tree clean)",
+      };
     }
     execSync(`git stash push -u -m "${label}"`, { cwd, timeout: 15000 });
     // Immediately pop so working tree is restored (we're just tagging the state)
-    execSync('git stash pop', { cwd, timeout: 10000 });
+    execSync("git stash pop", { cwd, timeout: 10000 });
     return { name: label, label, ok: true };
   } catch (err) {
     return { name: label, label, ok: false, error: err.message };
@@ -312,20 +356,24 @@ function createSnapshot(name, cwd = process.cwd()) {
  */
 function listSnapshots(cwd = process.cwd()) {
   try {
-    const out = execSync('git stash list', { cwd, timeout: 10000 }).toString().trim();
+    const out = execSync("git stash list", { cwd, timeout: 10000 })
+      .toString()
+      .trim();
     if (!out) return [];
     return out
-      .split('\n')
+      .split("\n")
       .map((line) => {
         // Format: stash@{N}: On branch: label
-        const m = line.match(/^stash@\{(\d+)\}:\s+(?:WIP on [^:]+:\s+\S+\s+|On \S+:\s+)(.*)/);
+        const m = line.match(
+          /^stash@\{(\d+)\}:\s+(?:WIP on [^:]+:\s+\S+\s+|On \S+:\s+)(.*)/,
+        );
         if (!m) return null;
         const raw = m[2].trim();
         if (!raw.startsWith(SNAPSHOT_PREFIX)) return null;
         return {
           index: parseInt(m[1], 10),
           label: raw,
-          shortName: raw.replace(`${SNAPSHOT_PREFIX}-`, ''),
+          shortName: raw.replace(`${SNAPSHOT_PREFIX}-`, ""),
           date: line,
         };
       })
@@ -347,17 +395,20 @@ function restoreSnapshot(target, cwd = process.cwd()) {
   try {
     const snapshots = listSnapshots(cwd);
     if (snapshots.length === 0) {
-      return { ok: false, error: 'No snapshots found' };
+      return { ok: false, error: "No snapshots found" };
     }
 
     let entry;
-    if (target === undefined || target === 'last') {
+    if (target === undefined || target === "last") {
       entry = snapshots[0]; // most recent
-    } else if (typeof target === 'number') {
+    } else if (typeof target === "number") {
       entry = snapshots.find((s) => s.index === target);
     } else {
       entry = snapshots.find(
-        (s) => s.label === target || s.shortName === target || s.shortName.includes(String(target))
+        (s) =>
+          s.label === target ||
+          s.shortName === target ||
+          s.shortName.includes(String(target)),
       );
     }
 
@@ -373,7 +424,17 @@ function restoreSnapshot(target, cwd = process.cwd()) {
 }
 
 module.exports = {
-  recordChange, undo, redo, getHistory, getUndoCount, getRedoCount, clearHistory,
-  persistEntry, loadPersistedHistory, pruneHistory,
-  createSnapshot, listSnapshots, restoreSnapshot,
+  recordChange,
+  undo,
+  redo,
+  getHistory,
+  getUndoCount,
+  getRedoCount,
+  clearHistory,
+  persistEntry,
+  loadPersistedHistory,
+  pruneHistory,
+  createSnapshot,
+  listSnapshots,
+  restoreSnapshot,
 };

@@ -4,32 +4,128 @@
  * Docs live in .nex/brain/*.md, auto-indexed and injected into system prompt.
  */
 
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, withFileLockSync } = require('./filelock');
+const fs = require("fs");
+const path = require("path");
+const { atomicWrite, withFileLockSync } = require("./filelock");
 
 // ─── Stop Words ───────────────────────────────────────────────
 const STOP_WORDS = new Set([
   // English
-  'the', 'a', 'an', 'is', 'are', 'and', 'or', 'but', 'in', 'on', 'at',
-  'to', 'for', 'of', 'with', 'this', 'that', 'it', 'as', 'be', 'by',
-  'from', 'was', 'were', 'has', 'have', 'had', 'not', 'do', 'does',
-  'did', 'so', 'if', 'its', 'my', 'me', 'we', 'you', 'he', 'she',
-  'they', 'our', 'your', 'their', 'can', 'will', 'would', 'could',
-  'should', 'may', 'might', 'then', 'than', 'also', 'which', 'when',
-  'where', 'how', 'what', 'who', 'all', 'any', 'each', 'more', 'most',
-  'use', 'used', 'using', 'get', 'set', 'new', 'add', 'make',
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "and",
+  "or",
+  "but",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "this",
+  "that",
+  "it",
+  "as",
+  "be",
+  "by",
+  "from",
+  "was",
+  "were",
+  "has",
+  "have",
+  "had",
+  "not",
+  "do",
+  "does",
+  "did",
+  "so",
+  "if",
+  "its",
+  "my",
+  "me",
+  "we",
+  "you",
+  "he",
+  "she",
+  "they",
+  "our",
+  "your",
+  "their",
+  "can",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "then",
+  "than",
+  "also",
+  "which",
+  "when",
+  "where",
+  "how",
+  "what",
+  "who",
+  "all",
+  "any",
+  "each",
+  "more",
+  "most",
+  "use",
+  "used",
+  "using",
+  "get",
+  "set",
+  "new",
+  "add",
+  "make",
   // German
-  'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einen',
-  'einem', 'eines', 'und', 'oder', 'aber', 'von', 'zu', 'mit', 'auf',
-  'bei', 'nach', 'aus', 'vor', 'ist', 'sind', 'war', 'hat', 'haben',
-  'wird', 'kann', 'soll', 'muss', 'nicht', 'auch', 'als', 'durch',
+  "der",
+  "die",
+  "das",
+  "den",
+  "dem",
+  "des",
+  "ein",
+  "eine",
+  "einen",
+  "einem",
+  "eines",
+  "und",
+  "oder",
+  "aber",
+  "von",
+  "zu",
+  "mit",
+  "auf",
+  "bei",
+  "nach",
+  "aus",
+  "vor",
+  "ist",
+  "sind",
+  "war",
+  "hat",
+  "haben",
+  "wird",
+  "kann",
+  "soll",
+  "muss",
+  "nicht",
+  "auch",
+  "als",
+  "durch",
 ]);
 
 // ─── Storage ──────────────────────────────────────────────────
 
 function getBrainDir() {
-  const dir = path.join(process.cwd(), '.nex', 'brain');
+  const dir = path.join(process.cwd(), ".nex", "brain");
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -37,11 +133,11 @@ function getBrainDir() {
 }
 
 function getIndexPath() {
-  return path.join(getBrainDir(), '.brain-index.json');
+  return path.join(getBrainDir(), ".brain-index.json");
 }
 
 function getEmbeddingCachePath() {
-  return path.join(getBrainDir(), '.embeddings.json');
+  return path.join(getBrainDir(), ".embeddings.json");
 }
 
 /**
@@ -49,16 +145,17 @@ function getEmbeddingCachePath() {
  * @returns {Array<{ name, path, size, modified }>}
  */
 function listDocuments() {
-  const dir = path.join(process.cwd(), '.nex', 'brain');
+  const dir = path.join(process.cwd(), ".nex", "brain");
   if (!fs.existsSync(dir)) return [];
   try {
-    return fs.readdirSync(dir)
-      .filter(f => f.endsWith('.md') && !f.startsWith('.'))
-      .map(f => {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".md") && !f.startsWith("."))
+      .map((f) => {
         const filePath = path.join(dir, f);
         const stat = fs.statSync(filePath);
         return {
-          name: f.replace(/\.md$/, ''),
+          name: f.replace(/\.md$/, ""),
           path: filePath,
           size: stat.size,
           modified: new Date(stat.mtimeMs),
@@ -80,14 +177,18 @@ function parseFrontmatter(content) {
   let body = content;
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (match) {
-    const lines = match[1].split('\n');
+    const lines = match[1].split("\n");
     for (const line of lines) {
       const m = line.match(/^(\w+):\s*(.+)$/);
       if (!m) continue;
       const key = m[1].trim();
       const val = m[2].trim();
-      if (val.startsWith('[') && val.endsWith(']')) {
-        fm[key] = val.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+      if (val.startsWith("[") && val.endsWith("]")) {
+        fm[key] = val
+          .slice(1, -1)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
       } else {
         fm[key] = val;
       }
@@ -105,9 +206,9 @@ function parseFrontmatter(content) {
 function readDocument(name) {
   const filePath = path.join(getBrainDir(), `${name}.md`);
   if (!fs.existsSync(filePath)) {
-    return { name, content: '', body: '', frontmatter: {} };
+    return { name, content: "", body: "", frontmatter: {} };
   }
-  const raw = fs.readFileSync(filePath, 'utf-8');
+  const raw = fs.readFileSync(filePath, "utf-8");
   const { frontmatter, body } = parseFrontmatter(raw);
   return { name, content: raw, body, frontmatter };
 }
@@ -131,13 +232,15 @@ function writeDocument(name, content) {
  * Non-blocking: errors are silently swallowed.
  */
 function _autoRebuildEmbeddings() {
-  if (process.env.NEX_BRAIN_EMBEDDINGS === 'false') return;
+  if (process.env.NEX_BRAIN_EMBEDDINGS === "false") return;
   const cachePath = getEmbeddingCachePath();
   if (!fs.existsSync(cachePath)) return; // not opted in yet
   setImmediate(async () => {
     try {
       await buildEmbeddingIndex();
-    } catch { /* non-fatal, runs silently in background */ }
+    } catch {
+      /* non-fatal, runs silently in background */
+    }
   });
 }
 
@@ -159,9 +262,9 @@ function removeDocument(name) {
 function tokenize(text) {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9äöüß\s-]/g, ' ')
+    .replace(/[^a-z0-9äöüß\s-]/g, " ")
     .split(/[\s-]+/)
-    .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 }
 
 function _extractKeywords(content) {
@@ -171,15 +274,15 @@ function _extractKeywords(content) {
   // Tags from frontmatter: 5x weight
   const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
   for (const tag of tags) {
-    const w = tag.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const w = tag.toLowerCase().replace(/[^a-z0-9-]/g, "");
     if (w.length > 1) scores[w] = (scores[w] || 0) + 5;
   }
 
   // Headings (lines starting with #): 3x weight
-  const lines = (body || content).split('\n');
+  const lines = (body || content).split("\n");
   for (const line of lines) {
-    if (line.startsWith('#')) {
-      const headingText = line.replace(/^#+\s*/, '');
+    if (line.startsWith("#")) {
+      const headingText = line.replace(/^#+\s*/, "");
       for (const w of tokenize(headingText)) {
         scores[w] = (scores[w] || 0) + 3;
       }
@@ -198,7 +301,7 @@ function _readIndex() {
   const indexPath = getIndexPath();
   if (!fs.existsSync(indexPath)) return { documents: {} };
   try {
-    return JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+    return JSON.parse(fs.readFileSync(indexPath, "utf-8"));
   } catch {
     return { documents: {} };
   }
@@ -238,7 +341,7 @@ function buildIndex() {
   const docs = listDocuments();
   const index = { documents: {} };
   for (const doc of docs) {
-    const content = fs.readFileSync(doc.path, 'utf-8');
+    const content = fs.readFileSync(doc.path, "utf-8");
     const { frontmatter } = parseFrontmatter(content);
     const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
     index.documents[doc.name] = {
@@ -268,7 +371,7 @@ function getIndex() {
   }
   // Check if any indexed doc was deleted
   for (const name of Object.keys(index.documents)) {
-    if (!docs.some(d => d.name === name)) {
+    if (!docs.some((d) => d.name === name)) {
       return buildIndex();
     }
   }
@@ -293,8 +396,12 @@ function _keywordQuery(userQuery, options = {}) {
       }
       // Partial match for compound terms
       for (const [kw, kwScore] of Object.entries(entry.keywords)) {
-        if (kw !== token && kw.length > 3 && token.length > 3 &&
-            (kw.includes(token) || token.includes(kw))) {
+        if (
+          kw !== token &&
+          kw.length > 3 &&
+          token.length > 3 &&
+          (kw.includes(token) || token.includes(kw))
+        ) {
           score += kwScore * 0.3;
         }
       }
@@ -310,55 +417,78 @@ function _keywordQuery(userQuery, options = {}) {
 
 // ─── Embeddings (Optional) ────────────────────────────────────
 
-const EMBED_MODEL = process.env.NEX_EMBED_MODEL || 'nomic-embed-text';
+const EMBED_MODEL = process.env.NEX_EMBED_MODEL || "nomic-embed-text";
 const CHUNK_WORDS = 400;
 const CHUNK_OVERLAP = 50;
 
 async function isEmbeddingAvailable() {
-  if (process.env.NEX_BRAIN_EMBEDDINGS === 'false') return false;
+  if (process.env.NEX_BRAIN_EMBEDDINGS === "false") return false;
   try {
-    const baseUrl = process.env.OLLAMA_HOST || 'http://localhost:11434';
-    const http = require('http');
-    const https = require('https');
+    const baseUrl = process.env.OLLAMA_HOST || "http://localhost:11434";
+    const http = require("http");
+    const https = require("https");
     const url = new URL(`${baseUrl}/api/tags`);
-    const client = url.protocol === 'https:' ? https : http;
+    const client = url.protocol === "https:" ? https : http;
     const tags = await new Promise((resolve, reject) => {
       const req = client.get(url.toString(), { timeout: 2000 }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('bad json')); } });
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            reject(new Error("bad json"));
+          }
+        });
       });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.on("error", reject);
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("timeout"));
+      });
     });
-    const models = (tags.models || []).map(m => m.name);
-    return models.some(m => m.startsWith(EMBED_MODEL.split(':')[0]));
+    const models = (tags.models || []).map((m) => m.name);
+    return models.some((m) => m.startsWith(EMBED_MODEL.split(":")[0]));
   } catch {
     return false;
   }
 }
 
 async function generateEmbedding(text) {
-  const baseUrl = process.env.OLLAMA_HOST || 'http://localhost:11434';
-  const http = require('http');
-  const https = require('https');
+  const baseUrl = process.env.OLLAMA_HOST || "http://localhost:11434";
+  const http = require("http");
+  const https = require("https");
   const url = new URL(`${baseUrl}/api/embeddings`);
-  const client = url.protocol === 'https:' ? https : http;
+  const client = url.protocol === "https:" ? https : http;
   const body = JSON.stringify({ model: EMBED_MODEL, prompt: text });
   return new Promise((resolve, reject) => {
-    const req = client.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 30000,
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data).embedding || []); } catch (e) { reject(e); }
-      });
+    const req = client.request(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 30000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data).embedding || []);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("embedding timeout"));
     });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('embedding timeout')); });
     req.write(body);
     req.end();
   });
@@ -369,7 +499,9 @@ async function generateEmbedding(text) {
  */
 function cosineSimilarity(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -384,7 +516,7 @@ function _chunkText(text) {
   const chunks = [];
   let i = 0;
   while (i < words.length) {
-    const chunk = words.slice(i, i + CHUNK_WORDS).join(' ');
+    const chunk = words.slice(i, i + CHUNK_WORDS).join(" ");
     chunks.push({ text: chunk, offset: i });
     if (i + CHUNK_WORDS >= words.length) break;
     i += CHUNK_WORDS - CHUNK_OVERLAP;
@@ -397,19 +529,27 @@ async function buildEmbeddingIndex() {
   let cache = { documents: {} };
   const cachePath = getEmbeddingCachePath();
   if (fs.existsSync(cachePath)) {
-    try { cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch { /* ignore */ }
+    try {
+      cache = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+    } catch {
+      /* ignore */
+    }
   }
 
   for (const doc of docs) {
     const existing = cache.documents[doc.name];
     if (existing && new Date(existing.modified) >= doc.modified) continue;
 
-    const content = fs.readFileSync(doc.path, 'utf-8');
+    const content = fs.readFileSync(doc.path, "utf-8");
     const chunks = _chunkText(content);
     const embeddedChunks = [];
     for (const chunk of chunks) {
       const embedding = await generateEmbedding(chunk.text);
-      embeddedChunks.push({ text: chunk.text, embedding, offset: chunk.offset });
+      embeddedChunks.push({
+        text: chunk.text,
+        embedding,
+        offset: chunk.offset,
+      });
     }
     cache.documents[doc.name] = {
       chunks: embeddedChunks,
@@ -419,12 +559,12 @@ async function buildEmbeddingIndex() {
 
   // Remove deleted docs from cache
   for (const name of Object.keys(cache.documents)) {
-    if (!docs.some(d => d.name === name)) {
+    if (!docs.some((d) => d.name === name)) {
       delete cache.documents[name];
     }
   }
 
-  fs.writeFileSync(cachePath, JSON.stringify(cache), 'utf-8');
+  fs.writeFileSync(cachePath, JSON.stringify(cache), "utf-8");
   return cache;
 }
 
@@ -435,7 +575,7 @@ async function semanticQuery(userQuery, options = {}) {
 
   let cache;
   try {
-    cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    cache = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   } catch {
     return [];
   }
@@ -445,8 +585,8 @@ async function semanticQuery(userQuery, options = {}) {
 
   for (const [name, entry] of Object.entries(cache.documents || {})) {
     let bestScore = 0;
-    let bestChunk = '';
-    for (const chunk of (entry.chunks || [])) {
+    let bestChunk = "";
+    for (const chunk of entry.chunks || []) {
       const sim = cosineSimilarity(queryEmbedding, chunk.embedding);
       if (sim > bestScore) {
         bestScore = sim;
@@ -492,19 +632,23 @@ async function query(userQuery, options = {}) {
   let ranked = keywordResults;
 
   // Hybrid retrieval if embeddings are available
-  if (process.env.NEX_BRAIN_EMBEDDINGS !== 'false') {
+  if (process.env.NEX_BRAIN_EMBEDDINGS !== "false") {
     try {
       const embAvail = await isEmbeddingAvailable();
       if (embAvail) {
         const semResults = await semanticQuery(userQuery, { topK });
         ranked = _fuseResults(keywordResults, semResults, { topK });
       }
-    } catch { /* fall back to keyword only */ }
+    } catch {
+      /* fall back to keyword only */
+    }
   }
 
-  return ranked.map(r => {
+  return ranked.map((r) => {
     const doc = readDocument(r.name);
-    const excerpt = (doc.body || doc.content || '').slice(0, 300).replace(/\n+/g, ' ') + '...';
+    const excerpt =
+      (doc.body || doc.content || "").slice(0, 300).replace(/\n+/g, " ") +
+      "...";
     return { name: r.name, score: r.score, content: doc.content, excerpt };
   });
 }
@@ -515,26 +659,26 @@ async function query(userQuery, options = {}) {
  * @returns {Promise<string>}
  */
 async function getBrainContext(userQuery) {
-  if (!userQuery || !userQuery.trim()) return '';
+  if (!userQuery || !userQuery.trim()) return "";
 
   // Skip if no brain dir or no docs
-  const brainDir = path.join(process.cwd(), '.nex', 'brain');
-  if (!fs.existsSync(brainDir)) return '';
+  const brainDir = path.join(process.cwd(), ".nex", "brain");
+  if (!fs.existsSync(brainDir)) return "";
   const docs = listDocuments();
-  if (docs.length === 0) return '';
+  if (docs.length === 0) return "";
 
   let results;
   try {
     results = await query(userQuery, { topK: 3 });
   } catch {
-    return '';
+    return "";
   }
-  if (!results || results.length === 0) return '';
+  if (!results || results.length === 0) return "";
 
   // Token budget: max 25% of context window (~25k tokens of ~100k)
   let estimateTokens;
   try {
-    estimateTokens = require('./context-engine').estimateTokens;
+    estimateTokens = require("./context-engine").estimateTokens;
   } catch {
     estimateTokens = (text) => Math.ceil(text.length / 4);
   }
@@ -544,22 +688,25 @@ async function getBrainContext(userQuery) {
   let totalTokens = 0;
 
   for (const r of results) {
-    let content = r.content || '';
+    let content = r.content || "";
     const docTokens = estimateTokens(content);
     if (totalTokens + docTokens > MAX_BRAIN_TOKENS) {
       const remaining = MAX_BRAIN_TOKENS - totalTokens;
       if (remaining < 100) break;
       const ratio = remaining / docTokens;
-      content = content.slice(0, Math.floor(content.length * ratio)) + '\n...(truncated)';
+      content =
+        content.slice(0, Math.floor(content.length * ratio)) +
+        "\n...(truncated)";
     }
-    const scoreStr = typeof r.score === 'number' ? r.score.toFixed(2) : String(r.score);
+    const scoreStr =
+      typeof r.score === "number" ? r.score.toFixed(2) : String(r.score);
     parts.push(`--- ${r.name} (relevance: ${scoreStr}) ---\n${content}`);
     totalTokens += estimateTokens(content);
     if (totalTokens >= MAX_BRAIN_TOKENS) break;
   }
 
-  if (parts.length === 0) return '';
-  return `KNOWLEDGE BASE (auto-selected):\n\n${parts.join('\n\n')}`;
+  if (parts.length === 0) return "";
+  return `KNOWLEDGE BASE (auto-selected):\n\n${parts.join("\n\n")}`;
 }
 
 // ─── Exports ──────────────────────────────────────────────────

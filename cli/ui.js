@@ -3,15 +3,19 @@
  * Rich terminal output with markdown rendering support
  */
 
-const { T } = require('./theme');
+const { T } = require("./theme");
 const C = T;
 
 function colorLine(text, rgb) {
   // Color all visible chars in a line with a single RGB color
-  return [...text].map(ch => {
-    if (ch === ' ') return ch;
-    return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m${ch}`;
-  }).join('') + C.reset;
+  return (
+    [...text]
+      .map((ch) => {
+        if (ch === " ") return ch;
+        return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m${ch}`;
+      })
+      .join("") + C.reset
+  );
 }
 
 function lerpColor(stops, t) {
@@ -28,25 +32,25 @@ function lerpColor(stops, t) {
 // Dog mascot — minimal 8×6 pixel art (1 = filled, 0 = background)
 // Renders to 3 half-block rows
 const DOG_MATRIX = [
-  '01100110',  // ears
-  '01111110',  // head
-  '01111110',  // head solid
-  '01011010',  // face — eye gaps at cols 2 and 5
-  '01111110',  // snout
-  '00111100',  // body base (narrower)
+  "01100110", // ears
+  "01111110", // head
+  "01111110", // head solid
+  "01011010", // face — eye gaps at cols 2 and 5
+  "01111110", // snout
+  "00111100", // body base (narrower)
 ];
 
 function renderDog(matrix, color) {
   const lines = [];
   for (let r = 0; r < matrix.length; r += 2) {
-    let line = '';
+    let line = "";
     for (let c = 0; c < matrix[0].length; c++) {
-      const top = matrix[r][c] === '1';
-      const bot = r + 1 < matrix.length && matrix[r + 1][c] === '1';
-      if (top && bot)       line += `${color}█\x1b[0m`;
+      const top = matrix[r][c] === "1";
+      const bot = r + 1 < matrix.length && matrix[r + 1][c] === "1";
+      if (top && bot) line += `${color}█\x1b[0m`;
       else if (top && !bot) line += `${color}▀\x1b[0m`;
       else if (!top && bot) line += `${color}▄\x1b[0m`;
-      else                  line += ' ';
+      else line += " ";
     }
     lines.push(line);
   }
@@ -58,34 +62,49 @@ function banner(modelName, cwd, opts = {}) {
   const r = C.reset;
 
   const dogLines = renderDog(DOG_MATRIX, T.banner_logo);
-  const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : '';
-  const version = require('../package.json').version;
+  const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : "";
+  const version = require("../package.json").version;
 
   // 3 text lines — same height as dog
   const subtitles = [
     `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
     `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${yoloTag}`,
-    '',
+    "",
   ];
 
   const total = Math.max(dogLines.length, subtitles.length);
-  const dogOff  = Math.floor((total - dogLines.length) / 2);
+  const dogOff = Math.floor((total - dogLines.length) / 2);
   const textOff = Math.floor((total - subtitles.length) / 2);
   const dogWidth = DOG_MATRIX[0].length;
 
   const lines = [];
   for (let i = 0; i < total; i++) {
-    const dog  = dogLines[i - dogOff]   ?? ' '.repeat(dogWidth);
-    const text = subtitles[i - textOff] ?? '';
+    const dog = dogLines[i - dogOff] ?? " ".repeat(dogWidth);
+    const text = subtitles[i - textOff] ?? "";
     lines.push(dog + text);
   }
 
-  console.log('\n' + lines.join('\n') + '\n');
+  console.log("\n" + lines.join("\n") + "\n");
 }
 
 // Re-exports from spinner.js and format.js for backward compatibility
-const { Spinner, MultiProgress, TaskProgress, ToolProgress, setActiveTaskProgress, getActiveTaskProgress, cleanupTerminal } = require('./spinner');
-const { formatToolCall, formatResult, getToolSpinnerText, formatToolSummary, formatSectionHeader, formatMilestone } = require('./format');
+const {
+  Spinner,
+  MultiProgress,
+  TaskProgress,
+  ToolProgress,
+  setActiveTaskProgress,
+  getActiveTaskProgress,
+  cleanupTerminal,
+} = require("./spinner");
+const {
+  formatToolCall,
+  formatResult,
+  getToolSpinnerText,
+  formatToolSummary,
+  formatSectionHeader,
+  formatMilestone,
+} = require("./format");
 
 module.exports = {
   C,

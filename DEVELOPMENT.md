@@ -55,6 +55,7 @@ If merge conflicts occur during the merge from `devel` to `main`:
 **Startup detection**: nex-code detects unresolved merge conflicts at startup and displays a red warning listing affected files. The LLM context also includes conflict info so the agent won't attempt edits on conflicted files.
 
 **Project Structure & Indexing**
+
 - `bin/nex-code.js`: CLI entrypoint (wrapper)
 - `cli/`: All source code
 - `cli/agent.js`: Core agentic loop (`processInput`)
@@ -72,6 +73,7 @@ The VS Code extension at `~/Coding/nex-code-vscode/` spawns nex-code as `nex-cod
 ### Protocol
 
 **Extension → nex-code (stdin):**
+
 ```json
 { "type": "chat",    "id": "msg-001", "text": "fix the bug" }
 { "type": "confirm", "id": "cfm-001", "answer": true }
@@ -80,6 +82,7 @@ The VS Code extension at `~/Coding/nex-code-vscode/` spawns nex-code as `nex-cod
 ```
 
 **nex-code → Extension (stdout):**
+
 ```json
 { "type": "ready" }
 { "type": "token",           "id": "msg-001", "text": "Here is" }
@@ -115,6 +118,7 @@ The `remote_agent` tool (in `cli/tools.js`) delegates a coding task to a nex-cod
 ## Git Hooks
 
 Install all hooks with:
+
 ```bash
 10. npm install
 11. npm run build    # Build the high-performance bundle
@@ -122,9 +126,9 @@ Install all hooks with:
 13. npm run install-hooks
 ```
 
-| Hook | Purpose |
-|------|---------|
-| `pre-push` | Scans pushed commits for secrets (API keys, tokens, private keys) and blocks the push if found |
+| Hook         | Purpose                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `pre-push`   | Scans pushed commits for secrets (API keys, tokens, private keys) and blocks the push if found                            |
 | `post-merge` | On `devel→main` merge: auto-bumps patch version and commits. On any merge with `package.json` changes: runs `npm install` |
 
 ## Known Logic Patterns & Past Bug Fixes
@@ -134,7 +138,7 @@ Install all hooks with:
 Write-tool file locking uses `lockedFiles` (module-level Map) guarded by `acquireLock`/`releaseLock`.
 Two rules enforced since v0.3.26:
 
-1. **No concurrent same-agent locks**: `locksHeld` (per-run Set) is checked *before* calling `acquireLock`.
+1. **No concurrent same-agent locks**: `locksHeld` (per-run Set) is checked _before_ calling `acquireLock`.
    Even though `acquireLock` allows re-locking by the same `agentId`, parallel tool calls within one
    `Promise.all` batch would both pass — `locksHeld` prevents this.
 2. **Lock released on tool completion**: Each promise's `.then()` / `.catch()` calls `releaseLock` and

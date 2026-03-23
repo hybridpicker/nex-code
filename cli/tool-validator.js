@@ -4,9 +4,9 @@
  * Returns helpful error messages for open-source models.
  */
 
-const { getSkillToolDefinitions } = require('./skills');
-const { getMCPToolDefinitions } = require('./mcp');
-const { getPluginToolDefinitions } = require('./plugins');
+const { getSkillToolDefinitions } = require("./skills");
+const { getMCPToolDefinitions } = require("./mcp");
+const { getPluginToolDefinitions } = require("./plugins");
 
 // Schema cache to avoid repeated lookups (saves 5-20ms per tool call)
 const schemaCache = new Map();
@@ -16,9 +16,14 @@ const toolDefsCache = { value: null };
  * Get cached tool definitions (lazy-loaded)
  */
 function getAllToolDefinitions() {
-  const { TOOL_DEFINITIONS } = require('./tools');
+  const { TOOL_DEFINITIONS } = require("./tools");
   // Always get fresh skill and MCP definitions as they can change
-  return [...TOOL_DEFINITIONS, ...getSkillToolDefinitions(), ...getMCPToolDefinitions(), ...getPluginToolDefinitions()];
+  return [
+    ...TOOL_DEFINITIONS,
+    ...getSkillToolDefinitions(),
+    ...getMCPToolDefinitions(),
+    ...getPluginToolDefinitions(),
+  ];
 }
 
 /**
@@ -28,14 +33,14 @@ function getCachedSchema(toolName) {
   if (schemaCache.has(toolName)) {
     return schemaCache.get(toolName);
   }
-  
+
   const allTools = getAllToolDefinitions();
-  const toolDef = allTools.find(t => t.function.name === toolName);
-  
+  const toolDef = allTools.find((t) => t.function.name === toolName);
+
   if (!toolDef) {
     return null; // Tool not found
   }
-  
+
   // Tool exists - return schema (may be undefined if no parameters)
   const schema = toolDef.function.parameters;
   schemaCache.set(toolName, schema);
@@ -71,15 +76,17 @@ function closestMatch(input, candidates) {
 }
 
 function levenshtein(a, b) {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
   for (let i = 0; i <= m; i++) dp[i][0] = i;
   for (let j = 0; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
   return dp[m][n];
@@ -98,11 +105,11 @@ function validateToolArgs(toolName, args) {
   if (schema === null) {
     // Tool not found — check for close matches
     const allTools = getAllToolDefinitions();
-    const allNames = allTools.map(t => t.function.name);
+    const allNames = allTools.map((t) => t.function.name);
     const suggestion = closestMatch(toolName, allNames);
     return {
       valid: false,
-      error: `Unknown tool "${toolName}".${suggestion ? ` Did you mean "${suggestion}"?` : ''}\nAvailable tools: ${allNames.join(', ')}`,
+      error: `Unknown tool "${toolName}".${suggestion ? ` Did you mean "${suggestion}"?` : ""}\nAvailable tools: ${allNames.join(", ")}`,
     };
   }
 
@@ -127,7 +134,9 @@ function validateToolArgs(toolName, args) {
         delete corrected[suggestion];
         wasCorrected = true;
       } else {
-        errors.push(`Missing required parameter "${key}" (${schema.properties[key]?.description || schema.properties[key]?.type || 'unknown'})`);
+        errors.push(
+          `Missing required parameter "${key}" (${schema.properties[key]?.description || schema.properties[key]?.type || "unknown"})`,
+        );
       }
     }
   }
@@ -141,7 +150,9 @@ function validateToolArgs(toolName, args) {
         delete corrected[key];
         wasCorrected = true;
       } else if (!wasCorrected) {
-        errors.push(`Unknown parameter "${key}".${suggestion ? ` Did you mean "${suggestion}"?` : ''}`);
+        errors.push(
+          `Unknown parameter "${key}".${suggestion ? ` Did you mean "${suggestion}"?` : ""}`,
+        );
       }
     }
   }
@@ -152,14 +163,18 @@ function validateToolArgs(toolName, args) {
     const expected = schema.properties[key].type;
     const actual = typeof corrected[key];
 
-    if (expected === 'string' && actual === 'number') {
+    if (expected === "string" && actual === "number") {
       corrected[key] = String(corrected[key]);
       wasCorrected = true;
-    } else if (expected === 'number' && actual === 'string' && !isNaN(corrected[key])) {
+    } else if (
+      expected === "number" &&
+      actual === "string" &&
+      !isNaN(corrected[key])
+    ) {
       corrected[key] = Number(corrected[key]);
       wasCorrected = true;
-    } else if (expected === 'boolean' && actual === 'string') {
-      corrected[key] = corrected[key] === 'true';
+    } else if (expected === "boolean" && actual === "string") {
+      corrected[key] = corrected[key] === "true";
       wasCorrected = true;
     }
   }
@@ -167,8 +182,9 @@ function validateToolArgs(toolName, args) {
   if (errors.length > 0 && !wasCorrected) {
     return {
       valid: false,
-      error: `Tool "${toolName}" argument errors:\n` +
-        errors.map(e => `  - ${e}`).join('\n') +
+      error:
+        `Tool "${toolName}" argument errors:\n` +
+        errors.map((e) => `  - ${e}`).join("\n") +
         `\n\nExpected parameters: ${JSON.stringify(schema.properties, null, 2)}`,
     };
   }
@@ -208,44 +224,72 @@ function validateToolCallFormat(toolCall, providerName) {
   }
 
   // Gemini: normalize "args" to "arguments" at function level
-  if (normalized.function && normalized.function.args !== undefined && normalized.function.arguments === undefined) {
+  if (
+    normalized.function &&
+    normalized.function.args !== undefined &&
+    normalized.function.arguments === undefined
+  ) {
     normalized.function.arguments = normalized.function.args;
     delete normalized.function.args;
   }
 
   // Handle missing arguments — default to empty object
-  if (normalized.function && (normalized.function.arguments === undefined || normalized.function.arguments === null)) {
+  if (
+    normalized.function &&
+    (normalized.function.arguments === undefined ||
+      normalized.function.arguments === null)
+  ) {
     normalized.function.arguments = {};
   }
 
   // OpenAI/Ollama: parse JSON string arguments
-  if (normalized.function && typeof normalized.function.arguments === 'string') {
+  if (
+    normalized.function &&
+    typeof normalized.function.arguments === "string"
+  ) {
     const raw = normalized.function.arguments;
-    if (raw.trim() === '') {
+    if (raw.trim() === "") {
       normalized.function.arguments = {};
     } else {
       try {
         normalized.function.arguments = JSON.parse(raw);
       } catch (e) {
-        errors.push(`Invalid JSON in arguments${providerName ? ` (${providerName})` : ''}: ${e.message}`);
+        errors.push(
+          `Invalid JSON in arguments${providerName ? ` (${providerName})` : ""}: ${e.message}`,
+        );
         return { valid: false, normalized, errors };
       }
     }
   }
 
   // Ensure arguments is a plain object
-  if (normalized.function && typeof normalized.function.arguments !== 'object') {
-    errors.push(`Arguments must be an object, got ${typeof normalized.function.arguments}`);
+  if (
+    normalized.function &&
+    typeof normalized.function.arguments !== "object"
+  ) {
+    errors.push(
+      `Arguments must be an object, got ${typeof normalized.function.arguments}`,
+    );
     return { valid: false, normalized, errors };
   }
 
   // Ensure function name is a non-empty string
-  if (!normalized.function.name || typeof normalized.function.name !== 'string') {
-    errors.push('Tool call function name must be a non-empty string');
+  if (
+    !normalized.function.name ||
+    typeof normalized.function.name !== "string"
+  ) {
+    errors.push("Tool call function name must be a non-empty string");
     return { valid: false, normalized, errors };
   }
 
   return { valid: errors.length === 0, normalized, errors };
 }
 
-module.exports = { validateToolArgs, validateToolCallFormat, closestMatch, levenshtein, getCachedSchema, clearSchemaCache };
+module.exports = {
+  validateToolArgs,
+  validateToolCallFormat,
+  closestMatch,
+  levenshtein,
+  getCachedSchema,
+  clearSchemaCache,
+};

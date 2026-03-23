@@ -1,11 +1,11 @@
-jest.mock('axios', () => ({ post: jest.fn(), get: jest.fn() }));
+jest.mock("axios", () => ({ post: jest.fn(), get: jest.fn() }));
 
-const registry = require('../../cli/providers/registry');
+const registry = require("../../cli/providers/registry");
 
-describe('providers/registry.js', () => {
+describe("providers/registry.js", () => {
   beforeEach(() => {
     registry._reset();
-    process.env.OLLAMA_API_KEY = 'test-key';
+    process.env.OLLAMA_API_KEY = "test-key";
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
@@ -25,176 +25,188 @@ describe('providers/registry.js', () => {
   });
 
   // ─── Initialization ─────────────────────────────────────────
-  describe('initialization', () => {
-    it('auto-initializes with default providers', () => {
+  describe("initialization", () => {
+    it("auto-initializes with default providers", () => {
       const providers = registry.listProviders();
       expect(providers).toHaveLength(5);
-      expect(providers.map((p) => p.provider)).toEqual(['ollama', 'openai', 'anthropic', 'gemini', 'local']);
+      expect(providers.map((p) => p.provider)).toEqual([
+        "ollama",
+        "openai",
+        "anthropic",
+        "gemini",
+        "local",
+      ]);
     });
 
-    it('defaults to ollama provider', () => {
-      expect(registry.getActiveProviderName()).toBe('ollama');
+    it("defaults to ollama provider", () => {
+      expect(registry.getActiveProviderName()).toBe("ollama");
     });
 
-    it('defaults to qwen3-coder model', () => {
-      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
+    it("defaults to qwen3-coder model", () => {
+      expect(registry.getActiveModelId()).toBe("qwen3-coder:480b");
     });
 
-    it('uses DEFAULT_PROVIDER from env', () => {
+    it("uses DEFAULT_PROVIDER from env", () => {
       registry._reset();
-      process.env.DEFAULT_PROVIDER = 'openai';
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.DEFAULT_PROVIDER = "openai";
+      process.env.OPENAI_API_KEY = "sk-test";
 
-      expect(registry.getActiveProviderName()).toBe('openai');
-      expect(registry.getActiveModelId()).toBe('gpt-4o');
+      expect(registry.getActiveProviderName()).toBe("openai");
+      expect(registry.getActiveModelId()).toBe("gpt-4o");
     });
 
-    it('uses DEFAULT_MODEL from env', () => {
+    it("uses DEFAULT_MODEL from env", () => {
       registry._reset();
-      process.env.DEFAULT_MODEL = 'qwen3-coder:480b';
+      process.env.DEFAULT_MODEL = "qwen3-coder:480b";
 
-      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
+      expect(registry.getActiveModelId()).toBe("qwen3-coder:480b");
     });
 
-    it('falls back to ollama when DEFAULT_PROVIDER is invalid', () => {
+    it("falls back to ollama when DEFAULT_PROVIDER is invalid", () => {
       registry._reset();
-      process.env.DEFAULT_PROVIDER = 'nonexistent';
+      process.env.DEFAULT_PROVIDER = "nonexistent";
 
-      expect(registry.getActiveProviderName()).toBe('ollama');
+      expect(registry.getActiveProviderName()).toBe("ollama");
     });
   });
 
   // ─── getProvider ─────────────────────────────────────────────
-  describe('getProvider()', () => {
-    it('returns existing provider', () => {
-      const p = registry.getProvider('ollama');
+  describe("getProvider()", () => {
+    it("returns existing provider", () => {
+      const p = registry.getProvider("ollama");
       expect(p).toBeDefined();
-      expect(p.name).toBe('ollama');
+      expect(p.name).toBe("ollama");
     });
 
-    it('returns null for unknown provider', () => {
-      expect(registry.getProvider('nonexistent')).toBeNull();
+    it("returns null for unknown provider", () => {
+      expect(registry.getProvider("nonexistent")).toBeNull();
     });
   });
 
   // ─── getActiveProvider ──────────────────────────────────────
-  describe('getActiveProvider()', () => {
-    it('returns the active provider instance', () => {
+  describe("getActiveProvider()", () => {
+    it("returns the active provider instance", () => {
       const p = registry.getActiveProvider();
       expect(p).toBeDefined();
-      expect(p.name).toBe('ollama');
+      expect(p.name).toBe("ollama");
     });
   });
 
   // ─── getActiveModel ─────────────────────────────────────────
-  describe('getActiveModel()', () => {
-    it('returns model with provider info', () => {
+  describe("getActiveModel()", () => {
+    it("returns model with provider info", () => {
       const model = registry.getActiveModel();
-      expect(model.id).toBe('qwen3-coder:480b');
-      expect(model.name).toBe('Qwen3 Coder 480B');
-      expect(model.provider).toBe('ollama');
+      expect(model.id).toBe("qwen3-coder:480b");
+      expect(model.name).toBe("Qwen3 Coder 480B");
+      expect(model.provider).toBe("ollama");
     });
 
-    it('returns basic info for unknown model', () => {
+    it("returns basic info for unknown model", () => {
       registry._reset();
-      process.env.OLLAMA_API_KEY = 'test';
-      registry.setActiveModel('local:custom-model');
+      process.env.OLLAMA_API_KEY = "test";
+      registry.setActiveModel("local:custom-model");
 
       const model = registry.getActiveModel();
-      expect(model.id).toBe('custom-model');
-      expect(model.provider).toBe('local');
+      expect(model.id).toBe("custom-model");
+      expect(model.provider).toBe("local");
     });
   });
 
   // ─── parseModelSpec ─────────────────────────────────────────
-  describe('parseModelSpec()', () => {
-    it('parses provider:model format', () => {
-      expect(registry.parseModelSpec('openai:gpt-4o')).toEqual({
-        provider: 'openai',
-        model: 'gpt-4o',
+  describe("parseModelSpec()", () => {
+    it("parses provider:model format", () => {
+      expect(registry.parseModelSpec("openai:gpt-4o")).toEqual({
+        provider: "openai",
+        model: "gpt-4o",
       });
     });
 
-    it('handles model-only format', () => {
-      expect(registry.parseModelSpec('gpt-4o')).toEqual({
+    it("handles model-only format", () => {
+      expect(registry.parseModelSpec("gpt-4o")).toEqual({
         provider: null,
-        model: 'gpt-4o',
+        model: "gpt-4o",
       });
     });
 
-    it('handles model with colons', () => {
-      expect(registry.parseModelSpec('local:llama3:8b')).toEqual({
-        provider: 'local',
-        model: 'llama3:8b',
+    it("handles model with colons", () => {
+      expect(registry.parseModelSpec("local:llama3:8b")).toEqual({
+        provider: "local",
+        model: "llama3:8b",
       });
     });
 
-    it('returns nulls for empty input', () => {
-      expect(registry.parseModelSpec('')).toEqual({ provider: null, model: null });
-      expect(registry.parseModelSpec(null)).toEqual({ provider: null, model: null });
+    it("returns nulls for empty input", () => {
+      expect(registry.parseModelSpec("")).toEqual({
+        provider: null,
+        model: null,
+      });
+      expect(registry.parseModelSpec(null)).toEqual({
+        provider: null,
+        model: null,
+      });
     });
   });
 
   // ─── setActiveModel ─────────────────────────────────────────
-  describe('setActiveModel()', () => {
-    it('sets model with provider prefix', () => {
-      expect(registry.setActiveModel('ollama:qwen3-coder:480b')).toBe(true);
-      expect(registry.getActiveProviderName()).toBe('ollama');
-      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
+  describe("setActiveModel()", () => {
+    it("sets model with provider prefix", () => {
+      expect(registry.setActiveModel("ollama:qwen3-coder:480b")).toBe(true);
+      expect(registry.getActiveProviderName()).toBe("ollama");
+      expect(registry.getActiveModelId()).toBe("qwen3-coder:480b");
     });
 
-    it('sets model without prefix (searches active provider)', () => {
-      expect(registry.setActiveModel('qwen3-coder:480b')).toBe(true);
-      expect(registry.getActiveModelId()).toBe('qwen3-coder:480b');
+    it("sets model without prefix (searches active provider)", () => {
+      expect(registry.setActiveModel("qwen3-coder:480b")).toBe(true);
+      expect(registry.getActiveModelId()).toBe("qwen3-coder:480b");
     });
 
-    it('sets model from different provider (auto-switch)', () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+    it("sets model from different provider (auto-switch)", () => {
+      process.env.OPENAI_API_KEY = "sk-test";
       registry._reset();
-      process.env.OLLAMA_API_KEY = 'test';
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OLLAMA_API_KEY = "test";
+      process.env.OPENAI_API_KEY = "sk-test";
 
-      expect(registry.setActiveModel('gpt-4o')).toBe(true);
-      expect(registry.getActiveProviderName()).toBe('openai');
-      expect(registry.getActiveModelId()).toBe('gpt-4o');
+      expect(registry.setActiveModel("gpt-4o")).toBe(true);
+      expect(registry.getActiveProviderName()).toBe("openai");
+      expect(registry.getActiveModelId()).toBe("gpt-4o");
     });
 
-    it('returns false for unknown model', () => {
-      expect(registry.setActiveModel('nonexistent-model')).toBe(false);
+    it("returns false for unknown model", () => {
+      expect(registry.setActiveModel("nonexistent-model")).toBe(false);
     });
 
-    it('returns false for unknown provider', () => {
-      expect(registry.setActiveModel('fakeprovider:model')).toBe(false);
+    it("returns false for unknown provider", () => {
+      expect(registry.setActiveModel("fakeprovider:model")).toBe(false);
     });
 
-    it('allows unknown models for local provider', () => {
-      expect(registry.setActiveModel('local:my-custom-model')).toBe(true);
-      expect(registry.getActiveProviderName()).toBe('local');
-      expect(registry.getActiveModelId()).toBe('my-custom-model');
+    it("allows unknown models for local provider", () => {
+      expect(registry.setActiveModel("local:my-custom-model")).toBe(true);
+      expect(registry.getActiveProviderName()).toBe("local");
+      expect(registry.getActiveModelId()).toBe("my-custom-model");
     });
 
-    it('sets anthropic model with prefix', () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    it("sets anthropic model with prefix", () => {
+      process.env.ANTHROPIC_API_KEY = "sk-ant-test";
       registry._reset();
-      process.env.OLLAMA_API_KEY = 'test';
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+      process.env.OLLAMA_API_KEY = "test";
+      process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 
-      expect(registry.setActiveModel('anthropic:claude-sonnet')).toBe(true);
-      expect(registry.getActiveProviderName()).toBe('anthropic');
+      expect(registry.setActiveModel("anthropic:claude-sonnet")).toBe(true);
+      expect(registry.getActiveProviderName()).toBe("anthropic");
     });
   });
 
   // ─── getModelNames ──────────────────────────────────────────
-  describe('getModelNames()', () => {
-    it('returns all model names across providers', () => {
+  describe("getModelNames()", () => {
+    it("returns all model names across providers", () => {
       const names = registry.getModelNames();
-      expect(names).toContain('kimi-k2.5');
-      expect(names).toContain('qwen3-coder:480b');
-      expect(names).toContain('gpt-4o');
-      expect(names).toContain('claude-sonnet');
+      expect(names).toContain("kimi-k2.5");
+      expect(names).toContain("qwen3-coder:480b");
+      expect(names).toContain("gpt-4o");
+      expect(names).toContain("claude-sonnet");
     });
 
-    it('returns unique names', () => {
+    it("returns unique names", () => {
       const names = registry.getModelNames();
       const unique = [...new Set(names)];
       expect(names.length).toBe(unique.length);
@@ -202,57 +214,57 @@ describe('providers/registry.js', () => {
   });
 
   // ─── listProviders ─────────────────────────────────────────
-  describe('listProviders()', () => {
-    it('lists all providers with configuration status', () => {
+  describe("listProviders()", () => {
+    it("lists all providers with configuration status", () => {
       const list = registry.listProviders();
-      const ollama = list.find((p) => p.provider === 'ollama');
-      const openai = list.find((p) => p.provider === 'openai');
+      const ollama = list.find((p) => p.provider === "ollama");
+      const openai = list.find((p) => p.provider === "openai");
 
       expect(ollama.configured).toBe(true);
       expect(openai.configured).toBe(false);
     });
 
-    it('marks active model', () => {
+    it("marks active model", () => {
       const list = registry.listProviders();
-      const ollama = list.find((p) => p.provider === 'ollama');
+      const ollama = list.find((p) => p.provider === "ollama");
       const activeModels = ollama.models.filter((m) => m.active);
       expect(activeModels).toHaveLength(1);
-      expect(activeModels[0].id).toBe('qwen3-coder:480b');
+      expect(activeModels[0].id).toBe("qwen3-coder:480b");
     });
 
-    it('includes models per provider', () => {
+    it("includes models per provider", () => {
       const list = registry.listProviders();
-      const openai = list.find((p) => p.provider === 'openai');
+      const openai = list.find((p) => p.provider === "openai");
       expect(openai.models.length).toBeGreaterThan(0);
-      expect(openai.models[0]).toHaveProperty('id');
-      expect(openai.models[0]).toHaveProperty('name');
+      expect(openai.models[0]).toHaveProperty("id");
+      expect(openai.models[0]).toHaveProperty("name");
     });
   });
 
   // ─── listAllModels ─────────────────────────────────────────
-  describe('listAllModels()', () => {
-    it('returns flat list with specs', () => {
+  describe("listAllModels()", () => {
+    it("returns flat list with specs", () => {
       const models = registry.listAllModels();
       expect(models.length).toBeGreaterThan(5);
 
-      const ollamaModel = models.find((m) => m.spec === 'ollama:kimi-k2.5');
+      const ollamaModel = models.find((m) => m.spec === "ollama:kimi-k2.5");
       expect(ollamaModel).toBeDefined();
-      expect(ollamaModel.provider).toBe('ollama');
+      expect(ollamaModel.provider).toBe("ollama");
     });
 
-    it('includes configuration status', () => {
+    it("includes configuration status", () => {
       const models = registry.listAllModels();
-      const ollamaModel = models.find((m) => m.provider === 'ollama');
+      const ollamaModel = models.find((m) => m.provider === "ollama");
       expect(ollamaModel.configured).toBe(true);
 
-      const openaiModel = models.find((m) => m.provider === 'openai');
+      const openaiModel = models.find((m) => m.provider === "openai");
       expect(openaiModel.configured).toBe(false);
     });
   });
 
   // ─── callStream ─────────────────────────────────────────────
-  describe('callStream()', () => {
-    it('throws when no provider available', async () => {
+  describe("callStream()", () => {
+    it("throws when no provider available", async () => {
       registry._reset();
       // Force bad state
       const origProvider = process.env.OLLAMA_API_KEY;
@@ -263,52 +275,61 @@ describe('providers/registry.js', () => {
       process.env.OLLAMA_API_KEY = origProvider;
     });
 
-    it('throws when provider not configured', async () => {
+    it("throws when provider not configured", async () => {
       registry._reset();
-      process.env.DEFAULT_PROVIDER = 'openai';
+      process.env.DEFAULT_PROVIDER = "openai";
       delete process.env.OPENAI_API_KEY;
       // Need at least one provider so init doesn't fall back
-      process.env.OLLAMA_API_KEY = 'test';
+      process.env.OLLAMA_API_KEY = "test";
 
-      registry.setActiveModel('openai:gpt-4o');
-      await expect(registry.callStream([], [])).rejects.toThrow(/not configured|No configured provider/);
+      registry.setActiveModel("openai:gpt-4o");
+      await expect(registry.callStream([], [])).rejects.toThrow(
+        /not configured|No configured provider/,
+      );
     });
   });
 
   // ─── callChat ───────────────────────────────────────────────
-  describe('callChat()', () => {
-    it('throws when provider not configured', async () => {
+  describe("callChat()", () => {
+    it("throws when provider not configured", async () => {
       registry._reset();
-      process.env.OLLAMA_API_KEY = 'test';
-      registry.setActiveModel('openai:gpt-4o');
+      process.env.OLLAMA_API_KEY = "test";
+      registry.setActiveModel("openai:gpt-4o");
 
-      await expect(registry.callChat([], [])).rejects.toThrow(/not configured|No configured provider/);
+      await expect(registry.callChat([], [])).rejects.toThrow(
+        /not configured|No configured provider/,
+      );
     });
   });
 
   // ─── _reset ─────────────────────────────────────────────────
-  describe('_reset()', () => {
-    it('clears all state', () => {
+  describe("_reset()", () => {
+    it("clears all state", () => {
       registry._reset();
       // After reset, accessing triggers re-init
-      expect(registry.getActiveProviderName()).toBe('ollama');
+      expect(registry.getActiveProviderName()).toBe("ollama");
     });
   });
 
   // ─── registerProvider ───────────────────────────────────────
-  describe('registerProvider()', () => {
-    it('adds a custom provider', () => {
-      const { BaseProvider } = require('../../cli/providers/base');
+  describe("registerProvider()", () => {
+    it("adds a custom provider", () => {
+      const { BaseProvider } = require("../../cli/providers/base");
       class CustomProvider extends BaseProvider {
         constructor() {
-          super({ name: 'custom', models: { 'custom-m': { id: 'custom-m', name: 'Custom Model' } } });
+          super({
+            name: "custom",
+            models: { "custom-m": { id: "custom-m", name: "Custom Model" } },
+          });
         }
-        isConfigured() { return true; }
+        isConfigured() {
+          return true;
+        }
       }
 
-      registry.registerProvider('custom', new CustomProvider());
-      expect(registry.getProvider('custom')).toBeDefined();
-      expect(registry.getProvider('custom').name).toBe('custom');
+      registry.registerProvider("custom", new CustomProvider());
+      expect(registry.getProvider("custom")).toBeDefined();
+      expect(registry.getProvider("custom").name).toBe("custom");
     });
   });
 });

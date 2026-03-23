@@ -98,6 +98,7 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 ## Provider System
 
 ### Supported Providers:
+
 - **ollama** — Ollama Cloud (`OLLAMA_API_KEY`)
 - **openai** — OpenAI API (`OPENAI_API_KEY`)
 - **anthropic** — Anthropic API (`ANTHROPIC_API_KEY`)
@@ -105,9 +106,11 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 - **local** — Local Ollama Server (no key required)
 
 ### Model-Spec Format:
+
 `provider:model` (e.g. `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
 
 ### Env Variables:
+
 - `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
 - `DEFAULT_PROVIDER` (default: `ollama`)
 - `DEFAULT_MODEL` (default: provider-dependent)
@@ -121,6 +124,7 @@ Wenn der User Jarvis-Fehlermeldungen meldet (set_reminder, cron, Google Auth, Sm
 sind diese IMMER vom deployed System auf 94.130.37.43 — NICHT lokal.
 
 Vorgehen bei Jarvis-Fehlern:
+
 1. ZUERST Server-Logs prüfen: ssh_exec auf 94.130.37.43, tail logs/api.log
 2. DANN Code analysieren: /home/jarvis/jarvis-agent/ (nicht lokale Kopie)
 3. Fix deployen: git pull + systemctl restart jarvis-api
@@ -163,7 +167,7 @@ Vorgehen bei Jarvis-Fehlern:
 - Progress Indicators: getToolSpinnerText() → spinner wrapper around executeTool()
 - Compact Output: executeBatch(quiet=true) → single spinner + formatToolSummary() 1-line summaries
 - Response Quality: system prompt enforces substantive text responses after tool use, markdown formatting, approach statement before tasks, completion summary
-- Résumé: _printResume() shows steps/tools/files-modified/files-read after multi-step tasks
+- Résumé: \_printResume() shows steps/tools/files-modified/files-read after multi-step tasks
 - Follow-Up: context-based suggestions — 💡 /diff · /commit · /undo after edits, 💡 /save · /clear after read sessions
 - Tab Completion: completeFilePath() for file path completion alongside slash commands
 - Bracketed Paste Mode: \x1b[200~/201~ detection, multi-line paste as single input
@@ -174,7 +178,9 @@ Vorgehen bei Jarvis-Fehlern:
 ## Quality & Benchmark
 
 ### Session Scorer (`cli/session-scorer.js`)
+
 Scores a saved session 0-10 by static analysis of anti-patterns:
+
 - `sed -n` log-scrolling in bash/ssh commands
 - Repeated grep patterns (loop detection)
 - Excessive step count (> 30 per user turn)
@@ -182,14 +188,16 @@ Scores a saved session 0-10 by static analysis of anti-patterns:
 - HTTP 400 cascades from context overflow
 
 ```js
-const { scoreSession, scoreMessages } = require('./cli/session-scorer');
-scoreSession('my-session');  // => { score: 9.0, issues: [...], summary: '...' }
+const { scoreSession, scoreMessages } = require("./cli/session-scorer");
+scoreSession("my-session"); // => { score: 9.0, issues: [...], summary: '...' }
 ```
 
 ### Benchmark Suite (`cli/benchmark.js`)
+
 Five Jarvis-style scenarios run against a live model, scored automatically.
 
 Slash commands:
+
 - `/bench` — run full 5-scenario suite
 - `/bench quick` — run first 2 scenarios only
 - `/trend` — show score history from `.nex/benchmark-history.json`
@@ -197,7 +205,9 @@ Slash commands:
 History is appended to `.nex/benchmark-history.json` after each run.
 
 ### Loop Detection (agent.js)
+
 Key anti-patterns that trigger warnings/aborts during agentic execution:
+
 - Repeated bash/ssh commands (normalized, digits → N): warn@5, abort@8
 - Repeated grep patterns: warn@4, abort@7
 - Repeated file edits: warn@2, abort@4

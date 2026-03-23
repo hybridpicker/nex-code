@@ -18,10 +18,10 @@
  * }
  */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-const DEPLOY_FILE = path.join('.nex', 'deploy.json');
+const DEPLOY_FILE = path.join(".nex", "deploy.json");
 
 function getDeployConfigPath() {
   return path.join(process.cwd(), DEPLOY_FILE);
@@ -35,7 +35,7 @@ function loadDeployConfigs() {
   const p = getDeployConfigPath();
   if (!fs.existsSync(p)) return {};
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return JSON.parse(fs.readFileSync(p, "utf-8"));
   } catch {
     return {};
   }
@@ -52,8 +52,8 @@ function resolveDeployConfig(name) {
   if (configs[name]) return { ...configs[name], _name: name };
   const available = Object.keys(configs);
   const hint = available.length
-    ? `Available: ${available.join(', ')}`
-    : 'No deploy configs found. Create .nex/deploy.json or use explicit params.';
+    ? `Available: ${available.join(", ")}`
+    : "No deploy configs found. Create .nex/deploy.json or use explicit params.";
   throw new Error(`Unknown deploy config: "${name}". ${hint}`);
 }
 
@@ -62,9 +62,18 @@ function resolveDeployConfig(name) {
  * @param {Object} configs
  */
 function saveDeployConfigs(configs) {
-  const nexDir = path.join(process.cwd(), '.nex');
+  const nexDir = path.join(process.cwd(), ".nex");
   if (!fs.existsSync(nexDir)) fs.mkdirSync(nexDir, { recursive: true });
-  fs.writeFileSync(getDeployConfigPath(), JSON.stringify(configs, null, 2) + '\n', 'utf-8');
+  fs.writeFileSync(
+    getDeployConfigPath(),
+    JSON.stringify(configs, null, 2) + "\n",
+    "utf-8",
+  );
 }
 
-module.exports = { loadDeployConfigs, resolveDeployConfig, saveDeployConfigs, getDeployConfigPath };
+module.exports = {
+  loadDeployConfigs,
+  resolveDeployConfig,
+  saveDeployConfigs,
+  getDeployConfigPath,
+};

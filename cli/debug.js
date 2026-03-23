@@ -10,7 +10,7 @@
 
 /** Whether debug mode is active (checked lazily at each call). */
 function isDebug() {
-  return process.env.NEX_DEBUG === 'true' || process.argv.includes('--debug');
+  return process.env.NEX_DEBUG === "true" || process.argv.includes("--debug");
 }
 
 /**
