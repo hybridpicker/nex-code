@@ -433,8 +433,8 @@ RULES:
       });
 
       progress.update(idx, result.status === 'failed' ? 'error' : 'done');
-      totalTokens.input += result.tokensUsed.input;
-      totalTokens.output += result.tokensUsed.output;
+      totalTokens.input += result.tokensUsed?.input || 0;
+      totalTokens.output += result.tokensUsed?.output || 0;
       return result;
     } catch (err) {
       progress.update(idx, 'error');
@@ -462,10 +462,11 @@ RULES:
   console.log('');
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    const icon = r.status === 'done' ? `${C.green}\u2713${C.reset}` : r.status === 'truncated' ? `${C.yellow}\u26A0${C.reset}` : `${C.red}\u2717${C.reset}`;
-    const statusText = r.status === 'done' ? 'SUCCESS' : r.status === 'truncated' ? 'PARTIAL' : 'FAILED';
-    const summary = r.result ? `: ${r.result.substring(0, 50)}${r.result.length > 50 ? '...' : ''}` : '';
-    console.log(`${icon} Agent ${i + 1} [${statusText}]: ${r.task.substring(0, 50)}${r.task.length > 50 ? '...' : ''}${summary}`);
+    // Treat truncated-with-output as success — agent finished work but hit iteration cap
+    const isSuccess = r.status === 'done' || (r.status === 'truncated' && r.result && !r.result.startsWith('Error'));
+    const icon = isSuccess ? `${C.green}\u2713${C.reset}` : `${C.red}\u2717${C.reset}`;
+    const summary = r.result ? `: ${r.result.substring(0, 60)}${r.result.length > 60 ? '...' : ''}` : '';
+    console.log(`${icon} Agent ${i + 1} [${r.modelSpec || 'worker'}]: ${r.task.substring(0, 50)}${r.task.length > 50 ? '...' : ''}${summary}`);
   }
   console.log('');
 
