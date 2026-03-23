@@ -19,20 +19,22 @@ npm test  # verify everything works
 ## Development Setup
 
 ### Prerequisites
+
 - Node.js 20+
 - npm 9+
 - Git
 - Optional: `gh` CLI for GitHub Actions tools
 
 ### Environment Variables
+
 Copy `.env.example` to `.env` and configure at least one provider:
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `ANTHROPIC_API_KEY` | Anthropic API key | One of these |
-| `OPENAI_API_KEY` | OpenAI API key | is required |
-| `GEMINI_API_KEY` | Google Gemini API key | for testing |
-| `OLLAMA_HOST` | Ollama server URL (default: localhost) | Optional |
+| Variable            | Description                            | Required     |
+| ------------------- | -------------------------------------- | ------------ |
+| `ANTHROPIC_API_KEY` | Anthropic API key                      | One of these |
+| `OPENAI_API_KEY`    | OpenAI API key                         | is required  |
+| `GEMINI_API_KEY`    | Google Gemini API key                  | for testing  |
+| `OLLAMA_HOST`       | Ollama server URL (default: localhost) | Optional     |
 
 ### Running Tests
 
@@ -155,6 +157,7 @@ chore: maintenance tasks
 ## Reporting Issues
 
 Use [GitHub Issues](https://github.com/hybridpicker/nex-code/issues) with:
+
 - Steps to reproduce
 - Expected vs actual behavior
 - Node version and OS

@@ -17,16 +17,20 @@ async function readStreamErrorBody(err, extractFn) {
   if (!err.response?.data) return err.message;
   const data = err.response.data;
   // Non-stream path: data is already a parsed object
-  if (typeof data === 'object' && data !== null && typeof data.pipe !== 'function') {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    typeof data.pipe !== "function"
+  ) {
     return extractFn(data) || err.message;
   }
   // Stream path: collect chunks and parse
   try {
     const raw = await new Promise((resolve, reject) => {
       const chunks = [];
-      data.on('data', (c) => chunks.push(c));
-      data.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-      data.on('error', reject);
+      data.on("data", (c) => chunks.push(c));
+      data.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      data.on("error", reject);
     });
     const parsed = JSON.parse(raw);
     return extractFn(parsed) || raw || err.message;
@@ -44,10 +48,10 @@ class BaseProvider {
    */
   constructor(config = {}) {
     if (new.target === BaseProvider) {
-      throw new Error('BaseProvider is abstract — use a concrete provider');
+      throw new Error("BaseProvider is abstract — use a concrete provider");
     }
-    this.name = config.name || 'unknown';
-    this.baseUrl = config.baseUrl || '';
+    this.name = config.name || "unknown";
+    this.baseUrl = config.baseUrl || "";
     this.models = config.models || {};
     this.defaultModel = config.defaultModel || null;
   }

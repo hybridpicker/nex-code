@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
 export interface AgentEnv {
   NEX_PROVIDER?: string;
@@ -14,40 +14,60 @@ export interface AgentEnv {
 
 export class ConfigManager {
   getExecutablePath(): string {
-    return vscode.workspace.getConfiguration('nexCode').get('executablePath', 'nex-code');
+    return vscode.workspace
+      .getConfiguration("nexCode")
+      .get("executablePath", "nex-code");
   }
 
   getModel(): string {
-    return vscode.workspace.getConfiguration('nexCode').get('defaultModel', 'qwen3-coder:480b');
+    return vscode.workspace
+      .getConfiguration("nexCode")
+      .get("defaultModel", "qwen3-coder:480b");
   }
 
   buildEnv(): AgentEnv {
-    const cfg = vscode.workspace.getConfiguration('nexCode');
-    const env: AgentEnv = { NEX_SERVER: '1' };
+    const cfg = vscode.workspace.getConfiguration("nexCode");
+    const env: AgentEnv = { NEX_SERVER: "1" };
 
-    const provider = cfg.get<string>('defaultProvider', 'ollama');
-    if (provider) { env.NEX_PROVIDER = provider; }
+    const provider = cfg.get<string>("defaultProvider", "ollama");
+    if (provider) {
+      env.NEX_PROVIDER = provider;
+    }
 
-    const model = cfg.get<string>('defaultModel', '');
-    if (model) { env.NEX_MODEL = model; }
+    const model = cfg.get<string>("defaultModel", "");
+    if (model) {
+      env.NEX_MODEL = model;
+    }
 
-    const ollamaUrl = cfg.get<string>('ollamaBaseUrl', '');
-    if (ollamaUrl) { env.OLLAMA_BASE_URL = ollamaUrl; }
+    const ollamaUrl = cfg.get<string>("ollamaBaseUrl", "");
+    if (ollamaUrl) {
+      env.OLLAMA_BASE_URL = ollamaUrl;
+    }
 
-    const ollamaKey = cfg.get<string>('ollamaApiKey', '');
-    if (ollamaKey) { env.OLLAMA_API_KEY = ollamaKey; }
+    const ollamaKey = cfg.get<string>("ollamaApiKey", "");
+    if (ollamaKey) {
+      env.OLLAMA_API_KEY = ollamaKey;
+    }
 
-    const anthropicKey = cfg.get<string>('anthropicApiKey', '');
-    if (anthropicKey) { env.ANTHROPIC_API_KEY = anthropicKey; }
+    const anthropicKey = cfg.get<string>("anthropicApiKey", "");
+    if (anthropicKey) {
+      env.ANTHROPIC_API_KEY = anthropicKey;
+    }
 
-    const openaiKey = cfg.get<string>('openaiApiKey', '');
-    if (openaiKey) { env.OPENAI_API_KEY = openaiKey; }
+    const openaiKey = cfg.get<string>("openaiApiKey", "");
+    if (openaiKey) {
+      env.OPENAI_API_KEY = openaiKey;
+    }
 
-    const geminiKey = cfg.get<string>('geminiApiKey', '');
-    if (geminiKey) { env.GEMINI_API_KEY = geminiKey; }
+    const geminiKey = cfg.get<string>("geminiApiKey", "");
+    if (geminiKey) {
+      env.GEMINI_API_KEY = geminiKey;
+    }
 
-    const maxTurns = cfg.get<number>('maxTurns', 50);
-    if (maxTurns > 0) { env.NEX_MAX_TURNS = String(maxTurns); }
+    const maxTurns = cfg.get<number>("maxTurns", 50);
+    if (maxTurns > 0) {
+      env.NEX_MAX_TURNS = String(maxTurns);
+    }
 
     return env;
   }

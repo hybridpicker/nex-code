@@ -3,8 +3,13 @@
  * Generic cursor-based list picker for terminal UIs.
  */
 
-const { C } = require('./ui');
-const { listProviders, getActiveProviderName, getActiveModelId, setActiveModel } = require('./providers/registry');
+const { C } = require("./ui");
+const {
+  listProviders,
+  getActiveProviderName,
+  getActiveModelId,
+  setActiveModel,
+} = require("./providers/registry");
 
 /**
  * Generic interactive list picker.
@@ -16,7 +21,10 @@ const { listProviders, getActiveProviderName, getActiveModelId, setActiveModel }
  * @returns {Promise<string|null>} selected value or null if cancelled
  */
 function pickFromList(rl, items, options = {}) {
-  const { title = 'Select', hint = '\u2191\u2193 navigate \u00b7 Enter select \u00b7 Esc cancel' } = options;
+  const {
+    title = "Select",
+    hint = "\u2191\u2193 navigate \u00b7 Enter select \u00b7 Esc cancel",
+  } = options;
 
   return new Promise((resolve) => {
     // Find selectable items (non-headers)
@@ -35,7 +43,9 @@ function pickFromList(rl, items, options = {}) {
     if (cursor < 0) cursor = 0;
 
     // Calculate visible window for scrolling
-    const maxVisible = process.stdout.rows ? Math.max(process.stdout.rows - 6, 5) : 20;
+    const maxVisible = process.stdout.rows
+      ? Math.max(process.stdout.rows - 6, 5)
+      : 20;
     let scrollOffset = 0;
 
     function getVisibleRange() {
@@ -46,7 +56,10 @@ function pickFromList(rl, items, options = {}) {
       } else if (cursorItemIdx >= scrollOffset + maxVisible) {
         scrollOffset = cursorItemIdx - maxVisible + 1;
       }
-      return { start: scrollOffset, end: Math.min(items.length, scrollOffset + maxVisible) };
+      return {
+        start: scrollOffset,
+        end: Math.min(items.length, scrollOffset + maxVisible),
+      };
     }
 
     let renderedLines = 0;
@@ -56,7 +69,7 @@ function pickFromList(rl, items, options = {}) {
       if (renderedLines > 0) {
         process.stdout.write(`\x1b[${renderedLines}A`);
         for (let i = 0; i < renderedLines; i++) {
-          process.stdout.write('\x1b[2K\n');
+          process.stdout.write("\x1b[2K\n");
         }
         process.stdout.write(`\x1b[${renderedLines}A`);
       }
@@ -64,7 +77,7 @@ function pickFromList(rl, items, options = {}) {
       const lines = [];
       lines.push(`  ${C.bold}${C.cyan}${title}${C.reset}`);
       lines.push(`  ${C.dim}${hint}${C.reset}`);
-      lines.push('');
+      lines.push("");
 
       const { start, end } = getVisibleRange();
 
@@ -80,8 +93,10 @@ function pickFromList(rl, items, options = {}) {
         }
 
         const isSelected = selectableIndices[cursor] === i;
-        const pointer = isSelected ? `${C.cyan}> ` : '  ';
-        const currentTag = item.isCurrent ? ` ${C.yellow}<current>${C.reset}` : '';
+        const pointer = isSelected ? `${C.cyan}> ` : "  ";
+        const currentTag = item.isCurrent
+          ? ` ${C.yellow}<current>${C.reset}`
+          : "";
 
         if (isSelected) {
           lines.push(`${pointer}${C.bold}${item.label}${C.reset}${currentTag}`);
@@ -94,8 +109,8 @@ function pickFromList(rl, items, options = {}) {
         lines.push(`  ${C.dim}\u2193 more${C.reset}`);
       }
 
-      const output = lines.join('\n');
-      process.stdout.write(output + '\n');
+      const output = lines.join("\n");
+      process.stdout.write(output + "\n");
       renderedLines = lines.length;
     }
 
@@ -108,7 +123,7 @@ function pickFromList(rl, items, options = {}) {
     process.stdin.resume();
 
     function cleanup() {
-      process.stdin.removeListener('keypress', onKeypress);
+      process.stdin.removeListener("keypress", onKeypress);
       if (process.stdin.isTTY && wasRaw !== undefined) {
         process.stdin.setRawMode(wasRaw);
       }
@@ -118,7 +133,7 @@ function pickFromList(rl, items, options = {}) {
     function onKeypress(str, key) {
       if (!key) return;
 
-      if (key.name === 'up' || (key.ctrl && key.name === 'p')) {
+      if (key.name === "up" || (key.ctrl && key.name === "p")) {
         if (cursor > 0) {
           cursor--;
           render();
@@ -126,7 +141,7 @@ function pickFromList(rl, items, options = {}) {
         return;
       }
 
-      if (key.name === 'down' || (key.ctrl && key.name === 'n')) {
+      if (key.name === "down" || (key.ctrl && key.name === "n")) {
         if (cursor < selectableIndices.length - 1) {
           cursor++;
           render();
@@ -134,21 +149,21 @@ function pickFromList(rl, items, options = {}) {
         return;
       }
 
-      if (key.name === 'return') {
+      if (key.name === "return") {
         const selectedItem = items[selectableIndices[cursor]];
         cleanup();
         resolve(selectedItem ? selectedItem.value : null);
         return;
       }
 
-      if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
         cleanup();
         resolve(null);
         return;
       }
     }
 
-    process.stdin.on('keypress', onKeypress);
+    process.stdin.on("keypress", onKeypress);
     render();
   });
 }
@@ -185,7 +200,7 @@ async function showModelPicker(rl) {
   }
 
   const selected = await pickFromList(rl, items, {
-    title: 'Select Model',
+    title: "Select Model",
   });
 
   if (selected) {

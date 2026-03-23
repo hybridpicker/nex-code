@@ -3,19 +3,41 @@
  * Hybrid: chat + tool-use in a single conversation.
  */
 
-const { C, Spinner, TaskProgress, formatToolCall, formatToolSummary, formatSectionHeader, formatMilestone, setActiveTaskProgress } = require('./ui');
-const { MilestoneTracker } = require('./milestone');
-const { callStream } = require('./providers/registry');
-const { parseToolArgs } = require('./ollama');
-const { executeTool } = require('./tools');
-const { gatherProjectContext } = require('./context');
-const { fitToContext, forceCompress, getUsage, estimateTokens } = require('./context-engine');
-const { autoSave, flushAutoSave } = require('./session');
-const { scoreMessages, formatScore, appendScoreHistory } = require('./session-scorer');
+const {
+  C,
+  Spinner,
+  TaskProgress,
+  formatToolCall,
+  formatToolSummary,
+  formatSectionHeader,
+  formatMilestone,
+  setActiveTaskProgress,
+} = require("./ui");
+const { debugLog, warnLog } = require("./debug");
+const { MilestoneTracker } = require("./milestone");
+const { callStream } = require("./providers/registry");
+const { parseToolArgs } = require("./ollama");
+const { executeTool } = require("./tools");
+const { gatherProjectContext } = require("./context");
+const {
+  fitToContext,
+  forceCompress,
+  getUsage,
+  estimateTokens,
+} = require("./context-engine");
+const { autoSave, flushAutoSave } = require("./session");
+const {
+  scoreMessages,
+  formatScore,
+  appendScoreHistory,
+} = require("./session-scorer");
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
-function saveNow(messages) { autoSave(messages); flushAutoSave(); }
+function saveNow(messages) {
+  autoSave(messages);
+  flushAutoSave();
+}
 
 /**
  * Score the current session and print the result, then persist score into
@@ -25,8 +47,12 @@ function _scoreAndPrint(messages) {
   try {
     // Only score sessions that had meaningful agent activity
     const hasToolCalls = messages.some((m) => {
-      if (m.role !== 'assistant') return false;
-      if (Array.isArray(m.content) && m.content.some((b) => b && b.type === 'tool_use')) return true;
+      if (m.role !== "assistant") return false;
+      if (
+        Array.isArray(m.content) &&
+        m.content.some((b) => b && b.type === "tool_use")
+      )
+        return true;
       if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
       return false;
     });
@@ -39,57 +65,96 @@ function _scoreAndPrint(messages) {
 
     // Write score into the autosave file metadata
     try {
-      const { _getSessionsDir } = require('./session');
-      const fs = require('fs');
-      const p = require('path').join(_getSessionsDir(), '_autosave.json');
+      const { _getSessionsDir } = require("./session");
+      const fs = require("fs");
+      const p = require("path").join(_getSessionsDir(), "_autosave.json");
       if (fs.existsSync(p)) {
-        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        const data = JSON.parse(fs.readFileSync(p, "utf-8"));
         data.score = result.score;
         data.scoreGrade = result.grade;
         data.scoreIssues = result.issues;
         fs.writeFileSync(p, JSON.stringify(data, null, 2));
       }
-    } catch { /* non-critical — ignore */ }
+    } catch {
+      /* non-critical — ignore */
+    }
 
     // Persist score to benchmark history
     try {
-      const { getActiveModel } = require('./ollama');
-      const pkg = require('../package.json');
+      const { getActiveModel } = require("./ollama");
+      const pkg = require("../package.json");
       appendScoreHistory(result.score, {
         version: pkg.version,
         model: getActiveModel ? getActiveModel() : null,
-        sessionName: '_autosave',
+        sessionName: "_autosave",
         issues: result.issues,
       });
-    } catch { /* non-critical — ignore */ }
-  } catch { /* scorer must never crash the agent */ }
+    } catch {
+      /* non-critical — ignore */
+    }
+  } catch {
+    /* scorer must never crash the agent */
+  }
 }
-const { getMemoryContext } = require('./memory');
-const { getDeploymentContextBlock } = require('./server-context');
-const { checkPermission, setPermission, savePermissions } = require('./permissions');
-const { confirm, setAllowAlwaysHandler, getAutoConfirm } = require('./safety');
-const { isPlanMode, getPlanModePrompt, PLAN_MODE_ALLOWED_TOOLS, setPlanContent, extractStepsFromText, createPlan, getActivePlan, startExecution, advancePlanStep, getPlanStepInfo } = require('./planner');
-const { StreamRenderer } = require('./render');
-const { runHooks } = require('./hooks');
-const { routeMCPCall, getMCPToolDefinitions } = require('./mcp');
-const { getSkillInstructions, getSkillToolDefinitions, routeSkillCall } = require('./skills');
-const { trackUsage } = require('./costs');
-const { validateToolArgs } = require('./tool-validator');
-const { filterToolsForModel, getModelTier, PROVIDER_DEFAULT_TIER } = require('./tool-tiers');
-const { getConfiguredProviders, getActiveProviderName, getActiveModelId, setActiveModel, MODEL_EQUIVALENTS } = require('./providers/registry');
-const fsSync = require('fs');
-const path = require('path');
+const { getMemoryContext } = require("./memory");
+const { getDeploymentContextBlock } = require("./server-context");
+const {
+  checkPermission,
+  setPermission,
+  savePermissions,
+} = require("./permissions");
+const { confirm, setAllowAlwaysHandler, getAutoConfirm } = require("./safety");
+const {
+  isPlanMode,
+  getPlanModePrompt,
+  PLAN_MODE_ALLOWED_TOOLS,
+  setPlanContent,
+  extractStepsFromText,
+  createPlan,
+  getActivePlan,
+  startExecution,
+  advancePlanStep,
+  getPlanStepInfo,
+} = require("./planner");
+const { StreamRenderer } = require("./render");
+const { runHooks } = require("./hooks");
+const { routeMCPCall, getMCPToolDefinitions } = require("./mcp");
+const {
+  getSkillInstructions,
+  getSkillToolDefinitions,
+  routeSkillCall,
+} = require("./skills");
+const { trackUsage } = require("./costs");
+const { validateToolArgs } = require("./tool-validator");
+const {
+  filterToolsForModel,
+  getModelTier,
+  PROVIDER_DEFAULT_TIER,
+} = require("./tool-tiers");
+const {
+  getConfiguredProviders,
+  getActiveProviderName,
+  getActiveModelId,
+  setActiveModel,
+  MODEL_EQUIVALENTS,
+} = require("./providers/registry");
+const fsSync = require("fs");
+const path = require("path");
 
 // ─── Milestone compression ───────────────────────────────────
 const MILESTONE_N = (() => {
-  const v = parseInt(process.env.NEX_MILESTONE_STEPS ?? '5', 10);
+  const v = parseInt(process.env.NEX_MILESTONE_STEPS ?? "5", 10);
   return Number.isFinite(v) && v >= 0 ? v : 5;
 })();
 
 function _emitMilestone(ms) {
   const banner = formatMilestone(
-    ms.phaseName, ms.stepCount, ms.toolCounts,
-    ms.elapsed, ms.filesRead, ms.filesModified
+    ms.phaseName,
+    ms.stepCount,
+    ms.toolCounts,
+    ms.elapsed,
+    ms.filesRead,
+    ms.filesModified,
   );
   // Append-only: no cursor-up-and-erase. The cursor-up/\x1b[J approach left
   // blank lines in terminal scrollback (copy-paste artifact) and caused visible
@@ -99,7 +164,8 @@ function _emitMilestone(ms) {
 
 // ─── Vision / Image Helpers ──────────────────────────────────
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i;
-const IMAGE_PATH_RE = /(?:^|\s)((?:~|\.{1,2})?(?:\/[\w.\-@() ]+)+\.(?:png|jpe?g|gif|webp|bmp|tiff?))(?:\s|$)/gi;
+const IMAGE_PATH_RE =
+  /(?:^|\s)((?:~|\.{1,2})?(?:\/[\w.\-@() ]+)+\.(?:png|jpe?g|gif|webp|bmp|tiff?))(?:\s|$)/gi;
 
 function _detectImagePaths(text) {
   const paths = [];
@@ -107,7 +173,9 @@ function _detectImagePaths(text) {
   IMAGE_PATH_RE.lastIndex = 0;
   while ((m = IMAGE_PATH_RE.exec(text)) !== null) {
     const raw = m[1].trim();
-    const abs = raw.startsWith('~') ? raw.replace('~', process.env.HOME || '') : path.resolve(raw);
+    const abs = raw.startsWith("~")
+      ? raw.replace("~", process.env.HOME || "")
+      : path.resolve(raw);
     if (fsSync.existsSync(abs)) paths.push({ raw, abs });
   }
   return paths;
@@ -115,24 +183,29 @@ function _detectImagePaths(text) {
 
 function _imageToBase64(absPath) {
   const buf = fsSync.readFileSync(absPath);
-  const ext = path.extname(absPath).toLowerCase().replace('.', '');
-  const mediaType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-    : ext === 'png' ? 'image/png'
-    : ext === 'gif' ? 'image/gif'
-    : ext === 'webp' ? 'image/webp'
-    : 'image/png';
-  return { data: buf.toString('base64'), media_type: mediaType };
+  const ext = path.extname(absPath).toLowerCase().replace(".", "");
+  const mediaType =
+    ext === "jpg" || ext === "jpeg"
+      ? "image/jpeg"
+      : ext === "png"
+        ? "image/png"
+        : ext === "gif"
+          ? "image/gif"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
+  return { data: buf.toString("base64"), media_type: mediaType };
 }
 
 function buildUserContent(text) {
   const imagePaths = _detectImagePaths(text);
   if (imagePaths.length === 0) return text; // No images → plain string (unchanged behaviour)
 
-  const blocks = [{ type: 'text', text }];
+  const blocks = [{ type: "text", text }];
   for (const img of imagePaths) {
     try {
       const { data, media_type } = _imageToBase64(img.abs);
-      blocks.push({ type: 'image', media_type, data });
+      blocks.push({ type: "image", media_type, data });
     } catch {
       // File unreadable — skip silently
     }
@@ -158,7 +231,8 @@ function buildUserContent(text) {
  * @returns {{ text: string, truncated: boolean, repeatCount: number }}
  */
 function detectAndTruncateRepetition(text) {
-  if (!text || text.length < 200) return { text, truncated: false, repeatCount: 0 };
+  if (!text || text.length < 200)
+    return { text, truncated: false, repeatCount: 0 };
 
   // Split into sentences using ". " as delimiter, keep delimiter attached
   const raw = text.split(/(?<=\. )/);
@@ -169,7 +243,10 @@ function detectAndTruncateRepetition(text) {
   // Build sliding windows of 3 sentences and count occurrences
   const windowCounts = new Map();
   for (let i = 0; i <= sentences.length - 3; i++) {
-    const window = sentences.slice(i, i + 3).join('').trim();
+    const window = sentences
+      .slice(i, i + 3)
+      .join("")
+      .trim();
     // Only track non-trivial windows (>30 chars)
     if (window.length > 30) {
       windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
@@ -178,9 +255,12 @@ function detectAndTruncateRepetition(text) {
 
   // Find the most-repeated window
   let maxCount = 0;
-  let repeatedWindow = '';
+  let repeatedWindow = "";
   for (const [window, count] of windowCounts) {
-    if (count > maxCount) { maxCount = count; repeatedWindow = window; }
+    if (count > maxCount) {
+      maxCount = count;
+      repeatedWindow = window;
+    }
   }
 
   if (maxCount < 3) return { text, truncated: false, repeatCount: maxCount };
@@ -204,7 +284,10 @@ function detectAndTruncateRepetition(text) {
       cutPos = pos + repeatedWindow.length;
       searchFrom = pos + 1;
     }
-    truncated = cutPos > 0 ? text.slice(0, cutPos) + SYSTEM_NOTE : text.slice(0, 3000) + SYSTEM_NOTE;
+    truncated =
+      cutPos > 0
+        ? text.slice(0, cutPos) + SYSTEM_NOTE
+        : text.slice(0, 3000) + SYSTEM_NOTE;
   }
 
   return { text: truncated, truncated: true, repeatCount: maxCount };
@@ -225,10 +308,11 @@ function detectAndTruncateRepetition(text) {
  * @returns {{ text: string, truncated: boolean, repeatCount: number }}
  */
 function detectAndTruncateLoop(text, maxRepeats = 5) {
-  if (!text || text.length < 40) return { text, truncated: false, repeatCount: 0 };
+  if (!text || text.length < 40)
+    return { text, truncated: false, repeatCount: 0 };
 
   // Split by newlines and collect non-trivial paragraphs (≥20 chars)
-  const lines = text.split('\n');
+  const lines = text.split("\n");
   const paragraphCounts = new Map();
   for (const line of lines) {
     const p = line.trim();
@@ -239,12 +323,16 @@ function detectAndTruncateLoop(text, maxRepeats = 5) {
 
   // Find the most-repeated paragraph
   let maxCount = 0;
-  let worstParagraph = '';
+  let worstParagraph = "";
   for (const [para, count] of paragraphCounts) {
-    if (count > maxCount) { maxCount = count; worstParagraph = para; }
+    if (count > maxCount) {
+      maxCount = count;
+      worstParagraph = para;
+    }
   }
 
-  if (maxCount <= maxRepeats) return { text, truncated: false, repeatCount: maxCount };
+  if (maxCount <= maxRepeats)
+    return { text, truncated: false, repeatCount: maxCount };
 
   // Truncate after the maxRepeats-th occurrence of the repeated paragraph
   const WARNING = `\n\n⚠ [Response truncated: repeated paragraph detected (${maxCount}×)]`;
@@ -260,9 +348,10 @@ function detectAndTruncateLoop(text, maxRepeats = 5) {
     searchFrom = pos + 1;
   }
 
-  const truncatedText = cutPos > 0
-    ? text.slice(0, cutPos) + WARNING
-    : text.slice(0, 2000) + WARNING;
+  const truncatedText =
+    cutPos > 0
+      ? text.slice(0, cutPos) + WARNING
+      : text.slice(0, 2000) + WARNING;
 
   return { text: truncatedText, truncated: true, repeatCount: maxCount };
 }
@@ -279,19 +368,23 @@ let cachedMCPToolDefinitions = null;
  */
 function getAllToolDefinitions() {
   if (cachedToolDefinitions === null) {
-    const { TOOL_DEFINITIONS } = require('./tools');
+    const { TOOL_DEFINITIONS } = require("./tools");
     cachedToolDefinitions = TOOL_DEFINITIONS;
   }
-  
+
   if (cachedSkillToolDefinitions === null) {
     cachedSkillToolDefinitions = getSkillToolDefinitions();
   }
-  
+
   if (cachedMCPToolDefinitions === null) {
     cachedMCPToolDefinitions = getMCPToolDefinitions();
   }
-  
-  return [...cachedToolDefinitions, ...cachedSkillToolDefinitions, ...cachedMCPToolDefinitions];
+
+  return [
+    ...cachedToolDefinitions,
+    ...cachedSkillToolDefinitions,
+    ...cachedMCPToolDefinitions,
+  ];
 }
 
 /**
@@ -304,11 +397,15 @@ function clearToolDefinitionsCache() {
 }
 
 let MAX_ITERATIONS = 50;
-function setMaxIterations(n) { if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n; }
+function setMaxIterations(n) {
+  if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n;
+}
 
 // Abort signal getter — set by cli/index.js to avoid circular dependency
 let _getAbortSignal = () => null;
-function setAbortSignalGetter(fn) { _getAbortSignal = fn; }
+function setAbortSignalGetter(fn) {
+  _getAbortSignal = fn;
+}
 
 // ─── System Prompt Cache ─────────────────────────────────────
 // Cache system prompt to avoid rebuilding on every turn (saves 100-1000ms)
@@ -329,11 +426,15 @@ const TOOL_RESULT_COMPRESS_TARGET = 6000;
 // ─── Secret Scrubbing ─────────────────────────────────────────
 // Redact common secret patterns from tool results before they enter the conversation.
 // Matches env-style assignments for well-known secret prefixes (API_KEY, TOKEN, etc.)
-const SECRET_SCRUB_RE = /\b((?:API|ACCESS|AUTH|BEARER|CLIENT|GITHUB|GITLAB|SLACK|STRIPE|TWILIO|SENDGRID|AWS|GCP|AZURE|OPENAI|ANTHROPIC|GEMINI|OLLAMA)[_A-Z0-9]*(?:KEY|TOKEN|SECRET|PASS(?:WORD)?|CREDENTIAL)[_A-Z0-9]*)\s*=\s*["']?([A-Za-z0-9\-_.+/=]{10,})["']?/g;
+const SECRET_SCRUB_RE =
+  /\b((?:API|ACCESS|AUTH|BEARER|CLIENT|GITHUB|GITLAB|SLACK|STRIPE|TWILIO|SENDGRID|AWS|GCP|AZURE|OPENAI|ANTHROPIC|GEMINI|OLLAMA)[_A-Z0-9]*(?:KEY|TOKEN|SECRET|PASS(?:WORD)?|CREDENTIAL)[_A-Z0-9]*)\s*=\s*["']?([A-Za-z0-9\-_.+/=]{10,})["']?/g;
 
 function scrubSecrets(content) {
-  if (!content || typeof content !== 'string') return content;
-  return content.replace(SECRET_SCRUB_RE, (_, varName) => `${varName}=***REDACTED***`);
+  if (!content || typeof content !== "string") return content;
+  return content.replace(
+    SECRET_SCRUB_RE,
+    (_, varName) => `${varName}=***REDACTED***`,
+  );
 }
 
 // read_file results use tighter thresholds — large files flood context quickly
@@ -349,11 +450,17 @@ const READ_FILE_COMPRESS_TARGET = 4000;
 function compressToolResultIfNeeded(content, fnName = null) {
   const scrubbed = scrubSecrets(content);
   const tokens = estimateTokens(scrubbed);
-  const threshold = fnName === 'read_file' ? READ_FILE_TOKEN_THRESHOLD : TOOL_RESULT_TOKEN_THRESHOLD;
-  const target = fnName === 'read_file' ? READ_FILE_COMPRESS_TARGET : TOOL_RESULT_COMPRESS_TARGET;
+  const threshold =
+    fnName === "read_file"
+      ? READ_FILE_TOKEN_THRESHOLD
+      : TOOL_RESULT_TOKEN_THRESHOLD;
+  const target =
+    fnName === "read_file"
+      ? READ_FILE_COMPRESS_TARGET
+      : TOOL_RESULT_COMPRESS_TARGET;
   if (tokens > threshold) {
     try {
-      const { compressToolResult } = require('./context-engine');
+      const { compressToolResult } = require("./context-engine");
       const compressed = compressToolResult(scrubbed, target);
       return compressed;
     } catch {
@@ -370,14 +477,14 @@ function compressToolResultIfNeeded(content, fnName = null) {
  */
 function getCachedFilteredTools(allTools) {
   try {
-    const { getActiveModel } = require('./providers/registry');
+    const { getActiveModel } = require("./providers/registry");
     const model = getActiveModel();
-    const modelId = model ? `${model.provider}:${model.id}` : 'default';
-    
+    const modelId = model ? `${model.provider}:${model.id}` : "default";
+
     if (toolFilterCache.has(modelId)) {
       return toolFilterCache.get(modelId);
     }
-    
+
     const filtered = filterToolsForModel(allTools);
     toolFilterCache.set(modelId, filtered);
     return filtered;
@@ -400,34 +507,40 @@ function clearToolFilterCache() {
  */
 async function getProjectContextHash() {
   try {
-    const fs = require('fs').promises;
-    const path = require('path');
+    const fs = require("fs").promises;
+    const path = require("path");
     const files = [
-      path.join(process.cwd(), 'package.json'),
-      path.join(process.cwd(), '.git', 'HEAD'),
-      path.join(process.cwd(), 'README.md'),
-      path.join(process.cwd(), 'NEX.md'),
+      path.join(process.cwd(), "package.json"),
+      path.join(process.cwd(), ".git", "HEAD"),
+      path.join(process.cwd(), "README.md"),
+      path.join(process.cwd(), "NEX.md"),
     ];
     // Run all stat calls in parallel
-    const statResults = await Promise.allSettled(files.map(f => fs.stat(f).then(s => `${f}:${s.mtimeMs}`)));
+    const statResults = await Promise.allSettled(
+      files.map((f) => fs.stat(f).then((s) => `${f}:${s.mtimeMs}`)),
+    );
     const hashes = statResults
-      .filter(r => r.status === 'fulfilled')
-      .map(r => r.value);
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value);
     // Also include memory context hash
     try {
-      const { getMemoryContextHash } = require('./memory');
+      const { getMemoryContextHash } = require("./memory");
       const memHash = getMemoryContextHash();
       if (memHash) hashes.push(`memory:${memHash}`);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     // Include brain dir mtime so cache invalidates when brain docs change
     try {
-      const brainDir = path.join(process.cwd(), '.nex', 'brain');
+      const brainDir = path.join(process.cwd(), ".nex", "brain");
       if (fsSync.existsSync(brainDir)) {
         const brainStat = await fs.stat(brainDir);
         hashes.push(`brain:${brainStat.mtimeMs}`);
       }
-    } catch { /* ignore */ }
-    return hashes.join('|');
+    } catch {
+      /* ignore */
+    }
+    return hashes.join("|");
   } catch {
     return `fallback:${Date.now()}`;
   }
@@ -445,24 +558,37 @@ function invalidateSystemPromptCache() {
 // Tools that can safely run in parallel (read-only, no side effects)
 // Kept for reference; execution now uses SEQUENTIAL_ONLY logic instead.
 const PARALLEL_SAFE = new Set([
-  'read_file', 'list_directory', 'search_files', 'glob', 'grep',
-  'web_fetch', 'web_search', 'git_status', 'git_diff', 'git_log',
-  'task_list', 'gh_run_list', 'gh_run_view',
+  "read_file",
+  "list_directory",
+  "search_files",
+  "glob",
+  "grep",
+  "web_fetch",
+  "web_search",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "task_list",
+  "gh_run_list",
+  "gh_run_view",
   // Read-only container/service queries safe to run in parallel
-  'container_list', 'container_logs', 'service_logs',
+  "container_list",
+  "container_logs",
+  "service_logs",
   // Browser read-only operations (NOT click/fill — those mutate state)
-  'browser_open', 'browser_screenshot',
+  "browser_open",
+  "browser_screenshot",
 ]);
 // Tools that MUST run one-at-a-time: manage their own terminal display
 // or require strict ordering. ALL other tools run in parallel when the
 // LLM returns them in the same response (parallel_tool_calls convention).
-const SEQUENTIAL_ONLY = new Set(['spawn_agents']);
+const SEQUENTIAL_ONLY = new Set(["spawn_agents"]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
-const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || '60000', 10);    // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
-const STALE_ABORT_MS = parseInt(process.env.NEX_STALE_ABORT_MS || '120000', 10); // Abort after 120s without tokens (ENV: NEX_STALE_ABORT_MS)
-const STALE_AUTO_SWITCH = process.env.NEX_STALE_AUTO_SWITCH !== '0';             // Auto-switch to fast model on 2nd stale retry (disable: NEX_STALE_AUTO_SWITCH=0)
+const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || "60000", 10); // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
+const STALE_ABORT_MS = parseInt(process.env.NEX_STALE_ABORT_MS || "120000", 10); // Abort after 120s without tokens (ENV: NEX_STALE_ABORT_MS)
+const STALE_AUTO_SWITCH = process.env.NEX_STALE_AUTO_SWITCH !== "0"; // Auto-switch to fast model on 2nd stale retry (disable: NEX_STALE_AUTO_SWITCH=0)
 // Use process.cwd() dynamically
 
 /**
@@ -470,18 +596,20 @@ const STALE_AUTO_SWITCH = process.env.NEX_STALE_AUTO_SWITCH !== '0';            
  */
 function _savePlanToFile(text) {
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const dir = path.join(process.cwd(), '.nex', 'plans');
+    const fs = require("fs");
+    const path = require("path");
+    const dir = path.join(process.cwd(), ".nex", "plans");
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, 'current-plan.md');
-    fs.writeFileSync(filePath, text, 'utf-8');
-  } catch { /* non-fatal */ }
+    const filePath = path.join(dir, "current-plan.md");
+    fs.writeFileSync(filePath, text, "utf-8");
+  } catch {
+    /* non-fatal */
+  }
 }
 
 // Wire up "a" (always allow) from confirm dialog → permission system
 setAllowAlwaysHandler((toolName) => {
-  setPermission(toolName, 'allow');
+  setPermission(toolName, "allow");
   savePermissions();
   console.log(`${C.green}  ✓ ${toolName}: always allow${C.reset}`);
 });
@@ -495,20 +623,29 @@ setAllowAlwaysHandler((toolName) => {
 async function prepareToolCall(tc) {
   const fnName = tc.function.name;
   const args = parseToolArgs(tc.function.arguments);
-  const callId = tc.id || `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const callId =
+    tc.id || `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   // Malformed args
   if (!args) {
     const allToolDefs = getAllToolDefinitions();
-    const toolDef = allToolDefs.find(t => t.function.name === fnName);
-    const schema = toolDef ? JSON.stringify(toolDef.function.parameters, null, 2) : 'unknown';
-    console.log(`${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`);
+    const toolDef = allToolDefs.find((t) => t.function.name === fnName);
+    const schema = toolDef
+      ? JSON.stringify(toolDef.function.parameters, null, 2)
+      : "unknown";
+    debugLog(
+      `${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`,
+    );
     return {
-      callId, fnName, args: null, canExecute: false,
+      callId,
+      fnName,
+      args: null,
+      canExecute: false,
       errorResult: {
-        role: 'tool',
-        content: `ERROR: Malformed tool arguments. Could not parse your arguments as JSON.\n` +
-          `Raw input: ${typeof tc.function.arguments === 'string' ? tc.function.arguments.substring(0, 200) : 'N/A'}\n\n` +
+        role: "tool",
+        content:
+          `ERROR: Malformed tool arguments. Could not parse your arguments as JSON.\n` +
+          `Raw input: ${typeof tc.function.arguments === "string" ? tc.function.arguments.substring(0, 200) : "N/A"}\n\n` +
           `Expected JSON schema for "${fnName}":\n${schema}\n\n` +
           `Please retry the tool call with valid JSON arguments matching this schema.`,
         tool_call_id: callId,
@@ -519,10 +656,19 @@ async function prepareToolCall(tc) {
   // Validate
   const validation = validateToolArgs(fnName, args);
   if (!validation.valid) {
-    console.log(`${C.yellow}  ⚠ ${fnName}: ${validation.error.split('\n')[0]}${C.reset}`);
+    debugLog(
+      `${C.yellow}  ⚠ ${fnName}: ${validation.error.split("\n")[0]}${C.reset}`,
+    );
     return {
-      callId, fnName, args, canExecute: false,
-      errorResult: { role: 'tool', content: validation.error, tool_call_id: callId },
+      callId,
+      fnName,
+      args,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content: validation.error,
+        tool_call_id: callId,
+      },
     };
   }
 
@@ -532,9 +678,11 @@ async function prepareToolCall(tc) {
   if (validation.corrected) {
     const orig = Object.keys(args);
     const fixed = Object.keys(validation.corrected);
-    const renamed = orig.filter(k => !fixed.includes(k));
+    const renamed = orig.filter((k) => !fixed.includes(k));
     if (renamed.length) {
-      console.log(`${C.dim}  ✓ ${fnName}: corrected args (${renamed.join(', ')})${C.reset}`);
+      console.log(
+        `${C.dim}  ✓ ${fnName}: corrected args (${renamed.join(", ")})${C.reset}`,
+      );
     }
   }
 
@@ -542,9 +690,12 @@ async function prepareToolCall(tc) {
   if (isPlanMode() && !PLAN_MODE_ALLOWED_TOOLS.has(fnName)) {
     console.log(`${C.yellow}  ✗ ${fnName}: blocked in plan mode${C.reset}`);
     return {
-      callId, fnName, args: finalArgs, canExecute: false,
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
       errorResult: {
-        role: 'tool',
+        role: "tool",
         content: `PLAN MODE: '${fnName}' is blocked. Only read-only tools are allowed. Present your plan as text output instead of making changes.`,
         tool_call_id: callId,
       },
@@ -553,30 +704,59 @@ async function prepareToolCall(tc) {
 
   // Permission check
   const perm = checkPermission(fnName);
-  if (perm === 'deny') {
+  if (perm === "deny") {
     console.log(`${C.red}  ✗ ${fnName}: denied by permissions${C.reset}`);
     return {
-      callId, fnName, args: finalArgs, canExecute: false,
-      errorResult: { role: 'tool', content: `DENIED: Tool '${fnName}' is blocked by permissions`, tool_call_id: callId },
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content: `DENIED: Tool '${fnName}' is blocked by permissions`,
+        tool_call_id: callId,
+      },
     };
   }
-  if (perm === 'ask') {
+  if (perm === "ask") {
     let promptText = `  Allow ${fnName}?`;
-    if (fnName === 'bash' && finalArgs.command) {
+    if (fnName === "bash" && finalArgs.command) {
       const preview = finalArgs.command.substring(0, 80);
-      promptText = `  bash: \`${preview}${finalArgs.command.length > 80 ? '…' : ''}\`?`;
+      promptText = `  bash: \`${preview}${finalArgs.command.length > 80 ? "…" : ""}\`?`;
     }
     const ok = await confirm(promptText, { toolName: fnName });
     if (!ok) {
       return {
-        callId, fnName, args: finalArgs, canExecute: false, confirmedByUser: false,
-        errorResult: { role: 'tool', content: `CANCELLED: User declined ${fnName}`, tool_call_id: callId },
+        callId,
+        fnName,
+        args: finalArgs,
+        canExecute: false,
+        confirmedByUser: false,
+        errorResult: {
+          role: "tool",
+          content: `CANCELLED: User declined ${fnName}`,
+          tool_call_id: callId,
+        },
       };
     }
-    return { callId, fnName, args: finalArgs, canExecute: true, confirmedByUser: true, errorResult: null };
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: true,
+      confirmedByUser: true,
+      errorResult: null,
+    };
   }
 
-  return { callId, fnName, args: finalArgs, canExecute: true, confirmedByUser: true, errorResult: null };
+  return {
+    callId,
+    fnName,
+    args: finalArgs,
+    canExecute: true,
+    confirmedByUser: true,
+    errorResult: null,
+  };
 }
 
 /**
@@ -595,19 +775,24 @@ async function executeToolRouted(fnName, args, options = {}) {
  */
 function _argPreview(name, args) {
   switch (name) {
-    case 'read_file': case 'write_file': case 'edit_file':
-    case 'patch_file': case 'list_directory':
-      return args.path || '';
-    case 'bash':
-      return (args.command || '').substring(0, 60);
-    case 'grep': case 'search_files': case 'glob':
-      return args.pattern || '';
-    case 'web_fetch':
-      return (args.url || '').substring(0, 50);
-    case 'web_search':
-      return (args.query || '').substring(0, 40);
+    case "read_file":
+    case "write_file":
+    case "edit_file":
+    case "patch_file":
+    case "list_directory":
+      return args.path || "";
+    case "bash":
+      return (args.command || "").substring(0, 60);
+    case "grep":
+    case "search_files":
+    case "glob":
+      return args.pattern || "";
+    case "web_fetch":
+      return (args.url || "").substring(0, 50);
+    case "web_search":
+      return (args.query || "").substring(0, 40);
     default:
-      return '';
+      return "";
   }
 }
 
@@ -620,46 +805,65 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(formatToolCall(prep.fnName, prep.args));
   }
 
-  const preHookResults = runHooks('pre-tool', { tool_name: prep.fnName });
+  const preHookResults = runHooks("pre-tool", { tool_name: prep.fnName });
   if (!quiet && preHookResults.length > 0) {
     for (const result of preHookResults) {
       if (result.success) {
-        console.log(`${C.dim}  [hook pre-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+        console.log(
+          `${C.dim}  [hook pre-tool] ${result.command} → ${result.output || "ok"}${C.reset}`,
+        );
       } else {
-        console.log(`${C.yellow}  [hook pre-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+        console.log(
+          `${C.yellow}  [hook pre-tool] ${result.command} → ERROR: ${result.error}${C.reset}`,
+        );
       }
     }
   }
 
-  if (_serverHooks?.onToolStart) { _serverHooks.onToolStart(prep.fnName, prep.args); }
+  if (_serverHooks?.onToolStart) {
+    _serverHooks.onToolStart(prep.fnName, prep.args);
+  }
 
   const toolResult = await executeToolRouted(prep.fnName, prep.args, {
     silent: true,
     autoConfirm: prep.confirmedByUser === true,
   });
-  const safeResult = String(toolResult ?? '');
-  const truncated = safeResult.length > 50000
-    ? safeResult.substring(0, 50000) + `\n...(truncated ${safeResult.length - 50000} chars)`
-    : safeResult;
+  const safeResult = String(toolResult ?? "");
+  const truncated =
+    safeResult.length > 50000
+      ? safeResult.substring(0, 50000) +
+        `\n...(truncated ${safeResult.length - 50000} chars)`
+      : safeResult;
 
-  const firstLine = truncated.split('\n')[0];
-  const isError = firstLine.startsWith('ERROR') || firstLine.includes('CANCELLED') || firstLine.includes('BLOCKED')
-    || (prep.fnName === 'spawn_agents' && !/✓ Agent/.test(truncated) && /✗ Agent/.test(truncated));
+  const firstLine = truncated.split("\n")[0];
+  const isError =
+    firstLine.startsWith("ERROR") ||
+    firstLine.includes("CANCELLED") ||
+    firstLine.includes("BLOCKED") ||
+    (prep.fnName === "spawn_agents" &&
+      !/✓ Agent/.test(truncated) &&
+      /✗ Agent/.test(truncated));
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
 
   if (!quiet) {
     console.log(summary);
   }
 
-  if (_serverHooks?.onToolEnd) { _serverHooks.onToolEnd(prep.fnName, summary, !isError); }
+  if (_serverHooks?.onToolEnd) {
+    _serverHooks.onToolEnd(prep.fnName, summary, !isError);
+  }
 
-  const postHookResults = runHooks('post-tool', { tool_name: prep.fnName });
+  const postHookResults = runHooks("post-tool", { tool_name: prep.fnName });
   if (!quiet && postHookResults.length > 0) {
     for (const result of postHookResults) {
       if (result.success) {
-        console.log(`${C.dim}  [hook post-tool] ${result.command} → ${result.output || 'ok'}${C.reset}`);
+        console.log(
+          `${C.dim}  [hook post-tool] ${result.command} → ${result.output || "ok"}${C.reset}`,
+        );
       } else {
-        console.log(`${C.yellow}  [hook post-tool] ${result.command} → ERROR: ${result.error}${C.reset}`);
+        console.log(
+          `${C.yellow}  [hook post-tool] ${result.command} → ERROR: ${result.error}${C.reset}`,
+        );
       }
     }
   }
@@ -672,17 +876,26 @@ async function executeSingleTool(prep, quiet = false) {
   // the LLM sees the correction in its very next context window and can course-
   // correct for subsequent steps. We never block these — just nudge.
   let finalContent = compressedContent;
-  if (prep.fnName === 'bash' && prep.args?.command) {
+  if (prep.fnName === "bash" && prep.args?.command) {
     const cmd = prep.args.command.trim();
     const isWrite = /cat\s*>|<</.test(cmd);
     if (!isWrite && /\bcat\s+\S/.test(cmd)) {
-      finalContent += '\nHINT: use read_file instead of bash cat — it is faster, context-efficient, and the preferred tool for reading files.';
-    } else if (/^\s*ls(\s|$)/.test(cmd) && !/npm|yarn|pnpm|make|git\b/.test(cmd)) {
-      finalContent += '\nHINT: use list_directory instead of bash ls — it is the preferred tool for listing directory contents.';
+      finalContent +=
+        "\nHINT: use read_file instead of bash cat — it is faster, context-efficient, and the preferred tool for reading files.";
+    } else if (
+      /^\s*ls(\s|$)/.test(cmd) &&
+      !/npm|yarn|pnpm|make|git\b/.test(cmd)
+    ) {
+      finalContent +=
+        "\nHINT: use list_directory instead of bash ls — it is the preferred tool for listing directory contents.";
     }
   }
 
-  const msg = { role: 'tool', content: finalContent, tool_call_id: prep.callId };
+  const msg = {
+    role: "tool",
+    content: finalContent,
+    tool_call_id: prep.callId,
+  };
   return { msg, summary };
 }
 
@@ -699,16 +912,16 @@ async function executeBatch(prepared, quiet = false, options = {}) {
   // Quiet mode: show a single spinner for all tools
   let spinner = null;
   if (quiet && !options.skipSpinner) {
-    const execTools = prepared.filter(p => p.canExecute);
+    const execTools = prepared.filter((p) => p.canExecute);
     if (execTools.length > 0) {
       let label;
       if (execTools.length === 1) {
         const p = execTools[0];
         const preview = _argPreview(p.fnName, p.args);
-        label = `● ${p.fnName}${preview ? `(${preview})` : ''}`;
+        label = `● ${p.fnName}${preview ? `(${preview})` : ""}`;
       } else {
-        const names = execTools.map(p => p.fnName).join(', ');
-        label = `● ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + '…' : names}`;
+        const names = execTools.map((p) => p.fnName).join(", ");
+        label = `● ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + "…" : names}`;
       }
       spinner = new Spinner(label);
       spinner.start();
@@ -723,7 +936,9 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       results[idx] = msg;
       summaries.push(summary);
     } else {
-      const promises = batch.map(idx => executeSingleTool(prepared[idx], quiet));
+      const promises = batch.map((idx) =>
+        executeSingleTool(prepared[idx], quiet),
+      );
       const batchResults = await Promise.all(promises);
       for (let j = 0; j < batch.length; j++) {
         results[batch[j]] = batchResults[j].msg;
@@ -739,14 +954,21 @@ async function executeBatch(prepared, quiet = false, options = {}) {
     if (!prep.canExecute) {
       await flushBatch();
       results[i] = prep.errorResult;
-      summaries.push(formatToolSummary(prep.fnName, prep.args || {}, prep.errorResult.content, true));
+      summaries.push(
+        formatToolSummary(
+          prep.fnName,
+          prep.args || {},
+          prep.errorResult.content,
+          true,
+        ),
+      );
       continue;
     }
 
     if (SEQUENTIAL_ONLY.has(prep.fnName)) {
       await flushBatch();
       // spawn_agents manages its own display (MultiProgress) — stop outer spinner
-      if (prep.fnName === 'spawn_agents' && spinner) {
+      if (prep.fnName === "spawn_agents" && spinner) {
         spinner.stop();
         spinner = null;
       }
@@ -785,19 +1007,19 @@ const MAX_CONVERSATION_HISTORY = 300;
 // Reset in clearConversation() so /clear starts fresh.
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
-const _sessionGrepFileCounts = new Map();   // per-file grep count (different patterns on same file)
+const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
 const _sessionFileReadCounts = new Map();
 const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
 const _sessionLastEditFailed = new Map(); // path → true when last edit_file on that file failed with "old_text not found"
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 let _sessionConsecutiveSshCalls = 0;
-let _superNuclearFires = 0;    // total super-nuclear compressions this session (cap at 2)
-let _planRejectionCount = 0;  // times plan-without-reads was rejected this session (cap: 2)
-let _lastCompressionMsg = '';  // deduplicate consecutive identical compression messages
-let _compressionMsgCount = 0;  // count consecutive identical compression messages
+let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
+let _planRejectionCount = 0; // times plan-without-reads was rejected this session (cap: 2)
+let _lastCompressionMsg = ""; // deduplicate consecutive identical compression messages
+let _compressionMsgCount = 0; // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
-let _sshDeadlockRelaxCount = 0;   // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
+let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -805,11 +1027,15 @@ function _logCompression(msg, color) {
   if (msg === _lastCompressionMsg) {
     _compressionMsgCount++;
     // Overwrite the previous line with updated counter
-    process.stdout.write(`\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`);
+    if (require("./debug").DEBUG) {
+      process.stdout.write(
+        `\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`,
+      );
+    }
   } else {
     _lastCompressionMsg = msg;
     _compressionMsgCount = 1;
-    console.log(`${color}  ⚠ ${msg}${C.reset}`);
+    debugLog(`${color}  ⚠ ${msg}${C.reset}`);
   }
 }
 
@@ -831,7 +1057,7 @@ function injectMidRunNote(text) {
 function _drainMidRunBuffer() {
   if (_midRunBuffer.length === 0) return null;
   const notes = _midRunBuffer.splice(0, _midRunBuffer.length);
-  return notes.join('\n');
+  return notes.join("\n");
 }
 
 /**
@@ -850,85 +1076,131 @@ function _buildLanguagePrompt() {
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
 
   // Default: mirror user's language (auto). Set NEX_LANGUAGE=English (or any language) to hard-enforce.
-  const uiLang = (!uiLangRaw || uiLangRaw === 'auto') ? null : uiLangRaw;
+  const uiLang = !uiLangRaw || uiLangRaw === "auto" ? null : uiLangRaw;
 
-  const lines = ['# Language Rules (CRITICAL — enforce strictly)\n'];
+  const lines = ["# Language Rules (CRITICAL — enforce strictly)\n"];
 
   if (uiLang) {
-    lines.push(`RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`);
+    lines.push(
+      `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
+    );
   } else {
     // Auto mode: mirror the user's language
-    lines.push('RESPONSE LANGUAGE: Always respond in the same language as the user\'s message. If the user writes in German, respond in German; if in English, respond in English; etc.');
+    lines.push(
+      "RESPONSE LANGUAGE: Always respond in the same language as the user's message. If the user writes in German, respond in German; if in English, respond in English; etc.",
+    );
   }
 
   // Always enforce real code examples
-  lines.push('CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.');
-  lines.push('COMPLETENESS RULES:');
-  lines.push('  • ALWAYS show actual code when explaining implementations — never describe without showing');
-  lines.push('  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.');
-  lines.push('  • Include complete examples with full context (imports, function signatures, error handling)');
-  lines.push('  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")');
-  lines.push('  • Include edge cases in explanations (empty input, null values, boundary conditions)');
-  lines.push('  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)');
-  lines.push('  • For Makefiles, paste the COMPLETE Makefile code DIRECTLY in your text response — every target, recipe, dependency, and .PHONY line. Writing the Makefile with a tool does NOT count as showing it. The Makefile MUST appear verbatim in your chat text as a code block, even if you also wrote it to a file. Never describe structure without showing the actual code. CRITICAL: use EXACTLY the command specified — if the task says "runs jest", write "jest" in the recipe, NEVER "npm test". npm test is NOT jest. Recipes need real TAB indentation. ONE .PHONY line listing ALL phony targets.');
-  lines.push('  • For dataclasses, paste the COMPLETE dataclass code DIRECTLY in your text response — @dataclass decorator, all fields with types and defaults, full __post_init__ validation. Writing the file with a tool does NOT count as showing the code. The code MUST appear verbatim in your chat text, even if you also wrote it to a file.');
-  lines.push('  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.');
-  lines.push('  • When a task explicitly specifies a tool (e.g., "use tsc"), NEVER mention alternatives (e.g., "swc build") — use exactly what was requested.');
-  lines.push('  • In Makefile prerequisites, NEVER use shell glob patterns like src/**/*.ts — make does not expand these natively. Keep prerequisite lists explicit or omit them. When a Makefile target says "runs jest", call jest directly in the recipe (not npm test).');
-  lines.push('  • For bash in-place text replacements with backups: use ONLY ONE backup method — either sed -i.bak (let sed create the backup) OR cp file file.bak followed by sed -i (no extension). Never use both cp and sed -i.bak together — that produces redundant double backups (file.bak and file.bak.bak).');
-  lines.push('  • For iterative array-flattening (flattenDeep): use push() and reverse() at the end — NEVER unshift(). unshift is O(n) per call making the whole function O(n^2). The iterative version MUST use a loop (while/for) and an explicit stack array — zero recursive calls. If a function calls itself, it is recursive regardless of its name. Never label a recursive function as iterative.');
-  lines.push('  • FORBIDDEN: when refactoring callbacks to async/await, NEVER write try { ... } catch(e) { throw e } — this is an explicit anti-pattern. WRONG: async function f() { try { const d = await readFile(..); await writeFile(.., d); } catch(e) { throw e; } } — RIGHT: async function f() { const d = await readFile(..); await writeFile(.., d); } — omit the try-catch entirely, let rejections propagate.');
-  lines.push('  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.');
-  lines.push('  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting because the shell expands the glob into separate words before the loop — there is no subshell output to split. CRITICAL: NEVER suggest "ls -N" or any ls variant as a fix — ls -N outputs filenames one per line, but word splitting still occurs on each line when used in a subshell expansion. The only correct fix is the bare glob pattern.');
+  lines.push(
+    "CODE EXAMPLES: Always show actual, working code examples — never pseudocode or placeholder snippets.",
+  );
+  lines.push("COMPLETENESS RULES:");
+  lines.push(
+    "  • ALWAYS show actual code when explaining implementations — never describe without showing",
+  );
+  lines.push(
+    "  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.",
+  );
+  lines.push(
+    "  • Include complete examples with full context (imports, function signatures, error handling)",
+  );
+  lines.push(
+    '  • Show alternative approaches when relevant (e.g., "Alternative: use util.promisify instead")',
+  );
+  lines.push(
+    "  • Include edge cases in explanations (empty input, null values, boundary conditions)",
+  );
+  lines.push(
+    "  • Provide platform-specific guidance when commands differ by OS (Linux/macOS/Windows)",
+  );
+  lines.push(
+    '  • For Makefiles, paste the COMPLETE Makefile code DIRECTLY in your text response — every target, recipe, dependency, and .PHONY line. Writing the Makefile with a tool does NOT count as showing it. The Makefile MUST appear verbatim in your chat text as a code block, even if you also wrote it to a file. Never describe structure without showing the actual code. CRITICAL: use EXACTLY the command specified — if the task says "runs jest", write "jest" in the recipe, NEVER "npm test". npm test is NOT jest. Recipes need real TAB indentation. ONE .PHONY line listing ALL phony targets.',
+  );
+  lines.push(
+    "  • For dataclasses, paste the COMPLETE dataclass code DIRECTLY in your text response — @dataclass decorator, all fields with types and defaults, full __post_init__ validation. Writing the file with a tool does NOT count as showing the code. The code MUST appear verbatim in your chat text, even if you also wrote it to a file.",
+  );
+  lines.push(
+    "  • For cron expressions, re-read the exact time boundaries in the task before writing. If asked for 8-18h, the range is 8,9,...,18 — write exactly what was asked, not an approximation.",
+  );
+  lines.push(
+    '  • When a task explicitly specifies a tool (e.g., "use tsc"), NEVER mention alternatives (e.g., "swc build") — use exactly what was requested.',
+  );
+  lines.push(
+    '  • In Makefile prerequisites, NEVER use shell glob patterns like src/**/*.ts — make does not expand these natively. Keep prerequisite lists explicit or omit them. When a Makefile target says "runs jest", call jest directly in the recipe (not npm test).',
+  );
+  lines.push(
+    "  • For bash in-place text replacements with backups: use ONLY ONE backup method — either sed -i.bak (let sed create the backup) OR cp file file.bak followed by sed -i (no extension). Never use both cp and sed -i.bak together — that produces redundant double backups (file.bak and file.bak.bak).",
+  );
+  lines.push(
+    "  • For iterative array-flattening (flattenDeep): use push() and reverse() at the end — NEVER unshift(). unshift is O(n) per call making the whole function O(n^2). The iterative version MUST use a loop (while/for) and an explicit stack array — zero recursive calls. If a function calls itself, it is recursive regardless of its name. Never label a recursive function as iterative.",
+  );
+  lines.push(
+    "  • FORBIDDEN: when refactoring callbacks to async/await, NEVER write try { ... } catch(e) { throw e } — this is an explicit anti-pattern. WRONG: async function f() { try { const d = await readFile(..); await writeFile(.., d); } catch(e) { throw e; } } — RIGHT: async function f() { const d = await readFile(..); await writeFile(.., d); } — omit the try-catch entirely, let rejections propagate.",
+  );
+  lines.push(
+    '  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.',
+  );
+  lines.push(
+    '  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting because the shell expands the glob into separate words before the loop — there is no subshell output to split. CRITICAL: NEVER suggest "ls -N" or any ls variant as a fix — ls -N outputs filenames one per line, but word splitting still occurs on each line when used in a subshell expansion. The only correct fix is the bare glob pattern.',
+  );
 
-  const effectiveCodeLang = codeLang || 'English';
-  lines.push(`CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`);
+  const effectiveCodeLang = codeLang || "English";
+  lines.push(
+    `CODE LANGUAGE: Write all code comments, docstrings, variable descriptions, and inline documentation in ${effectiveCodeLang}.`,
+  );
 
-  const effectiveCommitLang = commitLang || 'English';
-  lines.push(`COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`);
+  const effectiveCommitLang = commitLang || "English";
+  lines.push(
+    `COMMIT MESSAGES: Write all git commit messages in ${effectiveCommitLang}.`,
+  );
 
   if (uiLang) {
-    lines.push(`\nThis is a hard requirement. Always respond in ${uiLang}. Do NOT switch to any other language — even if the user writes to you in German, French, or any other language, your reply MUST be in ${uiLang}.`);
+    lines.push(
+      `\nThis is a hard requirement. Always respond in ${uiLang}. Do NOT switch to any other language — even if the user writes to you in German, French, or any other language, your reply MUST be in ${uiLang}.`,
+    );
   }
 
-  return lines.join('\n') + '\n\n';
+  return lines.join("\n") + "\n\n";
 }
 
 function _buildModelRoutingGuide() {
   if (cachedModelRoutingGuide !== null) return cachedModelRoutingGuide;
   try {
     const configured = getConfiguredProviders();
-    const allModels = configured.flatMap(p =>
-      p.models.map(m => ({
+    const allModels = configured.flatMap((p) =>
+      p.models.map((m) => ({
         spec: `${p.name}:${m.id}`,
         tier: getModelTier(m.id, p.name),
         name: m.name,
-      }))
+      })),
     );
 
     if (allModels.length < 2) {
-      cachedModelRoutingGuide = '';
-      return '';
+      cachedModelRoutingGuide = "";
+      return "";
     }
 
     const tierLabels = {
-      full: 'complex tasks (refactor, implement, generate)',
-      standard: 'regular tasks (edit, fix, analyze)',
-      essential: 'simple tasks (read, search, list)',
+      full: "complex tasks (refactor, implement, generate)",
+      standard: "regular tasks (edit, fix, analyze)",
+      essential: "simple tasks (read, search, list)",
     };
 
-    let guide = '\n# Sub-Agent Model Routing\n\n';
-    guide += 'Sub-agents auto-select models by task complexity. Override with `model: "provider:model"` in agent definition.\n\n';
-    guide += '| Model | Tier | Auto-assigned for |\n|---|---|---|\n';
+    let guide = "\n# Sub-Agent Model Routing\n\n";
+    guide +=
+      'Sub-agents auto-select models by task complexity. Override with `model: "provider:model"` in agent definition.\n\n';
+    guide += "| Model | Tier | Auto-assigned for |\n|---|---|---|\n";
     for (const m of allModels) {
       guide += `| ${m.spec} | ${m.tier} | ${tierLabels[m.tier] || m.tier} |\n`;
     }
     cachedModelRoutingGuide = guide;
     return guide;
   } catch (err) {
-    if (process.env.NEX_DEBUG) console.error('[agent] model routing guide failed:', err.message);
-    cachedModelRoutingGuide = '';
-    return '';
+    if (process.env.NEX_DEBUG)
+      console.error("[agent] model routing guide failed:", err.message);
+    cachedModelRoutingGuide = "";
+    return "";
   }
 }
 
@@ -944,7 +1216,7 @@ async function buildSystemPrompt() {
   const projectContext = await gatherProjectContext(process.cwd());
   const memoryContext = getMemoryContext();
   const skillInstructions = getSkillInstructions();
-  const planPrompt = isPlanMode() ? getPlanModePrompt() : '';
+  const planPrompt = isPlanMode() ? getPlanModePrompt() : "";
   // Model routing guide is also cached internally
 
   const languagePrompt = _buildLanguagePrompt();
@@ -955,8 +1227,8 @@ WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
-${memoryContext ? `\n${memoryContext}\n` : ''}${skillInstructions ? `\n${skillInstructions}\n` : ''}${planPrompt ? `\n${planPrompt}\n` : ''}
-${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymentContext}\n\n` : ''}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ''}# Jarvis Debugging Rules
+${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
+${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}# Jarvis Debugging Rules
 
 - Jarvis errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
 - ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/jarvis/jarvis-agent/logs/
@@ -1238,13 +1510,16 @@ function clearConversation() {
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
-  _lastCompressionMsg = '';
+  _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
 
 function trimConversationHistory() {
   if (conversationMessages.length > MAX_CONVERSATION_HISTORY) {
-    conversationMessages.splice(0, conversationMessages.length - MAX_CONVERSATION_HISTORY);
+    conversationMessages.splice(
+      0,
+      conversationMessages.length - MAX_CONVERSATION_HISTORY,
+    );
   }
 }
 
@@ -1271,32 +1546,63 @@ function setConversationMessages(messages) {
  * Returns a formatted string or null if the project is too small.
  */
 async function _runPreScan() {
-  const { execFile } = require('child_process');
-  const fs = require('fs');
+  const { execFile } = require("child_process");
+  const fs = require("fs");
   const cwd = process.cwd();
 
-  const run = (cmd, args) => new Promise((resolve) => {
-    execFile(cmd, args, { cwd, timeout: 3000 }, (err, stdout) => {
-      resolve(err ? '' : (stdout || '').trim());
+  const run = (cmd, args) =>
+    new Promise((resolve) => {
+      execFile(cmd, args, { cwd, timeout: 3000 }, (err, stdout) => {
+        resolve(err ? "" : (stdout || "").trim());
+      });
     });
-  });
 
   // Find source files (exclude common build/dependency dirs)
   const [filesOut] = await Promise.all([
-    run('find', ['.', '-type', 'f',
-      '-not', '-path', '*/node_modules/*',
-      '-not', '-path', '*/.git/*',
-      '-not', '-path', '*/dist/*',
-      '-not', '-path', '*/.next/*',
-      '-not', '-path', '*/build/*',
-      '-not', '-path', '*/__pycache__/*',
-      '-not', '-path', '*/vendor/*',
+    run("find", [
+      ".",
+      "-type",
+      "f",
+      "-not",
+      "-path",
+      "*/node_modules/*",
+      "-not",
+      "-path",
+      "*/.git/*",
+      "-not",
+      "-path",
+      "*/dist/*",
+      "-not",
+      "-path",
+      "*/.next/*",
+      "-not",
+      "-path",
+      "*/build/*",
+      "-not",
+      "-path",
+      "*/__pycache__/*",
+      "-not",
+      "-path",
+      "*/vendor/*",
     ]),
   ]);
 
-  const EXTS = new Set(['js', 'ts', 'jsx', 'tsx', 'py', 'go', 'rs', 'rb', 'java', 'cpp', 'c', 'cs']);
-  const files = (filesOut ? filesOut.split('\n') : []).filter(f => {
-    const ext = f.split('.').pop();
+  const EXTS = new Set([
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "py",
+    "go",
+    "rs",
+    "rb",
+    "java",
+    "cpp",
+    "c",
+    "cs",
+  ]);
+  const files = (filesOut ? filesOut.split("\n") : []).filter((f) => {
+    const ext = f.split(".").pop();
     return EXTS.has(ext);
   });
 
@@ -1305,7 +1611,7 @@ async function _runPreScan() {
   // Count by extension
   const counts = {};
   for (const f of files) {
-    const ext = f.split('.').pop();
+    const ext = f.split(".").pop();
     counts[ext] = (counts[ext] || 0) + 1;
   }
 
@@ -1313,22 +1619,27 @@ async function _runPreScan() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
     .map(([ext, n]) => `${n} .${ext}`)
-    .join(' · ');
+    .join(" · ");
 
   let line = `  📁 ${fileParts}`;
 
   // Dependencies from package.json if present
-  const pkgPath = path.join(cwd, 'package.json');
+  const pkgPath = path.join(cwd, "package.json");
   if (fs.existsSync(pkgPath)) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      const deps = Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) });
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      const deps = Object.keys({
+        ...(pkg.dependencies || {}),
+        ...(pkg.devDependencies || {}),
+      });
       if (deps.length > 0) {
-        const shown = deps.slice(0, 5).join(' · ');
-        const extra = deps.length > 5 ? ` +${deps.length - 5}` : '';
+        const shown = deps.slice(0, 5).join(" · ");
+        const extra = deps.length > 5 ? ` +${deps.length - 5}` : "";
         line += `\n  📦 ${shown}${extra}`;
       }
-    } catch { /* ignore malformed package.json */ }
+    } catch {
+      /* ignore malformed package.json */
+    }
   }
 
   return line;
@@ -1340,50 +1651,72 @@ async function _runPreScan() {
  * @param {string} message
  */
 function _notifyDesktop(message) {
-  if (process.platform !== 'darwin') return;
+  if (process.platform !== "darwin") return;
   try {
-    const { execFileSync } = require('child_process');
+    const { execFileSync } = require("child_process");
     // Use osascript — no extra dependencies needed
-    execFileSync('osascript', [
-      '-e',
-      `display notification "${message.replace(/"/g, '\\"')}" with title "nex-code"`,
-    ], { timeout: 3000, stdio: 'ignore' });
-  } catch { /* ignore — notification is best-effort */ }
+    execFileSync(
+      "osascript",
+      [
+        "-e",
+        `display notification "${message.replace(/"/g, '\\"')}" with title "nex-code"`,
+      ],
+      { timeout: 3000, stdio: "ignore" },
+    );
+  } catch {
+    /* ignore — notification is best-effort */
+  }
 }
 
-function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint = false } = {}) {
+function _printResume(
+  totalSteps,
+  toolCounts,
+  filesModified,
+  filesRead,
+  startTime,
+  { suppressHint = false } = {},
+) {
   if (totalSteps < 1) return;
 
   const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
-  let resume = `── ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} · ${totalTools} ${totalTools === 1 ? 'tool' : 'tools'}`;
+  let resume = `── ${totalSteps} ${totalSteps === 1 ? "step" : "steps"} · ${totalTools} ${totalTools === 1 ? "tool" : "tools"}`;
   let elapsedSecs = 0;
   if (startTime) {
     const elapsed = Date.now() - startTime;
     elapsedSecs = Math.round(elapsed / 1000);
-    resume += elapsedSecs >= 60
-      ? ` · ${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
-      : ` · ${elapsedSecs}s`;
+    resume +=
+      elapsedSecs >= 60
+        ? ` · ${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`
+        : ` · ${elapsedSecs}s`;
   }
   if (filesModified.size > 0) {
-    resume += ` · ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified`;
+    resume += ` · ${filesModified.size} ${filesModified.size === 1 ? "file" : "files"} modified`;
   }
-  resume += ' ──';
+  resume += " ──";
   console.log(`\n${C.dim}  ${resume}${C.reset}`);
 
   // Desktop notification for long-running tasks (> 30s)
   if (elapsedSecs >= 30 && process.stdout.isTTY) {
-    const summary = filesModified.size > 0
-      ? `Done — ${filesModified.size} ${filesModified.size === 1 ? 'file' : 'files'} modified in ${elapsedSecs}s`
-      : `Done — ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} in ${elapsedSecs}s`;
+    const summary =
+      filesModified.size > 0
+        ? `Done — ${filesModified.size} ${filesModified.size === 1 ? "file" : "files"} modified in ${elapsedSecs}s`
+        : `Done — ${totalSteps} ${totalSteps === 1 ? "step" : "steps"} in ${elapsedSecs}s`;
     _notifyDesktop(summary);
   }
 
   // Follow-up suggestions based on what happened
   if (filesModified.size > 0) {
     console.log(`${C.dim}  💡 /diff · /commit · /undo${C.reset}`);
-  } else if (!suppressHint && filesRead.size >= 5 && filesModified.size === 0 && totalSteps >= 3) {
+  } else if (
+    !suppressHint &&
+    filesRead.size >= 5 &&
+    filesModified.size === 0 &&
+    totalSteps >= 3
+  ) {
     // Audit / read-heavy session — prompt for applying fixes
-    console.log(`${C.dim}  💡 Found issues? Say "fix 1" or "apply all fixes"${C.reset}`);
+    console.log(
+      `${C.dim}  💡 Found issues? Say "fix 1" or "apply all fixes"${C.reset}`,
+    );
   } else if (filesRead.size > 0 && totalSteps >= 2) {
     console.log(`${C.dim}  💡 /save · /clear${C.reset}`);
   }
@@ -1395,7 +1728,7 @@ function _printResume(totalSteps, toolCounts, filesModified, filesRead, startTim
  * Returns { action: 'retry' | 'switch' | 'quit', model?: string, provider?: string }
  */
 async function _staleRecoveryPrompt() {
-  if (!process.stdout.isTTY) return { action: 'quit' };
+  if (!process.stdout.isTTY) return { action: "quit" };
 
   const providerName = getActiveProviderName();
   const currentModelId = getActiveModelId();
@@ -1403,20 +1736,36 @@ async function _staleRecoveryPrompt() {
   const reliableModel = MODEL_EQUIVALENTS.strong?.[providerName];
 
   const hasFastAlt = fastModel && fastModel !== currentModelId;
-  const hasReliableAlt = reliableModel && reliableModel !== currentModelId && reliableModel !== fastModel;
+  const hasReliableAlt =
+    reliableModel &&
+    reliableModel !== currentModelId &&
+    reliableModel !== fastModel;
 
   const options = [];
-  options.push({ key: 'r', label: `Retry with current model ${C.dim}(${currentModelId})${C.reset}` });
+  options.push({
+    key: "r",
+    label: `Retry with current model ${C.dim}(${currentModelId})${C.reset}`,
+  });
   if (hasFastAlt) {
-    options.push({ key: 'f', label: `Switch to ${C.bold}${fastModel}${C.reset} ${C.dim}— fast, low latency${C.reset}`, model: fastModel });
+    options.push({
+      key: "f",
+      label: `Switch to ${C.bold}${fastModel}${C.reset} ${C.dim}— fast, low latency${C.reset}`,
+      model: fastModel,
+    });
   }
   if (hasReliableAlt) {
-    options.push({ key: 's', label: `Switch to ${C.bold}${reliableModel}${C.reset} ${C.dim}— reliable tool-calling, medium speed${C.reset}`, model: reliableModel });
+    options.push({
+      key: "s",
+      label: `Switch to ${C.bold}${reliableModel}${C.reset} ${C.dim}— reliable tool-calling, medium speed${C.reset}`,
+      model: reliableModel,
+    });
   }
-  options.push({ key: 'q', label: `${C.dim}Quit${C.reset}` });
+  options.push({ key: "q", label: `${C.dim}Quit${C.reset}` });
 
   console.log();
-  console.log(`${C.yellow}  Stream stale — all retries exhausted.${C.reset} What would you like to do?`);
+  console.log(
+    `${C.yellow}  Stream stale — all retries exhausted.${C.reset} What would you like to do?`,
+  );
   for (const opt of options) {
     console.log(`  ${C.cyan}[${opt.key}]${C.reset} ${opt.label}`);
   }
@@ -1428,13 +1777,13 @@ async function _staleRecoveryPrompt() {
     const wasRaw = stdin.isRaw;
     stdin.setRawMode(true);
     stdin.resume();
-    stdin.setEncoding('utf8');
+    stdin.setEncoding("utf8");
 
     let handled = false;
     const onKey = (key) => {
       if (handled) return;
       handled = true;
-      stdin.removeListener('data', onKey);
+      stdin.removeListener("data", onKey);
       stdin.setRawMode(wasRaw || false);
       stdin.pause();
 
@@ -1442,19 +1791,23 @@ async function _staleRecoveryPrompt() {
       process.stdout.write(`${a}\n`); // echo the chosen key
 
       // Ctrl+C → quit
-      if (key === '\u0003') return resolve({ action: 'quit' });
+      if (key === "\u0003") return resolve({ action: "quit" });
 
-      const match = options.find(o => o.key === a);
-      if (!match || match.key === 'q' || (!match.model && match.key !== 'r')) {
-        resolve({ action: 'quit' });
-      } else if (match.key === 'r') {
-        resolve({ action: 'retry' });
+      const match = options.find((o) => o.key === a);
+      if (!match || match.key === "q" || (!match.model && match.key !== "r")) {
+        resolve({ action: "quit" });
+      } else if (match.key === "r") {
+        resolve({ action: "retry" });
       } else {
-        resolve({ action: 'switch', model: match.model, provider: providerName });
+        resolve({
+          action: "switch",
+          model: match.model,
+          provider: providerName,
+        });
       }
     };
 
-    stdin.on('data', onKey);
+    stdin.on("data", onKey);
   });
 }
 
@@ -1467,26 +1820,64 @@ let _serverHooks = null;
  * @param {string} userInput
  * @param {{ onToken?: Function, onThinkingToken?: Function, onToolStart?: Function, onToolEnd?: Function } | null} [serverHooks]
  */
-async function processInput(userInput, serverHooks = null) {
+async function processInput(userInput, serverHooks = null, opts = {}) {
   _serverHooks = serverHooks;
   const userContent = buildUserContent(userInput);
-  conversationMessages.push({ role: 'user', content: userContent });
+  conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
 
-  const { setOnChange } = require('./tasks');
+  // Auto-orchestrate or hint for complex multi-goal prompts
+  const autoOrch =
+    opts.autoOrchestrate || process.env.NEX_AUTO_ORCHESTRATE === "true";
+  const orchThreshold = parseInt(
+    process.env.NEX_ORCHESTRATE_THRESHOLD || "3",
+    10,
+  );
+
+  try {
+    const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
+    const complexity = detectComplexPrompt(
+      typeof userInput === "string" ? userInput : "",
+    );
+
+    if (
+      autoOrch &&
+      complexity.isComplex &&
+      complexity.estimatedGoals >= orchThreshold
+    ) {
+      console.log(
+        `${C.yellow}⚡ Auto-orchestrate: ${complexity.estimatedGoals} goals → parallel agents${C.reset}`,
+      );
+      return await runOrchestrated(userInput, {
+        orchestratorModel:
+          opts.orchestratorModel || process.env.NEX_ORCHESTRATOR_MODEL,
+        workerModel: opts.model,
+      });
+    }
+
+    if (complexity.isComplex) {
+      console.log(
+        `${C.dim}Hint: ~${complexity.estimatedGoals} goals. Try --auto-orchestrate for parallel execution.${C.reset}`,
+      );
+    }
+  } catch {
+    /* orchestrator not available */
+  }
+
+  const { setOnChange } = require("./tasks");
   let taskProgress = null;
   let cumulativeTokens = 0;
 
   // Wire task onChange to create/update live task display
   setOnChange((event, data) => {
-    if (event === 'create') {
+    if (event === "create") {
       if (taskProgress) taskProgress.stop();
       taskProgress = new TaskProgress(data.name, data.tasks);
       taskProgress.setStats({ tokens: cumulativeTokens });
       taskProgress.start();
-    } else if (event === 'update' && taskProgress) {
+    } else if (event === "update" && taskProgress) {
       taskProgress.updateTask(data.id, data.status);
-    } else if (event === 'clear') {
+    } else if (event === "clear") {
       if (taskProgress) {
         taskProgress.stop();
         taskProgress = null;
@@ -1499,32 +1890,39 @@ async function processInput(userInput, serverHooks = null) {
   // Append brain context (query-dependent, not part of cached system prompt)
   let effectiveSystemPrompt = systemPrompt;
   try {
-    const { getBrainContext } = require('./brain');
+    const { getBrainContext } = require("./brain");
     const brainContext = await getBrainContext(userInput);
     if (brainContext) {
-      effectiveSystemPrompt = systemPrompt + '\n' + brainContext + '\n';
+      effectiveSystemPrompt = systemPrompt + "\n" + brainContext + "\n";
     }
-  } catch (err) { /* brain is optional */
-    if (process.env.NEX_DEBUG) console.error('[agent] brain context failed:', err.message);
+  } catch (err) {
+    /* brain is optional */
+    if (process.env.NEX_DEBUG)
+      console.error("[agent] brain context failed:", err.message);
   }
 
-  const fullMessages = [{ role: 'system', content: effectiveSystemPrompt }, ...conversationMessages];
+  const fullMessages = [
+    { role: "system", content: effectiveSystemPrompt },
+    ...conversationMessages,
+  ];
 
   // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
-  const preSpinner = new Spinner('Thinking...');
+  const preSpinner = new Spinner("Thinking...");
   preSpinner.start();
 
   // Start pre-scan concurrently on the FIRST message of a new conversation.
   // Results fill the "Thinking..." dead time with useful project context.
   const isFirstMessage = conversationMessages.length === 1;
-  const preScanPromise = isFirstMessage ? _runPreScan().catch(() => null) : Promise.resolve(null);
+  const preScanPromise = isFirstMessage
+    ? _runPreScan().catch(() => null)
+    : Promise.resolve(null);
 
   // Context-aware compression: fit messages into context window
   const allTools = getAllToolDefinitions();
-  const [{ messages: fittedMessages, compressed, compacted, tokensRemoved }, preScanResult] = await Promise.all([
-    fitToContext(fullMessages, allTools),
-    preScanPromise,
-  ]);
+  const [
+    { messages: fittedMessages, compressed, compacted, tokensRemoved },
+    preScanResult,
+  ] = await Promise.all([fitToContext(fullMessages, allTools), preScanPromise]);
 
   // Context budget warning
   const usage = getUsage(fullMessages, allTools);
@@ -1537,13 +1935,20 @@ async function processInput(userInput, serverHooks = null) {
   }
 
   if (compacted) {
-    console.log(`${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`);
+    console.log(
+      `${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`,
+    );
   } else if (compressed) {
-    const pct = usage.limit > 0 ? Math.round((tokensRemoved / usage.limit) * 100) : 0;
-    console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
+    const pct =
+      usage.limit > 0 ? Math.round((tokensRemoved / usage.limit) * 100) : 0;
+    debugLog(
+      `${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`,
+    );
   }
   if (usage.percentage > 85) {
-    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`);
+    debugLog(
+      `${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`,
+    );
   }
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
@@ -1553,10 +1958,15 @@ async function processInput(userInput, serverHooks = null) {
   {
     const _preCtx = getUsage(apiMessages, getAllToolDefinitions());
     if (_preCtx.percentage >= 65) {
-      const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, getAllToolDefinitions());
+      const { messages: _compressed, tokensRemoved: _freed } = forceCompress(
+        apiMessages,
+        getAllToolDefinitions(),
+      );
       if (_freed > 0) {
         apiMessages = _compressed;
-        console.log(`${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, getAllToolDefinitions()).percentage)}% used]${C.reset}`);
+        console.log(
+          `${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, getAllToolDefinitions()).percentage)}% used]${C.reset}`,
+        );
       }
     }
   }
@@ -1564,8 +1974,8 @@ async function processInput(userInput, serverHooks = null) {
   let rateLimitRetries = 0;
   let networkRetries = 0;
   let staleRetries = 0;
-  let contextRetries = 0;       // budget for 400-error context-overflow recovery (per inner loop)
-  let totalContextRetries = 0;  // lifetime cap across all auto-extend cycles
+  let contextRetries = 0; // budget for 400-error context-overflow recovery (per inner loop)
+  let totalContextRetries = 0; // lifetime cap across all auto-extend cycles
   const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
 
@@ -1573,12 +1983,15 @@ async function processInput(userInput, serverHooks = null) {
   // If the first user message mentions Jarvis error keywords, flag so we can
   // intercept local tool calls and redirect to ssh_exec.
   const _firstUserText = (() => {
-    const m = conversationMessages.find(r => r.role === 'user');
-    return typeof m?.content === 'string' ? m.content : '';
+    const m = conversationMessages.find((r) => r.role === "user");
+    return typeof m?.content === "string" ? m.content : "";
   })();
   // Only trigger for actual server debugging, not for feature development tasks.
   // "jarvis" alone is too broad — e.g. "add feature to jarvis" should NOT block local reads.
-  const _isJarvisDebugging = /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken).{0,30}jarvis/i.test(_firstUserText);
+  const _isJarvisDebugging =
+    /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken).{0,30}jarvis/i.test(
+      _firstUserText,
+    );
   let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Stats tracking for résumé ───
@@ -1592,1460 +2005,2041 @@ async function processInput(userInput, serverHooks = null) {
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
   const fileEditCounts = _sessionFileEditCounts;
-  const LOOP_WARN_EDITS = 2;  // warn agent after 2 edits to same file (early warning)
+  const LOOP_WARN_EDITS = 2; // warn agent after 2 edits to same file (early warning)
   const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
   const bashCmdCounts = _sessionBashCmdCounts;
-  const LOOP_WARN_BASH = 5;   // warn after 5 similar bash commands
-  const LOOP_ABORT_BASH = 8;  // abort after 8 similar bash commands
+  const LOOP_WARN_BASH = 5; // warn after 5 similar bash commands
+  const LOOP_ABORT_BASH = 8; // abort after 8 similar bash commands
   const grepPatternCounts = _sessionGrepPatternCounts;
-  const LOOP_WARN_GREP = 4;   // warn after 4 identical grep patterns
-  const LOOP_ABORT_GREP = 7;  // abort after 7 identical grep patterns
-  const grepFileCounts = _sessionGrepFileCounts;  // per-file grep count (different patterns)
-  const LOOP_WARN_GREP_FILE = 3;  // warn after 3 different-pattern greps on same file
+  const LOOP_WARN_GREP = 4; // warn after 4 identical grep patterns
+  const LOOP_ABORT_GREP = 7; // abort after 7 identical grep patterns
+  const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
+  const LOOP_WARN_GREP_FILE = 3; // warn after 3 different-pattern greps on same file
   const LOOP_ABORT_GREP_FILE = 4; // hard-block further greps on same file after 4
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 2;  // warn after 2 reads of the same file (early warning before context floods)
+  const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
-  let consecutiveErrors = 0;  // loop detection: consecutive tool failures (per-turn: resets on success)
+  let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
-  let consecutiveBlocks = 0;  // consecutive BLOCKED tool results — model ignoring block messages
+  let consecutiveBlocks = 0; // consecutive BLOCKED tool results — model ignoring block messages
   const LOOP_ABORT_BLOCKS = 5; // abort after 5 consecutive blocked tool calls (model stuck)
   let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
-  const LOOP_WARN_SWARM = 2;  // warn after 2 all-truncated swarm calls in a row
+  const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 8;   // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_WARN = 8; // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
   const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
   let iterLimit = MAX_ITERATIONS;
   let autoExtensions = 0;
-  const MAX_AUTO_EXTENSIONS = 3;  // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
+  const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
-  progressMadeThisPass = false;
-  for (i = 0; i < iterLimit; i++) {
-    // Check if aborted (Ctrl+C) at start of each iteration
-    const loopSignal = _getAbortSignal();
-    if (loopSignal?.aborted) break;
+    progressMadeThisPass = false;
+    for (i = 0; i < iterLimit; i++) {
+      // Check if aborted (Ctrl+C) at start of each iteration
+      const loopSignal = _getAbortSignal();
+      if (loopSignal?.aborted) break;
 
-    // ─── Proactive auto-compress before LLM call ─────────────────────────────
-    // Compress proactively to avoid 400 errors. Use a lower threshold on the first
-    // call (65%) because token estimation is imprecise and models may have a lower
-    // actual context limit than configured. After the first call, use 78%.
-    {
-      const _allTools = getAllToolDefinitions();
-      const _autoCtx = getUsage(apiMessages, _allTools);
-      const _threshold = totalSteps === 0 ? 65 : 78;
-      if (_autoCtx.percentage >= _threshold) {
-        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allTools, totalSteps === 0);
-        if (_freed > 0) {
-          apiMessages = _compressed;
-          if (_freed > 50) console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`);
+      // ─── Proactive auto-compress before LLM call ─────────────────────────────
+      // Compress proactively to avoid 400 errors. Use a lower threshold on the first
+      // call (65%) because token estimation is imprecise and models may have a lower
+      // actual context limit than configured. After the first call, use 78%.
+      {
+        const _allTools = getAllToolDefinitions();
+        const _autoCtx = getUsage(apiMessages, _allTools);
+        const _threshold = totalSteps === 0 ? 65 : 78;
+        if (_autoCtx.percentage >= _threshold) {
+          const { messages: _compressed, tokensRemoved: _freed } =
+            forceCompress(apiMessages, _allTools, totalSteps === 0);
+          if (_freed > 0) {
+            apiMessages = _compressed;
+            if (_freed > 50)
+              console.log(
+                `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`,
+              );
+          }
         }
       }
-    }
 
-    // Step indicator — deferred, only shown for tool iterations (matches résumé count)
-    let stepPrinted = true; // default: no marker (text-only iterations stay silent)
+      // Step indicator — deferred, only shown for tool iterations (matches résumé count)
+      let stepPrinted = true; // default: no marker (text-only iterations stay silent)
 
-    // Advance plan step cursor when a new tool iteration starts
-    if (totalSteps > 0) advancePlanStep();
+      // Advance plan step cursor when a new tool iteration starts
+      if (totalSteps > 0) advancePlanStep();
 
-    let spinner = null;
-    if (taskProgress && taskProgress.isActive()) {
-      // Resume the live task display instead of a plain spinner
-      if (taskProgress._paused) taskProgress.resume();
-    } else if (!taskProgress) {
-      let spinnerText;
-      const planInfo = getPlanStepInfo();
-      if (planInfo && planInfo.total > 1) {
-        const label = planInfo.description.length > 40
-          ? planInfo.description.slice(0, 37) + '…'
-          : planInfo.description;
-        spinnerText = `Plan step ${planInfo.current}/${planInfo.total}: ${label}`;
-      } else {
-        spinnerText = totalSteps > 0 ? `Thinking... (step ${totalSteps + 1})` : 'Thinking...';
-      }
-      spinner = new Spinner(spinnerText);
-      spinner.start();
-    }
-    let firstToken = true;
-    let streamedText = '';
-    let _streamLoopSuppressed = false; // suppress display once loop detected mid-stream
-    const stream = new StreamRenderer();
-
-    let result;
-    // Stale-stream detection: warn/abort if provider stops sending tokens
-    let lastTokenTime = Date.now();
-    let staleWarned = false;
-    const staleAbort = new AbortController();
-    const staleTimer = setInterval(() => {
-      const elapsed = Date.now() - lastTokenTime;
-      if (elapsed >= STALE_ABORT_MS) {
-        stream._clearCursorLine();
-        console.log(`${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`);
-        staleAbort.abort();
-      } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
-        staleWarned = true;
-        stream._clearCursorLine();
-        const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
-        const retryLabel = staleRetries > 0 ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})` : '';
-        const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
-        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`);
-        if (fastModel && fastModel !== getActiveModelId()) {
-          console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} in ~${abortInSec}s if no tokens arrive${C.reset}`);
+      let spinner = null;
+      if (taskProgress && taskProgress.isActive()) {
+        // Resume the live task display instead of a plain spinner
+        if (taskProgress._paused) taskProgress.resume();
+      } else if (!taskProgress) {
+        let spinnerText;
+        const planInfo = getPlanStepInfo();
+        if (planInfo && planInfo.total > 1) {
+          const label =
+            planInfo.description.length > 40
+              ? planInfo.description.slice(0, 37) + "…"
+              : planInfo.description;
+          spinnerText = `Plan step ${planInfo.current}/${planInfo.total}: ${label}`;
         } else {
-          console.log(`${C.dim}  💡 Ctrl+C to abort · auto-abort in ~${abortInSec}s${C.reset}`);
+          spinnerText =
+            totalSteps > 0
+              ? `Thinking... (step ${totalSteps + 1})`
+              : "Thinking...";
         }
+        spinner = new Spinner(spinnerText);
+        spinner.start();
       }
-    }, 5000);
-    
-    // Token batching for streaming optimization
-    let tokenBuffer = '';
-    let flushTimeout = null;
-    
-    try {
-      const baseTools = getCachedFilteredTools(getAllToolDefinitions());
-      const allTools = isPlanMode()
-        ? baseTools.filter(t => PLAN_MODE_ALLOWED_TOOLS.has(t.function.name))
-        : baseTools;
-      const userSignal = _getAbortSignal();
-      // Combine user abort (Ctrl+C) and stale abort into one signal
-      const combinedAbort = new AbortController();
-      if (userSignal) userSignal.addEventListener('abort', () => combinedAbort.abort(), { once: true });
-      staleAbort.signal.addEventListener('abort', () => combinedAbort.abort(), { once: true });
+      let firstToken = true;
+      let streamedText = "";
+      let _streamLoopSuppressed = false; // suppress display once loop detected mid-stream
+      const stream = new StreamRenderer();
 
-      result = await callStream(apiMessages, allTools, {
-        signal: combinedAbort.signal,
-        onThinkingToken: () => {
-          // Thinking-model reasoning tokens: reset stale timer but don't display
-          lastTokenTime = Date.now();
-          staleWarned = false;
-          if (_serverHooks?.onThinkingToken) { _serverHooks.onThinkingToken(); }
-        },
-        onToken: (text) => {
-          lastTokenTime = Date.now();
-          staleWarned = false;
+      let result;
+      // Stale-stream detection: warn/abort if provider stops sending tokens
+      let lastTokenTime = Date.now();
+      let staleWarned = false;
+      const staleAbort = new AbortController();
+      const staleTimer = setInterval(() => {
+        const elapsed = Date.now() - lastTokenTime;
+        if (elapsed >= STALE_ABORT_MS) {
+          stream._clearCursorLine();
+          debugLog(
+            `${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`,
+          );
+          staleAbort.abort();
+        } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
+          staleWarned = true;
+          stream._clearCursorLine();
+          const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+          const retryLabel =
+            staleRetries > 0
+              ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})`
+              : "";
+          const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
+          debugLog(
+            `${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`,
+          );
+          if (fastModel && fastModel !== getActiveModelId()) {
+            console.log(
+              `${C.dim}  💡 Will auto-switch to ${fastModel} in ~${abortInSec}s if no tokens arrive${C.reset}`,
+            );
+          } else {
+            console.log(
+              `${C.dim}  💡 Ctrl+C to abort · auto-abort in ~${abortInSec}s${C.reset}`,
+            );
+          }
+        }
+      }, 5000);
 
-          // In server mode: forward token to hook, skip all TTY handling
-          if (_serverHooks?.onToken) {
-            _serverHooks.onToken(text);
+      // Token batching for streaming optimization
+      let tokenBuffer = "";
+      let flushTimeout = null;
+
+      try {
+        const baseTools = getCachedFilteredTools(getAllToolDefinitions());
+        const allTools = isPlanMode()
+          ? baseTools.filter((t) =>
+              PLAN_MODE_ALLOWED_TOOLS.has(t.function.name),
+            )
+          : baseTools;
+        const userSignal = _getAbortSignal();
+        // Combine user abort (Ctrl+C) and stale abort into one signal
+        const combinedAbort = new AbortController();
+        if (userSignal)
+          userSignal.addEventListener("abort", () => combinedAbort.abort(), {
+            once: true,
+          });
+        staleAbort.signal.addEventListener(
+          "abort",
+          () => combinedAbort.abort(),
+          { once: true },
+        );
+
+        result = await callStream(apiMessages, allTools, {
+          signal: combinedAbort.signal,
+          onThinkingToken: () => {
+            // Thinking-model reasoning tokens: reset stale timer but don't display
+            lastTokenTime = Date.now();
+            staleWarned = false;
+            if (_serverHooks?.onThinkingToken) {
+              _serverHooks.onThinkingToken();
+            }
+          },
+          onToken: (text) => {
+            lastTokenTime = Date.now();
+            staleWarned = false;
+
+            // In server mode: forward token to hook, skip all TTY handling
+            if (_serverHooks?.onToken) {
+              _serverHooks.onToken(text);
+              streamedText += text;
+              return;
+            }
+
+            // Mid-stream loop detection: suppress display once repetition is detected.
+            // The post-stream detectAndTruncateLoop will truncate before storing to history.
             streamedText += text;
-            return;
-          }
-
-          // Mid-stream loop detection: suppress display once repetition is detected.
-          // The post-stream detectAndTruncateLoop will truncate before storing to history.
-          streamedText += text;
-          if (!_streamLoopSuppressed && streamedText.length > 400 && streamedText.length % 250 < text.length + 1) {
-            const q = detectAndTruncateLoop(streamedText, 3);
-            if (q.truncated) {
-              _streamLoopSuppressed = true;
-              stream._clearCursorLine?.();
-              console.log(`${C.yellow}  ⚠ LLM stream loop detected (${q.repeatCount}× repeated) — suppressing display${C.reset}`);
+            if (
+              !_streamLoopSuppressed &&
+              streamedText.length > 400 &&
+              streamedText.length % 250 < text.length + 1
+            ) {
+              const q = detectAndTruncateLoop(streamedText, 3);
+              if (q.truncated) {
+                _streamLoopSuppressed = true;
+                stream._clearCursorLine?.();
+                debugLog(
+                  `${C.yellow}  ⚠ LLM stream loop detected (${q.repeatCount}× repeated) — suppressing display${C.reset}`,
+                );
+              }
             }
-          }
-          if (_streamLoopSuppressed) return;
+            if (_streamLoopSuppressed) return;
 
-          // In non-TTY (headless) mode: flush immediately — no buffering needed
-          // In TTY mode: batch tokens for 100ms to reduce cursor flicker
-          tokenBuffer += text;
+            // In non-TTY (headless) mode: flush immediately — no buffering needed
+            // In TTY mode: batch tokens for 100ms to reduce cursor flicker
+            tokenBuffer += text;
 
-          if (process.stdout.isTTY) {
-            if (!flushTimeout) {
-              flushTimeout = setTimeout(() => {
-                if (tokenBuffer && stream) {
-                  stream.push(tokenBuffer);
-                }
-                tokenBuffer = '';
-                flushTimeout = null;
-              }, 50);
+            if (process.stdout.isTTY) {
+              if (!flushTimeout) {
+                flushTimeout = setTimeout(() => {
+                  if (tokenBuffer && stream) {
+                    stream.push(tokenBuffer);
+                  }
+                  tokenBuffer = "";
+                  flushTimeout = null;
+                }, 50);
+              }
+            } else {
+              stream.push(tokenBuffer);
+              tokenBuffer = "";
             }
-          } else {
-            stream.push(tokenBuffer);
-            tokenBuffer = '';
-          }
-          
-          if (firstToken) {
-            if (taskProgress && !taskProgress._paused) {
-              taskProgress.pause();
-            } else if (spinner) {
-              spinner.stop();
-            }
-            if (!stepPrinted) { stepPrinted = true; }
-            stream.startCursor();
-            firstToken = false;
-          }
-        },
-      });
-    } catch (err) {
-      clearInterval(staleTimer);
-      if (flushTimeout) { clearTimeout(flushTimeout); flushTimeout = null; }
-      if (tokenBuffer && stream) { stream.push(tokenBuffer); tokenBuffer = ''; }
-      if (taskProgress && !taskProgress._paused) taskProgress.pause();
-      if (spinner) spinner.stop();
-      stream.stopCursor();
 
-      // Stale abort → progressive retry: 1st=resend, 2nd=compress+resend, exhausted=last-resort compress
-      if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
-        staleRetries++;
-        if (staleRetries > MAX_STALE_RETRIES) {
-          // Last-resort: force-compress once, then reset for fresh attempts
-          if (contextRetries < 1) {
-            contextRetries++;
-            _logCompression('Stale retries exhausted — last-resort force-compress...', C.yellow);
-            const allTools = getAllToolDefinitions();
-            const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
-            apiMessages = compressedMsgs;
-            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
-            staleRetries = 0; // Reset so compressed context gets full retry attempts
-            i--;
-            continue;
-          }
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          const recovery = await _staleRecoveryPrompt();
-          if (recovery.action === 'quit') {
-            setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-            saveNow(conversationMessages);
-            break;
-          }
-          if (recovery.action === 'switch') {
-            setActiveModel(`${recovery.provider}:${recovery.model}`);
-            console.log(`${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`);
-          }
-          // 'retry' or 'switch': reset counters and retry
-          // NOTE: do NOT reset contextRetries here — the stale-retry and 400-error
-          // budgets are independent. Resetting contextRetries here would allow the
-          // 400-compress path to loop indefinitely after a stale recovery.
-          staleRetries = 0;
-          i--;
-          continue;
+            if (firstToken) {
+              if (taskProgress && !taskProgress._paused) {
+                taskProgress.pause();
+              } else if (spinner) {
+                spinner.stop();
+              }
+              if (!stepPrinted) {
+                stepPrinted = true;
+              }
+              stream.startCursor();
+              firstToken = false;
+            }
+          },
+        });
+      } catch (err) {
+        clearInterval(staleTimer);
+        if (flushTimeout) {
+          clearTimeout(flushTimeout);
+          flushTimeout = null;
         }
-        // Progressive delay: 3s on first retry, 5s on subsequent
-        const delay = staleRetries === 1 ? 3000 : 5000;
-        // Auto-switch to fast model on first stale retry (don't waste another 120s on the same model)
-        // Uses staleCompressUsed (not contextRetries) so 400-error recovery budget stays intact.
-        // Nuclear compression on stale switch: context is already large enough to cause a timeout,
-        // so aggressively trim to 35% to give the (possibly smaller) fast model headroom.
-        if (staleRetries >= 1 && staleCompressUsed < 1) {
-          staleCompressUsed++;
-          _logCompression(`Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...`, C.yellow);
-          const allTools = getAllToolDefinitions();
-          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
-          apiMessages = compressedMsgs;
-          if (tokensRemoved > 0) {
-            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
-          }
-          if (STALE_AUTO_SWITCH) {
-            const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
-            if (fastModel && fastModel !== getActiveModelId()) {
-              setActiveModel(`${getActiveProviderName()}:${fastModel}`);
-              console.log(`${C.cyan}  ⚡ Auto-switched to ${fastModel} to avoid further stale timeouts${C.reset}`);
-              console.log(`${C.dim}  (disable with NEX_STALE_AUTO_SWITCH=0)${C.reset}`);
-            }
-          }
-        } else {
-          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`);
+        if (tokenBuffer && stream) {
+          stream.push(tokenBuffer);
+          tokenBuffer = "";
         }
-        const delaySpinner = new Spinner(`Waiting ${delay / 1000}s before retry...`);
-        delaySpinner.start();
-        await new Promise(r => setTimeout(r, delay));
-        delaySpinner.stop();
-        i--; // Don't count stale timeouts as iterations
-        continue;
-      }
+        if (taskProgress && !taskProgress._paused) taskProgress.pause();
+        if (spinner) spinner.stop();
+        stream.stopCursor();
 
-      // Abort errors (Ctrl+C) — break silently
-      if (err.name === 'AbortError' || err.name === 'CanceledError' ||
-        err.message?.includes('canceled') || err.message?.includes('aborted')) {
-        if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-        setOnChange(null);
-        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-        saveNow(conversationMessages);
-        break;
-      }
-
-      // User-friendly error message (avoid raw stack traces/cryptic codes)
-      let userMessage = err.message;
-      if (err.code === 'ECONNREFUSED' || err.message.includes('ECONNREFUSED')) {
-        userMessage = 'Connection refused — please check your internet connection or API endpoint';
-      } else if (err.code === 'ENOTFOUND' || err.message.includes('ENOTFOUND')) {
-        userMessage = 'Network error — could not reach the API server. Please check your connection';
-      } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
-        userMessage = 'Request timed out — the API server took too long to respond. Please try again';
-      } else if (err.message.includes('401') || err.message.includes('Unauthorized')) {
-        userMessage = 'Authentication failed — please check your API key in the .env file';
-      } else if (err.message.includes('403') || err.message.includes('Forbidden')) {
-        userMessage = 'Access denied — your API key may not have permission for this model';
-      } else if (err.message.includes('404')) {
-        // 404 = model not found on Ollama/OpenAI-compat provider — fatal, don't retry
-        const modelId = getActiveModelId ? getActiveModelId() : 'unknown';
-        userMessage = `Model not found (404): ${modelId} — check your .env MODEL setting or run /models to list available models`;
-        console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
-        if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-        setOnChange(null);
-        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-        saveNow(conversationMessages);
-        break;
-      } else if (err.message.includes('400')) {
-        // On any 400, always try force-compress first — the most common cause is a context
-        // overflow where Ollama returns a bare 400 with no useful message. Token-count
-        // heuristics are too unreliable to gate this: just try and retry.
-        // If a stale switch already happened (staleCompressUsed > 0), we already did nuclear
-        // compression — jump straight to nuclear for 400s too to avoid wasting light attempts.
-        if (contextRetries < 3 && totalContextRetries < MAX_TOTAL_CONTEXT_RETRIES) {
-          contextRetries++;
-          totalContextRetries++;
-          // On the very first call (no tool steps yet), skip gentle compression — there are
-          // no old messages to trim. Go straight to nuclear to avoid 3 noisy failed attempts.
-          const isFirstCall = totalSteps === 0 && contextRetries === 1;
-          const nuclear = isFirstCall || contextRetries === 3 || staleCompressUsed > 0;
-          if (isFirstCall) {
-            // First-call 400: system prompt too large for model. Skip to attempt 3.
-            contextRetries = 3;
-            const _errDetail = err.message.replace(/^API Error(\s*\[HTTP \d+\])?:\s*/i, '').slice(0, 150);
-            _logCompression(`Bad request (400) — ${_errDetail || 'system prompt too large'}, compressing...`, C.yellow);
-          } else if (nuclear) {
-            _logCompression(`Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`, C.yellow);
-          } else {
-            _logCompression(`Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)`, C.yellow);
-          }
-          const allTools = getAllToolDefinitions();
-          const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
-          apiMessages = compressedMsgs;
-          if (tokensRemoved > 50) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
-          }
-          i--;
-          continue;
-        }
-        // All compress retries exhausted — last resort: keep only system + first task message.
-        // This is more aggressive than nuclear (which keeps ~35% of context) — it drops
-        // everything except the origin user message so the agent can at least continue.
-        {
-          const _sys = apiMessages.find(m => m.role === 'system');
-          const _firstTask = apiMessages.find(m => m.role === 'user' &&
-            !String(m.content).startsWith('[SYSTEM') && !String(m.content).startsWith('BLOCKED:'));
-          const _superNuclear = [_sys, _firstTask].filter(Boolean);
-          const { getUsage: _gu } = require('./context-engine');
-          const _afterTokens = require('./context-engine').estimateMessagesTokens(_superNuclear);
-          const _beforeTokens = require('./context-engine').estimateMessagesTokens(apiMessages);
-          if (_afterTokens < _beforeTokens) {
-            // Extract investigation findings before wiping history so the agent
-            // can continue implementing fixes instead of re-investigating from scratch.
-            const _findingParts = [];
-            // Last 3 assistant messages with actual text content (skip pure tool-call turns)
-            const _assistantTexts = conversationMessages
-              .filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 30)
-              .slice(-3)
-              .map(m => m.content.trim().slice(0, 120).replace(/\n+/g, ' '));
-            if (_assistantTexts.length > 0) {
-              _findingParts.push('Key findings:\n' + _assistantTexts.map(t => `- ${t}`).join('\n'));
+        // Stale abort → progressive retry: 1st=resend, 2nd=compress+resend, exhausted=last-resort compress
+        if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
+          staleRetries++;
+          if (staleRetries > MAX_STALE_RETRIES) {
+            // Last-resort: force-compress once, then reset for fresh attempts
+            if (contextRetries < 1) {
+              contextRetries++;
+              _logCompression(
+                "Stale retries exhausted — last-resort force-compress...",
+                C.yellow,
+              );
+              const allTools = getAllToolDefinitions();
+              const { messages: compressedMsgs, tokensRemoved } = forceCompress(
+                apiMessages,
+                allTools,
+              );
+              apiMessages = compressedMsgs;
+              if (tokensRemoved > 50)
+                debugLog(
+                  `${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`,
+                );
+              staleRetries = 0; // Reset so compressed context gets full retry attempts
+              i--;
+              continue;
             }
-            // Last 2-3 tool result messages with meaningful output (skip BLOCKED: messages)
-            const _toolResults = conversationMessages
-              .filter(m => m.role === 'tool' && typeof m.content === 'string' &&
-                !m.content.startsWith('BLOCKED:') && m.content.trim().length > 10)
-              .slice(-3)
-              .map(m => m.content.trim().split('\n').slice(0, 3).join('\n').slice(0, 200));
-            if (_toolResults.length > 0) {
-              _findingParts.push('Tool results summary:\n' + _toolResults.map(t => `- ${t}`).join('\n'));
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
             }
-            // Prepend already-modified files so LLM knows what it already did
-            if (filesModified.size > 0) {
-              const _modifiedList = [...filesModified].map(f => f.split('/').slice(-2).join('/')).join(', ');
-              _findingParts.unshift(`Already modified: ${_modifiedList} — use edit_file to add missing pieces only, DO NOT use write_file on these files.`);
-            }
-            if (_findingParts.length > 0) {
-              const _findingsMsg = {
-                role: 'user',
-                content: `[SYSTEM: Findings from investigation before context wipe]\n${_findingParts.join('\n')}\nContinue implementing the fixes based on these findings.`,
-              };
-              _superNuclear.push(_findingsMsg);
-            }
-            // Hard cap: after 3 super-nuclear wipes, abort — repeated context collapse
-            // is a sign the task is too large for the current context window.
-            if (_superNuclearFires >= 3) {
-              const modList = filesModified.size > 0
-                ? `\nFiles modified so far: ${[...filesModified].map(f => f.split('/').slice(-1)[0]).join(', ')}`
-                : '';
-              console.log(`${C.red}  ✗ Super-nuclear limit reached (3×) — aborting to prevent runaway context loop${C.reset}`);
-              console.log(`${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ''}${C.reset}`);
-              if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            const recovery = await _staleRecoveryPrompt();
+            if (recovery.action === "quit") {
               setOnChange(null);
-              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+              );
               saveNow(conversationMessages);
               break;
             }
-
-            apiMessages = _superNuclear;
-            _superNuclearFires++;
-            _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
-            // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
-            // If the SSH storm triggered the context overflow, we must keep SSH blocked
-            // so the agent can't immediately repeat the same storm after context wipe.
-            // SSH unblocks naturally when the agent sends a text-only response.
-            _jarvisLocalWarnFired = 0;       // re-arm local guard for fresh start
-            _sessionFileReadCounts.clear();  // file content is gone after wipe — allow re-reads
-            _sessionLastEditFailed.clear();
-            _sessionReReadBlockShown.clear();
-            _sessionGrepFileCounts.clear();  // same for grep flood counters
-
-            _logCompression(`Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`, C.yellow);
-            // After 1st super-nuclear, inject a skip-investigation hint (_superNuclearFires already incremented)
-            if (_superNuclearFires >= 1) {
-              const skipMsg = {
-                role: 'user',
-                content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.`,
-              };
-              conversationMessages.push(skipMsg);
-              apiMessages.push(skipMsg);
+            if (recovery.action === "switch") {
+              setActiveModel(`${recovery.provider}:${recovery.model}`);
+              console.log(
+                `${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`,
+              );
             }
-            contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
+            // 'retry' or 'switch': reset counters and retry
+            // NOTE: do NOT reset contextRetries here — the stale-retry and 400-error
+            // budgets are independent. Resetting contextRetries here would allow the
+            // 400-compress path to loop indefinitely after a stale recovery.
+            staleRetries = 0;
             i--;
             continue;
           }
-        }
-        userMessage = 'Context too large to compress — use /clear to start fresh';
-      } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503') || err.message.includes('504')) {
-        userMessage = 'API server error — the provider is experiencing issues. Please try again in a moment';
-      } else if (err.message.includes('fetch failed') || err.message.includes('fetch')) {
-        userMessage = 'Network request failed — please check your internet connection';
-      }
-      console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
-
-      if (err.message.includes('429')) {
-        rateLimitRetries++;
-        if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
-          console.log(`${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded. Try again later or use /budget to check your limits.${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          saveNow(conversationMessages);
-          break;
-        }
-        const delay = Math.min(10000 * Math.pow(2, rateLimitRetries - 1), 120000);
-        const waitSpinner = new Spinner(`Rate limit — waiting ${Math.round(delay / 1000)}s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`);
-        waitSpinner.start();
-        await new Promise((r) => setTimeout(r, delay));
-        waitSpinner.stop();
-        continue;
-      }
-
-      // Network/TLS errors — retry with backoff (don't burn iterations)
-      const isNetworkError = err.message.includes('socket disconnected') ||
-        err.message.includes('TLS') || err.message.includes('ECONNRESET') ||
-        err.message.includes('ECONNABORTED') || err.message.includes('ETIMEDOUT') ||
-        err.code === 'ECONNRESET' || err.code === 'ECONNABORTED';
-      if (isNetworkError) {
-        networkRetries++;
-        if (networkRetries > MAX_NETWORK_RETRIES) {
-          console.log(`${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-          saveNow(conversationMessages);
-          break;
-        }
-        const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
-        const waitSpinner = new Spinner(`Network error — retrying in ${Math.round(delay / 1000)}s (${networkRetries}/${MAX_NETWORK_RETRIES})`);
-        waitSpinner.start();
-        await new Promise((r) => setTimeout(r, delay));
-        waitSpinner.stop();
-        i--; // Don't count network errors as iterations
-        continue;
-      }
-
-      // Auto-save on error so conversation isn't lost
-      if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-      setOnChange(null);
-      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-      saveNow(conversationMessages);
-      break;
-    }
-
-    clearInterval(staleTimer);
-    // Successful API response — reset per-call retry counters so transient
-    // rate-limit or network errors earlier in the session don't eat future retry budget.
-    rateLimitRetries = 0;
-    networkRetries = 0;
-
-    if (firstToken) {
-      if (taskProgress && !taskProgress._paused) taskProgress.pause();
-      if (spinner) spinner.stop();
-    }
-
-    // Flush remaining token buffer (from batching)
-    if (flushTimeout) {
-      clearTimeout(flushTimeout);
-      flushTimeout = null;
-    }
-    if (tokenBuffer && stream) {
-      stream.push(tokenBuffer);
-      tokenBuffer = '';
-    }
-
-    // Flush remaining stream buffer
-    if (streamedText) {
-      stream.flush();
-    }
-    // Reset retry counters on success
-    networkRetries = 0;
-    staleRetries = 0;
-
-    // Track token usage for cost dashboard
-    if (result && result.usage) {
-      trackUsage(
-        getActiveProviderName(),
-        getActiveModelId(),
-        result.usage.prompt_tokens || 0,
-        result.usage.completion_tokens || 0
-      );
-      cumulativeTokens += (result.usage.prompt_tokens || 0) + (result.usage.completion_tokens || 0);
-      if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
-    }
-
-    const { content: rawContent, tool_calls } = result;
-
-    // ── Repetition guard: truncate looping LLM output before storing ──────
-    // First apply paragraph-level loop detection (catches tight single-line loops)
-    const loopCheck = detectAndTruncateLoop(rawContent || '');
-    const afterLoopCheck = loopCheck.truncated ? loopCheck.text : rawContent;
-    if (loopCheck.truncated) {
-      console.log(`${C.yellow}  ⚠ LLM output loop detected (${loopCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
-    }
-    // Then apply sentence-window repetition detection (catches multi-sentence loops)
-    const repCheck = detectAndTruncateRepetition(afterLoopCheck || '');
-    const content = repCheck.truncated ? repCheck.text : afterLoopCheck;
-    if (repCheck.truncated) {
-      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated window) — response truncated${C.reset}`);
-    }
-
-    // Build assistant message for history
-    const assistantMsg = { role: 'assistant', content: content || '' };
-    if (tool_calls && tool_calls.length > 0) {
-      assistantMsg.tool_calls = tool_calls;
-    }
-    conversationMessages.push(assistantMsg);
-    apiMessages.push(assistantMsg);
-
-    // No tool calls → response complete (or nudge if empty after tools)
-    if (!tool_calls || tool_calls.length === 0) {
-      const hasText = (content || '').trim().length > 0 || streamedText.trim().length > 0;
-      // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
-      let _justUnblockedSsh = false;
-      if (_sshBlockedAfterStorm && hasText) {
-        _sshBlockedAfterStorm = false;
-        _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
-        _justUnblockedSsh = true;
-      }
-      // If the agent just got unblocked but responded with a question instead of acting,
-      // nudge it to continue implementing the fix without asking.
-      if (_justUnblockedSsh && hasText) {
-        const synthText = (content || '').trim();
-        const endsWithQuestion = synthText.endsWith('?') ||
-          /\b(Wo |Bitte |Kannst du|Soll ich)\b/.test(synthText.slice(-200));
-        if (endsWithQuestion) {
-          const continueNudge = { role: 'user', content: '[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is at 94.130.37.43.' };
-          apiMessages.push(continueNudge);
-          conversationMessages.push(continueNudge);
-          continue; // let the loop proceed without counting as a new step
-        }
-      }
-      // If we just ran tools but the LLM produced no text → nudge it to summarize
-      if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
-        const nudge = { role: 'user', content: '[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.' };
-        apiMessages.push(nudge);
-        conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
-        continue; // retry — don't count as a new step
-      }
-      // In plan mode: if the LLM presented a plan without reading ANY files first,
-      // reject it and force investigation. A plan based on zero tool calls is pure
-      // hallucination — the LLM invented data structures, file locations, etc.
-      // Cap at 2 rejections — on the 3rd attempt accept the plan to prevent an
-      // infinite investigation loop (LLM may be unable to read relevant files).
-      if (isPlanMode() && hasText && totalSteps === 0) {
-        _planRejectionCount++;
-        if (_planRejectionCount > 2) {
-          console.log(`${C.yellow}  ⚠ Plan accepted despite no file reads (rejection loop cap reached)${C.reset}`);
-          // Fall through to normal plan handling below
-        } else {
-          const investigateNudge = {
-            role: 'user',
-            content: `[SYSTEM] You wrote a plan without reading any files. This plan may be based on incorrect assumptions (wrong database type, wrong file structure, etc.).\n\nMANDATORY: Use read_file, glob, or grep to investigate the actual codebase first. Read at least the relevant module file and route file before writing the plan.`,
-          };
-          conversationMessages.push(investigateNudge);
-          apiMessages.push(investigateNudge);
-          console.log(`${C.yellow}  ⚠ Plan rejected (${_planRejectionCount}/2): no files read — forcing investigation${C.reset}`);
+          // Progressive delay: 3s on first retry, 5s on subsequent
+          const delay = staleRetries === 1 ? 3000 : 5000;
+          // Auto-switch to fast model on first stale retry (don't waste another 120s on the same model)
+          // Uses staleCompressUsed (not contextRetries) so 400-error recovery budget stays intact.
+          // Nuclear compression on stale switch: context is already large enough to cause a timeout,
+          // so aggressively trim to 35% to give the (possibly smaller) fast model headroom.
+          if (staleRetries >= 1 && staleCompressUsed < 1) {
+            staleCompressUsed++;
+            _logCompression(
+              `Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — force-compressing before retry...`,
+              C.yellow,
+            );
+            const allTools = getAllToolDefinitions();
+            const { messages: compressedMsgs, tokensRemoved } = forceCompress(
+              apiMessages,
+              allTools,
+              true,
+            ); // nuclear: 35% target
+            apiMessages = compressedMsgs;
+            if (tokensRemoved > 0) {
+              if (tokensRemoved > 50)
+                debugLog(
+                  `${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`,
+                );
+            }
+            if (STALE_AUTO_SWITCH) {
+              const fastModel =
+                MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+              if (fastModel && fastModel !== getActiveModelId()) {
+                setActiveModel(`${getActiveProviderName()}:${fastModel}`);
+                console.log(
+                  `${C.cyan}  ⚡ Auto-switched to ${fastModel} to avoid further stale timeouts${C.reset}`,
+                );
+                console.log(
+                  `${C.dim}  (disable with NEX_STALE_AUTO_SWITCH=0)${C.reset}`,
+                );
+              }
+            }
+          } else {
+            debugLog(
+              `${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`,
+            );
+          }
+          const delaySpinner = new Spinner(
+            `Waiting ${delay / 1000}s before retry...`,
+          );
+          delaySpinner.start();
+          await new Promise((r) => setTimeout(r, delay));
+          delaySpinner.stop();
+          i--; // Don't count stale timeouts as iterations
           continue;
         }
-      }
 
-      // In plan mode: save the plan text output to disk and extract structured steps
-      if (isPlanMode() && hasText) {
-        const planText = (content || streamedText || '').trim();
-        setPlanContent(planText);
-        _savePlanToFile(planText);
-        // Extract structured steps from LLM output so they can be tracked during execution
-        const extractedSteps = extractStepsFromText(planText);
-        if (extractedSteps.length > 0) {
-          // Determine task description from first user message in this session
-          const taskMsg = conversationMessages.find((m) => m.role === 'user');
-          const taskDesc = typeof taskMsg?.content === 'string'
-            ? taskMsg.content.slice(0, 120)
-            : 'Task';
-          createPlan(taskDesc, extractedSteps);
-          const stepWord = extractedSteps.length === 1 ? 'step' : 'steps';
-          // Interactive approval prompt (TTY only).
-          // We read stdin directly without creating a new readline interface —
-          // the main REPL readline is paused while processInput() runs, so
-          // direct stdin access is safe here and avoids stream conflicts.
-          let _autoApproved = false;
-          if (process.stdout.isTTY && process.stdin.isTTY) {
-            const { approvePlan, startExecution, setPlanMode } = require('./planner');
-            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `);
-            const wasRaw = process.stdin.isRaw;
-            const choice = await new Promise(resolve => {
-              try { process.stdin.setRawMode(true); } catch (_) { /* no tty */ }
-              process.stdin.resume();
-              process.stdin.once('data', (ch) => {
-                try { process.stdin.setRawMode(wasRaw || false); } catch (_) { /* ignore */ }
-                // Do NOT pause stdin — the main readline needs it flowing after we return
-                const k = ch.toString().toLowerCase()[0] || '\r';
-                resolve(k);
-              });
-            });
-            process.stdout.write('\n');
-            if (choice === 'r') {
-              console.log(`${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`);
-            } else if (choice === 'e') {
-              console.log(`${C.yellow}Type /plan edit to open in editor, or give feedback.${C.reset}`);
+        // Abort errors (Ctrl+C) — break silently
+        if (
+          err.name === "AbortError" ||
+          err.name === "CanceledError" ||
+          err.message?.includes("canceled") ||
+          err.message?.includes("aborted")
+        ) {
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          break;
+        }
+
+        // User-friendly error message (avoid raw stack traces/cryptic codes)
+        let userMessage = err.message;
+        if (
+          err.code === "ECONNREFUSED" ||
+          err.message.includes("ECONNREFUSED")
+        ) {
+          userMessage =
+            "Connection refused — please check your internet connection or API endpoint";
+        } else if (
+          err.code === "ENOTFOUND" ||
+          err.message.includes("ENOTFOUND")
+        ) {
+          userMessage =
+            "Network error — could not reach the API server. Please check your connection";
+        } else if (
+          err.code === "ETIMEDOUT" ||
+          err.message.includes("timeout")
+        ) {
+          userMessage =
+            "Request timed out — the API server took too long to respond. Please try again";
+        } else if (
+          err.message.includes("401") ||
+          err.message.includes("Unauthorized")
+        ) {
+          userMessage =
+            "Authentication failed — please check your API key in the .env file";
+        } else if (
+          err.message.includes("403") ||
+          err.message.includes("Forbidden")
+        ) {
+          userMessage =
+            "Access denied — your API key may not have permission for this model";
+        } else if (err.message.includes("404")) {
+          // 404 = model not found on Ollama/OpenAI-compat provider — fatal, don't retry
+          const modelId = getActiveModelId ? getActiveModelId() : "unknown";
+          userMessage = `Model not found (404): ${modelId} — check your .env MODEL setting or run /models to list available models`;
+          console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          break;
+        } else if (err.message.includes("400")) {
+          // On any 400, always try force-compress first — the most common cause is a context
+          // overflow where Ollama returns a bare 400 with no useful message. Token-count
+          // heuristics are too unreliable to gate this: just try and retry.
+          // If a stale switch already happened (staleCompressUsed > 0), we already did nuclear
+          // compression — jump straight to nuclear for 400s too to avoid wasting light attempts.
+          if (
+            contextRetries < 3 &&
+            totalContextRetries < MAX_TOTAL_CONTEXT_RETRIES
+          ) {
+            contextRetries++;
+            totalContextRetries++;
+            // On the very first call (no tool steps yet), skip gentle compression — there are
+            // no old messages to trim. Go straight to nuclear to avoid 3 noisy failed attempts.
+            const isFirstCall = totalSteps === 0 && contextRetries === 1;
+            const nuclear =
+              isFirstCall || contextRetries === 3 || staleCompressUsed > 0;
+            if (isFirstCall) {
+              // First-call 400: system prompt too large for model. Skip to attempt 3.
+              contextRetries = 3;
+              const _errDetail = err.message
+                .replace(/^API Error(\s*\[HTTP \d+\])?:\s*/i, "")
+                .slice(0, 150);
+              _logCompression(
+                `Bad request (400) — ${_errDetail || "system prompt too large"}, compressing...`,
+                C.yellow,
+              );
+            } else if (nuclear) {
+              _logCompression(
+                `Bad request (400) — nuclear compression (attempt ${contextRetries}/3, dropping history)...`,
+                C.yellow,
+              );
             } else {
-              // 'a', Enter (\r), space, or anything else → approve
-              if (approvePlan()) {
-                startExecution();
-                setPlanMode(false);
-                invalidateSystemPromptCache();
-                console.log(`${C.green}${C.bold}Approved!${C.reset} Executing ${extractedSteps.length} ${stepWord}...`);
-                const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText}`;
-                conversationMessages.push({ role: 'user', content: execPrompt });
-                apiMessages.push({ role: 'user', content: execPrompt });
-                _autoApproved = true;
-              }
+              _logCompression(
+                `Bad request (400) — force-compressing and retrying... (attempt ${contextRetries}/3)`,
+                C.yellow,
+              );
             }
-          } else {
-            console.log(`\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`);
-          }
-          if (_autoApproved) {
-            // Clean up progress state before re-entering the loop
-            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-            i--; // don't count the plan turn as a step
-            continue;
-          }
-        } else {
-          // Prose plan with no extractable numbered steps — still offer A-key approval
-          let _prosePlanApproved = false;
-          if (process.stdout.isTTY && process.stdin.isTTY) {
-            const { approvePlan, startExecution, setPlanMode } = require('./planner');
-            process.stdout.write(`\n${C.cyan}${C.bold}Plan ready.${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `);
-            const wasRaw2 = process.stdin.isRaw;
-            const choice2 = await new Promise(resolve => {
-              try { process.stdin.setRawMode(true); } catch (_) { /* no tty */ }
-              process.stdin.resume();
-              process.stdin.once('data', (ch) => {
-                try { process.stdin.setRawMode(wasRaw2 || false); } catch (_) { /* ignore */ }
-                resolve(ch.toString().toLowerCase()[0] || '\r');
-              });
-            });
-            process.stdout.write('\n');
-            if (choice2 === 'r') {
-              console.log(`${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`);
-            } else {
-              if (approvePlan()) {
-                startExecution();
-                setPlanMode(false);
-                invalidateSystemPromptCache();
-                console.log(`${C.green}${C.bold}Approved!${C.reset} Executing...`);
-                const planText2 = getPlanContent() || result.content;
-                const execPrompt2 = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText2}`;
-                conversationMessages.push({ role: 'user', content: execPrompt2 });
-                apiMessages.push({ role: 'user', content: execPrompt2 });
-                _prosePlanApproved = true;
-              }
+            const allTools = getAllToolDefinitions();
+            const { messages: compressedMsgs, tokensRemoved } = forceCompress(
+              apiMessages,
+              allTools,
+              nuclear,
+            );
+            apiMessages = compressedMsgs;
+            if (tokensRemoved > 50) {
+              debugLog(
+                `${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`,
+              );
             }
-          } else {
-            console.log(`\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`);
-          }
-          if (_prosePlanApproved) {
-            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             i--;
             continue;
           }
+          // All compress retries exhausted — last resort: keep only system + first task message.
+          // This is more aggressive than nuclear (which keeps ~35% of context) — it drops
+          // everything except the origin user message so the agent can at least continue.
+          {
+            const _sys = apiMessages.find((m) => m.role === "system");
+            const _firstTask = apiMessages.find(
+              (m) =>
+                m.role === "user" &&
+                !String(m.content).startsWith("[SYSTEM") &&
+                !String(m.content).startsWith("BLOCKED:"),
+            );
+            const _superNuclear = [_sys, _firstTask].filter(Boolean);
+            const { getUsage: _gu } = require("./context-engine");
+            const _afterTokens =
+              require("./context-engine").estimateMessagesTokens(_superNuclear);
+            const _beforeTokens =
+              require("./context-engine").estimateMessagesTokens(apiMessages);
+            if (_afterTokens < _beforeTokens) {
+              // Extract investigation findings before wiping history so the agent
+              // can continue implementing fixes instead of re-investigating from scratch.
+              const _findingParts = [];
+              // Last 3 assistant messages with actual text content (skip pure tool-call turns)
+              const _assistantTexts = conversationMessages
+                .filter(
+                  (m) =>
+                    m.role === "assistant" &&
+                    typeof m.content === "string" &&
+                    m.content.trim().length > 30,
+                )
+                .slice(-3)
+                .map((m) =>
+                  m.content.trim().slice(0, 120).replace(/\n+/g, " "),
+                );
+              if (_assistantTexts.length > 0) {
+                _findingParts.push(
+                  "Key findings:\n" +
+                    _assistantTexts.map((t) => `- ${t}`).join("\n"),
+                );
+              }
+              // Last 2-3 tool result messages with meaningful output (skip BLOCKED: messages)
+              const _toolResults = conversationMessages
+                .filter(
+                  (m) =>
+                    m.role === "tool" &&
+                    typeof m.content === "string" &&
+                    !m.content.startsWith("BLOCKED:") &&
+                    m.content.trim().length > 10,
+                )
+                .slice(-3)
+                .map((m) =>
+                  m.content
+                    .trim()
+                    .split("\n")
+                    .slice(0, 3)
+                    .join("\n")
+                    .slice(0, 200),
+                );
+              if (_toolResults.length > 0) {
+                _findingParts.push(
+                  "Tool results summary:\n" +
+                    _toolResults.map((t) => `- ${t}`).join("\n"),
+                );
+              }
+              // Prepend already-modified files so LLM knows what it already did
+              if (filesModified.size > 0) {
+                const _modifiedList = [...filesModified]
+                  .map((f) => f.split("/").slice(-2).join("/"))
+                  .join(", ");
+                _findingParts.unshift(
+                  `Already modified: ${_modifiedList} — use edit_file to add missing pieces only, DO NOT use write_file on these files.`,
+                );
+              }
+              if (_findingParts.length > 0) {
+                const _findingsMsg = {
+                  role: "user",
+                  content: `[SYSTEM: Findings from investigation before context wipe]\n${_findingParts.join("\n")}\nContinue implementing the fixes based on these findings.`,
+                };
+                _superNuclear.push(_findingsMsg);
+              }
+              // Hard cap: after 3 super-nuclear wipes, abort — repeated context collapse
+              // is a sign the task is too large for the current context window.
+              if (_superNuclearFires >= 3) {
+                const modList =
+                  filesModified.size > 0
+                    ? `\nFiles modified so far: ${[...filesModified].map((f) => f.split("/").slice(-1)[0]).join(", ")}`
+                    : "";
+                debugLog(
+                  `${C.red}  ✗ Super-nuclear limit reached (3×) — aborting to prevent runaway context loop${C.reset}`,
+                );
+                console.log(
+                  `${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ""}${C.reset}`,
+                );
+                if (taskProgress) {
+                  taskProgress.stop();
+                  taskProgress = null;
+                }
+                setOnChange(null);
+                _printResume(
+                  totalSteps,
+                  toolCounts,
+                  filesModified,
+                  filesRead,
+                  startTime,
+                  { suppressHint: true },
+                );
+                saveNow(conversationMessages);
+                break;
+              }
+
+              apiMessages = _superNuclear;
+              _superNuclearFires++;
+              _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
+              // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
+              // If the SSH storm triggered the context overflow, we must keep SSH blocked
+              // so the agent can't immediately repeat the same storm after context wipe.
+              // SSH unblocks naturally when the agent sends a text-only response.
+              _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
+              _sessionFileReadCounts.clear(); // file content is gone after wipe — allow re-reads
+              _sessionLastEditFailed.clear();
+              _sessionReReadBlockShown.clear();
+              _sessionGrepFileCounts.clear(); // same for grep flood counters
+
+              _logCompression(
+                `Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`,
+                C.yellow,
+              );
+              // After 1st super-nuclear, inject a skip-investigation hint (_superNuclearFires already incremented)
+              if (_superNuclearFires >= 1) {
+                const skipMsg = {
+                  role: "user",
+                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.`,
+                };
+                conversationMessages.push(skipMsg);
+                apiMessages.push(skipMsg);
+              }
+              contextRetries = 0; // reset so we get 3 fresh retries with the stripped context
+              i--;
+              continue;
+            }
+          }
+          userMessage =
+            "Context too large to compress — use /clear to start fresh";
+        } else if (
+          err.message.includes("500") ||
+          err.message.includes("502") ||
+          err.message.includes("503") ||
+          err.message.includes("504")
+        ) {
+          userMessage =
+            "API server error — the provider is experiencing issues. Please try again in a moment";
+        } else if (
+          err.message.includes("fetch failed") ||
+          err.message.includes("fetch")
+        ) {
+          userMessage =
+            "Network request failed — please check your internet connection";
         }
+        console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
+
+        if (err.message.includes("429")) {
+          rateLimitRetries++;
+          if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+            console.log(
+              `${C.red}  Rate limit: max retries (${MAX_RATE_LIMIT_RETRIES}) exceeded. Try again later or use /budget to check your limits.${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            break;
+          }
+          const delay = Math.min(
+            10000 * Math.pow(2, rateLimitRetries - 1),
+            120000,
+          );
+          const waitSpinner = new Spinner(
+            `Rate limit — waiting ${Math.round(delay / 1000)}s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})`,
+          );
+          waitSpinner.start();
+          await new Promise((r) => setTimeout(r, delay));
+          waitSpinner.stop();
+          continue;
+        }
+
+        // Network/TLS errors — retry with backoff (don't burn iterations)
+        const isNetworkError =
+          err.message.includes("socket disconnected") ||
+          err.message.includes("TLS") ||
+          err.message.includes("ECONNRESET") ||
+          err.message.includes("ECONNABORTED") ||
+          err.message.includes("ETIMEDOUT") ||
+          err.code === "ECONNRESET" ||
+          err.code === "ECONNABORTED";
+        if (isNetworkError) {
+          networkRetries++;
+          if (networkRetries > MAX_NETWORK_RETRIES) {
+            console.log(
+              `${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            break;
+          }
+          const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
+          const waitSpinner = new Spinner(
+            `Network error — retrying in ${Math.round(delay / 1000)}s (${networkRetries}/${MAX_NETWORK_RETRIES})`,
+          );
+          waitSpinner.start();
+          await new Promise((r) => setTimeout(r, delay));
+          waitSpinner.stop();
+          i--; // Don't count network errors as iterations
+          continue;
+        }
+
+        // Auto-save on error so conversation isn't lost
+        if (taskProgress) {
+          taskProgress.stop();
+          taskProgress = null;
+        }
+        setOnChange(null);
+        _printResume(
+          totalSteps,
+          toolCounts,
+          filesModified,
+          filesRead,
+          startTime,
+        );
+        saveNow(conversationMessages);
+        break;
       }
-      if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-      setOnChange(null);
-      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-      saveNow(conversationMessages);
-      _scoreAndPrint(conversationMessages);
-      return;
-    }
 
-    // ─── Update stats ───
-    totalSteps++;
-    if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
-    for (const tc of tool_calls) {
-      const name = tc.function.name;
-      toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
-    }
+      clearInterval(staleTimer);
+      // Successful API response — reset per-call retry counters so transient
+      // rate-limit or network errors earlier in the session don't eat future retry budget.
+      rateLimitRetries = 0;
+      networkRetries = 0;
 
-    // ─── Prepare all tool calls (parse, validate, permissions) ───
-    // Run all preparations concurrently. Each call is independent: permission
-    // checks and validation are synchronous; only user-confirmation prompts
-    // are async, but readline serialises them through stdin automatically.
-    const prepared = await Promise.all(tool_calls.map(tc => prepareToolCall(tc)));
+      if (firstToken) {
+        if (taskProgress && !taskProgress._paused) taskProgress.pause();
+        if (spinner) spinner.stop();
+      }
 
-    // ─── Pre-batch context pressure check ───────────────────────────────────
-    // Warn the LLM before it executes tool calls that could overflow context.
-    // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
-    {
-      const ctxUsage = getUsage(apiMessages, getAllToolDefinitions());
-      const ctxPct = ctxUsage.percentage;
-      const hasUnboundedRead = prepared.some(p =>
-        p.canExecute && p.fnName === 'read_file' && !p.args?.line_end
+      // Flush remaining token buffer (from batching)
+      if (flushTimeout) {
+        clearTimeout(flushTimeout);
+        flushTimeout = null;
+      }
+      if (tokenBuffer && stream) {
+        stream.push(tokenBuffer);
+        tokenBuffer = "";
+      }
+
+      // Flush remaining stream buffer
+      if (streamedText) {
+        stream.flush();
+      }
+      // Reset retry counters on success
+      networkRetries = 0;
+      staleRetries = 0;
+
+      // Track token usage for cost dashboard
+      if (result && result.usage) {
+        trackUsage(
+          getActiveProviderName(),
+          getActiveModelId(),
+          result.usage.prompt_tokens || 0,
+          result.usage.completion_tokens || 0,
+        );
+        cumulativeTokens +=
+          (result.usage.prompt_tokens || 0) +
+          (result.usage.completion_tokens || 0);
+        if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
+      }
+
+      const { content: rawContent, tool_calls } = result;
+
+      // ── Repetition guard: truncate looping LLM output before storing ──────
+      // First apply paragraph-level loop detection (catches tight single-line loops)
+      const loopCheck = detectAndTruncateLoop(rawContent || "");
+      const afterLoopCheck = loopCheck.truncated ? loopCheck.text : rawContent;
+      if (loopCheck.truncated) {
+        debugLog(
+          `${C.yellow}  ⚠ LLM output loop detected (${loopCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`,
+        );
+      }
+      // Then apply sentence-window repetition detection (catches multi-sentence loops)
+      const repCheck = detectAndTruncateRepetition(afterLoopCheck || "");
+      const content = repCheck.truncated ? repCheck.text : afterLoopCheck;
+      if (repCheck.truncated) {
+        debugLog(
+          `${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated window) — response truncated${C.reset}`,
+        );
+      }
+
+      // Build assistant message for history
+      const assistantMsg = { role: "assistant", content: content || "" };
+      if (tool_calls && tool_calls.length > 0) {
+        assistantMsg.tool_calls = tool_calls;
+      }
+      conversationMessages.push(assistantMsg);
+      apiMessages.push(assistantMsg);
+
+      // No tool calls → response complete (or nudge if empty after tools)
+      if (!tool_calls || tool_calls.length === 0) {
+        const hasText =
+          (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
+        let _justUnblockedSsh = false;
+        if (_sshBlockedAfterStorm && hasText) {
+          _sshBlockedAfterStorm = false;
+          _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
+          _justUnblockedSsh = true;
+        }
+        // If the agent just got unblocked but responded with a question instead of acting,
+        // nudge it to continue implementing the fix without asking.
+        if (_justUnblockedSsh && hasText) {
+          const synthText = (content || "").trim();
+          const endsWithQuestion =
+            synthText.endsWith("?") ||
+            /\b(Wo |Bitte |Kannst du|Soll ich)\b/.test(synthText.slice(-200));
+          if (endsWithQuestion) {
+            const continueNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is at 94.130.37.43.",
+            };
+            apiMessages.push(continueNudge);
+            conversationMessages.push(continueNudge);
+            continue; // let the loop proceed without counting as a new step
+          }
+        }
+        // If we just ran tools but the LLM produced no text → nudge it to summarize
+        if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
+          const nudge = {
+            role: "user",
+            content:
+              "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
+          };
+          apiMessages.push(nudge);
+          conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
+          continue; // retry — don't count as a new step
+        }
+        // In plan mode: if the LLM presented a plan without reading ANY files first,
+        // reject it and force investigation. A plan based on zero tool calls is pure
+        // hallucination — the LLM invented data structures, file locations, etc.
+        // Cap at 2 rejections — on the 3rd attempt accept the plan to prevent an
+        // infinite investigation loop (LLM may be unable to read relevant files).
+        if (isPlanMode() && hasText && totalSteps === 0) {
+          _planRejectionCount++;
+          if (_planRejectionCount > 2) {
+            debugLog(
+              `${C.yellow}  ⚠ Plan accepted despite no file reads (rejection loop cap reached)${C.reset}`,
+            );
+            // Fall through to normal plan handling below
+          } else {
+            const investigateNudge = {
+              role: "user",
+              content: `[SYSTEM] You wrote a plan without reading any files. This plan may be based on incorrect assumptions (wrong database type, wrong file structure, etc.).\n\nMANDATORY: Use read_file, glob, or grep to investigate the actual codebase first. Read at least the relevant module file and route file before writing the plan.`,
+            };
+            conversationMessages.push(investigateNudge);
+            apiMessages.push(investigateNudge);
+            debugLog(
+              `${C.yellow}  ⚠ Plan rejected (${_planRejectionCount}/2): no files read — forcing investigation${C.reset}`,
+            );
+            continue;
+          }
+        }
+
+        // In plan mode: save the plan text output to disk and extract structured steps
+        if (isPlanMode() && hasText) {
+          const planText = (content || streamedText || "").trim();
+          setPlanContent(planText);
+          _savePlanToFile(planText);
+          // Extract structured steps from LLM output so they can be tracked during execution
+          const extractedSteps = extractStepsFromText(planText);
+          if (extractedSteps.length > 0) {
+            // Determine task description from first user message in this session
+            const taskMsg = conversationMessages.find((m) => m.role === "user");
+            const taskDesc =
+              typeof taskMsg?.content === "string"
+                ? taskMsg.content.slice(0, 120)
+                : "Task";
+            createPlan(taskDesc, extractedSteps);
+            const stepWord = extractedSteps.length === 1 ? "step" : "steps";
+            // Interactive approval prompt (TTY only).
+            // We read stdin directly without creating a new readline interface —
+            // the main REPL readline is paused while processInput() runs, so
+            // direct stdin access is safe here and avoids stream conflicts.
+            let _autoApproved = false;
+            if (process.stdout.isTTY && process.stdin.isTTY) {
+              const {
+                approvePlan,
+                startExecution,
+                setPlanMode,
+              } = require("./planner");
+              process.stdout.write(
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+              );
+              const wasRaw = process.stdin.isRaw;
+              const choice = await new Promise((resolve) => {
+                try {
+                  process.stdin.setRawMode(true);
+                } catch (_) {
+                  /* no tty */
+                }
+                process.stdin.resume();
+                process.stdin.once("data", (ch) => {
+                  try {
+                    process.stdin.setRawMode(wasRaw || false);
+                  } catch (_) {
+                    /* ignore */
+                  }
+                  // Do NOT pause stdin — the main readline needs it flowing after we return
+                  const k = ch.toString().toLowerCase()[0] || "\r";
+                  resolve(k);
+                });
+              });
+              process.stdout.write("\n");
+              if (choice === "r") {
+                console.log(
+                  `${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`,
+                );
+              } else if (choice === "e") {
+                console.log(
+                  `${C.yellow}Type /plan edit to open in editor, or give feedback.${C.reset}`,
+                );
+              } else {
+                // 'a', Enter (\r), space, or anything else → approve
+                if (approvePlan()) {
+                  startExecution();
+                  setPlanMode(false);
+                  invalidateSystemPromptCache();
+                  console.log(
+                    `${C.green}${C.bold}Approved!${C.reset} Executing ${extractedSteps.length} ${stepWord}...`,
+                  );
+                  const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText}`;
+                  conversationMessages.push({
+                    role: "user",
+                    content: execPrompt,
+                  });
+                  apiMessages.push({ role: "user", content: execPrompt });
+                  _autoApproved = true;
+                }
+              }
+            } else {
+              console.log(
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`,
+              );
+            }
+            if (_autoApproved) {
+              // Clean up progress state before re-entering the loop
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              i--; // don't count the plan turn as a step
+              continue;
+            }
+          } else {
+            // Prose plan with no extractable numbered steps — still offer A-key approval
+            let _prosePlanApproved = false;
+            if (process.stdout.isTTY && process.stdin.isTTY) {
+              const {
+                approvePlan,
+                startExecution,
+                setPlanMode,
+              } = require("./planner");
+              process.stdout.write(
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+              );
+              const wasRaw2 = process.stdin.isRaw;
+              const choice2 = await new Promise((resolve) => {
+                try {
+                  process.stdin.setRawMode(true);
+                } catch (_) {
+                  /* no tty */
+                }
+                process.stdin.resume();
+                process.stdin.once("data", (ch) => {
+                  try {
+                    process.stdin.setRawMode(wasRaw2 || false);
+                  } catch (_) {
+                    /* ignore */
+                  }
+                  resolve(ch.toString().toLowerCase()[0] || "\r");
+                });
+              });
+              process.stdout.write("\n");
+              if (choice2 === "r") {
+                console.log(
+                  `${C.red}Plan rejected.${C.reset} Ask follow-up questions to refine.`,
+                );
+              } else {
+                if (approvePlan()) {
+                  startExecution();
+                  setPlanMode(false);
+                  invalidateSystemPromptCache();
+                  console.log(
+                    `${C.green}${C.bold}Approved!${C.reset} Executing...`,
+                  );
+                  const planText2 = getPlanContent() || result.content;
+                  const execPrompt2 = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planText2}`;
+                  conversationMessages.push({
+                    role: "user",
+                    content: execPrompt2,
+                  });
+                  apiMessages.push({ role: "user", content: execPrompt2 });
+                  _prosePlanApproved = true;
+                }
+              }
+            } else {
+              console.log(
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`,
+              );
+            }
+            if (_prosePlanApproved) {
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              i--;
+              continue;
+            }
+          }
+        }
+        if (taskProgress) {
+          taskProgress.stop();
+          taskProgress = null;
+        }
+        setOnChange(null);
+        _printResume(
+          totalSteps,
+          toolCounts,
+          filesModified,
+          filesRead,
+          startTime,
+        );
+        saveNow(conversationMessages);
+        _scoreAndPrint(conversationMessages);
+        return;
+      }
+
+      // ─── Update stats ───
+      totalSteps++;
+      if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
+      for (const tc of tool_calls) {
+        const name = tc.function.name;
+        toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+      }
+
+      // ─── Prepare all tool calls (parse, validate, permissions) ───
+      // Run all preparations concurrently. Each call is independent: permission
+      // checks and validation are synchronous; only user-confirmation prompts
+      // are async, but readline serialises them through stdin automatically.
+      const prepared = await Promise.all(
+        tool_calls.map((tc) => prepareToolCall(tc)),
       );
-      // Detect unbounded re-reads: read_file without line_start for a file already read.
-      // Targeted re-reads (with line_start) are now allowed (reading new sections after 350-line cap).
-      const reReadFiles = prepared
-        .filter(p => p.canExecute && p.fnName === 'read_file' && p.args?.path
-          && fileReadCounts.get(p.args.path) >= 1 && !p.args?.line_start)
-        .map(p => p.args.path.split('/').slice(-2).join('/'));
-      const hasReRead = reReadFiles.length > 0;
-      // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always;
-      // also warn unconditionally on unbounded re-reads of files already in context.
-      const warnNow =
-        (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
-        (ctxPct >= 85 && contextPressureWarnedAt < 85) ||
-        hasReRead;
-      if (warnNow) {
-        contextPressureWarnedAt = ctxPct;
-        let urgency = ctxPct >= 85 ? 'URGENT' : 'WARNING';
-        let advice;
-        if (hasReRead) {
-          urgency = 'WARNING';
-          advice = `Unbounded re-read of ${reReadFiles.join(', ')} — already in context. Use line_start/line_end to read specific sections instead.`;
-        } else if (hasUnboundedRead) {
-          advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
-        } else {
-          advice = `Context ${Math.round(ctxPct)}% used. Avoid large reads, wrap up with what you have.`;
+
+      // ─── Pre-batch context pressure check ───────────────────────────────────
+      // Warn the LLM before it executes tool calls that could overflow context.
+      // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
+      {
+        const ctxUsage = getUsage(apiMessages, getAllToolDefinitions());
+        const ctxPct = ctxUsage.percentage;
+        const hasUnboundedRead = prepared.some(
+          (p) => p.canExecute && p.fnName === "read_file" && !p.args?.line_end,
+        );
+        // Detect unbounded re-reads: read_file without line_start for a file already read.
+        // Targeted re-reads (with line_start) are now allowed (reading new sections after 350-line cap).
+        const reReadFiles = prepared
+          .filter(
+            (p) =>
+              p.canExecute &&
+              p.fnName === "read_file" &&
+              p.args?.path &&
+              fileReadCounts.get(p.args.path) >= 1 &&
+              !p.args?.line_start,
+          )
+          .map((p) => p.args.path.split("/").slice(-2).join("/"));
+        const hasReRead = reReadFiles.length > 0;
+        // Warn at 70% if about to do a full (unbounded) file read; urgently at 85% always;
+        // also warn unconditionally on unbounded re-reads of files already in context.
+        const warnNow =
+          (ctxPct >= 70 && hasUnboundedRead && contextPressureWarnedAt < 70) ||
+          (ctxPct >= 85 && contextPressureWarnedAt < 85) ||
+          hasReRead;
+        if (warnNow) {
+          contextPressureWarnedAt = ctxPct;
+          let urgency = ctxPct >= 85 ? "URGENT" : "WARNING";
+          let advice;
+          if (hasReRead) {
+            urgency = "WARNING";
+            advice = `Unbounded re-read of ${reReadFiles.join(", ")} — already in context. Use line_start/line_end to read specific sections instead.`;
+          } else if (hasUnboundedRead) {
+            advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
+          } else {
+            advice = `Context ${Math.round(ctxPct)}% used. Avoid large reads, wrap up with what you have.`;
+          }
+          const pressureMsg = {
+            role: "user",
+            content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% used (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
+          };
+          conversationMessages.push(pressureMsg);
+          apiMessages.push(pressureMsg);
+          if (ctxPct >= 85) {
+            const reReadLabel = hasReRead
+              ? ` (re-read of: ${reReadFiles.join(", ")})`
+              : "";
+            debugLog(
+              `${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`,
+            );
+          }
+          // For re-reads at low context usage, don't show misleading "Context X% used" — the
+          // hard-block message (below) already handles display for the user.
+          // The system warning is still injected into the LLM conversation above.
         }
-        const pressureMsg = {
-          role: 'user',
-          content: `[SYSTEM ${urgency}] Context ${Math.round(ctxPct)}% used (${ctxUsage.used}/${ctxUsage.limit} tokens). ${advice}`,
-        };
-        conversationMessages.push(pressureMsg);
-        apiMessages.push(pressureMsg);
-        if (ctxPct >= 85) {
-          const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
-        }
-        // For re-reads at low context usage, don't show misleading "Context X% used" — the
-        // hard-block message (below) already handles display for the user.
-        // The system warning is still injected into the LLM conversation above.
       }
-    }
 
-    // ─── Block re-reads after warning threshold ──────────────────────────────
-    // A SYSTEM WARNING is injected (pre-batch) whenever the LLM attempts to
-    // re-read a file that already has fileReadCounts >= 1.  The warning and the
-    // hard-block are evaluated in the same batch, so the threshold must be
-    // identical: block at >= 1 to deny the very same read that triggers the
-    // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
-    // despite the warning; only the third attempt (count=2) was blocked.
-    for (const prep of prepared) {
-      if (!prep.canExecute) continue;
-      if (prep.fnName !== 'read_file') continue;
-      const path = prep.args?.path;
-      if (!path) continue;
-      const alreadyRead = fileReadCounts.get(path) || 0;
-      // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
-      // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
-      // (no line_start) since those re-flood the context with the same content.
-      const isTargetedReRead = prep.args?.line_start != null;
-      const lastEditFailed = _sessionLastEditFailed.get(path) === true;
+      // ─── Block re-reads after warning threshold ──────────────────────────────
+      // A SYSTEM WARNING is injected (pre-batch) whenever the LLM attempts to
+      // re-read a file that already has fileReadCounts >= 1.  The warning and the
+      // hard-block are evaluated in the same batch, so the threshold must be
+      // identical: block at >= 1 to deny the very same read that triggers the
+      // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
+      // despite the warning; only the third attempt (count=2) was blocked.
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== "read_file") continue;
+        const path = prep.args?.path;
+        if (!path) continue;
+        const alreadyRead = fileReadCounts.get(path) || 0;
+        // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
+        // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
+        // (no line_start) since those re-flood the context with the same content.
+        const isTargetedReRead = prep.args?.line_start != null;
+        const lastEditFailed = _sessionLastEditFailed.get(path) === true;
 
-      // Hard cap: block if total reads (unbounded + targeted) >= 6 — prevents 13× read loops.
-      // Between 1 and 5: unbounded re-reads are blocked immediately; targeted reads are allowed
-      // since the model may need to navigate a large file in multiple sections.
-      const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file
+        // Hard cap: block if total reads (unbounded + targeted) >= 6 — prevents 13× read loops.
+        // Between 1 and 5: unbounded re-reads are blocked immediately; targeted reads are allowed
+        // since the model may need to navigate a large file in multiple sections.
+        const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file
 
-      if (alreadyRead >= TARGETED_READ_HARD_CAP) {
-        // Hard cap exceeded — block regardless of targeted/unbounded
-        const shortPath = path.split('/').slice(-2).join('/');
-        const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
-        _sessionReReadBlockShown.set(path, blockShownCount);
-        if (blockShownCount === 1) {
-          console.log(`${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`);
-        }
-        prep.canExecute = false;
-        prep.errorResult = {
-          role: 'tool',
-          content: `BLOCKED: read_file("${path}") denied — file already read ${alreadyRead}× (hard cap: ${TARGETED_READ_HARD_CAP}). You have seen enough of this file. Use grep to find specific content or proceed with what you know.`,
-          tool_call_id: prep.callId,
-        };
-      } else if (alreadyRead >= 1 && isTargetedReRead) {
-        // Targeted re-read within cap — allow. Clear edit-failure flag when used.
-        if (lastEditFailed) {
-          const shortPath = path.split('/').slice(-2).join('/');
-          console.log(`${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`);
-          _sessionLastEditFailed.delete(path);
-        } else {
-          // Check if this targeted re-read overlaps significantly with a range already read.
-          // ≥70% overlap means the model is re-reading content it already has in context.
-          // Block the read outright — a warning-only approach is insufficient because the
-          // LLM can ignore injected warnings and still execute the duplicate read.
-          const newStart = prep.args.line_start || 1;
-          const newEnd   = prep.args.line_end   || newStart + 350;
-          const prevRanges = _sessionFileReadRanges.get(path) || [];
-          let blocked = false;
-          for (const [ps, pe] of prevRanges) {
-            const overlapStart = Math.max(newStart, ps);
-            const overlapEnd   = Math.min(newEnd, pe);
-            if (overlapEnd > overlapStart) {
-              const overlapLen = overlapEnd - overlapStart;
-              const newLen     = newEnd - newStart || 1;
-              if (overlapLen / newLen >= 0.7) {
-                const shortPath = path.split('/').slice(-2).join('/');
-                console.log(`${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`);
+        if (alreadyRead >= TARGETED_READ_HARD_CAP) {
+          // Hard cap exceeded — block regardless of targeted/unbounded
+          const shortPath = path.split("/").slice(-2).join("/");
+          const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
+          _sessionReReadBlockShown.set(path, blockShownCount);
+          if (blockShownCount === 1) {
+            debugLog(
+              `${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`,
+            );
+          }
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: read_file("${path}") denied — file already read ${alreadyRead}× (hard cap: ${TARGETED_READ_HARD_CAP}). You have seen enough of this file. Use grep to find specific content or proceed with what you know.`,
+            tool_call_id: prep.callId,
+          };
+        } else if (alreadyRead >= 1 && isTargetedReRead) {
+          // Targeted re-read within cap — allow. Clear edit-failure flag when used.
+          if (lastEditFailed) {
+            const shortPath = path.split("/").slice(-2).join("/");
+            console.log(
+              `${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`,
+            );
+            _sessionLastEditFailed.delete(path);
+          } else {
+            // Check if this targeted re-read overlaps significantly with a range already read.
+            // ≥70% overlap means the model is re-reading content it already has in context.
+            // Block the read outright — a warning-only approach is insufficient because the
+            // LLM can ignore injected warnings and still execute the duplicate read.
+            const newStart = prep.args.line_start || 1;
+            const newEnd = prep.args.line_end || newStart + 350;
+            const prevRanges = _sessionFileReadRanges.get(path) || [];
+            let blocked = false;
+            for (const [ps, pe] of prevRanges) {
+              const overlapStart = Math.max(newStart, ps);
+              const overlapEnd = Math.min(newEnd, pe);
+              if (overlapEnd > overlapStart) {
+                const overlapLen = overlapEnd - overlapStart;
+                const newLen = newEnd - newStart || 1;
+                if (overlapLen / newLen >= 0.7) {
+                  const shortPath = path.split("/").slice(-2).join("/");
+                  debugLog(
+                    `${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`,
+                  );
+                  prep.canExecute = false;
+                  prep.errorResult = {
+                    role: "tool",
+                    content: `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) is a duplicate — lines ${ps}-${pe} are already in your context (≥70% overlap). Use grep to find specific content instead of re-reading.`,
+                    tool_call_id: prep.callId,
+                  };
+                  blocked = true;
+                  break;
+                }
+              }
+            }
+            if (!blocked) {
+              // No significant overlap with any single previous range — but check for scroll pattern.
+              // If the agent has read 3+ non-overlapping sections of the same file without an edit
+              // in between, it is scrolling through the file chunk-by-chunk. Scrolling accumulates
+              // context faster than grep and usually means the agent lost track of what it already read.
+              // Warn at section 3, hard-block at section 4.
+              const sectionCount = prevRanges.length; // sections already committed
+              const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
+              const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
+              if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
+                const shortPath = path.split("/").slice(-2).join("/");
+                debugLog(
+                  `${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`,
+                );
                 prep.canExecute = false;
                 prep.errorResult = {
-                  role: 'tool',
-                  content: `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) is a duplicate — lines ${ps}-${pe} are already in your context (≥70% overlap). Use grep to find specific content instead of re-reading.`,
+                  role: "tool",
+                  content: `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
                   tool_call_id: prep.callId,
                 };
-                blocked = true;
-                break;
+              } else if (sectionCount >= SCROLL_WARN_SECTIONS) {
+                // Allow but inject a warning into the result (done post-execution via flag)
+                prep._scrollWarn = { sectionCount: sectionCount + 1, path };
               }
             }
           }
-          if (!blocked) {
-            // No significant overlap with any single previous range — but check for scroll pattern.
-            // If the agent has read 3+ non-overlapping sections of the same file without an edit
-            // in between, it is scrolling through the file chunk-by-chunk. Scrolling accumulates
-            // context faster than grep and usually means the agent lost track of what it already read.
-            // Warn at section 3, hard-block at section 4.
-            const sectionCount = prevRanges.length; // sections already committed
-            const SCROLL_WARN_SECTIONS  = 2; // after 2 prior sections (3rd read) — warn
-            const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
-            if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
-              const shortPath = path.split('/').slice(-2).join('/');
-              console.log(`${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`);
-              prep.canExecute = false;
-              prep.errorResult = {
-                role: 'tool',
-                content: `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
-                tool_call_id: prep.callId,
-              };
-            } else if (sectionCount >= SCROLL_WARN_SECTIONS) {
-              // Allow but inject a warning into the result (done post-execution via flag)
-              prep._scrollWarn = { sectionCount: sectionCount + 1, path };
-            }
+          // else: normal targeted section read of a large file — let through silently
+        } else if (alreadyRead >= 1) {
+          // Unbounded re-read — block immediately to prevent context flood
+          const shortPath = path.split("/").slice(-2).join("/");
+          const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
+          _sessionReReadBlockShown.set(path, blockShownCount);
+          if (blockShownCount === 1) {
+            debugLog(
+              `${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`,
+            );
           }
-        }
-        // else: normal targeted section read of a large file — let through silently
-      } else if (alreadyRead >= 1) {
-        // Unbounded re-read — block immediately to prevent context flood
-        const shortPath = path.split('/').slice(-2).join('/');
-        const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
-        _sessionReReadBlockShown.set(path, blockShownCount);
-        if (blockShownCount === 1) {
-          console.log(`${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`);
-        }
-        prep.canExecute = false;
-        prep.errorResult = {
-          role: 'tool',
-          content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
-          tool_call_id: prep.callId,
-        };
-      }
-    }
-
-    // ─── sed -n pre-execution block ──────────────────────────────────────────
-    // Block sed -n line-range commands BEFORE they execute. Previously only a
-    // post-execution warning was injected — the command still ran and flooded context.
-    // Now block it outright so the model is forced to use grep instead.
-    for (const prep of prepared) {
-      if (!prep.canExecute) continue;
-      if (prep.fnName !== 'ssh_exec' && prep.fnName !== 'bash') continue;
-      if (!/\bsed\s+-n\b/.test(prep.args?.command || '')) continue;
-      console.log(`${C.red}  ✖ Blocked sed -n: use grep -n "pattern" <file> | head -30 instead${C.reset}`);
-      prep.canExecute = false;
-      prep.errorResult = {
-        role: 'tool',
-        content: `BLOCKED: sed -n is forbidden — it floods context with line ranges. Use grep -n "pattern" <file> | head -30 to read a specific section, or cat <file> for the full file.`,
-        tool_call_id: prep.callId,
-      };
-    }
-
-    // ─── write_file shrink guard ─────────────────────────────────────────────
-    // If write_file would replace an existing file with content <60% of the original
-    // length, it likely lost context and is overwriting with a skeleton. Block it.
-    for (const prep of prepared) {
-      if (!prep.canExecute) continue;
-      if (prep.fnName !== 'write_file') continue;
-      const wfPath = prep.args?.path;
-      const newContent = prep.args?.content || '';
-      if (!wfPath) continue;
-      try {
-        const fs_ = require('fs');
-        const resolvedWf = require('path').resolve(process.cwd(), wfPath);
-        if (fs_.existsSync(resolvedWf)) {
-          const oldLen = fs_.statSync(resolvedWf).size;
-          const newLen = Buffer.byteLength(newContent, 'utf8');
-          const ratio = oldLen > 0 ? newLen / oldLen : 1;
-          if (ratio < 0.6 && oldLen > 200) {
-            const shortPath = wfPath.split('/').slice(-2).join('/');
-            console.log(`${C.red}  ✖ write_file shrink guard: "${shortPath}" would shrink to ${Math.round(ratio * 100)}% of original — likely context loss${C.reset}`);
-            prep.canExecute = false;
-            prep.errorResult = {
-              role: 'tool',
-              content: `BLOCKED: write_file("${wfPath}") denied — new content is only ${Math.round(ratio * 100)}% of current file size (${oldLen} → ${newLen} bytes). This looks like a partial rewrite after context loss. Use edit_file/patch_file to add only the new code, or read the file first to see full content before replacing.`,
-              tool_call_id: prep.callId,
-            };
-          }
-        }
-      } catch (_) { /* ignore stat errors */ }
-    }
-
-    // ─── Block grep flood after abort threshold ──────────────────────────────
-    // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
-    // further greps on that file. The file content is already in context — searching
-    // it again only wastes tokens and scores worse on the session scorer.
-    for (const prep of prepared) {
-      if (!prep.canExecute) continue;
-      if (prep.fnName !== 'grep') continue;
-      const grepPath = prep.args?.path;
-      if (!grepPath) continue;
-      const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
-      if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
-        const shortPath = grepPath.split('/').slice(-2).join('/');
-        console.log(`${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`);
-        prep.canExecute = false;
-        prep.errorResult = {
-          role: 'tool',
-          content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results.`,
-          tool_call_id: prep.callId,
-        };
-      }
-    }
-
-    // ─── SSH block after storm warning ──────────────────────────────────────────
-    // After SSH storm warning fires, block all further ssh_exec calls. The agent
-    // MUST synthesize with what it already has. Unblocked when the agent produces
-    // a text-only LLM response (no tool calls) — see below in the LLM response handler.
-    //
-    // Dual-block deadlock prevention: if SSH storm AND Jarvis-local guard are BOTH
-    // active, the LLM has no information source at all and will hallucinate bad code.
-    // In that case, relax the SSH storm block and give the LLM one more SSH call.
-    if (_sshBlockedAfterStorm) {
-      const _allSsh = prepared.filter(p => p.canExecute && p.fnName === 'ssh_exec');
-      const _anyNonSsh = prepared.some(p => p.canExecute && p.fnName !== 'ssh_exec');
-      const _jarvisGuardActive = _isJarvisDebugging && _jarvisLocalWarnFired < 3;
-      if (_allSsh.length > 0 && !_anyNonSsh && _jarvisGuardActive && _sshDeadlockRelaxCount < 1) {
-        // Only SSH calls in this batch and local guard would also block — deadlock.
-        // Relax SSH storm to allow ONE call so the agent can proceed.
-        // Hard-cap: relaxer only fires ONCE per session to prevent repeated storm bypass.
-        _sshBlockedAfterStorm = false;
-        _sshDeadlockRelaxCount++;
-        _sessionConsecutiveSshCalls = Math.max(0, SSH_STORM_WARN - 2); // partial reset
-        console.log(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax ${_sshDeadlockRelaxCount}/1)]${C.reset}`);
-      } else {
-        for (const prep of _allSsh) {
           prep.canExecute = false;
           prep.errorResult = {
-            role: 'tool',
-            content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
+            role: "tool",
+            content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
             tool_call_id: prep.callId,
           };
         }
       }
-    }
 
-    // ─── Jarvis-local guard (pre-execution) ─────────────────────────────────────
-    // If this is a Jarvis-debugging task (first user message contains Jarvis error
-    // keywords), block the first local bash/read_file/find_files call and set an
-    // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
-    // locally. Fires once per session. Must be pre-execution (before executeBatch)
-    // — post-execution warnings can't prevent the tool from running.
-    if (_isJarvisDebugging && _jarvisLocalWarnFired < 3) {
+      // ─── sed -n pre-execution block ──────────────────────────────────────────
+      // Block sed -n line-range commands BEFORE they execute. Previously only a
+      // post-execution warning was injected — the command still ran and flooded context.
+      // Now block it outright so the model is forced to use grep instead.
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
-        if (!['bash', 'read_file', 'find_files'].includes(prep.fnName)) continue;
-        _jarvisLocalWarnFired++;
-        {
-          const _allTools = getAllToolDefinitions();
-          const { messages: _c } = forceCompress(apiMessages, _allTools);
-          apiMessages = _c;
-        }
-        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`);
+        if (prep.fnName !== "ssh_exec" && prep.fnName !== "bash") continue;
+        if (!/\bsed\s+-n\b/.test(prep.args?.command || "")) continue;
+        debugLog(
+          `${C.red}  ✖ Blocked sed -n: use grep -n "pattern" <file> | head -30 instead${C.reset}`,
+        );
         prep.canExecute = false;
         prep.errorResult = {
-          role: 'tool',
-          content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
+          role: "tool",
+          content: `BLOCKED: sed -n is forbidden — it floods context with line ranges. Use grep -n "pattern" <file> | head -30 to read a specific section, or cat <file> for the full file.`,
           tool_call_id: prep.callId,
         };
-        break; // one block per batch is enough to redirect the agent
       }
-    }
 
-    // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
-    const batchOpts = taskProgress ? { skipSpinner: true, skipSummaries: true } : {};
-    // ask_user renders its own UI — skip the normal section header for it
-    const hasAskUser = prepared.some(p => p.fnName === 'ask_user');
-    // Print bullet header immediately (before execution) so it appears while working
-    const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
-    let _spinAnim = null;
-    if (_showStepHeader && !hasAskUser) {
-      stepPrinted = true;
-      batchOpts.skipSpinner = true;
-      if (process.stdout.isTTY) {
-        // Blink the ● via ANSI \x1b[5m while the tool executes — no interval needed,
-        // the terminal handles blinking natively so it works even for sub-ms tools
-        process.stdout.write(formatSectionHeader(prepared, totalSteps, false, 'blink'));
-        _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
-      } else if (!_serverHooks) {
-        // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
-        process.stdout.write(formatSectionHeader(prepared, totalSteps, false) + '\n');
-      }
-    } else if (_showStepHeader) {
-      stepPrinted = true;
-      batchOpts.skipSpinner = true;
-    }
-    // Resume TaskProgress animation during tool execution so the UI never looks frozen
-    if (taskProgress && taskProgress._paused) taskProgress.resume();
-    const { results: toolMessages, summaries: batchSummaries } = await executeBatch(prepared, true, { ...batchOpts, skipSummaries: true });
-
-    // Stop blink, finalize header with static dot
-    if (_spinAnim) {
-      _spinAnim = null;
-      process.stdout.write(`\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`);
-    }
-
-    // Print summaries below the header (skip ask_user — it renders its own UI)
-    if (!batchOpts.skipSummaries) {
-      const shownSummaries = batchSummaries.filter((_, si) =>
-        !(prepared[si] && prepared[si].fnName === 'ask_user')
-      );
-      for (const s of shownSummaries) console.log(s);
-      // Blank line after each step group for visual separation
-      console.log('');
-
-      // Milestone tracking — linesBack no longer needed (append-only emit)
-      const toolNames = prepared
-        .filter(p => p && p.fnName !== 'ask_user')
-        .map(p => p.fnName);
-      const ms = _milestone.record(0, toolNames, filesRead, filesModified);
-      if (ms) _emitMilestone(ms);
-    }
-
-    // Count pre-execution blocks (canExecute=false with errorResult) toward consecutiveBlocks.
-    // These are calls blocked BEFORE executeBatch by guards like SSH storm, plan mode, etc.
-    // They're skipped in the main post-execution loop below, so without this count they never
-    // contribute to the abort threshold — letting the model send infinite blocked batches.
-    for (const prep of prepared) {
-      if (prep.canExecute) continue; // executed — handled below
-      if (!prep.errorResult) continue; // truly skipped (no errorResult) — don't count
-      const preBlockContent = typeof prep.errorResult.content === 'string' ? prep.errorResult.content : '';
-      if (preBlockContent.startsWith('BLOCKED:') || preBlockContent.startsWith('PLAN MODE:')) {
-        consecutiveBlocks++;
-        if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
+      // ─── write_file shrink guard ─────────────────────────────────────────────
+      // If write_file would replace an existing file with content <60% of the original
+      // length, it likely lost context and is overwriting with a skeleton. Block it.
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== "write_file") continue;
+        const wfPath = prep.args?.path;
+        const newContent = prep.args?.content || "";
+        if (!wfPath) continue;
+        try {
+          const fs_ = require("fs");
+          const resolvedWf = require("path").resolve(process.cwd(), wfPath);
+          if (fs_.existsSync(resolvedWf)) {
+            const oldLen = fs_.statSync(resolvedWf).size;
+            const newLen = Buffer.byteLength(newContent, "utf8");
+            const ratio = oldLen > 0 ? newLen / oldLen : 1;
+            if (ratio < 0.6 && oldLen > 200) {
+              const shortPath = wfPath.split("/").slice(-2).join("/");
+              console.log(
+                `${C.red}  ✖ write_file shrink guard: "${shortPath}" would shrink to ${Math.round(ratio * 100)}% of original — likely context loss${C.reset}`,
+              );
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: "tool",
+                content: `BLOCKED: write_file("${wfPath}") denied — new content is only ${Math.round(ratio * 100)}% of current file size (${oldLen} → ${newLen} bytes). This looks like a partial rewrite after context loss. Use edit_file/patch_file to add only the new code, or read the file first to see full content before replacing.`,
+                tool_call_id: prep.callId,
+              };
+            }
+          }
+        } catch (_) {
+          /* ignore stat errors */
         }
       }
-    }
 
-    // Track modified and read files
-    for (let j = 0; j < prepared.length; j++) {
-      const prep = prepared[j];
-      if (!prep.canExecute) continue;
-      const res = toolMessages[j].content;
-      // Only inspect the first line — tool output may legitimately contain
-      // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
-      // "EXIT" is the prefix used for non-zero bash exit codes (EXIT 1, EXIT ENOENT, etc.)
-      // and must also be treated as an error for consecutive-error counting.
-      const firstLine = res.split('\n')[0];
-      const isOk = !firstLine.startsWith('ERROR') && !firstLine.startsWith('CANCELLED') && !firstLine.startsWith('Command failed') && !firstLine.startsWith('EXIT');
-      // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
-      if (!isOk && (prep.fnName === 'edit_file' || prep.fnName === 'patch_file') && prep.args?.path) {
-        if (firstLine.includes('old_text not found')) {
-          _sessionLastEditFailed.set(prep.args.path, true);
-        }
-      }
-      if (isOk && prep.fnName === 'write_file' && prep.args?.path) {
-        // Warn when a temp/test/demo file is created outside the tests/ directory.
-        // These files are typically written, run once, then deleted — wasting tool calls
-        // and leaving orphans if the session is interrupted.
-        const wfBase = prep.args.path.split('/').pop();
-        const wfInTestsDir = prep.args.path.includes('/tests/') || prep.args.path.includes('\\tests\\');
-        const isTempPattern = /^(test_|demo_|temp_|tmp_|scratch_)/.test(wfBase);
-        if (isTempPattern && !wfInTestsDir) {
-          console.log(`${C.yellow}  ⚠ Temp file: "${wfBase}" — delete with bash rm when done to keep the workspace clean${C.reset}`);
-          const tempHint = {
-            role: 'user',
-            content: `[HINT] "${prep.args.path}" looks like a temporary test/demo file. Delete it with bash("rm ${prep.args.path}") as soon as you're done — orphaned temp files count against session quality.`,
+      // ─── Block grep flood after abort threshold ──────────────────────────────
+      // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
+      // further greps on that file. The file content is already in context — searching
+      // it again only wastes tokens and scores worse on the session scorer.
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== "grep") continue;
+        const grepPath = prep.args?.path;
+        if (!grepPath) continue;
+        const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
+        if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
+          const shortPath = grepPath.split("/").slice(-2).join("/");
+          debugLog(
+            `${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results.`,
+            tool_call_id: prep.callId,
           };
-          conversationMessages.push(tempHint);
-          apiMessages.push(tempHint);
         }
       }
-      if (isOk && ['write_file', 'edit_file', 'patch_file'].includes(prep.fnName)) {
-        if (prep.args && prep.args.path) {
-          _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
-          filesModified.add(prep.args.path);
-          const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
-          fileEditCounts.set(prep.args.path, count);
-          const shortPath = prep.args.path.split('/').slice(-2).join('/');
-          if (count === LOOP_WARN_EDITS) {
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
-            const loopWarning = {
-              role: 'user',
-              content: `[SYSTEM WARNING] "${prep.args.path}" edited ${count}×. One more edit max, then move on.`,
+
+      // ─── SSH block after storm warning ──────────────────────────────────────────
+      // After SSH storm warning fires, block all further ssh_exec calls. The agent
+      // MUST synthesize with what it already has. Unblocked when the agent produces
+      // a text-only LLM response (no tool calls) — see below in the LLM response handler.
+      //
+      // Dual-block deadlock prevention: if SSH storm AND Jarvis-local guard are BOTH
+      // active, the LLM has no information source at all and will hallucinate bad code.
+      // In that case, relax the SSH storm block and give the LLM one more SSH call.
+      if (_sshBlockedAfterStorm) {
+        const _allSsh = prepared.filter(
+          (p) => p.canExecute && p.fnName === "ssh_exec",
+        );
+        const _anyNonSsh = prepared.some(
+          (p) => p.canExecute && p.fnName !== "ssh_exec",
+        );
+        const _jarvisGuardActive =
+          _isJarvisDebugging && _jarvisLocalWarnFired < 3;
+        if (
+          _allSsh.length > 0 &&
+          !_anyNonSsh &&
+          _jarvisGuardActive &&
+          _sshDeadlockRelaxCount < 1
+        ) {
+          // Only SSH calls in this batch and local guard would also block — deadlock.
+          // Relax SSH storm to allow ONE call so the agent can proceed.
+          // Hard-cap: relaxer only fires ONCE per session to prevent repeated storm bypass.
+          _sshBlockedAfterStorm = false;
+          _sshDeadlockRelaxCount++;
+          _sessionConsecutiveSshCalls = Math.max(0, SSH_STORM_WARN - 2); // partial reset
+          debugLog(
+            `${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax ${_sshDeadlockRelaxCount}/1)]${C.reset}`,
+          );
+        } else {
+          for (const prep of _allSsh) {
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: "tool",
+              content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
+              tool_call_id: prep.callId,
             };
-            conversationMessages.push(loopWarning);
-            apiMessages.push(loopWarning);
-          } else if (count >= LOOP_ABORT_EDITS) {
-            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
-            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-            setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-            saveNow(conversationMessages);
-            return;
           }
         }
       }
-      // sed -n is now blocked in the pre-batch phase — no post-execution action needed here
-      // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
-      if ((prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && prep.args && prep.args.command) {
-        const cmdKey = prep.args.command.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 100);
-        const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
-        bashCmdCounts.set(cmdKey, bashCount);
-        if (bashCount === LOOP_WARN_BASH) {
-          console.log(`${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`);
-          const bashWarning = {
-            role: 'user',
-            content: `[SYSTEM WARNING] Same bash command ${bashCount}×. Debug loop detected — try a different approach.`,
-          };
-          conversationMessages.push(bashWarning);
-          apiMessages.push(bashWarning);
-        } else if (bashCount >= LOOP_ABORT_BASH) {
-          console.log(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
-        }
-      }
-      // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
-      // The existing bash-loop detector only fires on *similar* commands; an agent running 16
-      // different grep/cat patterns via ssh_exec bypasses it while still burning context.
-      if (prep.fnName === 'ssh_exec') {
-        _sessionConsecutiveSshCalls++;
-        if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
-          console.log(`${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
-        } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
-          // Pre-compress before injecting warning — 5 SSH results fill context fast,
-          // and adding the warning on top can tip a full context into a 400 cascade.
+
+      // ─── Jarvis-local guard (pre-execution) ─────────────────────────────────────
+      // If this is a Jarvis-debugging task (first user message contains Jarvis error
+      // keywords), block the first local bash/read_file/find_files call and set an
+      // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
+      // locally. Fires once per session. Must be pre-execution (before executeBatch)
+      // — post-execution warnings can't prevent the tool from running.
+      if (_isJarvisDebugging && _jarvisLocalWarnFired < 3) {
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (!["bash", "read_file", "find_files"].includes(prep.fnName))
+            continue;
+          _jarvisLocalWarnFired++;
           {
             const _allTools = getAllToolDefinitions();
             const { messages: _c } = forceCompress(apiMessages, _allTools);
             apiMessages = _c;
           }
-          _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
-          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`);
-          const sshStormWarning = {
-            role: 'user',
-            content: `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Synthesize findings now — no more SSH.`,
+          debugLog(
+            `${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
+            tool_call_id: prep.callId,
           };
-          conversationMessages.push(sshStormWarning);
-          apiMessages.push(sshStormWarning);
+          break; // one block per batch is enough to redirect the agent
         }
-      } else if (prep.canExecute) {
-        // Only reset on tools that actually executed — blocked tools (canExecute=false)
-        // don't constitute real work and shouldn't reset the consecutive SSH counter.
-        // Without this, a blocked bash/read_file lets the agent bypass the storm cap
-        // by doing nothing and then immediately issuing another 7 SSH calls.
-        _sessionConsecutiveSshCalls = 0;
       }
-      // Grep pattern loop detection — repeated identical patterns waste context
-      if (isOk && prep.fnName === 'grep' && prep.args && prep.args.pattern) {
-        const patKey = `${prep.args.pattern}|${prep.args.path || ''}`;
-        const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
-        grepPatternCounts.set(patKey, grepCount);
-        if (grepCount === LOOP_WARN_GREP) {
-          console.log(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
-          const grepWarning = {
-            role: 'user',
-            content: `[SYSTEM WARNING] Same grep pattern ${grepCount}×. Results unchanged — use existing data or try different pattern.`,
-          };
-          conversationMessages.push(grepWarning);
-          apiMessages.push(grepWarning);
-        } else if (grepCount >= LOOP_ABORT_GREP) {
-          console.log(`${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
+
+      // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
+      const batchOpts = taskProgress
+        ? { skipSpinner: true, skipSummaries: true }
+        : {};
+      // ask_user renders its own UI — skip the normal section header for it
+      const hasAskUser = prepared.some((p) => p.fnName === "ask_user");
+      // Print bullet header immediately (before execution) so it appears while working
+      const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
+      let _spinAnim = null;
+      if (_showStepHeader && !hasAskUser) {
+        stepPrinted = true;
+        batchOpts.skipSpinner = true;
+        if (process.stdout.isTTY) {
+          // Blink the ● via ANSI \x1b[5m while the tool executes — no interval needed,
+          // the terminal handles blinking natively so it works even for sub-ms tools
+          process.stdout.write(
+            formatSectionHeader(prepared, totalSteps, false, "blink"),
+          );
+          _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
+        } else if (!_serverHooks) {
+          // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
+          process.stdout.write(
+            formatSectionHeader(prepared, totalSteps, false) + "\n",
+          );
         }
-        // Per-file grep loop detection — multiple different patterns on same file
-        // This catches "search flood" where the agent greps the same file repeatedly
-        // with varying patterns instead of reading it once and using the context.
-        if (prep.args.path) {
-          const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
-          grepFileCounts.set(prep.args.path, fileGrepCount);
-          if (fileGrepCount === LOOP_WARN_GREP_FILE) {
-            const shortPath = prep.args.path.split('/').slice(-2).join('/');
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
-            const fileGrepWarning = {
-              role: 'user',
-              content: `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
-            };
-            conversationMessages.push(fileGrepWarning);
-            apiMessages.push(fileGrepWarning);
+      } else if (_showStepHeader) {
+        stepPrinted = true;
+        batchOpts.skipSpinner = true;
+      }
+      // Resume TaskProgress animation during tool execution so the UI never looks frozen
+      if (taskProgress && taskProgress._paused) taskProgress.resume();
+      const { results: toolMessages, summaries: batchSummaries } =
+        await executeBatch(prepared, true, {
+          ...batchOpts,
+          skipSummaries: true,
+        });
+
+      // Stop blink, finalize header with static dot
+      if (_spinAnim) {
+        _spinAnim = null;
+        process.stdout.write(
+          `\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`,
+        );
+      }
+
+      // Print summaries below the header (skip ask_user — it renders its own UI)
+      if (!batchOpts.skipSummaries) {
+        const shownSummaries = batchSummaries.filter(
+          (_, si) => !(prepared[si] && prepared[si].fnName === "ask_user"),
+        );
+        for (const s of shownSummaries) console.log(s);
+        // Blank line after each step group for visual separation
+        console.log("");
+
+        // Milestone tracking — linesBack no longer needed (append-only emit)
+        const toolNames = prepared
+          .filter((p) => p && p.fnName !== "ask_user")
+          .map((p) => p.fnName);
+        const ms = _milestone.record(0, toolNames, filesRead, filesModified);
+        if (ms) _emitMilestone(ms);
+      }
+
+      // Count pre-execution blocks (canExecute=false with errorResult) toward consecutiveBlocks.
+      // These are calls blocked BEFORE executeBatch by guards like SSH storm, plan mode, etc.
+      // They're skipped in the main post-execution loop below, so without this count they never
+      // contribute to the abort threshold — letting the model send infinite blocked batches.
+      for (const prep of prepared) {
+        if (prep.canExecute) continue; // executed — handled below
+        if (!prep.errorResult) continue; // truly skipped (no errorResult) — don't count
+        const preBlockContent =
+          typeof prep.errorResult.content === "string"
+            ? prep.errorResult.content
+            : "";
+        if (
+          preBlockContent.startsWith("BLOCKED:") ||
+          preBlockContent.startsWith("PLAN MODE:")
+        ) {
+          consecutiveBlocks++;
+          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
+            saveNow(conversationMessages);
+            return;
           }
         }
       }
-      // Health-check stop signal — inject strong stop instruction when tool result
-      // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
-      if (isOk && (prep.fnName === 'bash' || prep.fnName === 'ssh_exec') && res.includes('"valid":true')) {
-        // Pre-compress before injecting the STOP message: if context is already at
-        // ≥60% after the tool result was appended, adding another message would push
-        // it over the limit and trigger a 400 cascade on the next LLM call.
-        {
-          const _allToolsStop = getAllToolDefinitions();
-          const _stopCtx = getUsage(apiMessages, _allToolsStop);
-          if (_stopCtx.percentage >= 60) {
-            const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsStop);
-            if (_freed > 0) {
-              apiMessages = _compressed;
-              console.log(`${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, _allToolsStop).percentage)}%]${C.reset}`);
+
+      // Track modified and read files
+      for (let j = 0; j < prepared.length; j++) {
+        const prep = prepared[j];
+        if (!prep.canExecute) continue;
+        const res = toolMessages[j].content;
+        // Only inspect the first line — tool output may legitimately contain
+        // "ERROR" or "CANCELLED" in matched content (e.g. grep finding log lines).
+        // "EXIT" is the prefix used for non-zero bash exit codes (EXIT 1, EXIT ENOENT, etc.)
+        // and must also be treated as an error for consecutive-error counting.
+        const firstLine = res.split("\n")[0];
+        const isOk =
+          !firstLine.startsWith("ERROR") &&
+          !firstLine.startsWith("CANCELLED") &&
+          !firstLine.startsWith("Command failed") &&
+          !firstLine.startsWith("EXIT");
+        // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
+        if (
+          !isOk &&
+          (prep.fnName === "edit_file" || prep.fnName === "patch_file") &&
+          prep.args?.path
+        ) {
+          if (firstLine.includes("old_text not found")) {
+            _sessionLastEditFailed.set(prep.args.path, true);
+          }
+        }
+        if (isOk && prep.fnName === "write_file" && prep.args?.path) {
+          // Warn when a temp/test/demo file is created outside the tests/ directory.
+          // These files are typically written, run once, then deleted — wasting tool calls
+          // and leaving orphans if the session is interrupted.
+          const wfBase = prep.args.path.split("/").pop();
+          const wfInTestsDir =
+            prep.args.path.includes("/tests/") ||
+            prep.args.path.includes("\\tests\\");
+          const isTempPattern = /^(test_|demo_|temp_|tmp_|scratch_)/.test(
+            wfBase,
+          );
+          if (isTempPattern && !wfInTestsDir) {
+            debugLog(
+              `${C.yellow}  ⚠ Temp file: "${wfBase}" — delete with bash rm when done to keep the workspace clean${C.reset}`,
+            );
+            const tempHint = {
+              role: "user",
+              content: `[HINT] "${prep.args.path}" looks like a temporary test/demo file. Delete it with bash("rm ${prep.args.path}") as soon as you're done — orphaned temp files count against session quality.`,
+            };
+            conversationMessages.push(tempHint);
+            apiMessages.push(tempHint);
+          }
+        }
+        if (
+          isOk &&
+          ["write_file", "edit_file", "patch_file"].includes(prep.fnName)
+        ) {
+          if (prep.args && prep.args.path) {
+            _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
+            filesModified.add(prep.args.path);
+            const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
+            fileEditCounts.set(prep.args.path, count);
+            const shortPath = prep.args.path.split("/").slice(-2).join("/");
+            if (count === LOOP_WARN_EDITS) {
+              debugLog(
+                `${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`,
+              );
+              const loopWarning = {
+                role: "user",
+                content: `[SYSTEM WARNING] "${prep.args.path}" edited ${count}×. One more edit max, then move on.`,
+              };
+              conversationMessages.push(loopWarning);
+              apiMessages.push(loopWarning);
+            } else if (count >= LOOP_ABORT_EDITS) {
+              debugLog(
+                `${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`,
+              );
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              setOnChange(null);
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+                { suppressHint: true },
+              );
+              saveNow(conversationMessages);
+              return;
             }
           }
         }
-        const stopMsg = {
-          role: 'user',
-          content: '[SYSTEM STOP] Tool result contains {"valid":true}. The token/service is valid and reachable. STOP all further investigation immediately. Report to the user that the token is valid, the service is healthy, and no fix is needed. Do NOT read any more log files.',
-        };
-        conversationMessages.push(stopMsg);
-        apiMessages.push(stopMsg);
-        console.log(`${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`);
-      }
-      // Consecutive BLOCKED tool call detection — model ignoring block messages
-      const wasBlocked = res.startsWith('BLOCKED:');
-      if (wasBlocked) {
-        consecutiveBlocks++;
-        if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
-        }
-      } else {
-        consecutiveBlocks = 0; // reset on any non-blocked result
-      }
-      // Consecutive error detection
-      if (!isOk) {
-        consecutiveErrors++;
-        if (consecutiveErrors === LOOP_WARN_ERRORS) {
-          console.log(`${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`);
-          const errWarning = {
-            role: 'user',
-            content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive errors. Stuck loop — try fundamentally different approach or declare done.`,
-          };
-          conversationMessages.push(errWarning);
-          apiMessages.push(errWarning);
-        } else if (consecutiveErrors >= LOOP_ABORT_ERRORS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
-          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-          setOnChange(null);
-          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
-          saveNow(conversationMessages);
-          return;
-        }
-      } else {
-        consecutiveErrors = 0; // reset on success
-        progressMadeThisPass = true;
-      }
-      if (isOk && prep.fnName === 'read_file') {
-        if (prep.args && prep.args.path) {
-          filesRead.add(prep.args.path);
-          const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
-          fileReadCounts.set(prep.args.path, readCount);
-          // Record targeted read range so overlap detection can warn on duplicates
-          if (prep.args.line_start != null) {
-            const rs = prep.args.line_start || 1;
-            const re = prep.args.line_end   || rs + 350;
-            if (!_sessionFileReadRanges.has(prep.args.path)) _sessionFileReadRanges.set(prep.args.path, []);
-            _sessionFileReadRanges.get(prep.args.path).push([rs, re]);
-          }
-          // Inject scroll warning if flagged during pre-execution check
-          if (prep._scrollWarn) {
-            const { sectionCount, path: warnPath } = prep._scrollWarn;
-            const scrollWarning = {
-              role: 'user',
-              content: `[SYSTEM WARNING] "${warnPath}" — you have now read ${sectionCount} different sections of this file. This is a file-scroll pattern. Stop reading sections and use grep_search to find the specific lines you need instead.`,
+        // sed -n is now blocked in the pre-batch phase — no post-execution action needed here
+        // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
+        if (
+          (prep.fnName === "bash" || prep.fnName === "ssh_exec") &&
+          prep.args &&
+          prep.args.command
+        ) {
+          const cmdKey = prep.args.command
+            .replace(/\d+/g, "N")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 100);
+          const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
+          bashCmdCounts.set(cmdKey, bashCount);
+          if (bashCount === LOOP_WARN_BASH) {
+            debugLog(
+              `${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`,
+            );
+            const bashWarning = {
+              role: "user",
+              content: `[SYSTEM WARNING] Same bash command ${bashCount}×. Debug loop detected — try a different approach.`,
             };
-            conversationMessages.push(scrollWarning);
-            apiMessages.push(scrollWarning);
-            console.log(`${C.yellow}  ⚠ Scroll warning: "${warnPath.split('/').slice(-2).join('/')}" — ${sectionCount} sections read — use grep instead${C.reset}`);
+            conversationMessages.push(bashWarning);
+            apiMessages.push(bashWarning);
+          } else if (bashCount >= LOOP_ABORT_BASH) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
+            saveNow(conversationMessages);
+            return;
           }
-          const shortPath = prep.args.path.split('/').slice(-2).join('/');
-          // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
-          // are legitimate when navigating a large file beyond the 350-line cap.
-          const wasUnbounded = !prep.args?.line_start && !prep.args?.line_end;
-          if (wasUnbounded && readCount === LOOP_WARN_READS) {
-            // Pre-compress before injecting warning — prevents the warning itself from
-            // triggering a 400-cascade when context is already near capacity.
+        }
+        // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
+        // The existing bash-loop detector only fires on *similar* commands; an agent running 16
+        // different grep/cat patterns via ssh_exec bypasses it while still burning context.
+        if (prep.fnName === "ssh_exec") {
+          _sessionConsecutiveSshCalls++;
+          if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
+            debugLog(
+              `${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
+            saveNow(conversationMessages);
+            return;
+          } else if (_sessionConsecutiveSshCalls === SSH_STORM_WARN) {
+            // Pre-compress before injecting warning — 5 SSH results fill context fast,
+            // and adding the warning on top can tip a full context into a 400 cascade.
             {
-              const _allToolsRead = getAllToolDefinitions();
-              const _readCtx = getUsage(apiMessages, _allToolsRead);
-              if (_readCtx.percentage >= 60) {
-                const { messages: _c } = forceCompress(apiMessages, _allToolsRead);
-                apiMessages = _c;
+              const _allTools = getAllToolDefinitions();
+              const { messages: _c } = forceCompress(apiMessages, _allTools);
+              apiMessages = _c;
+            }
+            _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
+            debugLog(
+              `${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`,
+            );
+            const sshStormWarning = {
+              role: "user",
+              content: `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Synthesize findings now — no more SSH.`,
+            };
+            conversationMessages.push(sshStormWarning);
+            apiMessages.push(sshStormWarning);
+          }
+        } else if (prep.canExecute) {
+          // Only reset on tools that actually executed — blocked tools (canExecute=false)
+          // don't constitute real work and shouldn't reset the consecutive SSH counter.
+          // Without this, a blocked bash/read_file lets the agent bypass the storm cap
+          // by doing nothing and then immediately issuing another 7 SSH calls.
+          _sessionConsecutiveSshCalls = 0;
+        }
+        // Grep pattern loop detection — repeated identical patterns waste context
+        if (isOk && prep.fnName === "grep" && prep.args && prep.args.pattern) {
+          const patKey = `${prep.args.pattern}|${prep.args.path || ""}`;
+          const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
+          grepPatternCounts.set(patKey, grepCount);
+          if (grepCount === LOOP_WARN_GREP) {
+            debugLog(
+              `${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`,
+            );
+            const grepWarning = {
+              role: "user",
+              content: `[SYSTEM WARNING] Same grep pattern ${grepCount}×. Results unchanged — use existing data or try different pattern.`,
+            };
+            conversationMessages.push(grepWarning);
+            apiMessages.push(grepWarning);
+          } else if (grepCount >= LOOP_ABORT_GREP) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
+            saveNow(conversationMessages);
+            return;
+          }
+          // Per-file grep loop detection — multiple different patterns on same file
+          // This catches "search flood" where the agent greps the same file repeatedly
+          // with varying patterns instead of reading it once and using the context.
+          if (prep.args.path) {
+            const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
+            grepFileCounts.set(prep.args.path, fileGrepCount);
+            if (fileGrepCount === LOOP_WARN_GREP_FILE) {
+              const shortPath = prep.args.path.split("/").slice(-2).join("/");
+              debugLog(
+                `${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`,
+              );
+              const fileGrepWarning = {
+                role: "user",
+                content: `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
+              };
+              conversationMessages.push(fileGrepWarning);
+              apiMessages.push(fileGrepWarning);
+            }
+          }
+        }
+        // Health-check stop signal — inject strong stop instruction when tool result
+        // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
+        if (
+          isOk &&
+          (prep.fnName === "bash" || prep.fnName === "ssh_exec") &&
+          res.includes('"valid":true')
+        ) {
+          // Pre-compress before injecting the STOP message: if context is already at
+          // ≥60% after the tool result was appended, adding another message would push
+          // it over the limit and trigger a 400 cascade on the next LLM call.
+          {
+            const _allToolsStop = getAllToolDefinitions();
+            const _stopCtx = getUsage(apiMessages, _allToolsStop);
+            if (_stopCtx.percentage >= 60) {
+              const { messages: _compressed, tokensRemoved: _freed } =
+                forceCompress(apiMessages, _allToolsStop);
+              if (_freed > 0) {
+                apiMessages = _compressed;
+                console.log(
+                  `${C.dim}  [pre-stop-compress — ~${_freed} tokens freed before STOP injection, now ${Math.round(getUsage(apiMessages, _allToolsStop).percentage)}%]${C.reset}`,
+                );
               }
             }
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read unbounded ${readCount}× — use line_start/line_end${C.reset}`);
-            const readWarning = {
-              role: 'user',
-              content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}× without line ranges. Use line_start/line_end to read specific sections — do not re-read the full file.`,
-            };
-            conversationMessages.push(readWarning);
-            apiMessages.push(readWarning);
-          } else if (wasUnbounded && readCount >= LOOP_ABORT_READS) {
-            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`);
-            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          }
+          const stopMsg = {
+            role: "user",
+            content:
+              '[SYSTEM STOP] Tool result contains {"valid":true}. The token/service is valid and reachable. STOP all further investigation immediately. Report to the user that the token is valid, the service is healthy, and no fix is needed. Do NOT read any more log files.',
+          };
+          conversationMessages.push(stopMsg);
+          apiMessages.push(stopMsg);
+          console.log(
+            `${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`,
+          );
+        }
+        // Consecutive BLOCKED tool call detection — model ignoring block messages
+        const wasBlocked = res.startsWith("BLOCKED:");
+        if (wasBlocked) {
+          consecutiveBlocks++;
+          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
             setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
             saveNow(conversationMessages);
             return;
           }
+        } else {
+          consecutiveBlocks = 0; // reset on any non-blocked result
         }
-      }
-      // Spawn-agents truncation stuck detection
-      if (prep.fnName === 'spawn_agents') {
-        const doneCount = (res.match(/\bStatus: done\b/g) || []).length;
-        const truncCount = (res.match(/\bStatus: truncated\b/g) || []).length;
-        if (truncCount > 0 && doneCount === 0) {
-          truncatedSwarmCount++;
-          if (truncatedSwarmCount === LOOP_WARN_SWARM) {
-            console.log(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
-            const swarmWarning = {
-              role: 'user',
-              content: `[SYSTEM WARNING] Sub-agents truncated ${truncatedSwarmCount}× in a row. Stop spawning — try different approach or report findings.`,
+        // Consecutive error detection
+        if (!isOk) {
+          consecutiveErrors++;
+          if (consecutiveErrors === LOOP_WARN_ERRORS) {
+            debugLog(
+              `${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`,
+            );
+            const errWarning = {
+              role: "user",
+              content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive errors. Stuck loop — try fundamentally different approach or declare done.`,
             };
-            conversationMessages.push(swarmWarning);
-            apiMessages.push(swarmWarning);
-          } else if (truncatedSwarmCount >= LOOP_ABORT_SWARM) {
-            console.log(`${C.red}  ✖ Swarm abort: all sub-agents hit iteration limit ${truncatedSwarmCount}× — aborting stuck swarm${C.reset}`);
-            if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+            conversationMessages.push(errWarning);
+            apiMessages.push(errWarning);
+          } else if (consecutiveErrors >= LOOP_ABORT_ERRORS) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
             setOnChange(null);
-            _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
             saveNow(conversationMessages);
             return;
           }
-        } else if (doneCount > 0) {
-          truncatedSwarmCount = 0;
+        } else {
+          consecutiveErrors = 0; // reset on success
+          progressMadeThisPass = true;
+        }
+        if (isOk && prep.fnName === "read_file") {
+          if (prep.args && prep.args.path) {
+            filesRead.add(prep.args.path);
+            const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
+            fileReadCounts.set(prep.args.path, readCount);
+            // Record targeted read range so overlap detection can warn on duplicates
+            if (prep.args.line_start != null) {
+              const rs = prep.args.line_start || 1;
+              const re = prep.args.line_end || rs + 350;
+              if (!_sessionFileReadRanges.has(prep.args.path))
+                _sessionFileReadRanges.set(prep.args.path, []);
+              _sessionFileReadRanges.get(prep.args.path).push([rs, re]);
+            }
+            // Inject scroll warning if flagged during pre-execution check
+            if (prep._scrollWarn) {
+              const { sectionCount, path: warnPath } = prep._scrollWarn;
+              const scrollWarning = {
+                role: "user",
+                content: `[SYSTEM WARNING] "${warnPath}" — you have now read ${sectionCount} different sections of this file. This is a file-scroll pattern. Stop reading sections and use grep_search to find the specific lines you need instead.`,
+              };
+              conversationMessages.push(scrollWarning);
+              apiMessages.push(scrollWarning);
+              debugLog(
+                `${C.yellow}  ⚠ Scroll warning: "${warnPath.split("/").slice(-2).join("/")}" — ${sectionCount} sections read — use grep instead${C.reset}`,
+              );
+            }
+            const shortPath = prep.args.path.split("/").slice(-2).join("/");
+            // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
+            // are legitimate when navigating a large file beyond the 350-line cap.
+            const wasUnbounded = !prep.args?.line_start && !prep.args?.line_end;
+            if (wasUnbounded && readCount === LOOP_WARN_READS) {
+              // Pre-compress before injecting warning — prevents the warning itself from
+              // triggering a 400-cascade when context is already near capacity.
+              {
+                const _allToolsRead = getAllToolDefinitions();
+                const _readCtx = getUsage(apiMessages, _allToolsRead);
+                if (_readCtx.percentage >= 60) {
+                  const { messages: _c } = forceCompress(
+                    apiMessages,
+                    _allToolsRead,
+                  );
+                  apiMessages = _c;
+                }
+              }
+              debugLog(
+                `${C.yellow}  ⚠ Loop warning: "${shortPath}" read unbounded ${readCount}× — use line_start/line_end${C.reset}`,
+              );
+              const readWarning = {
+                role: "user",
+                content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}× without line ranges. Use line_start/line_end to read specific sections — do not re-read the full file.`,
+              };
+              conversationMessages.push(readWarning);
+              apiMessages.push(readWarning);
+            } else if (wasUnbounded && readCount >= LOOP_ABORT_READS) {
+              debugLog(
+                `${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`,
+              );
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              setOnChange(null);
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+                { suppressHint: true },
+              );
+              saveNow(conversationMessages);
+              return;
+            }
+          }
+        }
+        // Spawn-agents truncation stuck detection
+        if (prep.fnName === "spawn_agents") {
+          const doneCount = (res.match(/\bStatus: done\b/g) || []).length;
+          const truncCount = (res.match(/\bStatus: truncated\b/g) || []).length;
+          if (truncCount > 0 && doneCount === 0) {
+            truncatedSwarmCount++;
+            if (truncatedSwarmCount === LOOP_WARN_SWARM) {
+              debugLog(
+                `${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`,
+              );
+              const swarmWarning = {
+                role: "user",
+                content: `[SYSTEM WARNING] Sub-agents truncated ${truncatedSwarmCount}× in a row. Stop spawning — try different approach or report findings.`,
+              };
+              conversationMessages.push(swarmWarning);
+              apiMessages.push(swarmWarning);
+            } else if (truncatedSwarmCount >= LOOP_ABORT_SWARM) {
+              console.log(
+                `${C.red}  ✖ Swarm abort: all sub-agents hit iteration limit ${truncatedSwarmCount}× — aborting stuck swarm${C.reset}`,
+              );
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              setOnChange(null);
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+                { suppressHint: true },
+              );
+              saveNow(conversationMessages);
+              return;
+            }
+          } else if (doneCount > 0) {
+            truncatedSwarmCount = 0;
+          }
         }
       }
-    }
 
-    for (const toolMsg of toolMessages) {
-      conversationMessages.push(toolMsg);
-      apiMessages.push(toolMsg);
-    }
+      for (const toolMsg of toolMessages) {
+        conversationMessages.push(toolMsg);
+        apiMessages.push(toolMsg);
+      }
 
-    // ─── Post-tool auto-compress ─────────────────────────────────────────────
-    // Tool results (especially large SSH/grep outputs) can push context over the
-    // limit between iterations. Compress immediately after appending so the next
-    // LLM call never hits a 400 context-overflow error.
-    {
-      const _allToolsPost = getAllToolDefinitions();
-      const _postCtx = getUsage(apiMessages, _allToolsPost);
-      if (_postCtx.percentage >= 78) {
-        const { messages: _compressed, tokensRemoved: _freed } = forceCompress(apiMessages, _allToolsPost);
-        if (_freed > 0) {
-          apiMessages = _compressed;
-          console.log(`${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`);
+      // ─── Post-tool auto-compress ─────────────────────────────────────────────
+      // Tool results (especially large SSH/grep outputs) can push context over the
+      // limit between iterations. Compress immediately after appending so the next
+      // LLM call never hits a 400 context-overflow error.
+      {
+        const _allToolsPost = getAllToolDefinitions();
+        const _postCtx = getUsage(apiMessages, _allToolsPost);
+        if (_postCtx.percentage >= 78) {
+          const { messages: _compressed, tokensRemoved: _freed } =
+            forceCompress(apiMessages, _allToolsPost);
+          if (_freed > 0) {
+            apiMessages = _compressed;
+            console.log(
+              `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`,
+            );
+          }
         }
       }
-    }
 
-    // ─── Mid-run user notes ───
-    // If the user typed something while the agent was running, inject it now
-    // before the next API call so the model can take it into account.
-    const midRunNote = _drainMidRunBuffer();
-    if (midRunNote) {
-      const noteMsg = { role: 'user', content: `[User note mid-run]: ${midRunNote}` };
-      conversationMessages.push(noteMsg);
-      apiMessages.push(noteMsg);
-      console.log(`${C.cyan}  ✎ Context added${C.reset}`);
-    }
-  }
-
-  // Only print résumé + max-iterations warning if the loop actually exhausted (not on break)
-  if (i >= iterLimit) {
-    if (taskProgress) { taskProgress.stop(); taskProgress = null; }
-    setOnChange(null);
-    _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
-    saveNow(conversationMessages);
-    _scoreAndPrint(conversationMessages);
-
-    const { getActiveProviderName: _getProviderName } = require('./providers/registry');
-    const provider = _getProviderName();
-    if (provider === 'ollama' && autoExtensions < MAX_AUTO_EXTENSIONS) {
-      // Skip auto-extend if no meaningful progress was made in this pass
-      if (filesModified.size === 0 && !progressMadeThisPass) {
-        console.log(`${C.yellow}  ⚠ Max iterations reached with no progress. Stopping.${C.reset}`);
-        break outer;
+      // ─── Mid-run user notes ───
+      // If the user typed something while the agent was running, inject it now
+      // before the next API call so the model can take it into account.
+      const midRunNote = _drainMidRunBuffer();
+      if (midRunNote) {
+        const noteMsg = {
+          role: "user",
+          content: `[User note mid-run]: ${midRunNote}`,
+        };
+        conversationMessages.push(noteMsg);
+        apiMessages.push(noteMsg);
+        console.log(`${C.cyan}  ✎ Context added${C.reset}`);
       }
-      // Free provider — auto-extend silently.
-      // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
-      // so the next pass runs exactly 20 more iterations, not the full cumulative sum
-      // (which would give 70+90+...+250 = 1650 total instead of the intended 250).
-      autoExtensions++;
-      iterLimit = 20;
-      console.log(`${C.dim}  ── auto-extending (+20 turns, ext ${autoExtensions}/${MAX_AUTO_EXTENSIONS}) ──${C.reset}`);
-      continue outer;
     }
 
-    // Paid provider (or hard cap reached) — ask before spending more
-    console.log(`\n${C.yellow}⚠ Max iterations reached.${C.reset}`);
-    const keepGoing = await confirm(`  Continue for 20 more turns?`);
-    if (keepGoing) {
-      iterLimit = 20; // continue outer resets i to 0, so set exactly 20 new turns
-      continue outer;
-    }
+    // Only print résumé + max-iterations warning if the loop actually exhausted (not on break)
+    if (i >= iterLimit) {
+      if (taskProgress) {
+        taskProgress.stop();
+        taskProgress = null;
+      }
+      setOnChange(null);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+      saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
 
-    console.log(`${C.dim}  Tip: set "maxIterations" in .nex/config.json or use --max-turns${C.reset}`);
-  }
-  break outer;
+      const {
+        getActiveProviderName: _getProviderName,
+      } = require("./providers/registry");
+      const provider = _getProviderName();
+      if (provider === "ollama" && autoExtensions < MAX_AUTO_EXTENSIONS) {
+        // Skip auto-extend if no meaningful progress was made in this pass
+        if (filesModified.size === 0 && !progressMadeThisPass) {
+          console.log(
+            `${C.yellow}  ⚠ Max iterations reached with no progress. Stopping.${C.reset}`,
+          );
+          break outer;
+        }
+        // Free provider — auto-extend silently.
+        // iterLimit is reset to 20 (not += 20) because continue outer resets i to 0,
+        // so the next pass runs exactly 20 more iterations, not the full cumulative sum
+        // (which would give 70+90+...+250 = 1650 total instead of the intended 250).
+        autoExtensions++;
+        iterLimit = 20;
+        console.log(
+          `${C.dim}  ── auto-extending (+20 turns, ext ${autoExtensions}/${MAX_AUTO_EXTENSIONS}) ──${C.reset}`,
+        );
+        continue outer;
+      }
+
+      // Paid provider (or hard cap reached) — ask before spending more
+      console.log(`\n${C.yellow}⚠ Max iterations reached.${C.reset}`);
+      const keepGoing = await confirm(`  Continue for 20 more turns?`);
+      if (keepGoing) {
+        iterLimit = 20; // continue outer resets i to 0, so set exactly 20 new turns
+        continue outer;
+      }
+
+      console.log(
+        `${C.dim}  Tip: set "maxIterations" in .nex/config.json or use --max-turns${C.reset}`,
+      );
+    }
+    break outer;
   } // end outer while
 }
 

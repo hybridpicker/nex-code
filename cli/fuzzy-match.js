@@ -4,11 +4,11 @@
  * to recover from common LLM edit failures.
  */
 
-const { levenshtein } = require('./tool-validator');
+const { levenshtein } = require("./tool-validator");
 
 // Constants for fuzzy matching
 const MAX_CANDIDATES = 200;
-const SIMILARITY_THRESHOLD = 0.3;  // Reject if distance > 30% of target length
+const SIMILARITY_THRESHOLD = 0.3; // Reject if distance > 30% of target length
 const TAB_SPACES = 2;
 
 /**
@@ -20,18 +20,18 @@ const TAB_SPACES = 2;
  */
 function normalizeWhitespace(text) {
   return text
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\t/g, ' '.repeat(TAB_SPACES))
-    .split('\n')
-    .map(line => {
-      const trimmed = line.replace(/\s+$/, '');
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\t/g, " ".repeat(TAB_SPACES))
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.replace(/\s+$/, "");
       const match = trimmed.match(/^(\s*)(.*)/);
       if (!match) return trimmed;
       const [, indent, rest] = match;
-      return indent + rest.replace(/ {2,}/g, ' ');
+      return indent + rest.replace(/ {2,}/g, " ");
     })
-    .join('\n');
+    .join("\n");
 }
 
 /**
@@ -57,9 +57,9 @@ function fuzzyFindText(haystack, needle) {
   if (!normHaystack.includes(normNeedle)) return null;
 
   // Map normalized position back to original text using line-based matching
-  const haystackLines = haystack.split('\n');
-  const normHaystackLines = normHaystack.split('\n');
-  const normNeedleLines = normNeedle.split('\n');
+  const haystackLines = haystack.split("\n");
+  const normHaystackLines = normHaystack.split("\n");
+  const normNeedleLines = normNeedle.split("\n");
 
   // Find which normalized line the match starts on
   const needleFirstLine = normNeedleLines[0];
@@ -76,7 +76,7 @@ function fuzzyFindText(haystack, needle) {
     }
     if (matches) {
       // Return the original lines from haystack
-      return haystackLines.slice(i, i + normNeedleLines.length).join('\n');
+      return haystackLines.slice(i, i + normNeedleLines.length).join("\n");
     }
   }
 
@@ -106,8 +106,8 @@ function fuzzyFindText(haystack, needle) {
 function findMostSimilar(content, target) {
   if (!content || !target) return null;
 
-  const contentLines = content.split('\n');
-  const targetLines = target.split('\n');
+  const contentLines = content.split("\n");
+  const targetLines = target.split("\n");
   const targetLineCount = targetLines.length;
 
   if (contentLines.length === 0 || targetLineCount === 0) return null;
@@ -149,7 +149,7 @@ function isWithinThreshold(distance, targetLength) {
 function findBestSingleLineMatch(contentLines, target) {
   const targetTrimmed = target.trim();
   const step = calculateStep(contentLines.length);
-  
+
   let best = null;
   let bestDist = Infinity;
 
@@ -157,7 +157,7 @@ function findBestSingleLineMatch(contentLines, target) {
   for (let i = 0; i < contentLines.length; i += step) {
     const line = contentLines[i];
     if (!line.trim()) continue;
-    
+
     const dist = levenshtein(line.trim(), targetTrimmed);
     if (dist < bestDist) {
       bestDist = dist;
@@ -167,7 +167,12 @@ function findBestSingleLineMatch(contentLines, target) {
 
   // Refine around best match
   if (best && step > 1) {
-    const refined = refineSingleLineSearch(contentLines, targetTrimmed, best, step);
+    const refined = refineSingleLineSearch(
+      contentLines,
+      targetTrimmed,
+      best,
+      step,
+    );
     best = refined || best;
     bestDist = best.distance;
   }
@@ -187,14 +192,14 @@ function refineSingleLineSearch(contentLines, targetTrimmed, best, step) {
   const center = best.line - 1;
   const lo = Math.max(0, center - step);
   const hi = Math.min(contentLines.length - 1, center + step);
-  
+
   let bestDist = best.distance;
   let result = null;
 
   for (let i = lo; i <= hi; i++) {
     const line = contentLines[i];
     if (!line.trim()) continue;
-    
+
     const dist = levenshtein(line.trim(), targetTrimmed);
     if (dist < bestDist) {
       bestDist = dist;
@@ -217,13 +222,13 @@ function findBestMultiLineMatch(contentLines, target, windowSize) {
   if (maxWindows <= 0) return null;
 
   const step = calculateStep(maxWindows);
-  
+
   let best = null;
   let bestDist = Infinity;
 
   // Coarse search with sampling
   for (let i = 0; i < maxWindows; i += step) {
-    const window = contentLines.slice(i, i + windowSize).join('\n');
+    const window = contentLines.slice(i, i + windowSize).join("\n");
     const dist = levenshtein(window, target);
     if (dist < bestDist) {
       bestDist = dist;
@@ -233,7 +238,14 @@ function findBestMultiLineMatch(contentLines, target, windowSize) {
 
   // Refine around best match
   if (best && step > 1) {
-    const refined = refineMultiLineSearch(contentLines, target, best, step, windowSize, maxWindows);
+    const refined = refineMultiLineSearch(
+      contentLines,
+      target,
+      best,
+      step,
+      windowSize,
+      maxWindows,
+    );
     best = refined || best;
     bestDist = best.distance;
   }
@@ -251,16 +263,23 @@ function findBestMultiLineMatch(contentLines, target, windowSize) {
  * @param {number} maxWindows - Maximum window positions
  * @returns {Object|null} Refined match or null
  */
-function refineMultiLineSearch(contentLines, target, best, step, windowSize, maxWindows) {
+function refineMultiLineSearch(
+  contentLines,
+  target,
+  best,
+  step,
+  windowSize,
+  maxWindows,
+) {
   const center = best.line - 1;
   const lo = Math.max(0, center - step);
   const hi = Math.min(maxWindows - 1, center + step);
-  
+
   let bestDist = best.distance;
   let result = null;
 
   for (let i = lo; i <= hi; i++) {
-    const window = contentLines.slice(i, i + windowSize).join('\n');
+    const window = contentLines.slice(i, i + windowSize).join("\n");
     const dist = levenshtein(window, target);
     if (dist < bestDist) {
       bestDist = dist;

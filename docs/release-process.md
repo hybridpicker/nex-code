@@ -32,6 +32,7 @@ npm run release
 ```
 
 This command will:
+
 1. Bump the patch version
 2. Create a git tag
 3. Push to GitHub
