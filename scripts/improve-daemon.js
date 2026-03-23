@@ -32,7 +32,7 @@ const SESSION_FILE = path.join(HOME, 'Coding/jarvis-agent/.nex/sessions/_autosav
 const STATE_FILE   = path.join(HOME, 'Coding/jarvis-agent/.nex/loop-state.json');
 const NEX_DIR      = path.join(HOME, 'Coding/nex-code');
 const CLAUDE_BIN   = path.join(HOME, '.local/bin/claude');
-const JARVIS_SSH   = process.env.JARVIS_SSH_HOST || 'jarvis@94.130.37.43'; // override via env
+const JARVIS_SSH   = process.env.JARVIS_SSH_HOST; // set in LaunchAgent plist EnvironmentVariables
 const NODE_BIN     = process.execPath;
 
 const DEBOUNCE_MS   = 90_000;  // wait 90s after last write before treating session as complete
@@ -85,6 +85,10 @@ function scoreSession() {
 
 // ── Matrix notification via Jarvis ──────────────────────────────────────────
 function sendMatrix(message) {
+  if (!JARVIS_SSH) {
+    log('Matrix notification skipped — JARVIS_SSH_HOST not set.');
+    return;
+  }
   try {
     const payload = JSON.stringify({ message });
     // Write payload to a temp file to avoid shell quoting issues
