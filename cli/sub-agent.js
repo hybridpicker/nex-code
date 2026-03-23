@@ -412,6 +412,11 @@ ERROR RECOVERY:
 
         toolsUsed.push(fnName);
 
+        // Fire live tool-call event so callers (e.g. orchestrator) can stream activity
+        if (callbacks.onUpdate) {
+          callbacks.onUpdate({ type: "tool_call", tool: fnName, agentId });
+        }
+
         // Intercept nested spawn_agents: call executeSpawnAgents with depth+1
         // instead of going through the generic executeTool dispatch.
         const execToolOrNested =
