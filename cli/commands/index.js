@@ -116,6 +116,7 @@ const SLASH_COMMANDS = [
   },
   { cmd: "/init", desc: "Interactive setup wizard (.nex/)" },
   { cmd: "/setup", desc: "Configure provider and API keys" },
+  { cmd: "/retry [--model <id>]", desc: "Retry last user turn (optionally with a different model)" },
   { cmd: "/undo", desc: "Undo last file change" },
   { cmd: "/redo", desc: "Redo last undone change" },
   { cmd: "/history", desc: "Show file change history" },
@@ -281,6 +282,10 @@ ${C.bold}${C.cyan}Extensibility:${C.reset}
 ${C.bold}${C.cyan}Tasks:${C.reset}
   ${C.cyan}/tasks${C.reset}            ${C.dim}Show current task list${C.reset}
   ${C.cyan}/tasks clear${C.reset}      ${C.dim}Clear all tasks${C.reset}
+
+${C.bold}${C.cyan}Conversation:${C.reset}
+  ${C.cyan}/retry${C.reset}            ${C.dim}Retry last user turn with same model${C.reset}
+  ${C.cyan}/retry --model <id>${C.reset}${C.dim}  Retry with a different model${C.reset}
 
 ${C.bold}${C.cyan}Undo / Redo:${C.reset}
   ${C.cyan}/undo${C.reset}             ${C.dim}Undo last file change${C.reset}
@@ -576,6 +581,60 @@ async function handleSlashCommand(input, rl) {
       const { deleteSession: _delAutosave } = require("../session");
       _delAutosave("_autosave");
       console.log(`${C.green}Conversation cleared${C.reset}`);
+      return true;
+    }
+
+    case "/retry": {
+      const {
+        getConversationMessages: _retryGetMsgs,
+        setConversationMessages: _retrySetMsgs,
+        processInput: _retryProcessInput,
+      } = require("../agent");
+
+      const currentMsgs = _retryGetMsgs();
+      const lastUserIdx = currentMsgs.map((m) => m.role).lastIndexOf("user");
+      if (lastUserIdx === -1) {
+        console.log(`${C.yellow}Nothing to retry — no user message found.${C.reset}`);
+        return true;
+      }
+
+      // Parse optional --model flag
+      const modelFlagIdx = rest.indexOf("--model");
+      const retryModel =
+        modelFlagIdx !== -1 && rest[modelFlagIdx + 1]
+          ? rest[modelFlagIdx + 1]
+          : null;
+
+      if (retryModel) {
+        const { setActiveModel: _retrySetModel } = require("../providers/registry");
+        if (!_retrySetModel(retryModel)) {
+          console.log(`${C.red}Unknown model: ${retryModel}. Use /providers to see available models.${C.reset}`);
+          return true;
+        }
+        console.log(`${C.cyan}Switched to model: ${retryModel}${C.reset}`);
+      }
+
+      // Extract the last user message content
+      const lastUserMsg = currentMsgs[lastUserIdx];
+      // Reconstruct text from content (may be string or array of content blocks)
+      let retryText;
+      if (typeof lastUserMsg.content === "string") {
+        retryText = lastUserMsg.content;
+      } else if (Array.isArray(lastUserMsg.content)) {
+        retryText = lastUserMsg.content
+          .filter((b) => b && b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+      } else {
+        retryText = String(lastUserMsg.content);
+      }
+
+      // Truncate history to just before the last user message
+      _retrySetMsgs(currentMsgs.slice(0, lastUserIdx));
+
+      const modelDesc = retryModel || "current model";
+      console.log(`${C.cyan}Retrying with ${modelDesc}...${C.reset}`);
+      await _retryProcessInput(retryText);
       return true;
     }
 
