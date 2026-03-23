@@ -797,6 +797,7 @@ let _planRejectionCount = 0;  // times plan-without-reads was rejected this sess
 let _lastCompressionMsg = '';  // deduplicate consecutive identical compression messages
 let _compressionMsgCount = 0;  // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
+let _sshDeadlockRelaxCount = 0;   // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -965,6 +966,10 @@ ${languagePrompt ? `${languagePrompt}\n` : ''}${deploymentContext ? `${deploymen
 - LOG FILES: Always check the CURRENT log first: /home/jarvis/jarvis-agent/logs/api-error.log (no date suffix). Log files WITH a date suffix (e.g. api-error.log-20260322) are ROTATED/OLD — errors there may already be fixed. Only look at dated logs if the current log is empty or the error is absent from the current log.
 - FIX WORKFLOW (YOLO): Once you identify a fixable bug via SSH investigation: (1) edit the file on server using ssh_exec with tee or sed -i (NOT sed -n), (2) restart the affected service with systemctl restart, (3) verify with tail logs. Do NOT produce a report — execute the fix.
 - READING REMOTE FILES: NEVER use sed -n (always blocked). To read a specific function in a remote file: ssh_exec 'grep -n "functionName" /path/file -A 50'. To read the whole file: ssh_exec 'cat /path/file'. These are the only two options.
+
+# Plan Mode
+
+Plan mode is ONLY active when explicitly activated via the /plan command or shown in your system prompt as "PLAN MODE ACTIVE". If you do NOT see "PLAN MODE ACTIVE" in your instructions, you are NOT in plan mode — you have full tool access and MUST execute tasks directly. Never claim to be in plan mode unless you see that explicit marker.
 
 # Core Behavior
 
@@ -1232,6 +1237,7 @@ function clearConversation() {
   _superNuclearFires = 0;
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
+  _sshDeadlockRelaxCount = 0;
   _lastCompressionMsg = '';
   _compressionMsgCount = 0;
 }
@@ -2549,12 +2555,14 @@ async function processInput(userInput, serverHooks = null) {
       const _allSsh = prepared.filter(p => p.canExecute && p.fnName === 'ssh_exec');
       const _anyNonSsh = prepared.some(p => p.canExecute && p.fnName !== 'ssh_exec');
       const _jarvisGuardActive = _isJarvisDebugging && _jarvisLocalWarnFired < 3;
-      if (_allSsh.length > 0 && !_anyNonSsh && _jarvisGuardActive) {
+      if (_allSsh.length > 0 && !_anyNonSsh && _jarvisGuardActive && _sshDeadlockRelaxCount < 1) {
         // Only SSH calls in this batch and local guard would also block — deadlock.
         // Relax SSH storm to allow ONE call so the agent can proceed.
+        // Hard-cap: relaxer only fires ONCE per session to prevent repeated storm bypass.
         _sshBlockedAfterStorm = false;
+        _sshDeadlockRelaxCount++;
         _sessionConsecutiveSshCalls = Math.max(0, SSH_STORM_WARN - 2); // partial reset
-        console.log(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing SSH call]${C.reset}`);
+        console.log(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax ${_sshDeadlockRelaxCount}/1)]${C.reset}`);
       } else {
         for (const prep of _allSsh) {
           prep.canExecute = false;
