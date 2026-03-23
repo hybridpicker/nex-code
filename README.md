@@ -1354,6 +1354,56 @@ MCP tools appear with the `mcp_` prefix and are available to the agent alongside
 
 ---
 
+## MCP Servers
+
+nex-code supports a dedicated `.nex/mcp.json` file (or `~/.nex/mcp.json` for global config) for
+connecting MCP tool servers. This format supports environment variable interpolation so you can keep
+API keys out of the config file.
+
+```json
+// .nex/mcp.json
+{
+  "servers": {
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+**Search order for config:** `.nex/mcp.json` → `~/.nex/mcp.json`. Override with `--mcp-config <path>`.
+
+**Slash commands:**
+
+```
+/mcp list     — list connected MCP servers and their exposed tools
+/mcp status   — show which servers are running / stopped
+```
+
+**How it works:**
+
+1. nex-code spawns each server as a child process using stdio JSON-RPC transport.
+2. It sends `initialize` + `tools/list` to discover available tools.
+3. All discovered tools are merged into the nex-code tool registry under the name `mcp_<server>_<tool>`.
+4. The agent can call them transparently alongside built-in tools.
+5. All server processes are shut down cleanly when nex-code exits.
+
+**Env var interpolation:** `${VAR}` in the `env` block is replaced from `process.env` at startup so you
+can store the actual key in your shell environment or `.env` file:
+
+```bash
+export BRAVE_API_KEY=my-key
+nex-code --mcp-config .nex/mcp.json
+```
+
+---
+
 ## Hooks
 
 Run custom scripts on CLI events:
