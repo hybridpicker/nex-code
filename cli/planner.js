@@ -3,10 +3,10 @@
  * Structured planning workflow: analyze → plan → approve → execute
  */
 
-const fs = require('fs');
-const path = require('path');
-const readline = require('readline');
-const { C } = require('./ui');
+const fs = require("fs");
+const path = require("path");
+const readline = require("readline");
+const { C } = require("./ui");
 
 // Plan state
 let activePlan = null;
@@ -19,13 +19,21 @@ let planContent = null;
 // rather than blocking on an interactive question. The user approves/rejects
 // the whole plan, which is the only gate needed.
 const PLAN_MODE_ALLOWED_TOOLS = new Set([
-  'read_file', 'list_directory', 'search_files', 'glob', 'grep',
-  'web_search', 'web_fetch',
-  'git_status', 'git_diff', 'git_log', 'git_show',
+  "read_file",
+  "list_directory",
+  "search_files",
+  "glob",
+  "grep",
+  "web_search",
+  "web_fetch",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_show",
 ]);
 
 function getPlanDir() {
-  return path.join(process.cwd(), '.nex', 'plans');
+  return path.join(process.cwd(), ".nex", "plans");
 }
 
 function ensureDir() {
@@ -63,9 +71,9 @@ function createPlan(task, steps = []) {
     steps: steps.map((s) => ({
       description: s.description || s,
       files: s.files || [],
-      status: 'pending',
+      status: "pending",
     })),
-    status: 'draft',
+    status: "draft",
     createdAt: new Date().toISOString(),
   };
   return activePlan;
@@ -98,8 +106,8 @@ function isPlanMode() {
  * @returns {boolean}
  */
 function approvePlan() {
-  if (!activePlan || activePlan.status !== 'draft') return false;
-  activePlan.status = 'approved';
+  if (!activePlan || activePlan.status !== "draft") return false;
+  activePlan.status = "approved";
   activePlan.updatedAt = new Date().toISOString();
   return true;
 }
@@ -108,8 +116,8 @@ function approvePlan() {
  * Start executing the plan
  */
 function startExecution() {
-  if (!activePlan || activePlan.status !== 'approved') return false;
-  activePlan.status = 'executing';
+  if (!activePlan || activePlan.status !== "approved") return false;
+  activePlan.status = "executing";
   return true;
 }
 
@@ -119,13 +127,16 @@ function startExecution() {
  * @param {'pending'|'in_progress'|'done'|'skipped'} status
  */
 function updateStep(index, status) {
-  if (!activePlan || index < 0 || index >= activePlan.steps.length) return false;
+  if (!activePlan || index < 0 || index >= activePlan.steps.length)
+    return false;
   activePlan.steps[index].status = status;
   activePlan.updatedAt = new Date().toISOString();
 
   // Check if all steps are done
-  if (activePlan.steps.every((s) => s.status === 'done' || s.status === 'skipped')) {
-    activePlan.status = 'completed';
+  if (
+    activePlan.steps.every((s) => s.status === "done" || s.status === "skipped")
+  ) {
+    activePlan.status = "completed";
   }
   return true;
 }
@@ -147,24 +158,35 @@ function formatPlan(plan) {
 
   const lines = [];
   lines.push(`\n${C.bold}${C.cyan}Plan: ${plan.task}${C.reset}`);
-  lines.push(`${C.dim}Status: ${statusIcon[plan.status] || plan.status}${C.reset}\n`);
+  lines.push(
+    `${C.dim}Status: ${statusIcon[plan.status] || plan.status}${C.reset}\n`,
+  );
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i];
     let icon;
     switch (step.status) {
-      case 'done': icon = `${C.green}✓${C.reset}`; break;
-      case 'in_progress': icon = `${C.blue}→${C.reset}`; break;
-      case 'skipped': icon = `${C.dim}○${C.reset}`; break;
-      default: icon = `${C.dim} ${C.reset}`;
+      case "done":
+        icon = `${C.green}✓${C.reset}`;
+        break;
+      case "in_progress":
+        icon = `${C.blue}→${C.reset}`;
+        break;
+      case "skipped":
+        icon = `${C.dim}○${C.reset}`;
+        break;
+      default:
+        icon = `${C.dim} ${C.reset}`;
     }
-    lines.push(`  ${icon} ${C.bold}Step ${i + 1}:${C.reset} ${step.description}`);
+    lines.push(
+      `  ${icon} ${C.bold}Step ${i + 1}:${C.reset} ${step.description}`,
+    );
     if (step.files.length > 0) {
-      lines.push(`    ${C.dim}Files: ${step.files.join(', ')}${C.reset}`);
+      lines.push(`    ${C.dim}Files: ${step.files.join(", ")}${C.reset}`);
     }
   }
-  lines.push('');
-  return lines.join('\n');
+  lines.push("");
+  return lines.join("\n");
 }
 
 /**
@@ -175,7 +197,7 @@ function savePlan(plan) {
   if (!plan) return null;
   ensureDir();
   const filePath = path.join(getPlanDir(), `${plan.name}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(plan, null, 2), 'utf-8');
+  fs.writeFileSync(filePath, JSON.stringify(plan, null, 2), "utf-8");
   return filePath;
 }
 
@@ -186,7 +208,7 @@ function loadPlan(name) {
   const filePath = path.join(getPlanDir(), `${name}.json`);
   if (!fs.existsSync(filePath)) return null;
   try {
-    const plan = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const plan = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     activePlan = plan;
     return plan;
   } catch {
@@ -200,11 +222,11 @@ function loadPlan(name) {
 function listPlans() {
   ensureDir();
   const dir = getPlanDir();
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
   const plans = [];
   for (const f of files) {
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8"));
       plans.push({
         name: data.name,
         task: data.task,
@@ -216,7 +238,9 @@ function listPlans() {
       // skip corrupt
     }
   }
-  return plans.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return plans.sort((a, b) =>
+    (b.createdAt || "").localeCompare(a.createdAt || ""),
+  );
 }
 
 /**
@@ -243,12 +267,12 @@ function extractStepsFromText(text) {
     const rawLine = match[2].trim();
     // Strip markdown bold/italic and leading "**What**:" prefixes
     const description = rawLine
-      .replace(/^\*\*What\*\*:\s*/i, '')
-      .replace(/^\*\*\d+\.\*\*\s*/, '')
-      .replace(/\*\*/g, '')
+      .replace(/^\*\*What\*\*:\s*/i, "")
+      .replace(/^\*\*\d+\.\*\*\s*/, "")
+      .replace(/\*\*/g, "")
       .trim();
     if (description.length > 3) {
-      steps.push({ description, files: [], status: 'pending' });
+      steps.push({ description, files: [], status: "pending" });
     }
   }
 
@@ -256,9 +280,9 @@ function extractStepsFromText(text) {
   if (steps.length === 0) {
     const boldStepRe = /\*\*Step\s+\d+[:.]\*\*\s*(.+)/gi;
     while ((match = boldStepRe.exec(text)) !== null) {
-      const description = match[1].replace(/\*\*/g, '').trim();
+      const description = match[1].replace(/\*\*/g, "").trim();
       if (description.length > 3) {
-        steps.push({ description, files: [], status: 'pending' });
+        steps.push({ description, files: [], status: "pending" });
       }
     }
   }
@@ -270,7 +294,10 @@ function extractStepsFromText(text) {
     for (let i = 0; i < Math.min(steps.length, fileMatches.length); i++) {
       const raw = fileMatches[i][1];
       // Extract file-like tokens (contain dots or slashes)
-      steps[i].files = raw.split(/[,\s]+/).filter((t) => /[./]/.test(t)).slice(0, 5);
+      steps[i].files = raw
+        .split(/[,\s]+/)
+        .filter((t) => /[./]/.test(t))
+        .slice(0, 5);
     }
   }
 
@@ -280,8 +307,12 @@ function extractStepsFromText(text) {
 /**
  * Store the LLM's plan text output
  */
-function setPlanContent(text) { planContent = text; }
-function getPlanContent() { return planContent; }
+function setPlanContent(text) {
+  planContent = text;
+}
+function getPlanContent() {
+  return planContent;
+}
 
 /**
  * Clear the active plan
@@ -298,7 +329,7 @@ function clearPlan() {
  * Instructs the LLM to only analyze and plan, not execute
  */
 function getPlanModePrompt() {
-  const allowedList = [...PLAN_MODE_ALLOWED_TOOLS].join(', ');
+  const allowedList = [...PLAN_MODE_ALLOWED_TOOLS].join(", ");
   return `
 PLAN MODE ACTIVE: You are in analysis-only mode. You MUST NOT execute any changes.
 
@@ -358,12 +389,12 @@ let planStepCursor = 0;
  * Called from the agent loop each time a new LLM turn starts (new tool batch).
  */
 function advancePlanStep() {
-  if (!activePlan || activePlan.status !== 'executing') return;
+  if (!activePlan || activePlan.status !== "executing") return;
   if (planStepCursor > 0) {
-    updateStep(planStepCursor - 1, 'done');
+    updateStep(planStepCursor - 1, "done");
   }
   if (planStepCursor < activePlan.steps.length) {
-    updateStep(planStepCursor, 'in_progress');
+    updateStep(planStepCursor, "in_progress");
     planStepCursor++;
   }
 }
@@ -374,11 +405,16 @@ function advancePlanStep() {
  * @returns {{ current: number, total: number, description: string }|null}
  */
 function getPlanStepInfo() {
-  if (!activePlan || activePlan.status !== 'executing' || activePlan.steps.length === 0) return null;
+  if (
+    !activePlan ||
+    activePlan.status !== "executing" ||
+    activePlan.steps.length === 0
+  )
+    return null;
   const current = Math.min(planStepCursor, activePlan.steps.length);
   const total = activePlan.steps.length;
   const idx = Math.max(0, current - 1);
-  const description = activePlan.steps[idx]?.description || '';
+  const description = activePlan.steps[idx]?.description || "";
   return { current, total, description };
 }
 
@@ -390,8 +426,8 @@ function resetPlanStepCursor() {
 }
 
 // Autonomy levels
-const AUTONOMY_LEVELS = ['interactive', 'semi-auto', 'autonomous'];
-let autonomyLevel = 'interactive';
+const AUTONOMY_LEVELS = ["interactive", "semi-auto", "autonomous"];
+let autonomyLevel = "interactive";
 
 function setAutonomyLevel(level) {
   if (!AUTONOMY_LEVELS.includes(level)) return false;

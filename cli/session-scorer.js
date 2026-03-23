@@ -11,10 +11,10 @@
  *   const result = scoreMessages(messages);
  */
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,13 +28,17 @@ const path = require('path');
 function extractToolCalls(messages) {
   const calls = [];
   messages.forEach((msg, msgIndex) => {
-    if (msg.role !== 'assistant') return;
+    if (msg.role !== "assistant") return;
 
     // Anthropic style: content is an array of blocks
     if (Array.isArray(msg.content)) {
       msg.content.forEach((block) => {
-        if (block && block.type === 'tool_use') {
-          calls.push({ name: block.name || '', input: block.input || {}, index: msgIndex });
+        if (block && block.type === "tool_use") {
+          calls.push({
+            name: block.name || "",
+            input: block.input || {},
+            index: msgIndex,
+          });
         }
       });
     }
@@ -42,13 +46,16 @@ function extractToolCalls(messages) {
     // OpenAI style: tool_calls array
     if (Array.isArray(msg.tool_calls)) {
       msg.tool_calls.forEach((tc) => {
-        const name = tc.function?.name || tc.name || '';
+        const name = tc.function?.name || tc.name || "";
         let input = {};
         try {
-          input = typeof tc.function?.arguments === 'string'
-            ? JSON.parse(tc.function.arguments)
-            : (tc.function?.arguments || tc.input || {});
-        } catch { /* unparseable args — leave empty */ }
+          input =
+            typeof tc.function?.arguments === "string"
+              ? JSON.parse(tc.function.arguments)
+              : tc.function?.arguments || tc.input || {};
+        } catch {
+          /* unparseable args — leave empty */
+        }
         calls.push({ name, input, index: msgIndex });
       });
     }
@@ -65,23 +72,27 @@ function extractToolResults(messages) {
   const results = [];
   messages.forEach((msg, msgIndex) => {
     // OpenAI-style: role:'user' with content array containing type:'tool_result' blocks
-    if (msg.role === 'user' && Array.isArray(msg.content)) {
+    if (msg.role === "user" && Array.isArray(msg.content)) {
       msg.content.forEach((block) => {
-        if (block && block.type === 'tool_result') {
-          const content = typeof block.content === 'string'
-            ? block.content
-            : Array.isArray(block.content)
-              ? block.content.map((b) => (typeof b === 'string' ? b : b.text || '')).join('')
-              : JSON.stringify(block.content || '');
+        if (block && block.type === "tool_result") {
+          const content =
+            typeof block.content === "string"
+              ? block.content
+              : Array.isArray(block.content)
+                ? block.content
+                    .map((b) => (typeof b === "string" ? b : b.text || ""))
+                    .join("")
+                : JSON.stringify(block.content || "");
           results.push({ content, index: msgIndex });
         }
       });
     }
     // Anthropic-style: role:'tool' with string content
-    if (msg.role === 'tool') {
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content || '');
+    if (msg.role === "tool") {
+      const content =
+        typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content || "");
       results.push({ content, index: msgIndex });
     }
   });
@@ -97,24 +108,24 @@ function extractToolResults(messages) {
 function getLastAssistantText(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.role !== 'assistant') continue;
+    if (msg.role !== "assistant") continue;
 
     // String content
-    if (typeof msg.content === 'string') {
+    if (typeof msg.content === "string") {
       return msg.content.trim();
     }
 
     // Array of content blocks — join text blocks
     if (Array.isArray(msg.content)) {
       const text = msg.content
-        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
-        .map((b) => (typeof b === 'string' ? b : b.text || ''))
-        .join('')
+        .filter((b) => b && (b.type === "text" || typeof b === "string"))
+        .map((b) => (typeof b === "string" ? b : b.text || ""))
+        .join("")
         .trim();
       if (text) return text;
     }
   }
-  return '';
+  return "";
 }
 
 /**
@@ -128,16 +139,16 @@ function getLastNAssistantTexts(messages, n) {
   const texts = [];
   for (let i = messages.length - 1; i >= 0 && texts.length < n; i--) {
     const msg = messages[i];
-    if (msg.role !== 'assistant') continue;
+    if (msg.role !== "assistant") continue;
 
-    let text = '';
-    if (typeof msg.content === 'string') {
+    let text = "";
+    if (typeof msg.content === "string") {
       text = msg.content.trim();
     } else if (Array.isArray(msg.content)) {
       text = msg.content
-        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
-        .map((b) => (typeof b === 'string' ? b : b.text || ''))
-        .join('')
+        .filter((b) => b && (b.type === "text" || typeof b === "string"))
+        .map((b) => (typeof b === "string" ? b : b.text || ""))
+        .join("")
         .trim();
     }
     if (text) texts.push(text);
@@ -178,8 +189,8 @@ function scoreMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return {
       score: 0,
-      issues: ['Empty or invalid session — no messages to analyse'],
-      summary: 'No messages found',
+      issues: ["Empty or invalid session — no messages to analyse"],
+      summary: "No messages found",
     };
   }
 
@@ -194,41 +205,53 @@ function scoreMessages(messages) {
   // Detect the SYSTEM WARNING messages injected by agent.js loop detection.
   const loopWarningInjected = messages.some(
     (msg) =>
-      msg.role === 'user' &&
-      typeof msg.content === 'string' &&
-      msg.content.startsWith('[SYSTEM WARNING]') &&
-      (msg.content.includes('edited') || msg.content.includes('bash command') || msg.content.includes('grep pattern') ||
-       msg.content.includes('re-read') || msg.content.includes('already in your context'))
+      msg.role === "user" &&
+      typeof msg.content === "string" &&
+      msg.content.startsWith("[SYSTEM WARNING]") &&
+      (msg.content.includes("edited") ||
+        msg.content.includes("bash command") ||
+        msg.content.includes("grep pattern") ||
+        msg.content.includes("re-read") ||
+        msg.content.includes("already in your context")),
   );
   if (loopWarningInjected) {
     score -= 2.0;
-    issues.push('Loop-warning was fired during session (repeated file edits, bash commands, or re-reads)');
+    issues.push(
+      "Loop-warning was fired during session (repeated file edits, bash commands, or re-reads)",
+    );
   }
 
   // ── 2. sed -n used (-1.5) ─────────────────────────────────────────────────
   const sedNCall = toolCalls.find((tc) => {
-    const cmd = tc.input?.command || tc.input?.cmd || '';
+    const cmd = tc.input?.command || tc.input?.cmd || "";
     return /\bsed\s+-n\b/.test(cmd);
   });
   if (sedNCall) {
-    const cmd = (sedNCall.input?.command || sedNCall.input?.cmd || '').slice(0, 80);
+    const cmd = (sedNCall.input?.command || sedNCall.input?.cmd || "").slice(
+      0,
+      80,
+    );
     score -= 1.5;
     issues.push(`sed -n anti-pattern used: ${cmd}`);
   }
 
   // ── 3. grep with >20 context lines (-1.0) ─────────────────────────────────
   const heavyGrepCall = toolCalls.find((tc) => {
-    if (tc.name !== 'grep' && tc.name !== 'bash' && tc.name !== 'ssh_exec') return false;
+    if (tc.name !== "grep" && tc.name !== "bash" && tc.name !== "ssh_exec")
+      return false;
     // Detect -C / -A / -B flags with values > 20
-    const cmd = tc.input?.command || tc.input?.cmd || '';
-    const pattern = tc.input?.pattern || '';
+    const cmd = tc.input?.command || tc.input?.cmd || "";
+    const pattern = tc.input?.pattern || "";
     const combined = `${cmd} ${pattern}`;
-    return /(?:-[CAB]|--context|--after|--before)\s*[=\s]?([2-9][1-9]|\d{3,})/.test(combined) ||
-           /grep.*-[CAB]\s*([2-9][1-9]|\d{3,})/.test(combined);
+    return (
+      /(?:-[CAB]|--context|--after|--before)\s*[=\s]?([2-9][1-9]|\d{3,})/.test(
+        combined,
+      ) || /grep.*-[CAB]\s*([2-9][1-9]|\d{3,})/.test(combined)
+    );
   });
   if (heavyGrepCall) {
     score -= 1.0;
-    issues.push('grep used with >20 context lines (context flood risk)');
+    issues.push("grep used with >20 context lines (context flood risk)");
   }
 
   // ── 4. Session ends without diagnosis (-2.0) ──────────────────────────────
@@ -241,24 +264,26 @@ function scoreMessages(messages) {
   // A session with only a user message is an incomplete/aborted capture (the
   // autosave was written before the first LLM response), not a bad session.
   // Penalising it as "no diagnosis" would be a false positive.
-  const hasAnyAssistantMsg = messages.some((m) => m.role === 'assistant');
+  const hasAnyAssistantMsg = messages.some((m) => m.role === "assistant");
   const lastAssistantText = getLastAssistantText(messages);
   const lastThreeTexts = getLastNAssistantTexts(messages, 3);
   const hasSubstantiveDiagnosis = lastThreeTexts.some(
-    (t) => t.length > 100 && !/^[^.!]{0,40}\?$/.test(t)
+    (t) => t.length > 100 && !/^[^.!]{0,40}\?$/.test(t),
   );
   const endsWithoutDiagnosis =
     hasAnyAssistantMsg &&
-    !hasSubstantiveDiagnosis && (
-      lastAssistantText.length < 50 ||
-      /^[^.!]{0,40}\?$/.test(lastAssistantText)
-    );
+    !hasSubstantiveDiagnosis &&
+    (lastAssistantText.length < 50 ||
+      /^[^.!]{0,40}\?$/.test(lastAssistantText));
   if (endsWithoutDiagnosis) {
     score -= 2.0;
-    const snippet = lastAssistantText.length > 0
-      ? `"${lastAssistantText.slice(0, 60)}..."`
-      : '(no assistant text found)';
-    issues.push(`Session ends without diagnosis — last response too short or is only a question: ${snippet}`);
+    const snippet =
+      lastAssistantText.length > 0
+        ? `"${lastAssistantText.slice(0, 60)}..."`
+        : "(no assistant text found)";
+    issues.push(
+      `Session ends without diagnosis — last response too short or is only a question: ${snippet}`,
+    );
   }
 
   // ── 5. More than 40 tool calls (-1.5), more than 25 (-0.5) ───────────────
@@ -274,22 +299,25 @@ function scoreMessages(messages) {
   // The agent logs "[auto-compressed" or "[context compacted" into the assistant stream.
   // The session messages may also contain injected system messages about compression.
   const autoCompressDetected = messages.some((msg) => {
-    const text = typeof msg.content === 'string'
-      ? msg.content
-      : Array.isArray(msg.content)
-        ? msg.content.map((b) => (typeof b === 'string' ? b : b.text || '')).join('')
-        : '';
+    const text =
+      typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content
+              .map((b) => (typeof b === "string" ? b : b.text || ""))
+              .join("")
+          : "";
     return /\[auto-compressed|context compacted|force-compressed/.test(text);
   });
   if (autoCompressDetected) {
     score -= 0.5;
-    issues.push('Auto-compress triggered (context flood indicator)');
+    issues.push("Auto-compress triggered (context flood indicator)");
   }
 
   // ── 7. Repeated identical tool call (3+ times) (-1.0) ────────────────────
   const dupCounts = countDuplicateToolCalls(toolCalls);
   let worstDupCount = 0;
-  let worstDupKey = '';
+  let worstDupKey = "";
   for (const [key, count] of dupCounts) {
     if (count > worstDupCount) {
       worstDupCount = count;
@@ -297,7 +325,7 @@ function scoreMessages(messages) {
     }
   }
   if (worstDupCount >= 3) {
-    const [dupName] = worstDupKey.split('|');
+    const [dupName] = worstDupKey.split("|");
     score -= 1.0;
     issues.push(`Same tool call repeated ${worstDupCount}× (tool: ${dupName})`);
   }
@@ -318,14 +346,16 @@ function scoreMessages(messages) {
   }
   if (stopTriggerIgnored) {
     score -= 1.5;
-    issues.push('Stop-trigger ignored: tool result contained "valid":true but session continued with more tool calls');
+    issues.push(
+      'Stop-trigger ignored: tool result contained "valid":true but session continued with more tool calls',
+    );
   }
 
   // ── 9. SSH reconnect storm (-0.5) ─────────────────────────────────────────
   // ssh_exec calls in rapid succession (8+) — threshold raised from 7 to 8
   // because complex Jarvis debugging legitimately needs 5-7 SSH calls
   // (api.log + api-error.log + grep for each error + targeted search + verify)
-  const sshCalls = toolCalls.filter((tc) => tc.name === 'ssh_exec');
+  const sshCalls = toolCalls.filter((tc) => tc.name === "ssh_exec");
   if (sshCalls.length >= 8) {
     // Check if 8+ consecutive ssh calls exist (adjacent message indices)
     let maxConsecutive = 0;
@@ -341,7 +371,9 @@ function scoreMessages(messages) {
     maxConsecutive = Math.max(maxConsecutive, current);
     if (maxConsecutive >= 8) {
       score -= 0.5;
-      issues.push(`SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`);
+      issues.push(
+        `SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`,
+      );
     }
   }
 
@@ -354,14 +386,14 @@ function scoreMessages(messages) {
   // section.
   const readFileData = new Map(); // path → { count, ranges: [[start, end], ...] }
   for (const tc of toolCalls) {
-    if (tc.name === 'read_file' && tc.input?.path) {
+    if (tc.name === "read_file" && tc.input?.path) {
       const p = tc.input.path;
       if (!readFileData.has(p)) readFileData.set(p, { count: 0, ranges: [] });
       const d = readFileData.get(p);
       d.count++;
       if (tc.input.line_start != null) {
         const rs = tc.input.line_start || 1;
-        const re = tc.input.line_end   || rs + 350;
+        const re = tc.input.line_end || rs + 350;
         d.ranges.push([rs, re]);
       }
     }
@@ -373,10 +405,10 @@ function scoreMessages(messages) {
   function hasSignificantOverlap(newStart, newEnd, prevRanges) {
     for (const [ps, pe] of prevRanges) {
       const oStart = Math.max(newStart, ps);
-      const oEnd   = Math.min(newEnd, pe);
+      const oEnd = Math.min(newEnd, pe);
       if (oEnd > oStart) {
         const overlapLen = oEnd - oStart;
-        const newLen     = (newEnd - newStart) || 1;
+        const newLen = newEnd - newStart || 1;
         if (overlapLen / newLen >= 0.7) return true;
       }
     }
@@ -384,7 +416,7 @@ function scoreMessages(messages) {
   }
 
   let worstReadCount = 0;
-  let worstReadPath = '';
+  let worstReadPath = "";
   for (const [p, d] of readFileData) {
     if (d.count < 3) continue;
 
@@ -403,35 +435,46 @@ function scoreMessages(messages) {
       if (!hasLoop) continue; // distinct non-overlapping sections — handled by scroll check below
     }
 
-    if (d.count > worstReadCount) { worstReadCount = d.count; worstReadPath = p; }
+    if (d.count > worstReadCount) {
+      worstReadCount = d.count;
+      worstReadPath = p;
+    }
   }
   if (worstReadCount >= 3) {
     score -= 1.0;
-    const shortPath = worstReadPath.split('/').slice(-2).join('/');
-    issues.push(`read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`);
+    const shortPath = worstReadPath.split("/").slice(-2).join("/");
+    issues.push(
+      `read_file loop: "${shortPath}" read ${worstReadCount}× (file already in context)`,
+    );
   }
 
   // ── 10b. File-scroll pattern (-0.5) ──────────────────────────────────────
   // Agent reads same file in 4+ non-overlapping sections = scrolling chunk-by-chunk.
   // 3 sections can be legitimate (e.g. header/body/footer); 4+ is almost always a scroll.
   let worstScrollCount = 0;
-  let worstScrollPath = '';
+  let worstScrollPath = "";
   for (const [p, d] of readFileData) {
     if (d.ranges.length < 4) continue;
     const seen = [];
     let hasOverlap = false;
     for (const [rs, re] of d.ranges) {
-      if (seen.length > 0 && hasSignificantOverlap(rs, re, seen)) { hasOverlap = true; break; }
+      if (seen.length > 0 && hasSignificantOverlap(rs, re, seen)) {
+        hasOverlap = true;
+        break;
+      }
       seen.push([rs, re]);
     }
     if (!hasOverlap && d.ranges.length > worstScrollCount) {
-      worstScrollCount = d.ranges.length; worstScrollPath = p;
+      worstScrollCount = d.ranges.length;
+      worstScrollPath = p;
     }
   }
   if (worstScrollCount >= 4) {
     score -= 0.5;
-    const shortPath = worstScrollPath.split('/').slice(-2).join('/');
-    issues.push(`File-scroll pattern: "${shortPath}" read in ${worstScrollCount} sequential sections — use grep instead`);
+    const shortPath = worstScrollPath.split("/").slice(-2).join("/");
+    issues.push(
+      `File-scroll pattern: "${shortPath}" read in ${worstScrollCount} sequential sections — use grep instead`,
+    );
   }
 
   // ── 11. Per-file grep flood (-0.75) ───────────────────────────────────────
@@ -439,14 +482,14 @@ function scoreMessages(messages) {
   // patterns instead of using the file content already in context.
   const grepFilePatterns = new Map(); // file → Set of distinct patterns
   for (const tc of toolCalls) {
-    if (tc.name === 'grep' && tc.input?.path && tc.input?.pattern) {
+    if (tc.name === "grep" && tc.input?.path && tc.input?.pattern) {
       const f = tc.input.path;
       if (!grepFilePatterns.has(f)) grepFilePatterns.set(f, new Set());
       grepFilePatterns.get(f).add(tc.input.pattern);
     }
   }
   let worstGrepFileCount = 0;
-  let worstGrepFile = '';
+  let worstGrepFile = "";
   for (const [f, patterns] of grepFilePatterns) {
     if (patterns.size > worstGrepFileCount) {
       worstGrepFileCount = patterns.size;
@@ -455,8 +498,10 @@ function scoreMessages(messages) {
   }
   if (worstGrepFileCount >= 3) {
     score -= 0.75;
-    const shortPath = worstGrepFile.split('/').slice(-2).join('/');
-    issues.push(`grep flood on single file: "${shortPath}" searched ${worstGrepFileCount}× with different patterns (file already in context)`);
+    const shortPath = worstGrepFile.split("/").slice(-2).join("/");
+    issues.push(
+      `grep flood on single file: "${shortPath}" searched ${worstGrepFileCount}× with different patterns (file already in context)`,
+    );
   }
 
   // ── 12a. Write-then-delete temp file waste (-0.25 per file, max -0.5) ──────
@@ -467,12 +512,12 @@ function scoreMessages(messages) {
     const deletedTempFiles = new Set();
     const TEMP_RE = /^(test_|demo_|temp_|tmp_|scratch_)/;
     for (const tc of toolCalls) {
-      if (tc.name === 'write_file' && tc.input?.path) {
-        const base = tc.input.path.split('/').pop();
-        const inTests = tc.input.path.includes('/tests/');
+      if (tc.name === "write_file" && tc.input?.path) {
+        const base = tc.input.path.split("/").pop();
+        const inTests = tc.input.path.includes("/tests/");
         if (TEMP_RE.test(base) && !inTests) writtenTempFiles.add(tc.input.path);
       }
-      if ((tc.name === 'bash' || tc.name === 'ssh_exec') && tc.input?.command) {
+      if ((tc.name === "bash" || tc.name === "ssh_exec") && tc.input?.command) {
         // match: rm <path> or rm -f <path>
         const rmMatch = tc.input.command.match(/\brm\s+(?:-\w+\s+)?(\S+)/g);
         if (rmMatch) {
@@ -480,7 +525,10 @@ function scoreMessages(messages) {
             const parts = m.split(/\s+/);
             const rmPath = parts[parts.length - 1];
             for (const wPath of writtenTempFiles) {
-              if (wPath.endsWith(rmPath) || rmPath.endsWith(wPath.split('/').pop())) {
+              if (
+                wPath.endsWith(rmPath) ||
+                rmPath.endsWith(wPath.split("/").pop())
+              ) {
                 deletedTempFiles.add(wPath);
               }
             }
@@ -492,21 +540,31 @@ function scoreMessages(messages) {
     if (wastedCount >= 1) {
       const penalty = Math.min(wastedCount * 0.25, 0.5);
       score -= penalty;
-      const names = [...deletedTempFiles].map((p) => p.split('/').pop()).join(', ');
-      issues.push(`Temp file write-then-delete: ${names} — write inline logic or use tests/ instead`);
+      const names = [...deletedTempFiles]
+        .map((p) => p.split("/").pop())
+        .join(", ");
+      issues.push(
+        `Temp file write-then-delete: ${names} — write inline logic or use tests/ instead`,
+      );
     }
   }
 
   // ── 12. Bash EXIT-error storm (-1.0) ──────────────────────────────────────
   // Count tool results starting with "EXIT" (non-zero bash exit codes).
   // 10+ EXIT errors in a session indicates repeated failed commands.
-  const exitErrorCount = toolResults.filter((tr) => tr.content.startsWith('EXIT')).length;
+  const exitErrorCount = toolResults.filter((tr) =>
+    tr.content.startsWith("EXIT"),
+  ).length;
   if (exitErrorCount >= 10) {
     score -= 1.0;
-    issues.push(`Bash exit-error storm: ${exitErrorCount} tool results started with EXIT (repeated failing commands)`);
+    issues.push(
+      `Bash exit-error storm: ${exitErrorCount} tool results started with EXIT (repeated failing commands)`,
+    );
   } else if (exitErrorCount >= 5) {
     score -= 0.5;
-    issues.push(`Repeated bash errors: ${exitErrorCount} tool results with non-zero exit code`);
+    issues.push(
+      `Repeated bash errors: ${exitErrorCount} tool results with non-zero exit code`,
+    );
   }
 
   // ── 13. LLM output loop: repeated content in assistant message (-1.5) ────
@@ -514,15 +572,15 @@ function scoreMessages(messages) {
   // proportion of repeated content (same sliding-window block seen 3+ times).
   // Mirrors the detectAndTruncateRepetition logic in agent.js.
   for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    let text = '';
-    if (typeof msg.content === 'string') {
+    if (msg.role !== "assistant") continue;
+    let text = "";
+    if (typeof msg.content === "string") {
       text = msg.content;
     } else if (Array.isArray(msg.content)) {
       text = msg.content
-        .filter((b) => b && (b.type === 'text' || typeof b === 'string'))
-        .map((b) => (typeof b === 'string' ? b : b.text || ''))
-        .join('');
+        .filter((b) => b && (b.type === "text" || typeof b === "string"))
+        .map((b) => (typeof b === "string" ? b : b.text || ""))
+        .join("");
     }
     if (text.length <= 5000) continue;
 
@@ -532,14 +590,21 @@ function scoreMessages(messages) {
 
     const windowCounts = new Map();
     for (let wi = 0; wi <= sentences.length - 3; wi++) {
-      const window = sentences.slice(wi, wi + 3).join('').trim();
-      if (window.length > 30) windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
+      const window = sentences
+        .slice(wi, wi + 3)
+        .join("")
+        .trim();
+      if (window.length > 30)
+        windowCounts.set(window, (windowCounts.get(window) || 0) + 1);
     }
 
     let maxWinCount = 0;
-    let maxWinKey = '';
+    let maxWinKey = "";
     for (const [key, count] of windowCounts) {
-      if (count > maxWinCount) { maxWinCount = count; maxWinKey = key; }
+      if (count > maxWinCount) {
+        maxWinCount = count;
+        maxWinKey = key;
+      }
     }
 
     if (maxWinCount < 3) continue;
@@ -550,7 +615,9 @@ function scoreMessages(messages) {
     // Trigger on high ratio OR clearly excessive repetition count (≥10)
     if (ratio >= 0.4 || maxWinCount >= 10) {
       score -= 1.5;
-      issues.push(`llm output loop: assistant message repeated content detected (${maxWinCount}× same paragraph, ${Math.round(ratio * 100)}% repeated)`);
+      issues.push(
+        `llm output loop: assistant message repeated content detected (${maxWinCount}× same paragraph, ${Math.round(ratio * 100)}% repeated)`,
+      );
       break; // Only penalise once
     }
   }
@@ -560,42 +627,62 @@ function scoreMessages(messages) {
   // near zero). This means the LLM invented data structures, routes, and db types
   // from training knowledge rather than reading the actual codebase.
   {
-    const readToolNames = new Set(['read_file', 'list_directory', 'search_files', 'glob', 'grep']);
-    const hasReadCalls = messages.some(m => {
-      if (Array.isArray(m.tool_calls)) return m.tool_calls.some(tc => readToolNames.has(tc.function?.name));
-      if (Array.isArray(m.content)) return m.content.some(b => b.type === 'tool_use' && readToolNames.has(b.name));
+    const readToolNames = new Set([
+      "read_file",
+      "list_directory",
+      "search_files",
+      "glob",
+      "grep",
+    ]);
+    const hasReadCalls = messages.some((m) => {
+      if (Array.isArray(m.tool_calls))
+        return m.tool_calls.some((tc) => readToolNames.has(tc.function?.name));
+      if (Array.isArray(m.content))
+        return m.content.some(
+          (b) => b.type === "tool_use" && readToolNames.has(b.name),
+        );
       return false;
     });
-    const hasPlanText = messages.some(m =>
-      m.role === 'assistant' && typeof m.content === 'string' &&
-      (m.content.includes('## Steps') || m.content.includes('/plan approve'))
+    const hasPlanText = messages.some(
+      (m) =>
+        m.role === "assistant" &&
+        typeof m.content === "string" &&
+        (m.content.includes("## Steps") || m.content.includes("/plan approve")),
     );
     if (hasPlanText && !hasReadCalls) {
       score -= 2.0;
-      issues.push('plan written without reading any files — LLM invented data structures from training knowledge (hallucination risk)');
+      issues.push(
+        "plan written without reading any files — LLM invented data structures from training knowledge (hallucination risk)",
+      );
     }
   }
 
   // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
   // A BLOCKED message means the agent attempted something it shouldn't have.
-  const blockedResults = toolResults.filter((tr) => tr.content.startsWith('BLOCKED:'));
+  const blockedResults = toolResults.filter((tr) =>
+    tr.content.startsWith("BLOCKED:"),
+  );
   if (blockedResults.length > 0) {
     const penalty = Math.min(blockedResults.length * 0.5, 1.5);
     score -= penalty;
-    issues.push(`${blockedResults.length} tool call${blockedResults.length === 1 ? '' : 's'} blocked (agent attempted denied actions)`);
+    issues.push(
+      `${blockedResults.length} tool call${blockedResults.length === 1 ? "" : "s"} blocked (agent attempted denied actions)`,
+    );
   }
 
   // ── 15. Super-nuclear context wipes (-1.0 per wipe, max -2.0) ─────────────
   // Super-nuclear fires indicate the session collapsed under context pressure.
   // Detected via the warning messages injected after each wipe.
   const superNuclearCount = messages.filter((msg) => {
-    const text = typeof msg.content === 'string' ? msg.content : '';
+    const text = typeof msg.content === "string" ? msg.content : "";
     return /\[SYSTEM WARNING\] Context wiped \d+×/.test(text);
   }).length;
   if (superNuclearCount > 0) {
     const penalty = Math.min(superNuclearCount * 1.0, 2.0);
     score -= penalty;
-    issues.push(`Super-nuclear context wipe fired ${superNuclearCount}× (context collapse — task too large or read loops)`);
+    issues.push(
+      `Super-nuclear context wipe fired ${superNuclearCount}× (context collapse — task too large or read loops)`,
+    );
   }
 
   // ── 16. Bash used instead of dedicated tool (cat/ls/find) (-0.25 per type, max -0.75) ──
@@ -604,29 +691,33 @@ function scoreMessages(messages) {
   // Penalise sessions where the LLM ignores this — each violation type counts once.
   {
     let catViaBash = false;
-    let lsViaBash  = false;
+    let lsViaBash = false;
     let findViaBash = false;
     for (const tc of toolCalls) {
-      if (tc.name !== 'bash') continue;
-      const cmd = (tc.input?.command || tc.input?.cmd || '').trim();
+      if (tc.name !== "bash") continue;
+      const cmd = (tc.input?.command || tc.input?.cmd || "").trim();
       // Skip: write redirects (cat > file, cat >> file), heredocs (<<), and remote SSH usage
       const isWrite = /cat\s*>/.test(cmd) || /<</.test(cmd);
       if (!isWrite && /\bcat\s+\S/.test(cmd)) catViaBash = true;
       // ls used for directory listing (not piped into grep/wc for file-type filtering,
       // and not part of a build/test command)
-      if (/^\s*ls(\s|$)/.test(cmd) && !/npm|yarn|pnpm|make|git\b/.test(cmd)) lsViaBash = true;
+      if (/^\s*ls(\s|$)/.test(cmd) && !/npm|yarn|pnpm|make|git\b/.test(cmd))
+        lsViaBash = true;
       // find used for file discovery (not -exec or complex pipeline)
-      if (/\bfind\s+\S/.test(cmd) && !/git\b|npm\b|-exec\b/.test(cmd)) findViaBash = true;
+      if (/\bfind\s+\S/.test(cmd) && !/git\b|npm\b|-exec\b/.test(cmd))
+        findViaBash = true;
     }
-    const bashToolViolations = [catViaBash, lsViaBash, findViaBash].filter(Boolean).length;
+    const bashToolViolations = [catViaBash, lsViaBash, findViaBash].filter(
+      Boolean,
+    ).length;
     if (bashToolViolations > 0) {
       const penalty = Math.min(bashToolViolations * 0.25, 0.75);
       score -= penalty;
       const types = [];
-      if (catViaBash)  types.push('cat (use read_file)');
-      if (lsViaBash)   types.push('ls (use list_directory)');
-      if (findViaBash) types.push('find (use glob)');
-      issues.push(`bash used instead of dedicated tool: ${types.join(', ')}`);
+      if (catViaBash) types.push("cat (use read_file)");
+      if (lsViaBash) types.push("ls (use list_directory)");
+      if (findViaBash) types.push("find (use glob)");
+      issues.push(`bash used instead of dedicated tool: ${types.join(", ")}`);
     }
   }
 
@@ -636,14 +727,20 @@ function scoreMessages(messages) {
 
   // ── Build summary ─────────────────────────────────────────────────────────
   const grade =
-    score >= 9.0 ? 'A' :
-    score >= 8.0 ? 'B' :
-    score >= 7.0 ? 'C' :
-    score >= 6.0 ? 'D' : 'F';
+    score >= 9.0
+      ? "A"
+      : score >= 8.0
+        ? "B"
+        : score >= 7.0
+          ? "C"
+          : score >= 6.0
+            ? "D"
+            : "F";
 
-  const summary = issues.length === 0
-    ? `Clean session — no quality issues detected (${totalToolCalls} tool calls)`
-    : `${issues.length} issue${issues.length === 1 ? '' : 's'} found — ${totalToolCalls} tool calls`;
+  const summary =
+    issues.length === 0
+      ? `Clean session — no quality issues detected (${totalToolCalls} tool calls)`
+      : `${issues.length} issue${issues.length === 1 ? "" : "s"} found — ${totalToolCalls} tool calls`;
 
   return { score, grade, issues, summary };
 }
@@ -659,7 +756,7 @@ function scoreMessages(messages) {
  */
 function scoreSession(name) {
   try {
-    const { loadSession } = require('./session');
+    const { loadSession } = require("./session");
     const session = loadSession(name);
     if (!session) return null;
     const result = scoreMessages(session.messages || []);
@@ -680,13 +777,13 @@ function scoreSession(name) {
  */
 function formatScore(result, C = null) {
   const { score, grade, issues, summary } = result;
-  const dim = C?.dim || '';
-  const reset = C?.reset || '';
-  const green = C?.green || '';
-  const yellow = C?.yellow || '';
-  const red = C?.red || '';
-  const cyan = C?.cyan || '';
-  const bold = C?.bold || '';
+  const dim = C?.dim || "";
+  const reset = C?.reset || "";
+  const green = C?.green || "";
+  const yellow = C?.yellow || "";
+  const red = C?.red || "";
+  const cyan = C?.cyan || "";
+  const bold = C?.bold || "";
 
   const color = score >= 8 ? green : score >= 6 ? yellow : red;
   let out = `\n${dim}  Session score: ${reset}${bold}${color}${score}/10 (${grade})${reset}`;
@@ -711,21 +808,30 @@ function formatScore(result, C = null) {
  */
 function appendScoreHistory(score, meta = {}) {
   try {
-    const nexDir = path.join(process.cwd(), '.nex');
+    const nexDir = path.join(process.cwd(), ".nex");
     if (!fs.existsSync(nexDir)) fs.mkdirSync(nexDir, { recursive: true });
 
-    const historyPath = path.join(nexDir, 'benchmark-history.json');
+    const historyPath = path.join(nexDir, "benchmark-history.json");
     let history = [];
     if (fs.existsSync(historyPath)) {
-      try { history = JSON.parse(fs.readFileSync(historyPath, 'utf-8')); } catch { history = []; }
+      try {
+        history = JSON.parse(fs.readFileSync(historyPath, "utf-8"));
+      } catch {
+        history = [];
+      }
     }
     if (!Array.isArray(history)) history = [];
 
     const grade =
-      score >= 9.0 ? 'A' :
-      score >= 8.0 ? 'B' :
-      score >= 7.0 ? 'C' :
-      score >= 6.0 ? 'D' : 'F';
+      score >= 9.0
+        ? "A"
+        : score >= 8.0
+          ? "B"
+          : score >= 7.0
+            ? "C"
+            : score >= 6.0
+              ? "D"
+              : "F";
 
     const entry = {
       date: new Date().toISOString(),
@@ -743,7 +849,9 @@ function appendScoreHistory(score, meta = {}) {
     if (history.length > 100) history = history.slice(history.length - 100);
 
     fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
-  } catch { /* non-critical — never crash the caller */ }
+  } catch {
+    /* non-critical — never crash the caller */
+  }
 }
 
 // ─── Exports ─────────────────────────────────────────────────────────────────

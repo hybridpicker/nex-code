@@ -4,16 +4,20 @@
  * Auto-detects available models via /api/tags.
  */
 
-const axios = require('axios');
-const { BaseProvider, readStreamErrorBody } = require('./base');
+const axios = require("axios");
+const { BaseProvider, readStreamErrorBody } = require("./base");
 
-const DEFAULT_LOCAL_URL = 'http://localhost:11434';
+const DEFAULT_LOCAL_URL = "http://localhost:11434";
 
 class LocalProvider extends BaseProvider {
   constructor(config = {}) {
     super({
-      name: 'local',
-      baseUrl: config.baseUrl || process.env.OLLAMA_HOST || process.env.OLLAMA_LOCAL_URL || DEFAULT_LOCAL_URL,
+      name: "local",
+      baseUrl:
+        config.baseUrl ||
+        process.env.OLLAMA_HOST ||
+        process.env.OLLAMA_LOCAL_URL ||
+        DEFAULT_LOCAL_URL,
       models: config.models || {},
       defaultModel: config.defaultModel || null,
       ...config,
@@ -35,14 +39,16 @@ class LocalProvider extends BaseProvider {
     if (this._modelsLoaded) return this.models;
 
     try {
-      const response = await axios.get(`${this.baseUrl}/api/tags`, { timeout: 5000 });
+      const response = await axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000,
+      });
       const tags = response.data?.models || [];
 
       this.models = {};
       for (const m of tags) {
         const name = m.name || m.model;
         if (!name) continue;
-        const id = name.replace(/:latest$/, '');
+        const id = name.replace(/:latest$/, "");
 
         // Try to get actual context window from model metadata
         let contextWindow = 32768; // Conservative fallback
@@ -50,14 +56,16 @@ class LocalProvider extends BaseProvider {
           const showResp = await axios.post(
             `${this.baseUrl}/api/show`,
             { name },
-            { timeout: 5000 }
+            { timeout: 5000 },
           );
-          const params = showResp.data?.model_info || showResp.data?.details || {};
+          const params =
+            showResp.data?.model_info || showResp.data?.details || {};
           // Ollama exposes context length in model_info
-          contextWindow = params['general.context_length']
-            || params['llama.context_length']
-            || this._parseContextFromModelfile(showResp.data?.modelfile)
-            || 32768;
+          contextWindow =
+            params["general.context_length"] ||
+            params["llama.context_length"] ||
+            this._parseContextFromModelfile(showResp.data?.modelfile) ||
+            32768;
         } catch {
           // /api/show failed — use fallback
         }
@@ -95,14 +103,15 @@ class LocalProvider extends BaseProvider {
   // Convert internal multimodal messages to Ollama /api/chat format.
   _formatMessages(messages) {
     return messages.map((msg) => {
-      if (msg.role === 'user' && Array.isArray(msg.content)) {
+      if (msg.role === "user" && Array.isArray(msg.content)) {
         const textParts = [];
         const images = [];
         for (const block of msg.content) {
-          if (block.type === 'text') textParts.push(block.text ?? '');
-          else if (block.type === 'image' && block.data) images.push(block.data);
+          if (block.type === "text") textParts.push(block.text ?? "");
+          else if (block.type === "image" && block.data)
+            images.push(block.data);
         }
-        const formatted = { role: 'user', content: textParts.join('\n') };
+        const formatted = { role: "user", content: textParts.join("\n") };
         if (images.length > 0) formatted.images = images;
         return formatted;
       }
@@ -114,7 +123,7 @@ class LocalProvider extends BaseProvider {
     if (!this._modelsLoaded) await this.loadModels();
 
     const model = options.model || this.defaultModel;
-    if (!model) throw new Error('No local model available. Is Ollama running?');
+    if (!model) throw new Error("No local model available. Is Ollama running?");
 
     let response;
     try {
@@ -130,11 +139,18 @@ class LocalProvider extends BaseProvider {
             num_predict: options.maxTokens || 8192,
           },
         },
-        { timeout: options.timeout || this.timeout }
+        { timeout: options.timeout || this.timeout },
       );
     } catch (err) {
-      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      if (
+        err.name === "CanceledError" ||
+        err.name === "AbortError" ||
+        err.code === "ERR_CANCELED"
+      )
+        throw err;
+      const status = err.response?.status
+        ? ` [HTTP ${err.response.status}]`
+        : "";
       const msg = err.response?.data?.error || err.message;
       throw new Error(`API Error${status}: ${msg}`);
     }
@@ -146,7 +162,7 @@ class LocalProvider extends BaseProvider {
     if (!this._modelsLoaded) await this.loadModels();
 
     const model = options.model || this.defaultModel;
-    if (!model) throw new Error('No local model available. Is Ollama running?');
+    if (!model) throw new Error("No local model available. Is Ollama running?");
     const onToken = options.onToken || (() => {});
 
     let response;
@@ -165,34 +181,45 @@ class LocalProvider extends BaseProvider {
         },
         {
           timeout: options.timeout || this.timeout,
-          responseType: 'stream',
+          responseType: "stream",
           signal: options.signal,
-        }
+        },
       );
     } catch (err) {
-      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
+      if (
+        err.name === "CanceledError" ||
+        err.name === "AbortError" ||
+        err.code === "ERR_CANCELED"
+      )
+        throw err;
+      const status = err.response?.status
+        ? ` [HTTP ${err.response.status}]`
+        : "";
       const msg = await readStreamErrorBody(err, (p) => p?.error);
       throw new Error(`API Error${status}: ${msg}`);
     }
 
     return new Promise((resolve, reject) => {
-      let content = '';
+      let content = "";
       let toolCalls = [];
-      let buffer = '';
+      let buffer = "";
 
       // Abort listener: destroy stream on signal
       if (options.signal) {
-        options.signal.addEventListener('abort', () => {
-          response.data.destroy();
-          reject(new DOMException('The operation was aborted', 'AbortError'));
-        }, { once: true });
+        options.signal.addEventListener(
+          "abort",
+          () => {
+            response.data.destroy();
+            reject(new DOMException("The operation was aborted", "AbortError"));
+          },
+          { once: true },
+        );
       }
 
-      response.data.on('data', (chunk) => {
+      response.data.on("data", (chunk) => {
         buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -213,18 +240,21 @@ class LocalProvider extends BaseProvider {
           }
 
           if (parsed.done) {
-            resolve({ content, tool_calls: this._normalizeToolCalls(toolCalls) });
+            resolve({
+              content,
+              tool_calls: this._normalizeToolCalls(toolCalls),
+            });
             return;
           }
         }
       });
 
-      response.data.on('error', (err) => {
+      response.data.on("error", (err) => {
         if (options.signal?.aborted) return; // Ignore errors after abort
         reject(new Error(`Stream error: ${err.message}`));
       });
 
-      response.data.on('end', () => {
+      response.data.on("end", () => {
         if (buffer.trim()) {
           try {
             const parsed = JSON.parse(buffer);
@@ -247,7 +277,7 @@ class LocalProvider extends BaseProvider {
   normalizeResponse(data) {
     const msg = data.message || {};
     return {
-      content: msg.content || '',
+      content: msg.content || "",
       tool_calls: this._normalizeToolCalls(msg.tool_calls || []),
     };
   }
@@ -266,7 +296,7 @@ class LocalProvider extends BaseProvider {
     return toolCalls.map((tc, i) => ({
       id: tc.id || `local-${Date.now()}-${i}`,
       function: {
-        name: tc.function?.name || tc.name || 'unknown',
+        name: tc.function?.name || tc.name || "unknown",
         arguments: tc.function?.arguments || tc.arguments || {},
       },
     }));

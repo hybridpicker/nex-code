@@ -3,52 +3,52 @@
  * Supports Claude Sonnet, Opus, Haiku via Anthropic Messages API with SSE streaming.
  */
 
-const axios = require('axios');
-const { BaseProvider, readStreamErrorBody } = require('./base');
-const { serializeMessage } = require('../context-engine');
+const axios = require("axios");
+const { BaseProvider, readStreamErrorBody } = require("./base");
+const { serializeMessage } = require("../context-engine");
 
 const ANTHROPIC_MODELS = {
-  'claude-sonnet': {
-    id: 'claude-sonnet-4-6',
-    name: 'Claude Sonnet 4.6',
+  "claude-sonnet": {
+    id: "claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
     maxTokens: 64000,
     contextWindow: 200000,
   },
-  'claude-opus': {
-    id: 'claude-opus-4-6',
-    name: 'Claude Opus 4.6',
+  "claude-opus": {
+    id: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
     maxTokens: 128000,
     contextWindow: 200000,
   },
-  'claude-haiku': {
-    id: 'claude-haiku-4-5-20251001',
-    name: 'Claude Haiku 4.5',
+  "claude-haiku": {
+    id: "claude-haiku-4-5-20251001",
+    name: "Claude Haiku 4.5",
     maxTokens: 64000,
     contextWindow: 200000,
   },
-  'claude-sonnet-4-5': {
-    id: 'claude-sonnet-4-5-20250929',
-    name: 'Claude Sonnet 4.5',
+  "claude-sonnet-4-5": {
+    id: "claude-sonnet-4-5-20250929",
+    name: "Claude Sonnet 4.5",
     maxTokens: 64000,
     contextWindow: 200000,
   },
-  'claude-sonnet-4': {
-    id: 'claude-sonnet-4-20250514',
-    name: 'Claude Sonnet 4',
+  "claude-sonnet-4": {
+    id: "claude-sonnet-4-20250514",
+    name: "Claude Sonnet 4",
     maxTokens: 64000,
     contextWindow: 200000,
   },
 };
 
-const ANTHROPIC_VERSION = '2023-06-01';
+const ANTHROPIC_VERSION = "2023-06-01";
 
 class AnthropicProvider extends BaseProvider {
   constructor(config = {}) {
     super({
-      name: 'anthropic',
-      baseUrl: config.baseUrl || 'https://api.anthropic.com/v1',
+      name: "anthropic",
+      baseUrl: config.baseUrl || "https://api.anthropic.com/v1",
       models: config.models || ANTHROPIC_MODELS,
-      defaultModel: config.defaultModel || 'claude-sonnet',
+      defaultModel: config.defaultModel || "claude-sonnet",
       ...config,
     });
     this.timeout = config.timeout || 180000;
@@ -66,11 +66,11 @@ class AnthropicProvider extends BaseProvider {
 
   _getHeaders() {
     const key = this.getApiKey();
-    if (!key) throw new Error('ANTHROPIC_API_KEY not set');
+    if (!key) throw new Error("ANTHROPIC_API_KEY not set");
     return {
-      'x-api-key': key,
-      'anthropic-version': this.apiVersion,
-      'Content-Type': 'application/json',
+      "x-api-key": key,
+      "anthropic-version": this.apiVersion,
+      "Content-Type": "application/json",
     };
   }
 
@@ -84,33 +84,41 @@ class AnthropicProvider extends BaseProvider {
    * Anthropic uses separate system parameter and different tool_use/tool_result blocks.
    */
   formatMessages(messages) {
-    let system = '';
+    let system = "";
     const formatted = [];
 
     for (const msg of messages) {
-      if (msg.role === 'system') {
-        system += (system ? '\n\n' : '') + msg.content;
+      if (msg.role === "system") {
+        system += (system ? "\n\n" : "") + msg.content;
         continue;
       }
 
       // Skip caching for tool messages (they need dynamic merging)
-      if (msg.role !== 'system' && msg.role !== 'tool' && this._messageFormatCache.has(msg)) {
+      if (
+        msg.role !== "system" &&
+        msg.role !== "tool" &&
+        this._messageFormatCache.has(msg)
+      ) {
         formatted.push(this._messageFormatCache.get(msg));
         continue;
       }
 
       const formattedMsg = this._formatSingleMessage(msg, formatted);
-      
+
       // Skip if message was merged (null returned)
       if (!formattedMsg) continue;
-      
+
       // Cache (limit size) - skip tool messages
-      if (msg.role !== 'system' && msg.role !== 'tool' && this._messageStringCache.size < this._maxCacheSize) {
+      if (
+        msg.role !== "system" &&
+        msg.role !== "tool" &&
+        this._messageStringCache.size < this._maxCacheSize
+      ) {
         const cacheKey = this._getMessageCacheKey(msg);
         this._messageStringCache.set(cacheKey, formattedMsg);
         this._messageFormatCache.set(msg, formattedMsg);
       }
-      
+
       formatted.push(formattedMsg);
     }
 
@@ -118,10 +126,10 @@ class AnthropicProvider extends BaseProvider {
     // The super-nuclear recovery path can produce consecutive user messages
     // (task + findings + skip-hint). Insert empty assistant turns to fix.
     for (let i = formatted.length - 1; i > 0; i--) {
-      if (formatted[i].role === 'user' && formatted[i - 1].role === 'user') {
+      if (formatted[i].role === "user" && formatted[i - 1].role === "user") {
         formatted.splice(i, 0, {
-          role: 'assistant',
-          content: [{ type: 'text', text: '[continuing]' }],
+          role: "assistant",
+          content: [{ type: "text", text: "[continuing]" }],
         });
       }
     }
@@ -130,67 +138,83 @@ class AnthropicProvider extends BaseProvider {
   }
 
   _getMessageCacheKey(msg) {
-    const role = msg.role || '';
-    const content = typeof msg.content === 'string' ? msg.content.substring(0, 100) : '';
+    const role = msg.role || "";
+    const content =
+      typeof msg.content === "string" ? msg.content.substring(0, 100) : "";
     const toolCalls = msg.tool_calls ? msg.tool_calls.length : 0;
     return `${role}:${content.length}:${toolCalls}`;
   }
 
   _formatSingleMessage(msg, formatted = []) {
-    if (msg.role === 'assistant') {
+    if (msg.role === "assistant") {
       const content = [];
       if (msg.content) {
-        content.push({ type: 'text', text: msg.content });
+        content.push({ type: "text", text: msg.content });
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
           content.push({
-            type: 'tool_use',
+            type: "tool_use",
             id: tc.id || `toolu-${Date.now()}`,
             name: tc.function.name,
             input:
-              typeof tc.function.arguments === 'string'
-                ? JSON.parse(tc.function.arguments || '{}')
+              typeof tc.function.arguments === "string"
+                ? JSON.parse(tc.function.arguments || "{}")
                 : tc.function.arguments || {},
           });
         }
       }
-      return { role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '' }] };
+      return {
+        role: "assistant",
+        content: content.length > 0 ? content : [{ type: "text", text: "" }],
+      };
     }
 
-    if (msg.role === 'tool') {
+    if (msg.role === "tool") {
       // Anthropic tool results are sent as user messages with tool_result content blocks
       // Merge consecutive tool results into one user message
       const last = formatted[formatted.length - 1];
       const toolResult = {
-        type: 'tool_result',
+        type: "tool_result",
         tool_use_id: msg.tool_call_id,
-        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        content:
+          typeof msg.content === "string"
+            ? msg.content
+            : JSON.stringify(msg.content),
       };
 
-      if (last && last.role === 'user' && Array.isArray(last.content) && last.content[0]?.type === 'tool_result') {
+      if (
+        last &&
+        last.role === "user" &&
+        Array.isArray(last.content) &&
+        last.content[0]?.type === "tool_result"
+      ) {
         last.content.push(toolResult);
         return null; // Signal to skip pushing (already merged into last)
       }
-      return { role: 'user', content: [toolResult] };
+      return { role: "user", content: [toolResult] };
     }
 
     // user messages — handle multimodal content (text + images)
     if (Array.isArray(msg.content)) {
       const blocks = [];
       for (const block of msg.content) {
-        if (block.type === 'text') {
-          blocks.push({ type: 'text', text: block.text ?? '' });
-        } else if (block.type === 'image' && block.data) {
+        if (block.type === "text") {
+          blocks.push({ type: "text", text: block.text ?? "" });
+        } else if (block.type === "image" && block.data) {
           blocks.push({
-            type: 'image',
-            source: { type: 'base64', media_type: block.media_type || 'image/png', data: block.data },
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: block.media_type || "image/png",
+              data: block.data,
+            },
           });
         }
       }
-      return { role: 'user', content: blocks };
+      return { role: "user", content: blocks };
     }
-    return { role: 'user', content: msg.content };
+    return { role: "user", content: msg.content };
   }
 
   /**
@@ -200,8 +224,8 @@ class AnthropicProvider extends BaseProvider {
     if (!tools || tools.length === 0) return [];
     return tools.map((t) => ({
       name: t.function.name,
-      description: t.function.description || '',
-      input_schema: t.function.parameters || { type: 'object', properties: {} },
+      description: t.function.description || "",
+      input_schema: t.function.parameters || { type: "object", properties: {} },
     }));
   }
 
@@ -235,9 +259,19 @@ class AnthropicProvider extends BaseProvider {
         headers: this._getHeaders(),
       });
     } catch (err) {
-      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
-      const msg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
+      if (
+        err.name === "CanceledError" ||
+        err.name === "AbortError" ||
+        err.code === "ERR_CANCELED"
+      )
+        throw err;
+      const status = err.response?.status
+        ? ` [HTTP ${err.response.status}]`
+        : "";
+      const msg =
+        err.response?.data?.error?.message ||
+        err.response?.data?.error ||
+        err.message;
       throw new Error(`API Error${status}: ${msg}`);
     }
 
@@ -269,39 +303,53 @@ class AnthropicProvider extends BaseProvider {
       response = await axios.post(`${this.baseUrl}/messages`, body, {
         timeout: options.timeout || this.timeout,
         headers: this._getHeaders(),
-        responseType: 'stream',
+        responseType: "stream",
         signal: options.signal,
       });
     } catch (err) {
-      if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') throw err;
-      const status = err.response?.status ? ` [HTTP ${err.response.status}]` : '';
-      const msg = await readStreamErrorBody(err, (p) => p?.error?.message || p?.error);
+      if (
+        err.name === "CanceledError" ||
+        err.name === "AbortError" ||
+        err.code === "ERR_CANCELED"
+      )
+        throw err;
+      const status = err.response?.status
+        ? ` [HTTP ${err.response.status}]`
+        : "";
+      const msg = await readStreamErrorBody(
+        err,
+        (p) => p?.error?.message || p?.error,
+      );
       throw new Error(`API Error${status}: ${msg}`);
     }
 
     return new Promise((resolve, reject) => {
-      let content = '';
+      let content = "";
       const toolUses = []; // { id, name, inputJson }
       let currentToolIndex = -1;
-      let buffer = '';
+      let buffer = "";
 
       // Abort listener: destroy stream on signal
       if (options.signal) {
-        options.signal.addEventListener('abort', () => {
-          response.data.destroy();
-          reject(new DOMException('The operation was aborted', 'AbortError'));
-        }, { once: true });
+        options.signal.addEventListener(
+          "abort",
+          () => {
+            response.data.destroy();
+            reject(new DOMException("The operation was aborted", "AbortError"));
+          },
+          { once: true },
+        );
       }
 
-      response.data.on('data', (chunk) => {
+      response.data.on("data", (chunk) => {
         buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
         for (const line of lines) {
           const trimmed = line.trim();
 
-          if (trimmed.startsWith('data: ')) {
+          if (trimmed.startsWith("data: ")) {
             const data = trimmed.slice(6);
             let parsed;
             try {
@@ -311,22 +359,29 @@ class AnthropicProvider extends BaseProvider {
             }
 
             switch (parsed.type) {
-              case 'content_block_start': {
+              case "content_block_start": {
                 const block = parsed.content_block;
-                if (block?.type === 'tool_use') {
+                if (block?.type === "tool_use") {
                   currentToolIndex = toolUses.length;
-                  toolUses.push({ id: block.id, name: block.name, inputJson: '' });
+                  toolUses.push({
+                    id: block.id,
+                    name: block.name,
+                    inputJson: "",
+                  });
                 }
                 break;
               }
 
-              case 'content_block_delta': {
+              case "content_block_delta": {
                 const delta = parsed.delta;
-                if (delta?.type === 'text_delta' && delta.text) {
+                if (delta?.type === "text_delta" && delta.text) {
                   onToken(delta.text);
                   content += delta.text;
                 }
-                if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined) {
+                if (
+                  delta?.type === "input_json_delta" &&
+                  delta.partial_json !== undefined
+                ) {
                   if (currentToolIndex >= 0) {
                     toolUses[currentToolIndex].inputJson += delta.partial_json;
                   }
@@ -334,37 +389,40 @@ class AnthropicProvider extends BaseProvider {
                 break;
               }
 
-              case 'content_block_stop':
+              case "content_block_stop":
                 currentToolIndex = -1;
                 break;
 
-              case 'message_stop':
-                resolve({ content, tool_calls: this._buildToolCalls(toolUses) });
+              case "message_stop":
+                resolve({
+                  content,
+                  tool_calls: this._buildToolCalls(toolUses),
+                });
                 return;
             }
           }
         }
       });
 
-      response.data.on('error', (err) => {
+      response.data.on("error", (err) => {
         if (options.signal?.aborted) return; // Ignore errors after abort
         reject(new Error(`Stream error: ${err.message}`));
       });
 
-      response.data.on('end', () => {
+      response.data.on("end", () => {
         resolve({ content, tool_calls: this._buildToolCalls(toolUses) });
       });
     });
   }
 
   normalizeResponse(data) {
-    let content = '';
+    let content = "";
     const toolCalls = [];
 
     for (const block of data.content || []) {
-      if (block.type === 'text') {
+      if (block.type === "text") {
         content += block.text;
-      } else if (block.type === 'tool_use') {
+      } else if (block.type === "tool_use") {
         toolCalls.push({
           id: block.id,
           function: {

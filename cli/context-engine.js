@@ -5,10 +5,10 @@
  * when approaching context window limits, and provides smart file truncation.
  */
 
-const path = require('path');
+const path = require("path");
 
 function getActiveModel() {
-  return require('./providers/registry').getActiveModel();
+  return require("./providers/registry").getActiveModel();
 }
 
 // ─── Token Estimation ──────────────────────────────────────────
@@ -42,7 +42,7 @@ function getTokenRatio() {
   if (_cachedTokenRatio !== null) return _cachedTokenRatio;
   try {
     const model = getActiveModel();
-    const provider = model?.provider || 'ollama';
+    const provider = model?.provider || "ollama";
     _cachedTokenRatio = TOKEN_RATIOS[provider] || 4.0;
     return _cachedTokenRatio;
   } catch {
@@ -64,10 +64,13 @@ function invalidateTokenRatioCache() {
  */
 function estimateTokens(text) {
   if (!text) return 0;
-  if (typeof text !== 'string') text = JSON.stringify(text);
+  if (typeof text !== "string") text = JSON.stringify(text);
 
   // Check cache — key: first 80 chars + length to avoid O(n) key comparison on large strings
-  const cacheKey = text.length <= 80 ? text : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length - 20)}`;
+  const cacheKey =
+    text.length <= 80
+      ? text
+      : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length - 20)}`;
   const cached = stringTokenCache.get(cacheKey);
   if (cached !== undefined) {
     // LRU: move to end of insertion order
@@ -82,7 +85,8 @@ function estimateTokens(text) {
   if (stringTokenCache.size >= MAX_STRING_CACHE_SIZE) {
     const trimCount = MAX_STRING_CACHE_SIZE >> 1;
     const keys = stringTokenCache.keys();
-    for (let i = 0; i < trimCount; i++) stringTokenCache.delete(keys.next().value);
+    for (let i = 0; i < trimCount; i++)
+      stringTokenCache.delete(keys.next().value);
   }
   stringTokenCache.set(cacheKey, tokens);
 
@@ -101,7 +105,8 @@ function estimateTokens(text) {
  * @returns {string} Serialized message
  */
 function serializeMessage(msg) {
-  if (messageSerializationCache.has(msg)) return messageSerializationCache.get(msg);
+  if (messageSerializationCache.has(msg))
+    return messageSerializationCache.get(msg);
   const serialized = JSON.stringify(msg);
   messageSerializationCache.set(msg, serialized);
   return serialized;
@@ -122,9 +127,9 @@ function estimateMessageTokens(msg) {
   if (msg.tool_calls) {
     for (const tc of msg.tool_calls) {
       tokens += 4; // tool call overhead
-      tokens += estimateTokens(tc.function?.name || '');
+      tokens += estimateTokens(tc.function?.name || "");
       const args = tc.function?.arguments;
-      if (typeof args === 'string') {
+      if (typeof args === "string") {
         tokens += estimateTokens(args);
       } else if (args) {
         tokens += estimateTokens(JSON.stringify(args));
@@ -162,17 +167,17 @@ function estimateDeltaTokens(oldMessages, newMessages) {
     }
     if (!hasChanges) return 0; // No changes, no delta
   }
-  
+
   // Calculate tokens for new messages only
   const oldCount = oldMessages ? oldMessages.length : 0;
   const newCount = newMessages.length;
   let delta = 0;
-  
+
   // Only count new messages (from oldCount to newCount)
   for (let i = oldCount; i < newCount; i++) {
     delta += estimateMessageTokens(newMessages[i]);
   }
-  
+
   return delta;
 }
 
@@ -215,9 +220,9 @@ function getUsage(messages, tools) {
 
   for (const msg of messages) {
     const t = estimateMessageTokens(msg);
-    if (msg.role === 'system') {
+    if (msg.role === "system") {
       systemTokens += t;
-    } else if (msg.role === 'tool') {
+    } else if (msg.role === "tool") {
       toolResultTokens += t;
     } else {
       conversationTokens += t;
@@ -240,8 +245,9 @@ function getUsage(messages, tools) {
 
 // ─── Auto-Compression ──────────────────────────────────────────
 
-const COMPRESSION_THRESHOLD = parseFloat(process.env.NEX_COMPRESSION_THRESHOLD) || 0.75;
-const SAFETY_MARGIN = parseFloat(process.env.NEX_SAFETY_MARGIN) || 0.10;
+const COMPRESSION_THRESHOLD =
+  parseFloat(process.env.NEX_COMPRESSION_THRESHOLD) || 0.75;
+const SAFETY_MARGIN = parseFloat(process.env.NEX_SAFETY_MARGIN) || 0.1;
 const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
 const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
 const TRUNCATE_ASSISTANT = 500; // Truncate old assistant content to N chars
@@ -262,7 +268,7 @@ function compressToolResult(content, maxChars) {
   const budget = isError ? maxChars * 3 : maxChars;
   if (content.length <= budget) return content;
 
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   // Short outputs (≤10 lines): character-based 60/40 head/tail split
   if (lines.length <= 10) {
@@ -284,18 +290,25 @@ function compressToolResult(content, maxChars) {
   const headBudget = Math.floor(budget * 0.4);
   for (let i = 0; i < headCount && headLen < headBudget; i++) {
     // If we're about to exceed budget and this line starts a code block, include it
-    if (headLen + lines[i].length + 1 > headBudget && lines[i].trim().startsWith('```')) {
+    if (
+      headLen + lines[i].length + 1 > headBudget &&
+      lines[i].trim().startsWith("```")
+    ) {
       // Force include code block start and try to include as much as possible
       headLines.push(lines[i]);
       headLen += lines[i].length + 1;
       // Try to include the next few lines of the code block
       let j = i + 1;
-      while (j < lines.length && headLen < headBudget * 1.5 && !lines[j].trim().startsWith('```')) {
+      while (
+        j < lines.length &&
+        headLen < headBudget * 1.5 &&
+        !lines[j].trim().startsWith("```")
+      ) {
         headLines.push(lines[j]);
         headLen += lines[j].length + 1;
         j++;
       }
-      if (j < lines.length && lines[j].trim().startsWith('```')) {
+      if (j < lines.length && lines[j].trim().startsWith("```")) {
         headLines.push(lines[j]);
         headLen += lines[j].length + 1;
       }
@@ -309,20 +322,31 @@ function compressToolResult(content, maxChars) {
   let tailLines = [];
   let tailLen = 0;
   const tailBudget = Math.floor(budget * 0.4);
-  for (let i = lines.length - 1; i >= lines.length - tailCount && tailLen < tailBudget; i--) {
+  for (
+    let i = lines.length - 1;
+    i >= lines.length - tailCount && tailLen < tailBudget;
+    i--
+  ) {
     // If we're about to exceed budget and this line ends a code block, include it
-    if (tailLen + lines[i].length + 1 > tailBudget && lines[i].trim().startsWith('```')) {
+    if (
+      tailLen + lines[i].length + 1 > tailBudget &&
+      lines[i].trim().startsWith("```")
+    ) {
       // Force include code block end and try to include as much as possible
       tailLines.push(lines[i]); // push is O(1); unshift was O(k) per call → O(n²) total
       tailLen += lines[i].length + 1;
       // Try to include the previous few lines of the code block
       let j = i - 1;
-      while (j >= 0 && tailLen < tailBudget * 1.5 && !lines[j].trim().startsWith('```')) {
+      while (
+        j >= 0 &&
+        tailLen < tailBudget * 1.5 &&
+        !lines[j].trim().startsWith("```")
+      ) {
         tailLines.push(lines[j]);
         tailLen += lines[j].length + 1;
         j--;
       }
-      if (j >= 0 && lines[j].trim().startsWith('```')) {
+      if (j >= 0 && lines[j].trim().startsWith("```")) {
         tailLines.push(lines[j]);
         tailLen += lines[j].length + 1;
       }
@@ -335,7 +359,11 @@ function compressToolResult(content, maxChars) {
   tailLines.reverse(); // single O(k) pass to restore order
 
   const omitted = lines.length - headLines.length - tailLines.length;
-  return headLines.join('\n') + `\n...(${omitted} lines omitted, ${lines.length} total)...\n` + tailLines.join('\n');
+  return (
+    headLines.join("\n") +
+    `\n...(${omitted} lines omitted, ${lines.length} total)...\n` +
+    tailLines.join("\n")
+  );
 }
 
 /**
@@ -344,12 +372,25 @@ function compressToolResult(content, maxChars) {
  * @param {string} level - 'light', 'medium', or 'aggressive'
  * @returns {object} compressed message
  */
-function compressMessage(msg, level = 'light') {
-  const maxContent = level === 'aggressive' ? 100 : level === 'medium' ? 200 : TRUNCATE_ASSISTANT;
-  const maxTool = level === 'aggressive' ? 50 : level === 'medium' ? 100 : TRUNCATE_TOOL_RESULT;
+function compressMessage(msg, level = "light") {
+  const maxContent =
+    level === "aggressive"
+      ? 100
+      : level === "medium"
+        ? 200
+        : TRUNCATE_ASSISTANT;
+  const maxTool =
+    level === "aggressive"
+      ? 50
+      : level === "medium"
+        ? 100
+        : TRUNCATE_TOOL_RESULT;
 
-  if (msg.role === 'tool') {
-    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  if (msg.role === "tool") {
+    const content =
+      typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content);
     if (content.length > maxTool) {
       return {
         ...msg,
@@ -359,7 +400,7 @@ function compressMessage(msg, level = 'light') {
     return msg;
   }
 
-  if (msg.role === 'assistant') {
+  if (msg.role === "assistant") {
     const compressed = { ...msg };
 
     // Truncate long content
@@ -369,14 +410,15 @@ function compressMessage(msg, level = 'light') {
     }
 
     // Simplify tool_calls in old messages
-    if (compressed.tool_calls && level === 'aggressive') {
+    if (compressed.tool_calls && level === "aggressive") {
       compressed.tool_calls = compressed.tool_calls.map((tc) => ({
         ...tc,
         function: {
           name: tc.function.name,
-          arguments: typeof tc.function.arguments === 'string'
-            ? tc.function.arguments.substring(0, 50)
-            : tc.function.arguments,
+          arguments:
+            typeof tc.function.arguments === "string"
+              ? tc.function.arguments.substring(0, 50)
+              : tc.function.arguments,
         },
       }));
     }
@@ -407,14 +449,17 @@ function scoreMessageRelevance(msg, index, totalMessages, activeFiles) {
   let score = 0;
 
   // Type scoring (0-40)
-  if (msg.role === 'system') return 100; // never drop system
-  if (msg.role === 'user') score += 35;
-  else if (msg.role === 'tool') {
-    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
-    if (/^(ERROR|BLOCKED|CANCELLED)/i.test(content)) score += 30; // errors are valuable
+  if (msg.role === "system") return 100; // never drop system
+  if (msg.role === "user") score += 35;
+  else if (msg.role === "tool") {
+    const content =
+      typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content || "");
+    if (/^(ERROR|BLOCKED|CANCELLED)/i.test(content))
+      score += 30; // errors are valuable
     else score += 15;
-  }
-  else if (msg.role === 'assistant') {
+  } else if (msg.role === "assistant") {
     score += msg.tool_calls ? 20 : 10; // tool-calling responses > plain text
   }
 
@@ -424,7 +469,10 @@ function scoreMessageRelevance(msg, index, totalMessages, activeFiles) {
 
   // File overlap scoring (0-30)
   if (activeFiles && activeFiles.size > 0) {
-    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    const content =
+      typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content || "");
     let fileHits = 0;
     for (const f of activeFiles) {
       if (content.includes(f) || content.includes(path.basename(f))) fileHits++;
@@ -446,9 +494,12 @@ function extractActiveFiles(messages, recentCount = 10) {
   const recent = messages.slice(-recentCount);
   const filePattern = /(?:\/[\w.-]+)+\.\w+/g;
   for (const msg of recent) {
-    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    const content =
+      typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content || "");
     const matches = content.match(filePattern);
-    if (matches) matches.forEach(m => files.add(m));
+    if (matches) matches.forEach((m) => files.add(m));
   }
   return files;
 }
@@ -491,7 +542,7 @@ async function fitToContext(messages, tools, options = {}) {
   // Split: system + old messages + recent messages
   let system = null;
   let startIdx = 0;
-  if (messages.length > 0 && messages[0].role === 'system') {
+  if (messages.length > 0 && messages[0].role === "system") {
     system = messages[0];
     startIdx = 1;
   }
@@ -501,25 +552,30 @@ async function fitToContext(messages, tools, options = {}) {
   const recentMessages = messages.slice(recentStart);
 
   // Phase 0: LLM Compacting
-  const nonCompacted = oldMessages.filter(m => !m._compacted);
+  const nonCompacted = oldMessages.filter((m) => !m._compacted);
   if (nonCompacted.length >= 6) {
     try {
-      const { compactMessages } = require('./compactor');
+      const { compactMessages } = require("./compactor");
       const compactResult = await compactMessages(nonCompacted);
       if (compactResult) {
-        const kept = oldMessages.filter(m => m._compacted);
+        const kept = oldMessages.filter((m) => m._compacted);
         const compressedOld = [...kept, compactResult.message];
         const r = buildResult(system, compressedOld, recentMessages);
         const t = estimateMessagesTokens(r);
         if (t + toolTokens <= targetMax) {
-          return { messages: r, compressed: true, compacted: true,
-                   tokensRemoved: originalTokens - t };
+          return {
+            messages: r,
+            compressed: true,
+            compacted: true,
+            tokensRemoved: originalTokens - t,
+          };
         }
         // Compacted but still too large → continue with compacted messages as base
         oldMessages = compressedOld;
       }
     } catch (err) {
-      if (process.env.NEX_DEBUG) console.error('[context-engine] LLM compacting failed:', err.message);
+      if (process.env.NEX_DEBUG)
+        console.error("[context-engine] LLM compacting failed:", err.message);
     }
   }
 
@@ -527,7 +583,7 @@ async function fitToContext(messages, tools, options = {}) {
   const overageRatio = (totalUsed - targetMax) / targetMax;
 
   // Phase 1: Light compression (≤15% over target)
-  let compressed = oldMessages.map((msg) => compressMessage(msg, 'light'));
+  let compressed = oldMessages.map((msg) => compressMessage(msg, "light"));
   let result = buildResult(system, compressed, recentMessages);
   let tokens = estimateMessagesTokens(result);
 
@@ -541,7 +597,7 @@ async function fitToContext(messages, tools, options = {}) {
   }
 
   // Phase 2: Medium compression (≤30% over target)
-  compressed = oldMessages.map((msg) => compressMessage(msg, 'medium'));
+  compressed = oldMessages.map((msg) => compressMessage(msg, "medium"));
   result = buildResult(system, compressed, recentMessages);
   tokens = estimateMessagesTokens(result);
 
@@ -555,7 +611,7 @@ async function fitToContext(messages, tools, options = {}) {
   }
 
   // Phase 3: Aggressive compression (>30% over target)
-  compressed = oldMessages.map((msg) => compressMessage(msg, 'aggressive'));
+  compressed = oldMessages.map((msg) => compressMessage(msg, "aggressive"));
   result = buildResult(system, compressed, recentMessages);
   tokens = estimateMessagesTokens(result);
 
@@ -586,7 +642,7 @@ async function fitToContext(messages, tools, options = {}) {
     scored.splice(minIdx, 1);
   }
 
-  compressed = scored.map(s => s.msg);
+  compressed = scored.map((s) => s.msg);
 
   result = buildResult(system, compressed, recentMessages);
   // Re-verify: recentMessages and system are not tracked by the running `tokens` subtraction above.
@@ -618,30 +674,30 @@ function buildResult(system, oldMessages, recentMessages) {
  * @returns {string} truncated content
  */
 function truncateFileContent(content, maxTokens) {
-  if (!content) return '';
+  if (!content) return "";
 
   const currentTokens = estimateTokens(content);
   if (currentTokens <= maxTokens) return content;
 
   const maxChars = maxTokens * 4; // Reverse the estimation
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   // Keep first 60% and last 40%
   const headChars = Math.floor(maxChars * 0.6);
   const tailChars = Math.floor(maxChars * 0.4);
 
-  let headContent = '';
+  let headContent = "";
   let headLines = 0;
   for (const line of lines) {
     if (headContent.length + line.length + 1 > headChars) break;
-    headContent += (headContent ? '\n' : '') + line;
+    headContent += (headContent ? "\n" : "") + line;
     headLines++;
   }
 
-  let tailContent = '';
+  let tailContent = "";
   let tailLines = 0;
   for (let i = lines.length - 1; i >= headLines; i--) {
-    const candidate = lines[i] + (tailContent ? '\n' : '') + tailContent;
+    const candidate = lines[i] + (tailContent ? "\n" : "") + tailContent;
     if (candidate.length > tailChars) break;
     tailContent = candidate;
     tailLines++;
@@ -684,7 +740,7 @@ function forceCompress(messages, tools, nuclear = false) {
   // Split: system + old + recent
   let system = null;
   let startIdx = 0;
-  if (messages.length > 0 && messages[0].role === 'system') {
+  if (messages.length > 0 && messages[0].role === "system") {
     system = messages[0];
     startIdx = 1;
   }
@@ -695,11 +751,13 @@ function forceCompress(messages, tools, nuclear = false) {
   let recentMessages = messages.slice(recentStart);
 
   // Aggressive compression on all old messages
-  let compressed = oldMessages.map((msg) => compressMessage(msg, 'aggressive'));
+  let compressed = oldMessages.map((msg) => compressMessage(msg, "aggressive"));
 
   // Nuclear: also compress recent messages
   if (nuclear) {
-    recentMessages = recentMessages.map((msg) => compressMessage(msg, 'aggressive'));
+    recentMessages = recentMessages.map((msg) =>
+      compressMessage(msg, "aggressive"),
+    );
   }
 
   // Remove oldest messages until we fit
@@ -713,7 +771,7 @@ function forceCompress(messages, tools, nuclear = false) {
 
   // Nuclear: if still over budget, keep only the last user message
   if (nuclear && tokens > targetMax) {
-    const lastUser = recentMessages.filter((m) => m.role === 'user').slice(-1);
+    const lastUser = recentMessages.filter((m) => m.role === "user").slice(-1);
     recentMessages = lastUser;
     result = buildResult(system, [], recentMessages);
     tokens = estimateMessagesTokens(result);
@@ -725,23 +783,33 @@ function forceCompress(messages, tools, nuclear = false) {
   // The "last user message" is often a system-injected warning (BLOCKED:, SYSTEM WARNING:)
   // rather than the original task. We preserve the FIRST user message (original task)
   // so the LLM can resume work, not just respond to a warning injection.
-  const userMessages = messages.filter(m => m.role === 'user');
+  const userMessages = messages.filter((m) => m.role === "user");
   // First real user message = original task (skip if it looks like a system injection)
   const isSystemInjection = (m) => {
-    const text = typeof m.content === 'string' ? m.content : '';
-    return text.startsWith('[SYSTEM WARNING]') || text.startsWith('[SYSTEM:') || text.startsWith('BLOCKED:');
+    const text = typeof m.content === "string" ? m.content : "";
+    return (
+      text.startsWith("[SYSTEM WARNING]") ||
+      text.startsWith("[SYSTEM:") ||
+      text.startsWith("BLOCKED:")
+    );
   };
-  const firstTaskMsg = userMessages.find(m => !isSystemInjection(m));
-  const lastUserMsg = [...userMessages].reverse().find(m => !isSystemInjection(m));
+  const firstTaskMsg = userMessages.find((m) => !isSystemInjection(m));
+  const lastUserMsg = [...userMessages]
+    .reverse()
+    .find((m) => !isSystemInjection(m));
   // Always include the first task message so the LLM knows what it was doing.
   // Insert AFTER the system prompt (index 1), never before it — system must stay first.
-  if (firstTaskMsg && !result.find(m => m === firstTaskMsg)) {
-    const sysIdx = result.findIndex(m => m.role === 'system');
+  if (firstTaskMsg && !result.find((m) => m === firstTaskMsg)) {
+    const sysIdx = result.findIndex((m) => m.role === "system");
     const insertAt = sysIdx >= 0 ? sysIdx + 1 : 0;
     result.splice(insertAt, 0, firstTaskMsg);
   }
   // Also include the last real user message if different from first
-  if (lastUserMsg && lastUserMsg !== firstTaskMsg && !result.find(m => m === lastUserMsg)) {
+  if (
+    lastUserMsg &&
+    lastUserMsg !== firstTaskMsg &&
+    !result.find((m) => m === lastUserMsg)
+  ) {
     result.push(lastUserMsg);
   }
 

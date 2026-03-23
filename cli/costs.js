@@ -4,49 +4,49 @@
  * Supports per-provider cost limits with budget gating.
  */
 
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, withFileLockSync } = require('./filelock');
+const fs = require("fs");
+const path = require("path");
+const { atomicWrite, withFileLockSync } = require("./filelock");
 
 const PRICING = {
-  'openai': {
-    'gpt-4o':        { input: 2.50,  output: 10.00 },
-    'gpt-4o-mini':   { input: 0.15,  output: 0.60 },
-    'gpt-4.1':       { input: 2.00,  output: 8.00 },
-    'gpt-4.1-mini':  { input: 0.40,  output: 1.60 },
-    'gpt-4.1-nano':  { input: 0.10,  output: 0.40 },
-    'o1':            { input: 15.00, output: 60.00 },
-    'o3':            { input: 10.00, output: 40.00 },
-    'o3-mini':       { input: 1.10,  output: 4.40 },
-    'o4-mini':       { input: 1.10,  output: 4.40 },
+  openai: {
+    "gpt-4o": { input: 2.5, output: 10.0 },
+    "gpt-4o-mini": { input: 0.15, output: 0.6 },
+    "gpt-4.1": { input: 2.0, output: 8.0 },
+    "gpt-4.1-mini": { input: 0.4, output: 1.6 },
+    "gpt-4.1-nano": { input: 0.1, output: 0.4 },
+    o1: { input: 15.0, output: 60.0 },
+    o3: { input: 10.0, output: 40.0 },
+    "o3-mini": { input: 1.1, output: 4.4 },
+    "o4-mini": { input: 1.1, output: 4.4 },
   },
-  'anthropic': {
-    'claude-sonnet':     { input: 3.00,  output: 15.00 },
-    'claude-opus':       { input: 5.00,  output: 25.00 },
-    'claude-haiku':      { input: 0.80,  output: 4.00 },
-    'claude-sonnet-4-5': { input: 3.00,  output: 15.00 },
-    'claude-sonnet-4':   { input: 3.00,  output: 15.00 },
+  anthropic: {
+    "claude-sonnet": { input: 3.0, output: 15.0 },
+    "claude-opus": { input: 5.0, output: 25.0 },
+    "claude-haiku": { input: 0.8, output: 4.0 },
+    "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+    "claude-sonnet-4": { input: 3.0, output: 15.0 },
   },
-  'gemini': {
-    'gemini-2.5-pro':        { input: 1.25,  output: 10.00 },
-    'gemini-2.5-flash':      { input: 0.15,  output: 0.60 },
-    'gemini-2.0-flash':      { input: 0.10,  output: 0.40 },
-    'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
+  gemini: {
+    "gemini-2.5-pro": { input: 1.25, output: 10.0 },
+    "gemini-2.5-flash": { input: 0.15, output: 0.6 },
+    "gemini-2.0-flash": { input: 0.1, output: 0.4 },
+    "gemini-2.0-flash-lite": { input: 0.075, output: 0.3 },
   },
-  'ollama': {
-    'qwen3-coder:480b':     { input: 0, output: 0 },
-    'qwen3-coder-next':     { input: 0, output: 0 },
-    'devstral-2:123b':      { input: 0, output: 0 },
-    'devstral-small-2:24b': { input: 0, output: 0 },
-    'kimi-k2.5':            { input: 0, output: 0 },
-    'kimi-k2:1t':           { input: 0, output: 0 },
-    'deepseek-v3.2':        { input: 0, output: 0 },
-    'minimax-m2.5':         { input: 0, output: 0 },
-    'glm-5':                { input: 0, output: 0 },
-    'glm-4.7':              { input: 0, output: 0 },
-    'gpt-oss:120b':         { input: 0, output: 0 },
+  ollama: {
+    "qwen3-coder:480b": { input: 0, output: 0 },
+    "qwen3-coder-next": { input: 0, output: 0 },
+    "devstral-2:123b": { input: 0, output: 0 },
+    "devstral-small-2:24b": { input: 0, output: 0 },
+    "kimi-k2.5": { input: 0, output: 0 },
+    "kimi-k2:1t": { input: 0, output: 0 },
+    "deepseek-v3.2": { input: 0, output: 0 },
+    "minimax-m2.5": { input: 0, output: 0 },
+    "glm-5": { input: 0, output: 0 },
+    "glm-4.7": { input: 0, output: 0 },
+    "gpt-oss:120b": { input: 0, output: 0 },
   },
-  'local': {},
+  local: {},
 };
 
 // Session usage accumulator
@@ -69,7 +69,9 @@ function trackUsage(provider, model, inputTokens, outputTokens) {
   if (costLimits[provider] !== undefined) {
     const budget = checkBudget(provider);
     if (!budget.allowed) {
-      process.stderr.write(`\x1b[33m\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}\x1b[0m\n`);
+      process.stderr.write(
+        `\x1b[33m\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}\x1b[0m\n`,
+      );
     }
   }
 }
@@ -89,7 +91,9 @@ function getPricing(provider, model) {
  */
 function calcCost(entry) {
   const pricing = getPricing(entry.provider, entry.model);
-  return (entry.input * pricing.input + entry.output * pricing.output) / 1_000_000;
+  return (
+    (entry.input * pricing.input + entry.output * pricing.output) / 1_000_000
+  );
 }
 
 /**
@@ -102,7 +106,12 @@ function getSessionCosts() {
   for (const entry of usageLog) {
     const key = `${entry.provider}:${entry.model}`;
     if (!byKey[key]) {
-      byKey[key] = { provider: entry.provider, model: entry.model, input: 0, output: 0 };
+      byKey[key] = {
+        provider: entry.provider,
+        model: entry.model,
+        input: 0,
+        output: 0,
+      };
     }
     byKey[key].input += entry.input;
     byKey[key].output += entry.output;
@@ -128,25 +137,27 @@ function formatCosts() {
   const { totalCost, totalInput, totalOutput, breakdown } = getSessionCosts();
 
   if (breakdown.length === 0) {
-    return 'No token usage recorded this session.';
+    return "No token usage recorded this session.";
   }
 
   const lines = [];
-  lines.push('Session Token Usage:');
-  lines.push('');
+  lines.push("Session Token Usage:");
+  lines.push("");
 
   for (const b of breakdown) {
-    const costStr = b.cost > 0 ? `$${b.cost.toFixed(4)}` : 'free';
+    const costStr = b.cost > 0 ? `$${b.cost.toFixed(4)}` : "free";
     lines.push(`  ${b.provider}:${b.model}`);
     lines.push(`    Input:  ${b.input.toLocaleString()} tokens`);
     lines.push(`    Output: ${b.output.toLocaleString()} tokens`);
     lines.push(`    Cost:   ${costStr}`);
   }
 
-  lines.push('');
-  lines.push(`  Total: ${totalInput.toLocaleString()} in + ${totalOutput.toLocaleString()} out = $${totalCost.toFixed(4)}`);
+  lines.push("");
+  lines.push(
+    `  Total: ${totalInput.toLocaleString()} in + ${totalOutput.toLocaleString()} out = $${totalCost.toFixed(4)}`,
+  );
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -155,8 +166,9 @@ function formatCosts() {
  */
 function formatCostHint(provider, model, inputTokens, outputTokens) {
   const pricing = getPricing(provider, model);
-  const cost = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
-  if (cost <= 0) return '';
+  const cost =
+    (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  if (cost <= 0) return "";
   return `[~$${cost.toFixed(4)}]`;
 }
 
@@ -229,11 +241,11 @@ function checkBudget(provider) {
  * Load cost limits from .nex/config.json
  */
 function loadCostLimits() {
-  const configPath = path.join(process.cwd(), '.nex', 'config.json');
+  const configPath = path.join(process.cwd(), ".nex", "config.json");
   if (!fs.existsSync(configPath)) return;
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    if (config.costLimits && typeof config.costLimits === 'object') {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    if (config.costLimits && typeof config.costLimits === "object") {
       costLimits = { ...config.costLimits };
     }
   } catch {
@@ -245,14 +257,18 @@ function loadCostLimits() {
  * Save cost limits to .nex/config.json
  */
 function saveCostLimits() {
-  const configDir = path.join(process.cwd(), '.nex');
-  const configPath = path.join(configDir, 'config.json');
+  const configDir = path.join(process.cwd(), ".nex");
+  const configPath = path.join(configDir, "config.json");
   if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
 
   withFileLockSync(configPath, () => {
     let config = {};
     if (fs.existsSync(configPath)) {
-      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      } catch {
+        config = {};
+      }
     }
     config.costLimits = costLimits;
     atomicWrite(configPath, JSON.stringify(config, null, 2));

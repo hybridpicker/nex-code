@@ -3,9 +3,9 @@
  * Used for fast path discovery and autocompletion.
  */
 
-const fs = require('fs').promises;
-const path = require('path');
-const { exec } = require('util').promisify(require('child_process').exec);
+const fs = require("fs").promises;
+const path = require("path");
+const { exec } = require("util").promisify(require("child_process").exec);
 
 let _fileIndex = [];
 let _indexedCwd = null;
@@ -17,73 +17,82 @@ const INDEX_TTL_MS = 60000; // Index valid for 60 seconds
  * Check if index is still valid (not expired)
  */
 function isIndexValid(cwd) {
-    if (_fileIndex.length === 0) return false;
-    if (_indexedCwd !== cwd) return false;
-    if (Date.now() - _lastIndexTime > INDEX_TTL_MS) return false;
-    return true;
+  if (_fileIndex.length === 0) return false;
+  if (_indexedCwd !== cwd) return false;
+  if (Date.now() - _lastIndexTime > INDEX_TTL_MS) return false;
+  return true;
 }
 
 async function refreshIndex(cwd) {
-    if (_isIndexing) return;
-    
-    // Skip if index is still valid
-    if (isIndexValid(cwd)) return;
-    
-    _isIndexing = true;
-    _indexedCwd = cwd;
+  if (_isIndexing) return;
 
+  // Skip if index is still valid
+  if (isIndexValid(cwd)) return;
+
+  _isIndexing = true;
+  _indexedCwd = cwd;
+
+  try {
+    // Strategy 1: Use ripgrep if available (very fast)
     try {
-        // Strategy 1: Use ripgrep if available (very fast)
-        try {
-            const { stdout } = await exec('rg --files', { cwd, timeout: 5000 });
-            _fileIndex = stdout.split('\n').filter(Boolean);
-            _lastIndexTime = Date.now();
-            _isIndexing = false;
-            return;
-        } catch {
-            // rg failed or not found, fall back to Node.js walker
-        }
-
-        // Strategy 2: Node.js recursive walker
-        const matches = [];
-        const walk = async (dir, rel) => {
-            let entries;
-            try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
-            for (const e of entries) {
-                if (e.name === 'node_modules' || e.name === '.git' || e.name.startsWith('.')) continue;
-                const relPath = rel ? `${rel}/${e.name}` : e.name;
-                if (e.isDirectory()) {
-                    await walk(path.join(dir, e.name), relPath);
-                } else {
-                    matches.push(relPath);
-                }
-            }
-        };
-        await walk(cwd, '');
-        _fileIndex = matches;
-        _lastIndexTime = Date.now();
-    } catch (err) {
-        console.error(`Index error: ${err.message}`);
-    } finally {
-        _isIndexing = false;
+      const { stdout } = await exec("rg --files", { cwd, timeout: 5000 });
+      _fileIndex = stdout.split("\n").filter(Boolean);
+      _lastIndexTime = Date.now();
+      _isIndexing = false;
+      return;
+    } catch {
+      // rg failed or not found, fall back to Node.js walker
     }
+
+    // Strategy 2: Node.js recursive walker
+    const matches = [];
+    const walk = async (dir, rel) => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (
+          e.name === "node_modules" ||
+          e.name === ".git" ||
+          e.name.startsWith(".")
+        )
+          continue;
+        const relPath = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) {
+          await walk(path.join(dir, e.name), relPath);
+        } else {
+          matches.push(relPath);
+        }
+      }
+    };
+    await walk(cwd, "");
+    _fileIndex = matches;
+    _lastIndexTime = Date.now();
+  } catch (err) {
+    console.error(`Index error: ${err.message}`);
+  } finally {
+    _isIndexing = false;
+  }
 }
 
 function getFileIndex() {
-    return _fileIndex;
+  return _fileIndex;
 }
 
 function getIndexedCwd() {
-    return _indexedCwd;
+  return _indexedCwd;
 }
 
 function findFileInIndex(basename) {
-    return _fileIndex.filter(f => path.basename(f) === basename);
+  return _fileIndex.filter((f) => path.basename(f) === basename);
 }
 
 function searchIndex(query) {
-    const q = query.toLowerCase();
-    return _fileIndex.filter(f => f.toLowerCase().includes(q)).slice(0, 20);
+  const q = query.toLowerCase();
+  return _fileIndex.filter((f) => f.toLowerCase().includes(q)).slice(0, 20);
 }
 
 // ─── Content Index ─────────────────────────────────────────────
@@ -93,7 +102,19 @@ let _contentIndex = null;
 let _contentIndexTime = 0;
 const CONTENT_INDEX_TTL_MS = 120000; // 2 minutes
 
-const INDEXABLE_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java', '.rb']);
+const INDEXABLE_EXTENSIONS = new Set([
+  ".js",
+  ".ts",
+  ".jsx",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".rb",
+]);
 
 /**
  * Extract definitions from a source file.
@@ -103,62 +124,84 @@ const INDEXABLE_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cj
  */
 function extractDefinitions(content, ext) {
   const defs = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineNum = i + 1;
 
     // JavaScript/TypeScript patterns
-    if (['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext)) {
+    if ([".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"].includes(ext)) {
       // function declarations
-      const funcMatch = line.match(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/);
-      if (funcMatch) defs.push({ type: 'function', name: funcMatch[1], line: lineNum });
+      const funcMatch = line.match(
+        /(?:export\s+)?(?:async\s+)?function\s+(\w+)/,
+      );
+      if (funcMatch)
+        defs.push({ type: "function", name: funcMatch[1], line: lineNum });
 
       // class declarations
       const classMatch = line.match(/(?:export\s+)?class\s+(\w+)/);
-      if (classMatch) defs.push({ type: 'class', name: classMatch[1], line: lineNum });
+      if (classMatch)
+        defs.push({ type: "class", name: classMatch[1], line: lineNum });
 
       // const arrow functions (only top-level-looking ones)
-      const arrowMatch = line.match(/(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[\w$]+)\s*=>/);
-      if (arrowMatch) defs.push({ type: 'function', name: arrowMatch[1], line: lineNum });
+      const arrowMatch = line.match(
+        /(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[\w$]+)\s*=>/,
+      );
+      if (arrowMatch)
+        defs.push({ type: "function", name: arrowMatch[1], line: lineNum });
 
       // module.exports assignments
       const exportsMatch = line.match(/module\.exports\s*=\s*\{([^}]+)\}/);
       if (exportsMatch) {
-        const names = exportsMatch[1].split(',').map(n => n.trim().split(':')[0].trim()).filter(Boolean);
+        const names = exportsMatch[1]
+          .split(",")
+          .map((n) => n.trim().split(":")[0].trim())
+          .filter(Boolean);
         for (const name of names) {
-          if (/^\w+$/.test(name)) defs.push({ type: 'export', name, line: lineNum });
+          if (/^\w+$/.test(name))
+            defs.push({ type: "export", name, line: lineNum });
         }
       }
 
       // imports
-      const importMatch = line.match(/(?:require\(['"]([^'"]+)['"]\)|from\s+['"]([^'"]+)['"])/);
+      const importMatch = line.match(
+        /(?:require\(['"]([^'"]+)['"]\)|from\s+['"]([^'"]+)['"])/,
+      );
       if (importMatch) {
         const mod = importMatch[1] || importMatch[2];
-        defs.push({ type: 'import', name: mod, line: lineNum });
+        defs.push({ type: "import", name: mod, line: lineNum });
       }
     }
 
     // Python patterns
-    if (ext === '.py') {
+    if (ext === ".py") {
       const pyFuncMatch = line.match(/^(?:async\s+)?def\s+(\w+)/);
-      if (pyFuncMatch) defs.push({ type: 'function', name: pyFuncMatch[1], line: lineNum });
+      if (pyFuncMatch)
+        defs.push({ type: "function", name: pyFuncMatch[1], line: lineNum });
 
       const pyClassMatch = line.match(/^class\s+(\w+)/);
-      if (pyClassMatch) defs.push({ type: 'class', name: pyClassMatch[1], line: lineNum });
+      if (pyClassMatch)
+        defs.push({ type: "class", name: pyClassMatch[1], line: lineNum });
 
       const pyImportMatch = line.match(/^(?:from\s+(\S+)\s+)?import\s+(\S+)/);
-      if (pyImportMatch) defs.push({ type: 'import', name: pyImportMatch[1] || pyImportMatch[2], line: lineNum });
+      if (pyImportMatch)
+        defs.push({
+          type: "import",
+          name: pyImportMatch[1] || pyImportMatch[2],
+          line: lineNum,
+        });
     }
 
     // Go patterns
-    if (ext === '.go') {
+    if (ext === ".go") {
       const goFuncMatch = line.match(/^func\s+(?:\([^)]+\)\s+)?(\w+)/);
-      if (goFuncMatch) defs.push({ type: 'function', name: goFuncMatch[1], line: lineNum });
+      if (goFuncMatch)
+        defs.push({ type: "function", name: goFuncMatch[1], line: lineNum });
 
       const goTypeMatch = line.match(/^type\s+(\w+)\s+struct/);
-      if (goTypeMatch) defs.push({ type: 'class', name: goTypeMatch[1], line: lineNum });
+      if (goTypeMatch)
+        defs.push({ type: "class", name: goTypeMatch[1], line: lineNum });
     }
   }
 
@@ -175,7 +218,7 @@ function extractDefinitions(content, ext) {
  */
 async function buildContentIndex(cwd) {
   cwd = cwd || process.cwd();
-  const indexPath = path.join(cwd, '.nex', 'index', 'content-index.json');
+  const indexPath = path.join(cwd, ".nex", "index", "content-index.json");
 
   // Load existing index if valid
   let existing = {};
@@ -184,7 +227,7 @@ async function buildContentIndex(cwd) {
   }
 
   try {
-    const raw = await fs.readFile(indexPath, 'utf-8');
+    const raw = await fs.readFile(indexPath, "utf-8");
     existing = JSON.parse(raw);
   } catch {
     existing = { files: {} };
@@ -215,7 +258,7 @@ async function buildContentIndex(cwd) {
       }
 
       // Re-index this file
-      const content = await fs.readFile(fullPath, 'utf-8');
+      const content = await fs.readFile(fullPath, "utf-8");
       const defs = extractDefinitions(content, ext);
       updated.files[relPath] = { defs, mtime };
       changed = true;
@@ -226,9 +269,9 @@ async function buildContentIndex(cwd) {
 
   // Save if changed
   if (changed) {
-    const indexDir = path.join(cwd, '.nex', 'index');
+    const indexDir = path.join(cwd, ".nex", "index");
     await fs.mkdir(indexDir, { recursive: true });
-    await fs.writeFile(indexPath, JSON.stringify(updated), 'utf-8');
+    await fs.writeFile(indexPath, JSON.stringify(updated), "utf-8");
   }
 
   _contentIndex = updated;
@@ -270,4 +313,14 @@ async function searchContentIndex(query, type) {
   return results.slice(0, 50);
 }
 
-module.exports = { refreshIndex, getFileIndex, getIndexedCwd, findFileInIndex, searchIndex, isIndexValid, buildContentIndex, searchContentIndex, extractDefinitions };
+module.exports = {
+  refreshIndex,
+  getFileIndex,
+  getIndexedCwd,
+  findFileInIndex,
+  searchIndex,
+  isIndexValid,
+  buildContentIndex,
+  searchContentIndex,
+  extractDefinitions,
+};

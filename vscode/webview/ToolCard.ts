@@ -1,7 +1,17 @@
 const TOOL_ICONS: Record<string, string> = {
-  read_file: '📄', write_file: '✏️', edit_file: '✏️', patch_file: '✏️',
-  bash: '⚡', list_directory: '📁', glob: '🔍', grep: '🔍', search_files: '🔍',
-  git: '🌿', web_fetch: '🌐', web_search: '🌐', default: '🔧',
+  read_file: "📄",
+  write_file: "✏️",
+  edit_file: "✏️",
+  patch_file: "✏️",
+  bash: "⚡",
+  list_directory: "📁",
+  glob: "🔍",
+  grep: "🔍",
+  search_files: "🔍",
+  git: "🌿",
+  web_fetch: "🌐",
+  web_search: "🌐",
+  default: "🔧",
 };
 
 export class ToolCard {
@@ -11,10 +21,10 @@ export class ToolCard {
   private iconEl: HTMLSpanElement;
 
   constructor(toolName: string, args: Record<string, unknown>) {
-    this.element = document.createElement('div');
-    this.element.className = 'tool-card running';
+    this.element = document.createElement("div");
+    this.element.className = "tool-card running";
 
-    const icon = TOOL_ICONS[toolName] ?? TOOL_ICONS['default'];
+    const icon = TOOL_ICONS[toolName] ?? TOOL_ICONS["default"];
     const argPreview = getArgPreview(toolName, args);
 
     this.element.innerHTML = `
@@ -27,37 +37,48 @@ export class ToolCard {
       <div class="tool-card-body">${JSON.stringify(args, null, 2)}</div>
     `;
 
-    this.iconEl = this.element.querySelector('.tool-card-icon')!;
-    this.summaryEl = this.element.querySelector('.tool-card-summary')!;
-    this.bodyEl = this.element.querySelector('.tool-card-body')!;
+    this.iconEl = this.element.querySelector(".tool-card-icon")!;
+    this.summaryEl = this.element.querySelector(".tool-card-summary")!;
+    this.bodyEl = this.element.querySelector(".tool-card-body")!;
 
     // Toggle expand on header click
-    const header = this.element.querySelector('.tool-card-header')!;
-    header.addEventListener('click', () => {
-      this.element.classList.toggle('expanded');
+    const header = this.element.querySelector(".tool-card-header")!;
+    header.addEventListener("click", () => {
+      this.element.classList.toggle("expanded");
     });
   }
 
   finish(summary: string, ok: boolean) {
-    this.element.classList.remove('running');
-    this.iconEl.style.animation = '';
+    this.element.classList.remove("running");
+    this.iconEl.style.animation = "";
     this.summaryEl.textContent = summary;
-    this.summaryEl.className = 'tool-card-summary ' + (ok ? 'ok' : 'fail');
+    this.summaryEl.className = "tool-card-summary " + (ok ? "ok" : "fail");
 
     if (!ok) {
       // Failed cards stay expanded
-      this.element.classList.add('expanded');
+      this.element.classList.add("expanded");
     }
   }
 }
 
-function getArgPreview(toolName: string, args: Record<string, unknown>): string {
+function getArgPreview(
+  toolName: string,
+  args: Record<string, unknown>,
+): string {
   switch (toolName) {
-    case 'read_file': case 'write_file': case 'edit_file':
-    case 'list_directory': return String(args.path ?? '');
-    case 'bash': return String(args.command ?? '').substring(0, 60);
-    case 'grep': case 'search_files': return String(args.pattern ?? '');
-    case 'web_fetch': return String(args.url ?? '').substring(0, 50);
-    default: return '';
+    case "read_file":
+    case "write_file":
+    case "edit_file":
+    case "list_directory":
+      return String(args.path ?? "");
+    case "bash":
+      return String(args.command ?? "").substring(0, 60);
+    case "grep":
+    case "search_files":
+      return String(args.pattern ?? "");
+    case "web_fetch":
+      return String(args.url ?? "").substring(0, 50);
+    default:
+      return "";
   }
 }

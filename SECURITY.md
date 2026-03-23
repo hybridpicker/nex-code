@@ -12,23 +12,30 @@ If you discover a security vulnerability, please report it responsibly:
 ## Security Features
 
 ### Permission System
+
 Every tool has a configurable permission level (`allow`, `ask`, `deny`). Destructive tools default to `ask`, requiring explicit user confirmation. Configure in `.nex/config.json`.
 
 ### Safety Patterns
+
 Two-tier command filtering protects against dangerous operations:
+
 - **Forbidden** (blocked, no override): `rm -rf /`, fork bombs, `curl|sh`, credential access, reverse shells, code injection — 30+ patterns
 - **Dangerous** (requires confirmation): `git push`, `npm publish`, `sudo`, `wget`, `pip install -g` — 14 patterns
 
 ### Shell Injection Protection
+
 All tool implementations that execute external commands use `execFileSync` with argument arrays (not string interpolation) to prevent shell injection from LLM-generated arguments.
 
 ### MCP Environment Isolation
+
 MCP server subprocesses receive only a safe allowlist of environment variables (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `TERM`, `NODE_ENV`). API keys and secrets from `process.env` are never leaked to MCP servers.
 
 ### Tool Result Secret Scrubbing
+
 Tool results (e.g., `read_file`, `bash`) are automatically scanned for common secret patterns before being inserted into the conversation context. Matches against well-known prefixes (`API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL` — 14 provider prefixes including AWS, GCP, GitHub, Stripe, etc.) are redacted as `VARNAME=***REDACTED***`. This prevents secrets accidentally read from files from persisting in LLM context across turns.
 
 ### Dependency Vulnerability Scanning
+
 `npm audit --audit-level=high` runs in CI on every push and pull request. High and critical CVEs in transitive dependencies block the build.
 
 ## Known Limitations

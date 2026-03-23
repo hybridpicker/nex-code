@@ -5,11 +5,11 @@
  * Updates memory.json and NEX.md with learned knowledge.
  */
 
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, withFileLockSync } = require('./filelock');
-const { callChat } = require('./providers/registry');
-const { remember, listMemories, recall } = require('./memory');
+const fs = require("fs");
+const path = require("path");
+const { atomicWrite, withFileLockSync } = require("./filelock");
+const { callChat } = require("./providers/registry");
+const { remember, listMemories, recall } = require("./memory");
 
 const LEARN_MIN_MESSAGES = 4; // Minimum user turns to bother
 
@@ -46,14 +46,15 @@ Rules:
  */
 function formatForReflection(messages) {
   return messages
-    .filter(m =>
-      (m.role === 'user' || m.role === 'assistant') &&
-      typeof m.content === 'string' &&
-      m.content.trim().length > 10
+    .filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        typeof m.content === "string" &&
+        m.content.trim().length > 10,
     )
     .slice(-40)
-    .map(m => `[${m.role.toUpperCase()}]: ${m.content.substring(0, 700)}`)
-    .join('\n\n');
+    .map((m) => `[${m.role.toUpperCase()}]: ${m.content.substring(0, 700)}`)
+    .join("\n\n");
 }
 
 /**
@@ -62,7 +63,7 @@ function formatForReflection(messages) {
  * @returns {Promise<{ memories, nex_additions, summary, skipped?, error? }>}
  */
 async function reflectOnSession(messages) {
-  const userMessages = messages.filter(m => m.role === 'user');
+  const userMessages = messages.filter((m) => m.role === "user");
   if (userMessages.length < LEARN_MIN_MESSAGES) {
     return { memories: [], nex_additions: [], summary: null, skipped: true };
   }
@@ -73,8 +74,8 @@ async function reflectOnSession(messages) {
   }
 
   const reflectMessages = [
-    { role: 'system', content: REFLECTION_PROMPT },
-    { role: 'user', content: `Conversation to analyze:\n\n${formatted}` },
+    { role: "system", content: REFLECTION_PROMPT },
+    { role: "user", content: `Conversation to analyze:\n\n${formatted}` },
   ];
 
   try {
@@ -83,22 +84,34 @@ async function reflectOnSession(messages) {
       maxTokens: 800,
     });
 
-    const content = (result.content || '').trim();
+    const content = (result.content || "").trim();
 
     // Extract JSON — may be wrapped in markdown code block
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return { memories: [], nex_additions: [], summary: null, error: 'No JSON in response' };
+      return {
+        memories: [],
+        nex_additions: [],
+        summary: null,
+        error: "No JSON in response",
+      };
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
     return {
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
-      nex_additions: Array.isArray(parsed.nex_additions) ? parsed.nex_additions : [],
-      summary: typeof parsed.summary === 'string' ? parsed.summary : null,
+      nex_additions: Array.isArray(parsed.nex_additions)
+        ? parsed.nex_additions
+        : [],
+      summary: typeof parsed.summary === "string" ? parsed.summary : null,
     };
   } catch (err) {
-    return { memories: [], nex_additions: [], summary: null, error: err.message };
+    return {
+      memories: [],
+      nex_additions: [],
+      summary: null,
+      error: err.message,
+    };
   }
 }
 
@@ -109,9 +122,10 @@ async function reflectOnSession(messages) {
  */
 function applyMemories(memories) {
   const applied = [];
-  for (const { key, value } of (memories || [])) {
-    if (!key || !value || typeof key !== 'string' || typeof value !== 'string') continue;
-    const cleanKey = key.trim().replace(/\s+/g, '-').substring(0, 60);
+  for (const { key, value } of memories || []) {
+    if (!key || !value || typeof key !== "string" || typeof value !== "string")
+      continue;
+    const cleanKey = key.trim().replace(/\s+/g, "-").substring(0, 60);
     const cleanVal = value.trim().substring(0, 200);
     if (!cleanKey || !cleanVal) continue;
 
@@ -119,7 +133,11 @@ function applyMemories(memories) {
     if (existing === cleanVal) continue; // No change
 
     remember(cleanKey, cleanVal);
-    applied.push({ key: cleanKey, value: cleanVal, action: existing ? 'updated' : 'added' });
+    applied.push({
+      key: cleanKey,
+      value: cleanVal,
+      action: existing ? "updated" : "added",
+    });
   }
   return applied;
 }
@@ -132,19 +150,21 @@ function applyMemories(memories) {
 function applyNexAdditions(additions) {
   if (!additions || additions.length === 0) return [];
 
-  const nexPath = path.join(process.cwd(), 'NEX.md');
+  const nexPath = path.join(process.cwd(), "NEX.md");
 
   return withFileLockSync(nexPath, () => {
-    let existing = '';
+    let existing = "";
     try {
-      if (fs.existsSync(nexPath)) existing = fs.readFileSync(nexPath, 'utf-8');
-    } catch { /* ignore */ }
+      if (fs.existsSync(nexPath)) existing = fs.readFileSync(nexPath, "utf-8");
+    } catch {
+      /* ignore */
+    }
 
     const added = [];
     let newContent = existing;
 
     for (const line of additions) {
-      if (!line || typeof line !== 'string') continue;
+      if (!line || typeof line !== "string") continue;
       const clean = line.trim();
       if (!clean) continue;
 
@@ -154,12 +174,14 @@ function applyNexAdditions(additions) {
 
       added.push(clean);
       newContent = newContent
-        ? (newContent.endsWith('\n') ? newContent + clean : newContent + '\n' + clean)
+        ? newContent.endsWith("\n")
+          ? newContent + clean
+          : newContent + "\n" + clean
         : clean;
     }
 
     if (added.length > 0) {
-      if (!newContent.endsWith('\n')) newContent += '\n';
+      if (!newContent.endsWith("\n")) newContent += "\n";
       atomicWrite(nexPath, newContent);
     }
 
@@ -174,8 +196,10 @@ function applyNexAdditions(additions) {
  */
 async function learnFromSession(messages) {
   const result = await reflectOnSession(messages);
-  if (result.skipped) return { applied: [], nexAdded: [], summary: null, skipped: true };
-  if (result.error) return { applied: [], nexAdded: [], summary: null, error: result.error };
+  if (result.skipped)
+    return { applied: [], nexAdded: [], summary: null, skipped: true };
+  if (result.error)
+    return { applied: [], nexAdded: [], summary: null, error: result.error };
 
   const applied = applyMemories(result.memories);
   const nexAdded = applyNexAdditions(result.nex_additions);
@@ -231,26 +255,29 @@ Rules:
  * @returns {Promise<{ documents: Array<{name, content, reason}>, skip_reason?: string, error?: string }>}
  */
 async function reflectBrain(messages) {
-  const userMessages = messages.filter(m => m.role === 'user');
+  const userMessages = messages.filter((m) => m.role === "user");
   if (userMessages.length < LEARN_MIN_MESSAGES) {
-    return { documents: [], skip_reason: 'Session too short' };
+    return { documents: [], skip_reason: "Session too short" };
   }
 
   const formatted = formatForReflection(messages);
   if (!formatted.trim()) {
-    return { documents: [], skip_reason: 'No usable content' };
+    return { documents: [], skip_reason: "No usable content" };
   }
 
   const reflectMessages = [
-    { role: 'system', content: BRAIN_REFLECTION_PROMPT },
-    { role: 'user', content: `Conversation to analyze:\n\n${formatted}` },
+    { role: "system", content: BRAIN_REFLECTION_PROMPT },
+    { role: "user", content: `Conversation to analyze:\n\n${formatted}` },
   ];
 
   try {
-    const result = await callChat(reflectMessages, [], { temperature: 0, maxTokens: 2000 });
-    const content = (result.content || '').trim();
+    const result = await callChat(reflectMessages, [], {
+      temperature: 0,
+      maxTokens: 2000,
+    });
+    const content = (result.content || "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { documents: [], error: 'No JSON in response' };
+    if (!jsonMatch) return { documents: [], error: "No JSON in response" };
     const parsed = JSON.parse(jsonMatch[0]);
     return {
       documents: Array.isArray(parsed.documents) ? parsed.documents : [],
@@ -274,25 +301,37 @@ async function learnBrainFromSession(messages) {
     return { written: [], skipped: [], skip_reason: result.skip_reason };
   }
 
-  const { writeDocument, readDocument } = require('./brain');
+  const { writeDocument, readDocument } = require("./brain");
   const written = [];
   const skipped = [];
 
   for (const doc of result.documents) {
     if (!doc.name || !doc.content) continue;
-    const cleanName = doc.name.trim().replace(/\.md$/, '').replace(/[^a-z0-9-]/g, '-').substring(0, 60);
+    const cleanName = doc.name
+      .trim()
+      .replace(/\.md$/, "")
+      .replace(/[^a-z0-9-]/g, "-")
+      .substring(0, 60);
     if (!cleanName) continue;
 
     // Don't overwrite existing documents — append a dated section instead
     const existing = readDocument(cleanName);
     if (existing.content) {
-      const date = new Date().toISOString().split('T')[0];
+      const date = new Date().toISOString().split("T")[0];
       const appendContent = `\n\n## Update ${date}\n\n${doc.content}`;
       writeDocument(cleanName, existing.content + appendContent);
-      written.push({ name: cleanName, reason: doc.reason || '', action: 'updated' });
+      written.push({
+        name: cleanName,
+        reason: doc.reason || "",
+        action: "updated",
+      });
     } else {
       writeDocument(cleanName, doc.content);
-      written.push({ name: cleanName, reason: doc.reason || '', action: 'created' });
+      written.push({
+        name: cleanName,
+        reason: doc.reason || "",
+        action: "created",
+      });
     }
   }
 
