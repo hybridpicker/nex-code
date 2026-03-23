@@ -1473,6 +1473,15 @@ async function processInput(userInput, serverHooks = null) {
   conversationMessages.push({ role: 'user', content: userContent });
   trimConversationHistory();
 
+  // Hint: suggest /orchestrate for complex multi-goal prompts
+  try {
+    const { detectComplexPrompt } = require('./orchestrator');
+    const complexity = detectComplexPrompt(typeof userInput === 'string' ? userInput : '');
+    if (complexity.isComplex) {
+      console.log(`${C.dim}Hint: ~${complexity.estimatedGoals} goals detected. Use /orchestrate for parallel execution.${C.reset}`);
+    }
+  } catch { /* orchestrator not loaded — ignore */ }
+
   const { setOnChange } = require('./tasks');
   let taskProgress = null;
   let cumulativeTokens = 0;
