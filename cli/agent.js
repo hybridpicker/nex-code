@@ -2804,12 +2804,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
       } else if (result && !result.usage) {
         // No usage data — estimate from message context and response content
-        const ctxText = apiMessages.map((m) => {
-          if (typeof m.content === "string") return m.content;
-          if (Array.isArray(m.content))
-            return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
-          return "";
-        }).join(" ");
+        const ctxText = apiMessages
+          .map((m) => {
+            if (typeof m.content === "string") return m.content;
+            if (Array.isArray(m.content))
+              return m.content
+                .map((b) => (typeof b === "string" ? b : b.text || ""))
+                .join("");
+            return "";
+          })
+          .join(" ");
         const inputEst = _estTok(ctxText);
         const outputEst = _estTok(result.content || streamedText || "");
         trackUsage(
@@ -3105,8 +3109,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               ...apiMessages,
               {
                 role: "user",
-                content:
-                  "Please summarize what you just did in 2-3 sentences.",
+                content: "Please summarize what you just did in 2-3 sentences.",
               },
             ];
             const summaryRes = await callStream(summaryMessages, [], {});
@@ -3115,8 +3118,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(`\n${summaryText}`);
               // Save to conversationMessages so scorer sees the summary
               conversationMessages.push(
-                { role: "user", content: "Please summarize what you just did in 2-3 sentences." },
-                { role: "assistant", content: summaryText }
+                {
+                  role: "user",
+                  content:
+                    "Please summarize what you just did in 2-3 sentences.",
+                },
+                { role: "assistant", content: summaryText },
               );
             }
           } catch {

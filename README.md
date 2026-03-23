@@ -332,20 +332,20 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 # → {"success":true,"response":"..."}
 ```
 
-| Flag                   | Description                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `--task <prompt>`      | Run a single prompt and exit                                                                                  |
-| `--prompt-file <path>` | Read prompt from a UTF-8 file and run headless                                                                |
-| `--delete-prompt-file` | Delete the prompt file after reading (use with `--prompt-file`)                                               |
-| `--auto`               | Skip confirmations (non-interactive, no REPL banner)                                                          |
-| `--yolo`               | Skip all confirmations including dangerous commands (also configurable via `.nex/config.json` `"yolo": true`) |
-| `--server`             | Start JSON-lines IPC server (used by the VS Code extension)                                                   |
-| `--json`               | Output `{"success":true,"response":"..."}` to stdout                                                          |
-| `--max-turns <n>`      | Override the agentic loop iteration limit                                                                     |
-| `--model <spec>`       | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
-| `--debug`              | Show internal diagnostic messages (compression, loop detection, guards)                                       |
-| `--auto-orchestrate`   | Automatically use the multi-agent orchestrator when ≥3 goals are detected (also: `NEX_AUTO_ORCHESTRATE=true`) |
-| `--orchestrator-model <m>` | Model for decomposition/synthesis step (default: `kimi-k2.5`)                                            |
+| Flag                       | Description                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--task <prompt>`          | Run a single prompt and exit                                                                                  |
+| `--prompt-file <path>`     | Read prompt from a UTF-8 file and run headless                                                                |
+| `--delete-prompt-file`     | Delete the prompt file after reading (use with `--prompt-file`)                                               |
+| `--auto`                   | Skip confirmations (non-interactive, no REPL banner)                                                          |
+| `--yolo`                   | Skip all confirmations including dangerous commands (also configurable via `.nex/config.json` `"yolo": true`) |
+| `--server`                 | Start JSON-lines IPC server (used by the VS Code extension)                                                   |
+| `--json`                   | Output `{"success":true,"response":"..."}` to stdout                                                          |
+| `--max-turns <n>`          | Override the agentic loop iteration limit                                                                     |
+| `--model <spec>`           | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
+| `--debug`                  | Show internal diagnostic messages (compression, loop detection, guards)                                       |
+| `--auto-orchestrate`       | Automatically use the multi-agent orchestrator when ≥3 goals are detected (also: `NEX_AUTO_ORCHESTRATE=true`) |
+| `--orchestrator-model <m>` | Model for decomposition/synthesis step (default: `kimi-k2.5`)                                                 |
 
 ---
 
@@ -1011,17 +1011,17 @@ Suggested commit: fix: resolve auth type errors and add utility docs
 
 **Env vars:**
 
-| Variable                  | Default       | Description                                              |
-| ------------------------- | ------------- | -------------------------------------------------------- |
-| `NEX_AUTO_ORCHESTRATE`    | `false`       | Set to `true` to always use the orchestrator             |
-| `NEX_ORCHESTRATE_THRESHOLD` | `3`         | Minimum number of detected goals before auto-triggering  |
+| Variable                    | Default | Description                                             |
+| --------------------------- | ------- | ------------------------------------------------------- |
+| `NEX_AUTO_ORCHESTRATE`      | `false` | Set to `true` to always use the orchestrator            |
+| `NEX_ORCHESTRATE_THRESHOLD` | `3`     | Minimum number of detected goals before auto-triggering |
 
 **Model roles in orchestration:**
 
-| Role           | Default model       | Purpose                                      |
-| -------------- | ------------------- | -------------------------------------------- |
-| Orchestrator   | `kimi-k2.5`         | Decomposes prompt, synthesizes results       |
-| Worker         | `devstral-2:123b`   | Executes each sub-task (one agent per task)  |
+| Role         | Default model     | Purpose                                     |
+| ------------ | ----------------- | ------------------------------------------- |
+| Orchestrator | `kimi-k2.5`       | Decomposes prompt, synthesizes results      |
+| Worker       | `devstral-2:123b` | Executes each sub-task (one agent per task) |
 
 Override via `--orchestrator-model` (orchestrator) or `DEFAULT_MODEL` / `NEX_STANDARD_MODEL` (workers).
 

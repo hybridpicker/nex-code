@@ -2,7 +2,7 @@
  * cli/costs.js — Token Cost Tracking + Dashboard + Budget Limits
  * Tracks token usage per provider/model and estimates session costs.
  * Supports per-provider cost limits with budget gating.
- * 
+ *
  * Token Pricing Model:
  * - Prices are in USD per million tokens (input/output separately).
  * - Input tokens: tokens sent to the model (prompt, context, messages).

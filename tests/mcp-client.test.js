@@ -439,9 +439,9 @@ describe("_sendRequest()", () => {
       stdin: { write: jest.fn() },
       stdout: { on: jest.fn(), removeListener: jest.fn() },
     };
-    await expect(_sendRequest(mockProc, "test/timeout", {}, 30)).rejects.toThrow(
-      "MCP request timeout",
-    );
+    await expect(
+      _sendRequest(mockProc, "test/timeout", {}, 30),
+    ).rejects.toThrow("MCP request timeout");
   });
 
   it("rejects when stdin.write throws", async () => {
@@ -453,8 +453,8 @@ describe("_sendRequest()", () => {
       },
       stdout: { on: jest.fn(), removeListener: jest.fn() },
     };
-    await expect(_sendRequest(mockProc, "test/write", {}, 5000)).rejects.toThrow(
-      "MCP write failed",
-    );
+    await expect(
+      _sendRequest(mockProc, "test/write", {}, 5000),
+    ).rejects.toThrow("MCP write failed");
   });
 });
