@@ -447,8 +447,9 @@ async function runOrchestrated(prompt, opts = {}) {
   );
   for (const st of subTasks) {
     console.log(`  ${C.dim}${st.id}:${C.reset} ${st.task}`);
-    if (st.scope.length > 0)
-      console.log(`     ${C.dim}scope: ${st.scope.join(", ")}${C.reset}`);
+    const scopeDisplay = st.scope.filter(Boolean);
+    if (scopeDisplay.length > 0)
+      console.log(`     ${C.dim}scope: ${scopeDisplay.join(", ")}${C.reset}`);
   }
   console.log("");
 
@@ -544,8 +545,11 @@ RULES:
       r.status === "done" ||
       (r.status === "truncated" && r.result && !r.result.startsWith("Error"));
     const icon = isSuccess ? `${C.green}\u2713${C.reset}` : `${C.red}\u2717${C.reset}`;
-    const scope = r._scope && r._scope.length > 0
-      ? r._scope.map(f => f.replace(/^.*\//, '')).join(', ')
+    const scopeParts = r._scope && r._scope.length > 0
+      ? r._scope.map(f => f.replace(/^.*\//, '').replace(/\/$/, '')).filter(Boolean)
+      : [];
+    const scope = scopeParts.length > 0
+      ? scopeParts.join(', ')
       : r.task.substring(0, 35) + (r.task.length > 35 ? '...' : '');
     const isLast = i === results.length - 1;
     console.log(
