@@ -375,3 +375,57 @@ collapse — a single agent trying to solve everything in one context window.
 - `model-watcher.js` extended with orchestrator candidate detection
 - Auto-promotes new orchestrator model if benchmark score > current + 5%
 - See `docs/MODEL-SELECTION.md` for full model selection strategy
+
+---
+
+### v0.3.79–0.3.87 — Orchestrator Polish + Debug Mode
+
+#### v0.3.79 — Worker prompt hardening
+
+- `WORKER_SYSTEM_PROMPT` now explicitly forbids external CLI tools (`aspell`,
+  `jq`, `grep` for reading) — agents must use `read_file` + reasoning instead
+- Worker rule: "Be PROACTIVE — if your task says fix typos, read and fix them;
+  don't just search and report"
+
+#### v0.3.80 — Debug mode + auto-orchestrate
+
+- `cli/debug.js` — `debugLog()` / `warnLog()` gated on `NEX_DEBUG=true` or
+  `--debug` flag. ~30 internal `⚠ BLOCKED`, compression, SSH storm, deadlock
+  messages now hidden from normal output
+- `--auto-orchestrate` flag (+ `NEX_AUTO_ORCHESTRATE=true` env var): triggers
+  orchestrator automatically when ≥3 goals detected in prompt
+- `NEX_ORCHESTRATE_THRESHOLD` env var to tune the goal threshold
+- `--prompt` added as alias for `--task` in `bin/nex-code.js`
+
+#### v0.3.81–0.3.84 — Orchestrator reliability fixes
+
+- Fixed inline goal detection regex (was only matching line-start `(1)` not
+  `fix (1) this (2) that`)
+- Removed invalid `{"valid": true}` tool instruction from worker prompt —
+  caused `ERROR: Unknown tool: valid` on every sub-agent completion
+- Synthesizer now uses ✓ green / ⚠ yellow / ✗ red icons for agent status
+  instead of uniform `⚠` for all results
+- Token accumulation: safe `||` fallback prevents NaN when provider omits counts
+
+#### v0.3.85–0.3.87 — Clean terminal output
+
+- `MultiProgress.stop({ silent: true })` — clears progress block without
+  reprinting agent lines, eliminating the duplicate agent list that appeared
+  after Phase 2
+- Orchestrator now prints one clean summary block: scope files + duration
+- Empty/non-existent scope entries filtered out (fixes `, ,` in Agent display)
+- Phase 1 decompose output also filters empty scope strings
+
+---
+
+## 0.4.x — Multi-Agent Era
+
+Starting with v0.4.0, nex-code graduates from a single-agent loop to a
+**multi-agent orchestrated system**. The architecture is stable and battle-tested:
+
+- Kimi K2.5 as orchestrator (262K context, reasoning-grade decomposition)
+- devstral-2:123b as worker pool (fast, tool-calling optimised)
+- Max 3 parallel agents (SSH limit respected)
+- Auto-orchestrate for 3+ goal prompts (`--auto-orchestrate` or env var)
+- Debug mode hides all internal noise (`--debug` or `NEX_DEBUG=true`)
+- Clean terminal output: no duplicate lists, no empty scope fields
