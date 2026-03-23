@@ -124,7 +124,7 @@ const {
   getSkillToolDefinitions,
   routeSkillCall,
 } = require("./skills");
-const { trackUsage } = require("./costs");
+const { trackUsage, estimateTokens } = require("./costs");
 const { validateToolArgs } = require("./tool-validator");
 const {
   filterToolsForModel,
@@ -1265,13 +1265,14 @@ CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When
   • For Makefiles: (1) Output the COMPLETE Makefile in a fenced \`\`\`makefile code block IN YOUR TEXT first — before any tool calls. (2) Then optionally write it to disk. FORBIDDEN: using write_file for a Makefile and then only describing it in text — the code block in text is mandatory. The user CANNOT see write_file output. (3) Use EXACTLY the command from the description: "runs jest" → recipe is "jest" (NOT "npm test", NOT "npx jest"); "runs tsc" → recipe is "tsc". (4) Never suggest alternatives to the specified tool — if the task says tsc, only tsc appears in the Makefile.
   • For dataclasses, show the COMPLETE implementation — all fields with types, __post_init__ validation, and any defaults. Never describe without showing the code.
   • For cron expressions, quote the exact time constraint from the task verbatim, then write the expression. Verify boundary values (e.g., "8-18h" → hours 8 through 18 inclusive).
+  • For regex character classes with numeric ranges: after writing the expression, re-read the task requirement and verify each range boundary matches exactly. Common pitfalls: "8 to 18" → [8-9]|1[0-8] not [8-17]; hour ranges are 0-23, month ranges are 1-12, day ranges are 1-31. Count the values your range covers and compare to the requirement before finalizing.
 
 - Use markdown formatting: **bold** for key points, headers for sections, bullet lists for multiple items, \`code\` for identifiers. The terminal renders markdown with syntax highlighting.
 - Structure longer responses with headers (## Section) so the user can scan quickly.
 
 Response patterns by request type:
 - **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. NEVER just run tools and stop.
-- **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details.
+- **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details. When diagnosing a bug (memory leak, race condition, logic error): always proceed from diagnosis to concrete fix — write the corrected code and apply it. Do not stop after identifying the root cause unless the user explicitly asked for analysis only.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
@@ -2763,16 +2764,28 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       staleRetries = 0;
 
       // Track token usage for cost dashboard
-      if (result && result.usage) {
+      // Fall back to character-based estimation when provider omits usage data.
+      if (result) {
+        let inputT = result.usage?.prompt_tokens || 0;
+        let outputT = result.usage?.completion_tokens || 0;
+        if (inputT === 0 && outputT === 0) {
+          // Estimate: input from all messages sent, output from the response content
+          const ctxText = apiMessages.map((m) => {
+            if (typeof m.content === "string") return m.content;
+            if (Array.isArray(m.content))
+              return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
+            return "";
+          }).join(" ");
+          inputT = estimateTokens(ctxText);
+          outputT = estimateTokens(result.content || streamedText || "");
+        }
         trackUsage(
           getActiveProviderName(),
           getActiveModelId(),
-          result.usage.prompt_tokens || 0,
-          result.usage.completion_tokens || 0,
+          inputT,
+          outputT,
         );
-        cumulativeTokens +=
-          (result.usage.prompt_tokens || 0) +
-          (result.usage.completion_tokens || 0);
+        cumulativeTokens += inputT + outputT;
         if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
       }
 
