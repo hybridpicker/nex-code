@@ -1372,7 +1372,7 @@ After frontend_recon returns:
   - Don't add docstrings/comments to code you didn't change.
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
-- After completing work, give a brief summary of what was done and any important details. Don't just silently finish.
+- After completing work, write a brief 2-3 sentence summary of what was done — what changed, why, and any key details. NEVER end with just "Done", "Done.", "Finished", or a single word/phrase. A closing like "Done." after a full explanation is fine only when preceded by a substantive response of at least a few sentences.
 
 # Diagnose Before Build (Critical)
 
