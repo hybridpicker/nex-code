@@ -38,3 +38,17 @@ jobs:
       - run: npx jest --forceExit --shard=${{ matrix.shard }}/2
         env:
           CI: true
+
+  ci-passed:
+    name: CI Passed
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
+            echo "One or more required jobs failed: build=${{ needs.build.result }} test=${{ needs.test.result }}"
+            exit 1
+          fi
+          echo "All required jobs passed."
