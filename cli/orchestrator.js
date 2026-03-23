@@ -520,7 +520,18 @@ RULES:
           _systemPrompt: WORKER_SYSTEM_PROMPT,
         },
         {
-          onUpdate: () => {},
+          onUpdate: (event) => {
+            // Stream live tool-call activity to stderr when running in a TTY.
+            // Skipped in piped/non-TTY contexts to keep output clean.
+            if (
+              event &&
+              event.type === "tool_call" &&
+              process.stderr.isTTY
+            ) {
+              const label = `  ${C.dim}[Agent ${idx + 1}] ${event.tool}${C.reset}`;
+              process.stderr.write(label + "\n");
+            }
+          },
         },
       );
 
