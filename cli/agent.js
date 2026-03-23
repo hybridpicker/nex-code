@@ -1502,8 +1502,7 @@ You have access to a persistent knowledge base in .nex/brain/.
   return cachedSystemPrompt;
 }
 
-function clearConversation() {
-  conversationMessages = [];
+function _resetSessionTracking() {
   _sessionBashCmdCounts.clear();
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
@@ -1519,6 +1518,11 @@ function clearConversation() {
   _sshDeadlockRelaxCount = 0;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
+}
+
+function clearConversation() {
+  conversationMessages = [];
+  _resetSessionTracking();
 }
 
 function trimConversationHistory() {
@@ -4091,4 +4095,6 @@ module.exports = {
   detectAndTruncateLoop,
   // Mid-run input injection
   injectMidRunNote,
+  // Reset loop/read tracking without clearing messages (used by /retry)
+  resetSessionTracking: _resetSessionTracking,
 };
