@@ -989,10 +989,16 @@ describe("agent.js", () => {
       expect(trackUsage).toHaveBeenCalledWith("ollama", "kimi-k2.5", 0, 0);
     });
 
-    it("does not track when no usage", async () => {
+    it("estimates tokens when no usage data (Ollama Cloud fallback)", async () => {
       mockStream("Hello");
       await processInput("test");
-      expect(trackUsage).not.toHaveBeenCalled();
+      // Provider omitted usage → estimated values are tracked (non-zero from context)
+      expect(trackUsage).toHaveBeenCalledTimes(1);
+      const [provider, model, inputEst, outputEst] = trackUsage.mock.calls[0];
+      expect(provider).toBe("ollama");
+      expect(model).toBe("kimi-k2.5");
+      expect(typeof inputEst).toBe("number");
+      expect(typeof outputEst).toBe("number");
     });
 
     it("handles undefined token counts as 0", async () => {

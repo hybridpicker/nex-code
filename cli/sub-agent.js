@@ -14,8 +14,15 @@ const {
 } = require("./providers/registry");
 const { parseToolArgs } = require("./ollama");
 const { filterToolsForModel, getModelTier } = require("./tool-tiers");
-const { trackUsage } = require("./costs");
+const { trackUsage, estimateTokens: _estimateTokens } = require("./costs");
 const { MultiProgress, C } = require("./ui");
+
+/** Fallback token estimator (~4 chars per token). Works even when costs mock omits estimateTokens. */
+function _estTok(text) {
+  if (!text || typeof text !== "string") return 0;
+  if (typeof _estimateTokens === "function") return _estimateTokens(text);
+  return Math.ceil(text.length / 4);
+}
 
 const MAX_SUB_ITERATIONS = 15;
 const MAX_PARALLEL_AGENTS = 5;
@@ -309,15 +316,33 @@ ERROR RECOVERY:
         throw new Error("Empty or invalid response from provider");
       }
 
-      // Track tokens
-      if (result.usage) {
-        const inputT = result.usage.prompt_tokens || 0;
-        const outputT = result.usage.completion_tokens || 0;
-        tokensUsed.input += inputT;
-        tokensUsed.output += outputT;
+      // Track tokens — fall back to character-based estimation when provider
+      // does not return usage data (e.g. Ollama Cloud).
+      {
         const trackProvider = agentProvider || getActiveProviderName();
         const trackModel = agentModel || getActiveModelId();
-        trackUsage(trackProvider, trackModel, inputT, outputT);
+        if (result.usage) {
+          const inputT = result.usage.prompt_tokens || 0;
+          const outputT = result.usage.completion_tokens || 0;
+          tokensUsed.input += inputT;
+          tokensUsed.output += outputT;
+          trackUsage(trackProvider, trackModel, inputT, outputT);
+        } else {
+          // No usage data from provider — estimate from context text
+          const content = result.content || "";
+          const ctxText = messages.map((m) => {
+            if (typeof m.content === "string") return m.content;
+            if (Array.isArray(m.content))
+              return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
+            return "";
+          }).join(" ");
+          const inputT = _estTok(ctxText);
+          const outputT = _estTok(content);
+          tokensUsed.input += inputT;
+          tokensUsed.output += outputT;
+          tokensUsed._estimated = true;
+          trackUsage(trackProvider, trackModel, inputT, outputT);
+        }
       }
 
       const content = result.content || "";
