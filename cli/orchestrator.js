@@ -462,6 +462,13 @@ async function runOrchestrated(prompt, opts = {}) {
   const startTime = Date.now();
   const acquire = createSemaphore(maxParallel);
 
+  // Shared scratch-pad: agents that finish early contribute findings that
+  // later-starting or retrying agents can use to avoid duplication.
+  const sharedContext = {
+    findings: [], // Array of { agentId, summary, files }
+    _lock: false,
+  };
+
   const labels = subTasks.map(
     (st, i) =>
       `Agent ${i + 1} [${workerModel}]: ${st.task.substring(0, 40)}${st.task.length > 40 ? "..." : ""}`,
@@ -492,13 +499,21 @@ RULES:
   const agentPromises = subTasks.map(async (st, idx) => {
     const release = await acquire();
     try {
+      // Inject any findings from agents that have already completed
+      const priorFindings = sharedContext.findings
+        .filter((f) => f.agentId !== st.id)
+        .map((f) => `Agent ${f.agentId} found: ${f.summary}`)
+        .join("\n");
+
+      const contextParts = [
+        priorFindings ? `Prior agent findings:\n${priorFindings}\n` : "",
+        st.scope.length > 0 ? `Focus on files: ${st.scope.join(", ")}` : "",
+      ].filter(Boolean);
+
       const result = await runSubAgent(
         {
           task: st.task,
-          context:
-            st.scope.length > 0
-              ? `Focus on files: ${st.scope.join(", ")}`
-              : undefined,
+          context: contextParts.length > 0 ? contextParts.join("\n") : undefined,
           max_iterations: Math.min(st.estimatedCalls || 10, 15),
           model: workerModel,
           _skipLog: true,
@@ -508,6 +523,17 @@ RULES:
           onUpdate: () => {},
         },
       );
+
+      // Contribute this agent's findings to the shared scratch-pad
+      const resultSummary =
+        typeof result.result === "string"
+          ? result.result.slice(0, 200)
+          : String(result.result || "").slice(0, 200);
+      sharedContext.findings.push({
+        agentId: st.id,
+        summary: resultSummary,
+        files: Array.isArray(st.scope) ? st.scope : [],
+      });
 
       progress.update(idx, result.status === "failed" ? "error" : "done");
       totalTokens.input += result.tokensUsed?.input || 0;
@@ -578,8 +604,19 @@ RULES:
     };
   }
 
+  // Detect whether agents shared context (findings from multiple agents
+  // reference overlapping files)
+  const allFiles = sharedContext.findings.flatMap((f) => f.files);
+  const fileCounts = new Map();
+  for (const f of allFiles) fileCounts.set(f, (fileCounts.get(f) || 0) + 1);
+  const hasOverlap = [...fileCounts.values()].some((c) => c > 1);
+  const sharedContextNote =
+    sharedContext.findings.length > 1 && hasOverlap
+      ? ` ${C.dim}(agents shared context)${C.reset}`
+      : "";
+
   // Show synthesis
-  console.log(`\n${C.bold}Summary:${C.reset} ${synthesis.summary}`);
+  console.log(`\n${C.bold}Summary:${C.reset} ${synthesis.summary}${sharedContextNote}`);
   if (synthesis.conflicts.length > 0) {
     console.log(`${C.yellow}Conflicts:${C.reset}`);
     for (const c of synthesis.conflicts) console.log(`  - ${c}`);
