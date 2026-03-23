@@ -3702,7 +3702,9 @@ async function _executeToolInner(name, args, options = {}) {
         if (!ok) return "CANCELLED: User declined.";
       }
 
-      const cmd = `docker exec ${args.container} sh -c ${JSON.stringify(args.command)}`;
+      const safeContainer = (args.container || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+      if (!safeContainer) return "ERROR: Invalid container name";
+      const cmd = `docker exec ${safeContainer} sh -c ${JSON.stringify(args.command)}`;
 
       if (isLocal) {
         try {
@@ -3844,9 +3846,13 @@ async function _executeToolInner(name, args, options = {}) {
 
       // ── Sync step ─────────────────────────────────────────────
       if (method === "git") {
-        const pullCmd = args.branch
-          ? `cd ${args.remote_path} && git fetch origin && git checkout ${args.branch} && git pull origin ${args.branch}`
-          : `cd ${args.remote_path} && git pull`;
+        const safeBranch = (args.branch || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+        if (args.branch && safeBranch !== args.branch)
+          return `ERROR: Invalid branch name: ${args.branch}`;
+        const safeRemotePath = (args.remote_path || "").replace(/'/g, "'\\''");
+        const pullCmd = safeBranch
+          ? `cd '${safeRemotePath}' && git fetch origin && git checkout '${safeBranch}' && git pull origin '${safeBranch}'`
+          : `cd '${safeRemotePath}' && git pull`;
         if (args.dry_run) {
           return `DRY RUN [git]: would run on ${target}:\n  ${pullCmd}${args.deploy_script ? `\n  ${args.deploy_script}` : ""}`;
         }
