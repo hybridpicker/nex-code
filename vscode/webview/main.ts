@@ -1,7 +1,7 @@
-import { marked } from 'marked';
-import hljs from 'highlight.js';
-import { ToolCard } from './ToolCard';
-import { ConfirmDialog } from './ConfirmDialog';
+import { marked } from "marked";
+import hljs from "highlight.js";
+import { ToolCard } from "./ToolCard";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 // Configure marked with syntax highlighting
 marked.setOptions({
@@ -10,7 +10,7 @@ marked.setOptions({
       return hljs.highlight(code, { language: lang }).value;
     }
     return hljs.highlightAuto(code).value;
-  }
+  },
 } as any);
 
 // VS Code webview API
@@ -20,10 +20,10 @@ declare function acquireVsCodeApi(): {
 const vscode = acquireVsCodeApi();
 
 // DOM references
-const app = document.getElementById('app')!;
+const app = document.getElementById("app")!;
 
 // Inject styles
-const style = document.createElement('style');
+const style = document.createElement("style");
 style.textContent = getStyles();
 document.head.appendChild(style);
 
@@ -38,51 +38,53 @@ app.innerHTML = `
   </div>
 `;
 
-const messagesEl = document.getElementById('messages')!;
-const inputEl = document.getElementById('input') as HTMLTextAreaElement;
-const sendBtn = document.getElementById('send-btn')!;
+const messagesEl = document.getElementById("messages")!;
+const inputEl = document.getElementById("input") as HTMLTextAreaElement;
+const sendBtn = document.getElementById("send-btn")!;
 
 // State
 let currentMsgEl: HTMLDivElement | null = null;
-let currentAccum = '';
+let currentAccum = "";
 let currentToolCards = new Map<string, ToolCard>();
 let pendingConfirm: ConfirmDialog | null = null;
 
 // Auto-resize textarea
-inputEl.addEventListener('input', () => {
-  inputEl.style.height = 'auto';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
+inputEl.addEventListener("input", () => {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
 });
 
 // Send on Enter (Shift+Enter = newline)
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     doSend();
   }
 });
-sendBtn.addEventListener('click', doSend);
+sendBtn.addEventListener("click", doSend);
 
 function doSend() {
   const text = inputEl.value.trim();
-  if (!text) { return; }
+  if (!text) {
+    return;
+  }
   addUserBubble(text);
-  vscode.postMessage({ type: 'chat', text });
-  inputEl.value = '';
-  inputEl.style.height = 'auto';
+  vscode.postMessage({ type: "chat", text });
+  inputEl.value = "";
+  inputEl.style.height = "auto";
   setInputEnabled(false);
 
   // Start a new assistant message placeholder
-  currentAccum = '';
-  currentMsgEl = document.createElement('div');
-  currentMsgEl.className = 'message assistant streaming';
+  currentAccum = "";
+  currentMsgEl = document.createElement("div");
+  currentMsgEl.className = "message assistant streaming";
   messagesEl.appendChild(currentMsgEl);
   scrollToBottom();
 }
 
 function addUserBubble(text: string) {
-  const el = document.createElement('div');
-  el.className = 'message user';
+  const el = document.createElement("div");
+  el.className = "message user";
   el.textContent = text;
   messagesEl.appendChild(el);
   scrollToBottom();
@@ -98,18 +100,18 @@ function scrollToBottom() {
 }
 
 // IPC from extension
-window.addEventListener('message', (event) => {
+window.addEventListener("message", (event) => {
   const msg = event.data;
   handleEvent(msg);
 });
 
 function handleEvent(msg: any) {
   switch (msg.type) {
-    case 'ready':
+    case "ready":
       setInputEnabled(true);
       break;
 
-    case 'token':
+    case "token":
       if (currentMsgEl) {
         currentAccum += msg.text;
         currentMsgEl.innerHTML = marked(currentAccum) as string;
@@ -117,16 +119,16 @@ function handleEvent(msg: any) {
       }
       break;
 
-    case 'tool_start': {
+    case "tool_start": {
       const card = new ToolCard(msg.tool, msg.args);
-      currentToolCards.set(msg.tool + '-' + msg.id, card);
+      currentToolCards.set(msg.tool + "-" + msg.id, card);
       messagesEl.appendChild(card.element);
       scrollToBottom();
       break;
     }
 
-    case 'tool_end': {
-      const key = msg.tool + '-' + msg.id;
+    case "tool_end": {
+      const key = msg.tool + "-" + msg.id;
       const card = currentToolCards.get(key);
       if (card) {
         card.finish(msg.summary, msg.ok);
@@ -136,45 +138,52 @@ function handleEvent(msg: any) {
       break;
     }
 
-    case 'confirm_request': {
-      pendingConfirm = new ConfirmDialog(msg.question, msg.tool, msg.critical, (answer) => {
-        vscode.postMessage({ type: 'confirm', id: msg.id, answer });
-        pendingConfirm = null;
-      });
+    case "confirm_request": {
+      pendingConfirm = new ConfirmDialog(
+        msg.question,
+        msg.tool,
+        msg.critical,
+        (answer) => {
+          vscode.postMessage({ type: "confirm", id: msg.id, answer });
+          pendingConfirm = null;
+        },
+      );
       messagesEl.appendChild(pendingConfirm.element);
       scrollToBottom();
       break;
     }
 
-    case 'done':
+    case "done":
       if (currentMsgEl) {
-        currentMsgEl.classList.remove('streaming');
+        currentMsgEl.classList.remove("streaming");
         currentMsgEl = null;
       }
-      currentAccum = '';
+      currentAccum = "";
       setInputEnabled(true);
       break;
 
-    case 'error':
+    case "error":
       if (currentMsgEl) {
-        currentMsgEl.classList.remove('streaming');
-        currentMsgEl.classList.add('error');
-        currentMsgEl.textContent = '\u26a0 ' + msg.message;
+        currentMsgEl.classList.remove("streaming");
+        currentMsgEl.classList.add("error");
+        currentMsgEl.textContent = "\u26a0 " + msg.message;
         currentMsgEl = null;
       }
       setInputEnabled(true);
       break;
 
-    case 'crashed':
-      addSystemMessage('\u26a0 Agent process crashed. Use "Nex Code: Restart Agent" to reconnect.');
+    case "crashed":
+      addSystemMessage(
+        '\u26a0 Agent process crashed. Use "Nex Code: Restart Agent" to reconnect.',
+      );
       setInputEnabled(false);
       break;
   }
 }
 
 function addSystemMessage(text: string) {
-  const el = document.createElement('div');
-  el.className = 'message system';
+  const el = document.createElement("div");
+  el.className = "message system";
   el.textContent = text;
   messagesEl.appendChild(el);
   scrollToBottom();

@@ -101,6 +101,7 @@ map was never populated — loop detection was completely inoperative for all
 bash commands.
 
 **Fix:** Changed `'bash_exec'` → `'bash'`. Also:
+
 - Extended sed-n detection to `bash` (not just `ssh_exec`)
 - Added grep-pattern loop detection (warn at 4×, abort at 7×) to catch
   agents re-running the same search query with no new information
@@ -154,6 +155,7 @@ the pattern established for stop-signal and sed-n injections.
 #### `e854b99` — SSH storm deadlock hard-cap; auto-plan disabled in YOLO mode; --prompt alias
 
 **Problem:** Three issues from a 1.5/10 session:
+
 1. The dual-block deadlock relaxer (SSH storm + Jarvis-local guard both active)
    had no usage cap — it fired every batch, letting the agent bypass the SSH
    storm block repeatedly and accumulate 34+ tool calls.
@@ -197,6 +199,7 @@ turns.
 A static analyzer that inspects a saved session file and returns a 0-10 score.
 
 **Scoring factors (deductions):**
+
 - `sed -n` usage in any bash/ssh command (−1.5 per occurrence)
 - Grep pattern repeated 4+ times (−1 per pattern over threshold)
 - More than 30 steps in a single user turn (−0.5 per 5 extra steps)
@@ -205,9 +208,10 @@ A static analyzer that inspects a saved session file and returns a 0-10 score.
 - HTTP 400 errors in tool results (−1 per error)
 
 **Usage:**
+
 ```js
-const { scoreSession, scoreMessages } = require('./cli/session-scorer');
-const result = scoreSession('my-session-name');
+const { scoreSession, scoreMessages } = require("./cli/session-scorer");
+const result = scoreSession("my-session-name");
 // => { score: 8.5, issues: ['sed -n used (step 42)'], summary: '...' }
 ```
 
@@ -218,12 +222,14 @@ disk, which is how the benchmark suite uses it.
 
 Five Jarvis-style scenarios that exercise the full agentic loop against a live
 model. Each scenario has:
+
 - A realistic multi-step prompt (e.g. "Debug why the API service is failing")
 - An expected tool-call sequence
 - A pass/fail validator per tool call
 - Session scoring applied to the resulting conversation
 
 **Running the benchmark:**
+
 ```
 /bench          — run full suite (5 scenarios)
 /bench quick    — run first 2 scenarios only
@@ -238,13 +244,13 @@ overall average.
 
 ## 4. Score Baseline
 
-| Date | Score | Notes |
-|------|-------|-------|
-| Pre-fix (estimated) | ~3/10 | 110+ steps, sed loops, 400 cascades, no loop detection |
-| 2026-03-15 (OpenClaw bench) | 7.5/10 | Response truncation still present |
-| 2026-03-17 (OpenClaw bench) | 8.13/10 | Makefile task still broken |
-| 2026-03-19 (OpenClaw bench) | 8.13/10 | Same weak task, bench branch missing |
-| 2026-03-21 (post-fixes) | 10/10 | All loop-detection fixes merged |
+| Date                        | Score   | Notes                                                  |
+| --------------------------- | ------- | ------------------------------------------------------ |
+| Pre-fix (estimated)         | ~3/10   | 110+ steps, sed loops, 400 cascades, no loop detection |
+| 2026-03-15 (OpenClaw bench) | 7.5/10  | Response truncation still present                      |
+| 2026-03-17 (OpenClaw bench) | 8.13/10 | Makefile task still broken                             |
+| 2026-03-19 (OpenClaw bench) | 8.13/10 | Same weak task, bench branch missing                   |
+| 2026-03-21 (post-fixes)     | 10/10   | All loop-detection fixes merged                        |
 
 The jump from ~3 to 10 on the session scorer was driven almost entirely by the
 `bash_exec` typo fix (`d4f2b5e`) — once loop detection was actually running,
@@ -277,6 +283,7 @@ triggered deductions.
 ### Automated Cron loop
 
 A cron job fires every 20 minutes on the Jarvis server. It:
+
 1. Reads the last saved session from `.nex/sessions/`
 2. Scores it via `session-scorer.js`
 3. If score < 8, runs `self-improving.js` to generate a targeted fix prompt
@@ -343,24 +350,28 @@ Complex multi-goal prompts (e.g. "fix 4 bugs") previously caused context
 collapse — a single agent trying to solve everything in one context window.
 
 **New modules:**
+
 - `cli/orchestrator.js` — Decomposes prompts into sub-tasks, runs them via
   parallel sub-agents (max 3 concurrent, SSH limit), synthesizes results
 - `cli/orchestrator-bench.js` — Benchmarks models on decompose/synthesize
   quality (6 scenarios, separate from tool-calling benchmark)
 
 **Two-tier model architecture:**
+
 - Orchestrator model (default `kimi-k2.5`): reasoning + 262K context for
   task decomposition and result synthesis (only 2 LLM calls)
 - Worker model (default `devstral-2:123b`): fast tool calling for parallel
   sub-agent execution (5-15 calls per agent)
 
 **CLI integration:**
+
 - `/orchestrate <prompt>` slash command for interactive use
 - `--orchestrate` flag with `--task` for headless mode
 - `--orchestrator-model` flag for model override
 - Complexity hint in `processInput()` suggests orchestration for 3+ goals
 
 **Model discovery:**
+
 - `model-watcher.js` extended with orchestrator candidate detection
 - Auto-promotes new orchestrator model if benchmark score > current + 5%
 - See `docs/MODEL-SELECTION.md` for full model selection strategy

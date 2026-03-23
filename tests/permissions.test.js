@@ -1,16 +1,16 @@
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-describe('permissions.js', () => {
+describe("permissions.js", () => {
   let permissions;
   let tmpDir;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nex-perms-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-perms-"));
     jest.resetModules();
-    jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
-    permissions = require('../cli/permissions');
+    jest.spyOn(process, "cwd").mockReturnValue(tmpDir);
+    permissions = require("../cli/permissions");
   });
 
   afterEach(() => {
@@ -18,267 +18,277 @@ describe('permissions.js', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });
 
-  describe('DEFAULT_PERMISSIONS', () => {
-    it('has read tools as allow', () => {
-      expect(permissions.DEFAULT_PERMISSIONS.read_file).toBe('allow');
-      expect(permissions.DEFAULT_PERMISSIONS.list_directory).toBe('allow');
-      expect(permissions.DEFAULT_PERMISSIONS.glob).toBe('allow');
-      expect(permissions.DEFAULT_PERMISSIONS.grep).toBe('allow');
+  describe("DEFAULT_PERMISSIONS", () => {
+    it("has read tools as allow", () => {
+      expect(permissions.DEFAULT_PERMISSIONS.read_file).toBe("allow");
+      expect(permissions.DEFAULT_PERMISSIONS.list_directory).toBe("allow");
+      expect(permissions.DEFAULT_PERMISSIONS.glob).toBe("allow");
+      expect(permissions.DEFAULT_PERMISSIONS.grep).toBe("allow");
     });
 
-    it('has write tools as ask', () => {
-      expect(permissions.DEFAULT_PERMISSIONS.bash).toBe('ask');
-      expect(permissions.DEFAULT_PERMISSIONS.write_file).toBe('ask');
-      expect(permissions.DEFAULT_PERMISSIONS.edit_file).toBe('ask');
-      expect(permissions.DEFAULT_PERMISSIONS.patch_file).toBe('ask');
-    });
-  });
-
-  describe('getPermission()', () => {
-    it('returns default permission for known tool', () => {
-      expect(permissions.getPermission('bash')).toBe('ask');
-      expect(permissions.getPermission('read_file')).toBe('allow');
-    });
-
-    it('returns ask for unknown tool', () => {
-      expect(permissions.getPermission('unknown_tool')).toBe('ask');
+    it("has write tools as ask", () => {
+      expect(permissions.DEFAULT_PERMISSIONS.bash).toBe("ask");
+      expect(permissions.DEFAULT_PERMISSIONS.write_file).toBe("ask");
+      expect(permissions.DEFAULT_PERMISSIONS.edit_file).toBe("ask");
+      expect(permissions.DEFAULT_PERMISSIONS.patch_file).toBe("ask");
     });
   });
 
-  describe('setPermission()', () => {
-    it('changes permission for a tool', () => {
-      permissions.setPermission('bash', 'allow');
-      expect(permissions.getPermission('bash')).toBe('allow');
+  describe("getPermission()", () => {
+    it("returns default permission for known tool", () => {
+      expect(permissions.getPermission("bash")).toBe("ask");
+      expect(permissions.getPermission("read_file")).toBe("allow");
     });
 
-    it('returns true for valid mode', () => {
-      expect(permissions.setPermission('bash', 'allow')).toBe(true);
-      expect(permissions.setPermission('bash', 'ask')).toBe(true);
-      expect(permissions.setPermission('bash', 'deny')).toBe(true);
-    });
-
-    it('returns false for invalid mode', () => {
-      expect(permissions.setPermission('bash', 'invalid')).toBe(false);
-    });
-
-    it('can set permissions for new tools', () => {
-      permissions.setPermission('custom_tool', 'deny');
-      expect(permissions.getPermission('custom_tool')).toBe('deny');
+    it("returns ask for unknown tool", () => {
+      expect(permissions.getPermission("unknown_tool")).toBe("ask");
     });
   });
 
-  describe('checkPermission()', () => {
-    it('returns permission mode', () => {
-      expect(permissions.checkPermission('read_file')).toBe('allow');
-      expect(permissions.checkPermission('bash')).toBe('ask');
+  describe("setPermission()", () => {
+    it("changes permission for a tool", () => {
+      permissions.setPermission("bash", "allow");
+      expect(permissions.getPermission("bash")).toBe("allow");
     });
 
-    it('reflects changes from setPermission', () => {
-      permissions.setPermission('bash', 'deny');
-      expect(permissions.checkPermission('bash')).toBe('deny');
+    it("returns true for valid mode", () => {
+      expect(permissions.setPermission("bash", "allow")).toBe(true);
+      expect(permissions.setPermission("bash", "ask")).toBe(true);
+      expect(permissions.setPermission("bash", "deny")).toBe(true);
+    });
+
+    it("returns false for invalid mode", () => {
+      expect(permissions.setPermission("bash", "invalid")).toBe(false);
+    });
+
+    it("can set permissions for new tools", () => {
+      permissions.setPermission("custom_tool", "deny");
+      expect(permissions.getPermission("custom_tool")).toBe("deny");
     });
   });
 
-  describe('listPermissions()', () => {
-    it('returns all permissions', () => {
+  describe("checkPermission()", () => {
+    it("returns permission mode", () => {
+      expect(permissions.checkPermission("read_file")).toBe("allow");
+      expect(permissions.checkPermission("bash")).toBe("ask");
+    });
+
+    it("reflects changes from setPermission", () => {
+      permissions.setPermission("bash", "deny");
+      expect(permissions.checkPermission("bash")).toBe("deny");
+    });
+  });
+
+  describe("listPermissions()", () => {
+    it("returns all permissions", () => {
       const list = permissions.listPermissions();
       expect(list.length).toBeGreaterThan(0);
-      expect(list[0]).toHaveProperty('tool');
-      expect(list[0]).toHaveProperty('mode');
+      expect(list[0]).toHaveProperty("tool");
+      expect(list[0]).toHaveProperty("mode");
     });
 
-    it('includes all default tools', () => {
+    it("includes all default tools", () => {
       const list = permissions.listPermissions();
       const tools = list.map((p) => p.tool);
-      expect(tools).toContain('bash');
-      expect(tools).toContain('read_file');
-      expect(tools).toContain('glob');
-      expect(tools).toContain('grep');
+      expect(tools).toContain("bash");
+      expect(tools).toContain("read_file");
+      expect(tools).toContain("glob");
+      expect(tools).toContain("grep");
     });
   });
 
-  describe('resetPermissions()', () => {
-    it('resets to defaults', () => {
-      permissions.setPermission('bash', 'deny');
+  describe("resetPermissions()", () => {
+    it("resets to defaults", () => {
+      permissions.setPermission("bash", "deny");
       permissions.resetPermissions();
-      expect(permissions.getPermission('bash')).toBe('ask');
+      expect(permissions.getPermission("bash")).toBe("ask");
     });
   });
 
-  describe('savePermissions() + loadPermissions()', () => {
-    it('saves and loads permissions from config', () => {
-      permissions.setPermission('bash', 'allow');
+  describe("savePermissions() + loadPermissions()", () => {
+    it("saves and loads permissions from config", () => {
+      permissions.setPermission("bash", "allow");
       permissions.savePermissions();
 
       // Verify file was created
-      const configPath = path.join(tmpDir, '.nex', 'config.json');
+      const configPath = path.join(tmpDir, ".nex", "config.json");
       expect(fs.existsSync(configPath)).toBe(true);
 
       // Reset and reload
       permissions.resetPermissions();
-      expect(permissions.getPermission('bash')).toBe('ask');
+      expect(permissions.getPermission("bash")).toBe("ask");
 
       permissions.loadPermissions();
-      expect(permissions.getPermission('bash')).toBe('allow');
+      expect(permissions.getPermission("bash")).toBe("allow");
     });
 
-    it('handles missing config file', () => {
+    it("handles missing config file", () => {
       permissions.loadPermissions(); // should not throw
-      expect(permissions.getPermission('bash')).toBe('ask');
+      expect(permissions.getPermission("bash")).toBe("ask");
     });
 
-    it('handles corrupt config file', () => {
-      const configDir = path.join(tmpDir, '.nex');
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, 'config.json'), '{invalid', 'utf-8');
-      permissions.loadPermissions(); // should not throw
-      expect(permissions.getPermission('bash')).toBe('ask');
-    });
-
-    it('preserves other config keys when saving', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("handles corrupt config file", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ theme: 'dark', other: true }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        "{invalid",
+        "utf-8",
+      );
+      permissions.loadPermissions(); // should not throw
+      expect(permissions.getPermission("bash")).toBe("ask");
+    });
+
+    it("preserves other config keys when saving", () => {
+      const configDir = path.join(tmpDir, ".nex");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, "config.json"),
+        JSON.stringify({ theme: "dark", other: true }),
+        "utf-8",
       );
 
-      permissions.setPermission('bash', 'allow');
+      permissions.setPermission("bash", "allow");
       permissions.savePermissions();
 
-      const config = JSON.parse(fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8'));
-      expect(config.theme).toBe('dark');
+      const config = JSON.parse(
+        fs.readFileSync(path.join(configDir, "config.json"), "utf-8"),
+      );
+      expect(config.theme).toBe("dark");
       expect(config.other).toBe(true);
-      expect(config.permissions.bash).toBe('allow');
+      expect(config.permissions.bash).toBe("allow");
     });
   });
 
-  describe('PERMISSION_PRESETS', () => {
-    it('readonly blocks write operations', () => {
+  describe("PERMISSION_PRESETS", () => {
+    it("readonly blocks write operations", () => {
       const preset = permissions.PERMISSION_PRESETS.readonly;
-      expect(preset.blockedTools).toContain('bash');
-      expect(preset.blockedTools).toContain('write_file');
-      expect(preset.allowedTools).toContain('read_file');
-      expect(preset.allowedTools).toContain('grep');
+      expect(preset.blockedTools).toContain("bash");
+      expect(preset.blockedTools).toContain("write_file");
+      expect(preset.allowedTools).toContain("read_file");
+      expect(preset.allowedTools).toContain("grep");
     });
 
-    it('developer blocks deployment tools', () => {
+    it("developer blocks deployment tools", () => {
       const preset = permissions.PERMISSION_PRESETS.developer;
-      expect(preset.blockedTools).toContain('deploy');
+      expect(preset.blockedTools).toContain("deploy");
       expect(preset.allowedTools).toBeNull(); // all allowed except blocked
     });
 
-    it('admin has no blocked tools', () => {
+    it("admin has no blocked tools", () => {
       const preset = permissions.PERMISSION_PRESETS.admin;
       expect(preset.blockedTools).toHaveLength(0);
     });
   });
 
-  describe('listPresets()', () => {
-    it('returns all presets', () => {
+  describe("listPresets()", () => {
+    it("returns all presets", () => {
       const presets = permissions.listPresets();
       expect(presets).toHaveLength(3);
-      expect(presets.map(p => p.name)).toEqual(['readonly', 'developer', 'admin']);
+      expect(presets.map((p) => p.name)).toEqual([
+        "readonly",
+        "developer",
+        "admin",
+      ]);
     });
   });
 
-  describe('isToolAllowed()', () => {
-    it('allows tools by default (admin preset)', () => {
-      const result = permissions.isToolAllowed('bash');
+  describe("isToolAllowed()", () => {
+    it("allows tools by default (admin preset)", () => {
+      const result = permissions.isToolAllowed("bash");
       expect(result.allowed).toBe(true);
     });
 
-    it('blocks tools in readonly preset', () => {
+    it("blocks tools in readonly preset", () => {
       // Write a config with readonly preset
-      const configDir = path.join(tmpDir, '.nex');
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        JSON.stringify({ teamPermissions: { role: "readonly" } }),
+        "utf-8",
       );
 
-      const result = permissions.isToolAllowed('bash');
+      const result = permissions.isToolAllowed("bash");
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('blocked');
+      expect(result.reason).toContain("blocked");
     });
 
-    it('blocks tools not in allowedTools list for readonly', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("blocks tools not in allowedTools list for readonly", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        JSON.stringify({ teamPermissions: { role: "readonly" } }),
+        "utf-8",
       );
 
       // write_file is in blockedTools, but a custom tool would fail on allowedTools check
-      const result = permissions.isToolAllowed('custom_not_allowed');
+      const result = permissions.isToolAllowed("custom_not_allowed");
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('not in the allowed list');
+      expect(result.reason).toContain("not in the allowed list");
     });
 
-    it('allows read tools in readonly preset', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("allows read tools in readonly preset", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ teamPermissions: { role: 'readonly' } }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        JSON.stringify({ teamPermissions: { role: "readonly" } }),
+        "utf-8",
       );
 
-      const result = permissions.isToolAllowed('read_file');
+      const result = permissions.isToolAllowed("read_file");
       expect(result.allowed).toBe(true);
     });
   });
 
   // ─── getEffectivePreset ────────────────────────────────────
-  describe('getEffectivePreset()', () => {
-    it('returns admin by default when no config', () => {
+  describe("getEffectivePreset()", () => {
+    it("returns admin by default when no config", () => {
       const preset = permissions.getEffectivePreset();
       expect(preset.blockedTools).toEqual([]);
     });
 
-    it('returns correct preset for developer role', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("returns correct preset for developer role", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ teamPermissions: { role: 'developer' } }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        JSON.stringify({ teamPermissions: { role: "developer" } }),
+        "utf-8",
       );
 
       const preset = permissions.getEffectivePreset();
-      expect(preset.blockedTools).toContain('deploy');
+      expect(preset.blockedTools).toContain("deploy");
       expect(preset.allowedTools).toBeNull();
     });
 
-    it('merges overrides with preset', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("merges overrides with preset", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
+        path.join(configDir, "config.json"),
         JSON.stringify({
           teamPermissions: {
-            role: 'admin',
-            overrides: { blockedTools: ['custom_blocked'] },
+            role: "admin",
+            overrides: { blockedTools: ["custom_blocked"] },
           },
         }),
-        'utf-8'
+        "utf-8",
       );
 
       const preset = permissions.getEffectivePreset();
-      expect(preset.blockedTools).toContain('custom_blocked');
+      expect(preset.blockedTools).toContain("custom_blocked");
     });
 
-    it('falls back to admin for unknown role', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("falls back to admin for unknown role", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
-        JSON.stringify({ teamPermissions: { role: 'nonexistent' } }),
-        'utf-8'
+        path.join(configDir, "config.json"),
+        JSON.stringify({ teamPermissions: { role: "nonexistent" } }),
+        "utf-8",
       );
 
       const preset = permissions.getEffectivePreset();
@@ -287,55 +297,61 @@ describe('permissions.js', () => {
   });
 
   // ─── savePresetConfig / loadPresetConfig ───────────────────
-  describe('savePresetConfig / loadPresetConfig', () => {
-    it('saves and loads team permissions', () => {
-      permissions.savePresetConfig({ role: 'developer' });
+  describe("savePresetConfig / loadPresetConfig", () => {
+    it("saves and loads team permissions", () => {
+      permissions.savePresetConfig({ role: "developer" });
 
       const loaded = permissions.loadPresetConfig();
-      expect(loaded.role).toBe('developer');
+      expect(loaded.role).toBe("developer");
     });
 
-    it('returns null when no config file', () => {
+    it("returns null when no config file", () => {
       expect(permissions.loadPresetConfig()).toBeNull();
     });
 
-    it('returns null on corrupt config', () => {
-      const configDir = path.join(tmpDir, '.nex');
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, 'config.json'), '{corrupt', 'utf-8');
-      expect(permissions.loadPresetConfig()).toBeNull();
-    });
-
-    it('preserves existing config keys when saving', () => {
-      const configDir = path.join(tmpDir, '.nex');
+    it("returns null on corrupt config", () => {
+      const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
-        path.join(configDir, 'config.json'),
+        path.join(configDir, "config.json"),
+        "{corrupt",
+        "utf-8",
+      );
+      expect(permissions.loadPresetConfig()).toBeNull();
+    });
+
+    it("preserves existing config keys when saving", () => {
+      const configDir = path.join(tmpDir, ".nex");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, "config.json"),
         JSON.stringify({ existing: true }),
-        'utf-8'
+        "utf-8",
       );
 
-      permissions.savePresetConfig({ role: 'readonly' });
+      permissions.savePresetConfig({ role: "readonly" });
 
-      const config = JSON.parse(fs.readFileSync(path.join(configDir, 'config.json'), 'utf-8'));
+      const config = JSON.parse(
+        fs.readFileSync(path.join(configDir, "config.json"), "utf-8"),
+      );
       expect(config.existing).toBe(true);
-      expect(config.teamPermissions.role).toBe('readonly');
+      expect(config.teamPermissions.role).toBe("readonly");
     });
   });
 
   // ─── listPresets additional ────────────────────────────────
-  describe('listPresets() - additional', () => {
-    it('readonly preset shows allowed tool count', () => {
+  describe("listPresets() - additional", () => {
+    it("readonly preset shows allowed tool count", () => {
       const presets = permissions.listPresets();
-      const readonly = presets.find(p => p.name === 'readonly');
-      expect(readonly.toolCount).toContain('allowed');
+      const readonly = presets.find((p) => p.name === "readonly");
+      expect(readonly.toolCount).toContain("allowed");
       expect(readonly.blockedCount).toBeGreaterThan(0);
     });
 
-    it('admin preset shows all allowed', () => {
+    it("admin preset shows all allowed", () => {
       const presets = permissions.listPresets();
-      const admin = presets.find(p => p.name === 'admin');
-      expect(admin.toolCount).toBe('all allowed');
+      const admin = presets.find((p) => p.name === "admin");
+      expect(admin.toolCount).toBe("all allowed");
       expect(admin.blockedCount).toBe(0);
     });
   });
