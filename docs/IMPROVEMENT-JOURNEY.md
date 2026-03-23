@@ -149,6 +149,45 @@ is read repeatedly) could itself push context over the limit.
 **Fix:** Pre-compress before injecting the read_file loop warning, mirroring
 the pattern established for stop-signal and sed-n injections.
 
+### 2026-03-23
+
+#### `e854b99` — SSH storm deadlock hard-cap; auto-plan disabled in YOLO mode; --prompt alias
+
+**Problem:** Three issues from a 1.5/10 session:
+1. The dual-block deadlock relaxer (SSH storm + Jarvis-local guard both active)
+   had no usage cap — it fired every batch, letting the agent bypass the SSH
+   storm block repeatedly and accumulate 34+ tool calls.
+2. Auto-plan mode activated when `--auto` was passed (YOLO mode), causing the
+   agent to claim it was "in plan mode" and refuse to execute — defeating the
+   purpose of the YOLO flag entirely.
+3. `--prompt` was not recognized as a flag (only `--task` existed), so
+   `nex-code --prompt "..." --auto` fell through to interactive REPL mode
+   instead of headless execution.
+
+**Fix:** Added `_sshDeadlockRelaxCount` counter — deadlock relaxer now fires at
+most once per session (`_sshDeadlockRelaxCount < 1`). Auto-plan detection now
+skips when `getAutoConfirm()` is true. `--prompt` added as alias for `--task`
+in `bin/nex-code.js`. System prompt gains an explicit rule: plan mode is only
+active when "PLAN MODE ACTIVE" appears in instructions.
+
+#### `986636a` — Count pre-execution BLOCKED calls toward consecutive-block abort
+
+**Root cause of the 0/10 infinite-loop problem:**
+
+Pre-execution guards (SSH storm, plan mode) set `canExecute = false` on a tool
+call before `executeBatch`, which made the tool's `errorResult` a BLOCKED:
+message. But the post-execution loop that counts `consecutiveBlocks` skipped
+these calls with `if (!prep.canExecute) continue`. Neither `consecutiveBlocks`
+nor `_sessionConsecutiveSshCalls` ever incremented for those blocked calls, so
+neither the 5-block abort nor the 12-SSH-storm abort could fire. The model
+could send infinite batches of blocked ssh_exec calls and run to the 50-turn
+max every time.
+
+**Fix:** Added a pre-execution pass that counts `BLOCKED:` / `PLAN MODE:`
+errorResults toward `consecutiveBlocks` with the same `LOOP_ABORT_BLOCKS = 5`
+threshold. Sessions now abort within 5 blocked batches instead of running 50+
+turns.
+
 ---
 
 ## 3. How the Benchmark System Works
