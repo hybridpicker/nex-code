@@ -614,22 +614,31 @@ RULES:
   // Reprint agent lines with scope info — replaces the progress bar output cleanly
   console.log("");
   const elapsed = Math.round((Date.now() - startTime) / 1000);
-  const dur = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+  const dur =
+    elapsed >= 60
+      ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+      : `${elapsed}s`;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     const isSuccess =
       r.status === "done" ||
       (r.status === "truncated" && r.result && !r.result.startsWith("Error"));
-    const icon = isSuccess ? `${C.green}\u2713${C.reset}` : `${C.red}\u2717${C.reset}`;
-    const scopeParts = r._scope && r._scope.length > 0
-      ? r._scope.map(f => f.replace(/^.*\//, '').replace(/\/$/, '')).filter(Boolean)
-      : [];
-    const scope = scopeParts.length > 0
-      ? scopeParts.join(', ')
-      : r.task.substring(0, 35) + (r.task.length > 35 ? '...' : '');
+    const icon = isSuccess
+      ? `${C.green}\u2713${C.reset}`
+      : `${C.red}\u2717${C.reset}`;
+    const scopeParts =
+      r._scope && r._scope.length > 0
+        ? r._scope
+            .map((f) => f.replace(/^.*\//, "").replace(/\/$/, ""))
+            .filter(Boolean)
+        : [];
+    const scope =
+      scopeParts.length > 0
+        ? scopeParts.join(", ")
+        : r.task.substring(0, 35) + (r.task.length > 35 ? "..." : "");
     const isLast = i === results.length - 1;
     console.log(
-      `  ${icon} Agent ${i + 1}  ${C.dim}${scope}${C.reset}${isLast ? `   ${C.dim}${dur}${C.reset}` : ''}`
+      `  ${icon} Agent ${i + 1}  ${C.dim}${scope}${C.reset}${isLast ? `   ${C.dim}${dur}${C.reset}` : ""}`,
     );
   }
   console.log("");
@@ -665,7 +674,9 @@ RULES:
       : "";
 
   // Show synthesis
-  console.log(`\n${C.bold}Summary:${C.reset} ${synthesis.summary}${sharedContextNote}`);
+  console.log(
+    `\n${C.bold}Summary:${C.reset} ${synthesis.summary}${sharedContextNote}`,
+  );
   if (synthesis.conflicts.length > 0) {
     console.log(`${C.yellow}Conflicts:${C.reset}`);
     for (const c of synthesis.conflicts) console.log(`  - ${c}`);

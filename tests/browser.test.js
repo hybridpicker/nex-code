@@ -12,20 +12,16 @@ const mockPage = {
   evaluate: jest.fn(),
   setViewportSize: jest.fn().mockResolvedValue(undefined),
   screenshot: jest.fn().mockResolvedValue(Buffer.from("fake-png-data")),
-  getByText: jest
-    .fn()
-    .mockReturnValue({
-      first: jest
-        .fn()
-        .mockReturnValue({ click: jest.fn().mockResolvedValue(undefined) }),
-    }),
-  locator: jest
-    .fn()
-    .mockReturnValue({
-      first: jest
-        .fn()
-        .mockReturnValue({ click: jest.fn().mockResolvedValue(undefined) }),
-    }),
+  getByText: jest.fn().mockReturnValue({
+    first: jest
+      .fn()
+      .mockReturnValue({ click: jest.fn().mockResolvedValue(undefined) }),
+  }),
+  locator: jest.fn().mockReturnValue({
+    first: jest
+      .fn()
+      .mockReturnValue({ click: jest.fn().mockResolvedValue(undefined) }),
+  }),
   waitForLoadState: jest.fn().mockResolvedValue(undefined),
   fill: jest.fn().mockResolvedValue(undefined),
   keyboard: { press: jest.fn().mockResolvedValue(undefined) },

@@ -138,9 +138,10 @@ describe("/retry — handleSlashCommand", () => {
   }
 
   test("returns early when no user messages exist", async () => {
-    const result = await simulateRetry([], [
-      { role: "system", content: "You are helpful." },
-    ]);
+    const result = await simulateRetry(
+      [],
+      [{ role: "system", content: "You are helpful." }],
+    );
     expect(result.early).toBe(true);
     expect(processInputCalls).toHaveLength(0);
   });

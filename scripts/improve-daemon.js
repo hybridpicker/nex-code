@@ -20,32 +20,40 @@
  * Auto-start: LaunchAgent (com.nex-code.improve-daemon.plist)
  */
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const { spawnSync, execSync } = require('child_process');
+const fs = require("fs");
+const path = require("path");
+const { spawnSync, execSync } = require("child_process");
 
 // ── Config ─────────────────────────────────────────────────────────────────
-const HOME         = process.env.HOME;
-const SESSION_FILE = path.join(HOME, 'Coding/jarvis-agent/.nex/sessions/_autosave.json');
-const STATE_FILE   = path.join(HOME, 'Coding/jarvis-agent/.nex/loop-state.json');
-const NEX_DIR      = path.join(HOME, 'Coding/nex-code');
-const CLAUDE_BIN   = path.join(HOME, '.local/bin/claude');
-const JARVIS_SSH   = process.env.JARVIS_SSH_HOST; // set in LaunchAgent plist EnvironmentVariables
-const NODE_BIN     = process.execPath;
+const HOME = process.env.HOME;
+const SESSION_FILE = path.join(
+  HOME,
+  "Coding/jarvis-agent/.nex/sessions/_autosave.json",
+);
+const STATE_FILE = path.join(HOME, "Coding/jarvis-agent/.nex/loop-state.json");
+const NEX_DIR = path.join(HOME, "Coding/nex-code");
+const CLAUDE_BIN = path.join(HOME, ".local/bin/claude");
+const JARVIS_SSH = process.env.JARVIS_SSH_HOST; // set in LaunchAgent plist EnvironmentVariables
+const NODE_BIN = process.execPath;
 
-const DEBOUNCE_MS   = 90_000;  // wait 90s after last write before treating session as complete
-const MAX_PASSES    = 8;       // hard stop after 8 improvement passes
-const PLATEAU_COUNT = 2;       // stop if score unchanged for this many consecutive sessions
-const SCORE_TARGET  = 9.5;     // stop early if this score is reached
+const DEBOUNCE_MS = 90_000; // wait 90s after last write before treating session as complete
+const MAX_PASSES = 8; // hard stop after 8 improvement passes
+const PLATEAU_COUNT = 2; // stop if score unchanged for this many consecutive sessions
+const SCORE_TARGET = 9.5; // stop early if this score is reached
 
 // ── State helpers ───────────────────────────────────────────────────────────
 function readState() {
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch {
-    return { pass: 0, scores: [], lastHash: '', startedAt: new Date().toISOString() };
+    return {
+      pass: 0,
+      scores: [],
+      lastHash: "",
+      startedAt: new Date().toISOString(),
+    };
   }
 }
 
@@ -58,14 +66,14 @@ function sessionHash() {
     const stat = fs.statSync(SESSION_FILE);
     return String(stat.mtimeMs);
   } catch {
-    return '';
+    return "";
   }
 }
 
 // ── Scorer ──────────────────────────────────────────────────────────────────
 function scoreSession() {
   const script = `
-    const {scoreMessages} = require(${JSON.stringify(path.join(NEX_DIR, 'cli/session-scorer.js'))});
+    const {scoreMessages} = require(${JSON.stringify(path.join(NEX_DIR, "cli/session-scorer.js"))});
     const fs = require('fs');
     try {
       const d = JSON.parse(fs.readFileSync(${JSON.stringify(SESSION_FILE)}, 'utf8'));
@@ -75,39 +83,42 @@ function scoreSession() {
       process.stdout.write(JSON.stringify({ score: 0, grade: 'F', issues: [e.message] }));
     }
   `;
-  const res = spawnSync(NODE_BIN, ['-e', script], { encoding: 'utf8', timeout: 15_000 });
+  const res = spawnSync(NODE_BIN, ["-e", script], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
   try {
     return JSON.parse(res.stdout);
   } catch {
-    return { score: 0, grade: 'F', issues: ['scorer error'] };
+    return { score: 0, grade: "F", issues: ["scorer error"] };
   }
 }
 
 // ── Matrix notification via Jarvis ──────────────────────────────────────────
 function sendMatrix(message) {
   if (!JARVIS_SSH) {
-    log('Matrix notification skipped — JARVIS_SSH_HOST not set.');
+    log("Matrix notification skipped — JARVIS_SSH_HOST not set.");
     return;
   }
   try {
     const payload = JSON.stringify({ message });
     // Write payload to a temp file to avoid shell quoting issues
     const tmpFile = `/tmp/nex-matrix-${Date.now()}.json`;
-    require('fs').writeFileSync(tmpFile, payload);
+    require("fs").writeFileSync(tmpFile, payload);
     execSync(
       `ssh -o ConnectTimeout=10 -o BatchMode=yes ${JARVIS_SSH} ` +
-      `"curl -sf -X POST http://localhost:3000/matrix/notify ` +
-      `-H 'Content-Type: application/json' -d @-" < ${tmpFile}`,
-      { timeout: 20_000 }
+        `"curl -sf -X POST http://localhost:3000/matrix/notify ` +
+        `-H 'Content-Type: application/json' -d @-" < ${tmpFile}`,
+      { timeout: 20_000 },
     );
-    require('fs').unlinkSync(tmpFile);
-    log('Matrix notification sent.');
+    require("fs").unlinkSync(tmpFile);
+    log("Matrix notification sent.");
   } catch (e) {
     log(`Matrix notification failed: ${e.message}`);
     // Fallback: macOS notification
     try {
       execSync(
-        `osascript -e 'display notification "${message.replace(/"/g, "'").slice(0, 200)}" with title "nex-code daemon"'`
+        `osascript -e 'display notification "${message.replace(/"/g, "'").slice(0, 200)}" with title "nex-code daemon"'`,
       );
     } catch {}
   }
@@ -117,7 +128,7 @@ function sendMatrix(message) {
 function isScorePlateau(scores) {
   if (scores.length < PLATEAU_COUNT + 1) return false;
   const last = scores.slice(-PLATEAU_COUNT);
-  return last.every(s => s === last[0]);
+  return last.every((s) => s === last[0]);
 }
 
 // ── Logging ──────────────────────────────────────────────────────────────────
@@ -129,8 +140,8 @@ function log(...args) {
 // ── Improvement pass ─────────────────────────────────────────────────────────
 function runImprovementPass(score, issues) {
   const issueText = issues.length
-    ? `\nAktuell offene Issues (höchste Prio zuerst):\n${issues.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
-    : '\nKeine Issues vom Scorer gemeldet — prüfe Terminal-Output und Layout.';
+    ? `\nAktuell offene Issues (höchste Prio zuerst):\n${issues.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+    : "\nKeine Issues vom Scorer gemeldet — prüfe Terminal-Output und Layout.";
 
   const prompt =
     `nex-code Auto-Improvement Pass — Session Score: ${score}/10.` +
@@ -145,32 +156,32 @@ function runImprovementPass(score, issues) {
     `Do NOT end with just "Done", "Analysis complete", "Finished", or any single word or short phrase. ` +
     `Always write a substantive closing paragraph of at least 2 sentences.`;
 
-  log('Running improvement pass via Claude Code headless...');
+  log("Running improvement pass via Claude Code headless...");
   const res = spawnSync(
     CLAUDE_BIN,
-    ['--print', '--dangerously-skip-permissions', '-p', prompt],
+    ["--print", "--dangerously-skip-permissions", "-p", prompt],
     {
       cwd: NEX_DIR,
-      stdio: 'inherit',
+      stdio: "inherit",
       timeout: 900_000, // 15 min max
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: undefined,
         ANTHROPIC_API_KEY: undefined,
       },
-    }
+    },
   );
 
   if (res.status !== 0) {
     log(`Claude pass exited with status ${res.status}`);
   } else {
-    log('Improvement pass complete.');
+    log("Improvement pass complete.");
   }
 }
 
 // ── Main trigger ─────────────────────────────────────────────────────────────
 let debounceTimer = null;
-let lastHash = '';
+let lastHash = "";
 
 function onSessionChange() {
   const hash = sessionHash();
@@ -178,7 +189,9 @@ function onSessionChange() {
   lastHash = hash;
 
   if (debounceTimer) clearTimeout(debounceTimer);
-  log(`Session file changed — waiting ${DEBOUNCE_MS / 1000}s for session to complete...`);
+  log(
+    `Session file changed — waiting ${DEBOUNCE_MS / 1000}s for session to complete...`,
+  );
 
   debounceTimer = setTimeout(async () => {
     debounceTimer = null;
@@ -186,12 +199,14 @@ function onSessionChange() {
 
     // Don't re-process same session
     if (hash === state.lastHash) {
-      log('Same session hash as last pass — skipping.');
+      log("Same session hash as last pass — skipping.");
       return;
     }
 
     const { score, grade, issues } = scoreSession();
-    log(`Score: ${score}/10 ${grade}  Issues: ${issues.length ? issues.join('; ') : 'none'}`);
+    log(
+      `Score: ${score}/10 ${grade}  Issues: ${issues.length ? issues.join("; ") : "none"}`,
+    );
 
     state.scores.push(score);
     state.pass++;
@@ -202,38 +217,47 @@ function onSessionChange() {
     if (score >= SCORE_TARGET) {
       sendMatrix(
         `✅ nex-code auto-improve: Score erreicht ${score}/10 ${grade} — kein weiterer Fix nötig.\n` +
-        `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`
+          `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`,
       );
-      log('Score target reached. Daemon will wait for next session.');
+      log("Score target reached. Daemon will wait for next session.");
       return;
     }
 
     if (state.pass >= MAX_PASSES) {
       sendMatrix(
         `🛑 nex-code auto-improve: Max Passes (${MAX_PASSES}) erreicht.\n` +
-        `Letzter Score: ${score}/10 ${grade}\n` +
-        `Devel bereit → \`/nex-improve stop\` zum Mergen, dann manuell weitere Analyse.`
+          `Letzter Score: ${score}/10 ${grade}\n` +
+          `Devel bereit → \`/nex-improve stop\` zum Mergen, dann manuell weitere Analyse.`,
       );
-      log('Max passes reached. Stopping improvement loop.');
+      log("Max passes reached. Stopping improvement loop.");
       // Reset so next session starts fresh
-      writeState({ pass: 0, scores: [], lastHash: hash, startedAt: new Date().toISOString() });
+      writeState({
+        pass: 0,
+        scores: [],
+        lastHash: hash,
+        startedAt: new Date().toISOString(),
+      });
       return;
     }
 
     if (isScorePlateau(state.scores)) {
       sendMatrix(
         `📊 nex-code auto-improve: Score Plateau bei ${score}/10 (${PLATEAU_COUNT}× gleich).\n` +
-        `Pass ${state.pass}/${MAX_PASSES}. Weitere Fixes brauchen neue Sessions.\n` +
-        `Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`
+          `Pass ${state.pass}/${MAX_PASSES}. Weitere Fixes brauchen neue Sessions.\n` +
+          `Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`,
       );
-      log('Score plateau detected. Stopping improvement loop.');
-      writeState({ pass: 0, scores: [], lastHash: hash, startedAt: new Date().toISOString() });
+      log("Score plateau detected. Stopping improvement loop.");
+      writeState({
+        pass: 0,
+        scores: [],
+        lastHash: hash,
+        startedAt: new Date().toISOString(),
+      });
       return;
     }
 
     // ── Run improvement pass ─────────────────────────────────────────────────
     runImprovementPass(score, issues);
-
   }, DEBOUNCE_MS);
 }
 
@@ -246,27 +270,41 @@ if (!fs.existsSync(SESSION_FILE)) {
 log(`nex-code improve-daemon started.`);
 log(`Watching: ${SESSION_FILE}`);
 log(`State:    ${STATE_FILE}`);
-log(`Stop conditions: plateau=${PLATEAU_COUNT}× | max=${MAX_PASSES} passes | score≥${SCORE_TARGET}`);
+log(
+  `Stop conditions: plateau=${PLATEAU_COUNT}× | max=${MAX_PASSES} passes | score≥${SCORE_TARGET}`,
+);
 
 // Initialize lastHash from state so restart doesn't re-process old session
 const initialState = readState();
-lastHash = initialState.lastHash || '';
+lastHash = initialState.lastHash || "";
 
 // fs.watch on macOS can miss events for atomically-written files (write+rename).
 // Use fs.watchFile (polling) as primary watcher for reliability.
 const POLL_INTERVAL_MS = 5000; // poll every 5s
-fs.watchFile(SESSION_FILE, { persistent: true, interval: POLL_INTERVAL_MS }, (curr, prev) => {
-  if (curr.mtimeMs !== prev.mtimeMs) onSessionChange();
-});
+fs.watchFile(
+  SESSION_FILE,
+  { persistent: true, interval: POLL_INTERVAL_MS },
+  (curr, prev) => {
+    if (curr.mtimeMs !== prev.mtimeMs) onSessionChange();
+  },
+);
 
 // Also keep fs.watch as a fast-path for editors that modify in-place
 const watcher = fs.watch(SESSION_FILE, { persistent: true }, (event) => {
-  if (event === 'change') onSessionChange();
+  if (event === "change") onSessionChange();
 });
-watcher.on('error', () => {}); // silently ignore — watchFile is the reliable fallback
+watcher.on("error", () => {}); // silently ignore — watchFile is the reliable fallback
 
 // Graceful shutdown
-process.on('SIGTERM', () => { fs.unwatchFile(SESSION_FILE); log('SIGTERM — shutting down.'); process.exit(0); });
-process.on('SIGINT',  () => { fs.unwatchFile(SESSION_FILE); log('SIGINT — shutting down.');  process.exit(0); });
+process.on("SIGTERM", () => {
+  fs.unwatchFile(SESSION_FILE);
+  log("SIGTERM — shutting down.");
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  fs.unwatchFile(SESSION_FILE);
+  log("SIGINT — shutting down.");
+  process.exit(0);
+});
 
-log('Ready. Watching for session changes (poll every 5s + fs.watch)...');
+log("Ready. Watching for session changes (poll every 5s + fs.watch)...");

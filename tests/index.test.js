@@ -14,13 +14,11 @@ jest.mock("../cli/agent", () => ({
 }));
 
 jest.mock("../cli/ollama", () => ({
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "kimi-k2.5",
-      name: "Kimi K2.5",
-      provider: "ollama",
-    }),
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    provider: "ollama",
+  }),
   setActiveModel: jest.fn(),
   getModelNames: jest.fn().mockReturnValue(["kimi-k2.5", "qwen3-coder:480b"]),
 }));
@@ -47,24 +45,20 @@ jest.mock("../cli/providers/registry", () => ({
   ]),
   getActiveProviderName: jest.fn().mockReturnValue("ollama"),
   getActiveModelId: jest.fn().mockReturnValue("kimi-k2.5"),
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "kimi-k2.5",
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    provider: "ollama",
+  }),
+  setActiveModel: jest.fn().mockReturnValue(true),
+  listAllModels: jest.fn().mockReturnValue([
+    {
+      spec: "ollama:kimi-k2.5",
       name: "Kimi K2.5",
       provider: "ollama",
-    }),
-  setActiveModel: jest.fn().mockReturnValue(true),
-  listAllModels: jest
-    .fn()
-    .mockReturnValue([
-      {
-        spec: "ollama:kimi-k2.5",
-        name: "Kimi K2.5",
-        provider: "ollama",
-        configured: true,
-      },
-    ]),
+      configured: true,
+    },
+  ]),
   setFallbackChain: jest.fn(),
   getFallbackChain: jest.fn().mockReturnValue([]),
   getProvider: jest.fn().mockReturnValue(null),
@@ -713,36 +707,30 @@ describe("index.js (REPL commands)", () => {
         ],
       }));
       jest.mock("../cli/ollama", () => ({
-        getActiveModel: jest
-          .fn()
-          .mockReturnValue({
-            id: "kimi-k2.5",
-            name: "Kimi K2.5",
-            provider: "ollama",
-          }),
+        getActiveModel: jest.fn().mockReturnValue({
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          provider: "ollama",
+        }),
         setActiveModel: jest.fn(),
         getModelNames: jest
           .fn()
           .mockReturnValue(["kimi-k2.5", "qwen3-coder:480b"]),
       }));
       jest.mock("../cli/providers/registry", () => ({
-        listProviders: jest
-          .fn()
-          .mockReturnValue([
-            {
-              provider: "ollama",
-              configured: true,
-              models: [{ id: "kimi-k2.5", name: "Kimi K2.5", active: true }],
-            },
-          ]),
-        getActiveProviderName: jest.fn().mockReturnValue("ollama"),
-        getActiveModel: jest
-          .fn()
-          .mockReturnValue({
-            id: "kimi-k2.5",
-            name: "Kimi K2.5",
+        listProviders: jest.fn().mockReturnValue([
+          {
             provider: "ollama",
-          }),
+            configured: true,
+            models: [{ id: "kimi-k2.5", name: "Kimi K2.5", active: true }],
+          },
+        ]),
+        getActiveProviderName: jest.fn().mockReturnValue("ollama"),
+        getActiveModel: jest.fn().mockReturnValue({
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          provider: "ollama",
+        }),
         listAllModels: jest.fn().mockReturnValue([]),
         setFallbackChain: jest.fn(),
         getFallbackChain: jest.fn().mockReturnValue([]),
@@ -868,27 +856,23 @@ describe("index.js (REPL commands)", () => {
             messageCount: 8,
           },
         ]),
-        getLastSession: jest
-          .fn()
-          .mockReturnValue({
-            name: "_autosave",
-            messageCount: 8,
-            messages: [{ role: "user", content: "last" }],
-          }),
+        getLastSession: jest.fn().mockReturnValue({
+          name: "_autosave",
+          messageCount: 8,
+          messages: [{ role: "user", content: "last" }],
+        }),
         deleteSession: jest.fn().mockReturnValue(true),
       }));
       jest.mock("../cli/memory", () => ({
         remember: jest.fn(),
         forget: jest.fn().mockImplementation((key) => key === "existing-key"),
-        listMemories: jest
-          .fn()
-          .mockReturnValue([
-            {
-              key: "lang",
-              value: "TypeScript",
-              updatedAt: "2025-06-01T00:00:00Z",
-            },
-          ]),
+        listMemories: jest.fn().mockReturnValue([
+          {
+            key: "lang",
+            value: "TypeScript",
+            updatedAt: "2025-06-01T00:00:00Z",
+          },
+        ]),
       }));
       jest.mock("../cli/permissions", () => ({
         listPermissions: jest.fn().mockReturnValue([
@@ -940,13 +924,11 @@ describe("index.js (REPL commands)", () => {
         ],
       }));
       jest.mock("../cli/ollama", () => ({
-        getActiveModel: jest
-          .fn()
-          .mockReturnValue({
-            id: "kimi-k2.5",
-            name: "Kimi K2.5",
-            provider: "ollama",
-          }),
+        getActiveModel: jest.fn().mockReturnValue({
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          provider: "ollama",
+        }),
         setActiveModel: jest
           .fn()
           .mockImplementation(
@@ -973,13 +955,11 @@ describe("index.js (REPL commands)", () => {
           },
         ]),
         getActiveProviderName: jest.fn().mockReturnValue("ollama"),
-        getActiveModel: jest
-          .fn()
-          .mockReturnValue({
-            id: "kimi-k2.5",
-            name: "Kimi K2.5",
-            provider: "ollama",
-          }),
+        getActiveModel: jest.fn().mockReturnValue({
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          provider: "ollama",
+        }),
         listAllModels: jest.fn().mockReturnValue([]),
         setFallbackChain: jest.fn(),
         getFallbackChain: jest.fn().mockReturnValue([]),
@@ -1769,13 +1749,11 @@ describe("index.js (REPL commands)", () => {
       jest.mock("../cli/providers/registry", () => ({
         listProviders: jest.fn().mockReturnValue([]),
         getActiveProviderName: jest.fn().mockReturnValue("ollama"),
-        getActiveModel: jest
-          .fn()
-          .mockReturnValue({
-            id: "kimi-k2.5",
-            name: "Kimi K2.5",
-            provider: "ollama",
-          }),
+        getActiveModel: jest.fn().mockReturnValue({
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          provider: "ollama",
+        }),
         listAllModels: jest.fn().mockReturnValue([]),
         setFallbackChain: jest.fn(),
         getFallbackChain: jest.fn().mockReturnValue([]),
