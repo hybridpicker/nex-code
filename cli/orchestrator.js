@@ -142,7 +142,8 @@ function detectComplexPrompt(prompt) {
     reasons.push(`${alsoMatches.length} transition keywords`);
   }
 
-  const isComplex = goals >= 3;
+  const threshold = parseInt(process.env.NEX_ORCHESTRATE_THRESHOLD || '3', 10);
+  const isComplex = goals >= threshold;
   return {
     isComplex,
     estimatedGoals: goals,
