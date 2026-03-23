@@ -3702,7 +3702,10 @@ async function _executeToolInner(name, args, options = {}) {
         if (!ok) return "CANCELLED: User declined.";
       }
 
-      const safeContainer = (args.container || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+      const safeContainer = (args.container || "").replace(
+        /[^a-zA-Z0-9._\/-]/g,
+        "",
+      );
       if (!safeContainer) return "ERROR: Invalid container name";
       const cmd = `docker exec ${safeContainer} sh -c ${JSON.stringify(args.command)}`;
 
@@ -3846,7 +3849,10 @@ async function _executeToolInner(name, args, options = {}) {
 
       // ── Sync step ─────────────────────────────────────────────
       if (method === "git") {
-        const safeBranch = (args.branch || "").replace(/[^a-zA-Z0-9._\/-]/g, "");
+        const safeBranch = (args.branch || "").replace(
+          /[^a-zA-Z0-9._\/-]/g,
+          "",
+        );
         if (args.branch && safeBranch !== args.branch)
           return `ERROR: Invalid branch name: ${args.branch}`;
         const safeRemotePath = (args.remote_path || "").replace(/'/g, "'\\''");

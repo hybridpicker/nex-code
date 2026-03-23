@@ -330,12 +330,16 @@ ERROR RECOVERY:
         } else {
           // No usage data from provider — estimate from context text
           const content = result.content || "";
-          const ctxText = messages.map((m) => {
-            if (typeof m.content === "string") return m.content;
-            if (Array.isArray(m.content))
-              return m.content.map((b) => (typeof b === "string" ? b : b.text || "")).join("");
-            return "";
-          }).join(" ");
+          const ctxText = messages
+            .map((m) => {
+              if (typeof m.content === "string") return m.content;
+              if (Array.isArray(m.content))
+                return m.content
+                  .map((b) => (typeof b === "string" ? b : b.text || ""))
+                  .join("");
+              return "";
+            })
+            .join(" ");
           const inputT = _estTok(ctxText);
           const outputT = _estTok(content);
           tokensUsed.input += inputT;

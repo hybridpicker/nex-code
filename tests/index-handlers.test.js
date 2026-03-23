@@ -27,14 +27,12 @@ jest.mock("../cli/agent", () => ({
 }));
 
 jest.mock("../cli/ollama", () => ({
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "qwen3-coder:480b",
-      name: "Qwen3 Coder",
-      provider: "ollama",
-      contextWindow: 131072,
-    }),
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "qwen3-coder:480b",
+    name: "Qwen3 Coder",
+    provider: "ollama",
+    contextWindow: 131072,
+  }),
   setActiveModel: jest.fn(),
   getModelNames: jest.fn().mockReturnValue(["qwen3-coder:480b"]),
 }));
@@ -58,13 +56,11 @@ jest.mock("../cli/providers/registry", () => ({
   ]),
   getActiveProviderName: jest.fn().mockReturnValue("ollama"),
   getActiveModelId: jest.fn().mockReturnValue("qwen3-coder:480b"),
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "qwen3-coder:480b",
-      name: "Qwen3 Coder",
-      provider: "ollama",
-    }),
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "qwen3-coder:480b",
+    name: "Qwen3 Coder",
+    provider: "ollama",
+  }),
   setActiveModel: jest.fn().mockReturnValue(true),
   listAllModels: jest.fn().mockReturnValue([]),
   setFallbackChain: jest.fn(),

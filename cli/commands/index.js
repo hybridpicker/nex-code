@@ -118,7 +118,10 @@ const SLASH_COMMANDS = [
   },
   { cmd: "/init", desc: "Interactive setup wizard (.nex/)" },
   { cmd: "/setup", desc: "Configure provider and API keys" },
-  { cmd: "/retry [--model <id>]", desc: "Retry last user turn (optionally with a different model)" },
+  {
+    cmd: "/retry [--model <id>]",
+    desc: "Retry last user turn (optionally with a different model)",
+  },
   { cmd: "/undo", desc: "Undo last file change" },
   { cmd: "/redo", desc: "Redo last undone change" },
   { cmd: "/history", desc: "Show file change history" },
@@ -598,7 +601,9 @@ async function handleSlashCommand(input, rl) {
       const currentMsgs = _retryGetMsgs();
       const lastUserIdx = currentMsgs.map((m) => m.role).lastIndexOf("user");
       if (lastUserIdx === -1) {
-        console.log(`${C.yellow}Nothing to retry — no user message found.${C.reset}`);
+        console.log(
+          `${C.yellow}Nothing to retry — no user message found.${C.reset}`,
+        );
         return true;
       }
 
@@ -610,9 +615,13 @@ async function handleSlashCommand(input, rl) {
           : null;
 
       if (retryModel) {
-        const { setActiveModel: _retrySetModel } = require("../providers/registry");
+        const {
+          setActiveModel: _retrySetModel,
+        } = require("../providers/registry");
         if (!_retrySetModel(retryModel)) {
-          console.log(`${C.red}Unknown model: ${retryModel}. Use /providers to see available models.${C.reset}`);
+          console.log(
+            `${C.red}Unknown model: ${retryModel}. Use /providers to see available models.${C.reset}`,
+          );
           return true;
         }
         console.log(`${C.cyan}Switched to model: ${retryModel}${C.reset}`);
@@ -1709,7 +1718,9 @@ For each issue, include:
         }
         console.log(`\n${C.bold}${C.cyan}Connected MCP Servers:${C.reset}`);
         if (connected.length === 0) {
-          console.log(`  ${C.dim}(none connected — run /mcp connect)${C.reset}`);
+          console.log(
+            `  ${C.dim}(none connected — run /mcp connect)${C.reset}`,
+          );
         }
         for (const s of connected) {
           console.log(

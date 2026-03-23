@@ -1,13 +1,11 @@
 // ─── Module Mocks ─────────────────────────────────────────
 jest.mock("../cli/providers/registry", () => ({
   callStream: jest.fn(),
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "kimi-k2.5",
-      name: "Kimi K2.5",
-      provider: "ollama",
-    }),
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    provider: "ollama",
+  }),
   getActiveProviderName: jest.fn().mockReturnValue("ollama"),
   getActiveModelId: jest.fn().mockReturnValue("kimi-k2.5"),
   getConfiguredProviders: jest.fn().mockReturnValue([]),
@@ -164,14 +162,12 @@ jest.mock("../cli/context", () => ({
   gatherProjectContext: jest.fn().mockReturnValue("PACKAGE: test-project"),
 }));
 jest.mock("../cli/context-engine", () => ({
-  fitToContext: jest
-    .fn()
-    .mockImplementation(async (messages) => ({
-      messages,
-      compressed: false,
-      compacted: false,
-      tokensRemoved: 0,
-    })),
+  fitToContext: jest.fn().mockImplementation(async (messages) => ({
+    messages,
+    compressed: false,
+    compacted: false,
+    tokensRemoved: 0,
+  })),
   getUsage: jest
     .fn()
     .mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 }),
@@ -212,14 +208,12 @@ jest.mock("../cli/planner", () => ({
 }));
 jest.mock("../cli/render", () => ({
   renderMarkdown: jest.fn().mockImplementation((t) => t || ""),
-  StreamRenderer: jest
-    .fn()
-    .mockImplementation(() => ({
-      push: jest.fn(),
-      flush: jest.fn(),
-      startCursor: jest.fn(),
-      stopCursor: jest.fn(),
-    })),
+  StreamRenderer: jest.fn().mockImplementation(() => ({
+    push: jest.fn(),
+    flush: jest.fn(),
+    startCursor: jest.fn(),
+    stopCursor: jest.fn(),
+  })),
 }));
 jest.mock("../cli/hooks", () => ({ runHooks: jest.fn().mockReturnValue([]) }));
 jest.mock("../cli/mcp", () => ({
@@ -269,18 +263,16 @@ jest.mock("../cli/spinner", () => {
   return {
     Spinner: SpinnerMock,
     MultiProgress: jest.fn(),
-    TaskProgress: jest
-      .fn()
-      .mockImplementation(() => ({
-        start: jest.fn(),
-        stop: jest.fn(),
-        pause: jest.fn(),
-        resume: jest.fn(),
-        setStats: jest.fn(),
-        updateTask: jest.fn(),
-        isActive: jest.fn().mockReturnValue(false),
-        _paused: false,
-      })),
+    TaskProgress: jest.fn().mockImplementation(() => ({
+      start: jest.fn(),
+      stop: jest.fn(),
+      pause: jest.fn(),
+      resume: jest.fn(),
+      setStats: jest.fn(),
+      updateTask: jest.fn(),
+      isActive: jest.fn().mockReturnValue(false),
+      _paused: false,
+    })),
     setActiveTaskProgress: jest.fn(),
     getActiveTaskProgress: jest.fn(),
     cleanupTerminal: jest.fn(),

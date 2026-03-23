@@ -6,24 +6,20 @@
 jest.mock("../cli/providers/registry", () => {
   const mockProvider = {
     name: "ollama",
-    getModel: jest
-      .fn()
-      .mockReturnValue({
-        id: "kimi-k2.5",
-        name: "Kimi K2.5",
-        maxTokens: 16384,
-      }),
+    getModel: jest.fn().mockReturnValue({
+      id: "kimi-k2.5",
+      name: "Kimi K2.5",
+      maxTokens: 16384,
+    }),
     getModelNames: jest.fn().mockReturnValue(["kimi-k2.5", "qwen3-coder:480b"]),
   };
 
   return {
-    getActiveModel: jest
-      .fn()
-      .mockReturnValue({
-        id: "kimi-k2.5",
-        name: "Kimi K2.5",
-        provider: "ollama",
-      }),
+    getActiveModel: jest.fn().mockReturnValue({
+      id: "kimi-k2.5",
+      name: "Kimi K2.5",
+      provider: "ollama",
+    }),
     setActiveModel: jest
       .fn()
       .mockImplementation(
