@@ -162,14 +162,22 @@ class MultiProgress {
     }
   }
 
-  stop() {
+  stop(opts = {}) {
     this._stopped = true;
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // Final render to show final states
-    this._renderFinal();
+    if (!opts.silent) {
+      // Final render to show final states
+      this._renderFinal();
+    } else {
+      // Clear the progress block without reprinting
+      let buf = "";
+      for (let i = 0; i < this.lineCount; i++) buf += "\x1b[2K\n";
+      if (this.lineCount > 0) buf += `\x1b[${this.lineCount}A`;
+      process.stderr.write(buf);
+    }
     process.stderr.write("\x1b[?25h"); // show cursor
   }
 

@@ -106,4 +106,16 @@ function runDiagnostics(filePath, content) {
   return diagnostics;
 }
 
-module.exports = { runDiagnostics };
+/**
+ * Get current process memory usage in MB.
+ * @returns {Object} Memory usage with rss (Resident Set Size) and heapUsed in MB.
+ */
+function getMemoryUsage() {
+  const memoryUsage = process.memoryUsage();
+  return {
+    rss: Math.round((memoryUsage.rss / 1024 / 1024) * 100) / 100,
+    heapUsed: Math.round((memoryUsage.heapUsed / 1024 / 1024) * 100) / 100,
+  };
+}
+
+module.exports = { runDiagnostics, getMemoryUsage };

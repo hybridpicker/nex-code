@@ -165,6 +165,38 @@ function flushAutoSave() {
   }
 }
 
+/**
+ * Remove session files older than 30 days
+ * @returns {number} — Number of sessions deleted
+ */
+function clearOldSessions() {
+  ensureDir();
+  const dir = getSessionsDir();
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+  
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  
+  let deletedCount = 0;
+  
+  for (const f of files) {
+    const filePath = path.join(dir, f);
+    try {
+      const stats = fs.statSync(filePath);
+      const fileDate = new Date(stats.mtime);
+      
+      if (fileDate < thirtyDaysAgo) {
+        fs.unlinkSync(filePath);
+        deletedCount++;
+      }
+    } catch {
+      // skip files that can't be read or deleted
+    }
+  }
+  
+  return deletedCount;
+}
+
 module.exports = {
   saveSession,
   loadSession,
@@ -173,6 +205,7 @@ module.exports = {
   getLastSession,
   autoSave,
   flushAutoSave,
+  clearOldSessions,
   // exported for testing
   _getSessionsDir: getSessionsDir,
 };

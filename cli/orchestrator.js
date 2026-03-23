@@ -530,7 +530,7 @@ RULES:
   try {
     results = await Promise.all(agentPromises);
   } finally {
-    progress.stop();
+    progress.stop({ silent: true });
     clearAllLocks();
   }
 
