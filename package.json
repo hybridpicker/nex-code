@@ -1,6 +1,6 @@
 {
   "name": "nex-code",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "The open-source agentic coding CLI. Free with Ollama Cloud — switch to OpenAI, Anthropic or Gemini anytime. Alternative to Claude Code & Gemini CLI.",
   "bin": {
     "nex-code": "./dist/nex-code.js"
