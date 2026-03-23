@@ -59,6 +59,29 @@ ORIGINAL REQUEST:
 SUB-AGENT RESULTS:
 {results}`;
 
+// ─── Retry Helper ────────────────────────────────────────────────────────────
+
+/**
+ * Executes `fn` and retries once on failure after `delayMs` ms.
+ * Throws the last error if all attempts fail.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn - Async function to call
+ * @param {number} [retries=1] - Number of retries after initial attempt
+ * @param {number} [delayMs=2000] - Delay between attempts in ms
+ * @returns {Promise<T>}
+ */
+async function withRetry(fn, retries = 1, delayMs = 2000) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+
 // ─── Concurrency Control ─────────────────────────────────────────────────────
 
 /**
@@ -510,29 +533,44 @@ RULES:
         st.scope.length > 0 ? `Focus on files: ${st.scope.join(", ")}` : "",
       ].filter(Boolean);
 
-      const result = await runSubAgent(
-        {
-          task: st.task,
-          context: contextParts.length > 0 ? contextParts.join("\n") : undefined,
-          max_iterations: Math.min(st.estimatedCalls || 10, 15),
-          model: workerModel,
-          _skipLog: true,
-          _systemPrompt: WORKER_SYSTEM_PROMPT,
+      let _retryAttempt = 0;
+      const result = await withRetry(
+        async () => {
+          if (_retryAttempt > 0) {
+            progress.update(idx, "retry");
+            process.stderr.write(
+              `  ${C.dim}[Agent ${idx + 1}] retrying after error...${C.reset}\n`,
+            );
+          }
+          _retryAttempt++;
+          return runSubAgent(
+            {
+              task: st.task,
+              context:
+                contextParts.length > 0 ? contextParts.join("\n") : undefined,
+              max_iterations: Math.min(st.estimatedCalls || 10, 15),
+              model: workerModel,
+              _skipLog: true,
+              _systemPrompt: WORKER_SYSTEM_PROMPT,
+            },
+            {
+              onUpdate: (event) => {
+                // Stream live tool-call activity to stderr when running in a TTY.
+                // Skipped in piped/non-TTY contexts to keep output clean.
+                if (
+                  event &&
+                  event.type === "tool_call" &&
+                  process.stderr.isTTY
+                ) {
+                  const label = `  ${C.dim}[Agent ${idx + 1}] ${event.tool}${C.reset}`;
+                  process.stderr.write(label + "\n");
+                }
+              },
+            },
+          );
         },
-        {
-          onUpdate: (event) => {
-            // Stream live tool-call activity to stderr when running in a TTY.
-            // Skipped in piped/non-TTY contexts to keep output clean.
-            if (
-              event &&
-              event.type === "tool_call" &&
-              process.stderr.isTTY
-            ) {
-              const label = `  ${C.dim}[Agent ${idx + 1}] ${event.tool}${C.reset}`;
-              process.stderr.write(label + "\n");
-            }
-          },
-        },
+        1,
+        2000,
       );
 
       // Contribute this agent's findings to the shared scratch-pad
@@ -661,4 +699,5 @@ module.exports = {
   DEFAULT_WORKER_MODEL,
   DEFAULT_MAX_PARALLEL,
   DEFAULT_MAX_SUBTASKS,
+  withRetry,
 };

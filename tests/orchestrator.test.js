@@ -56,6 +56,7 @@ const {
   DEFAULT_MAX_PARALLEL,
   DEFAULT_MAX_SUBTASKS,
   runOrchestrated,
+  withRetry,
 } = require("../cli/orchestrator");
 
 // Suppress console output during tests
@@ -898,5 +899,50 @@ describe("orchestrator-bench scoring", () => {
     test("has at least 6 scenarios", () => {
       expect(ORCHESTRATOR_SCENARIOS.length).toBeGreaterThanOrEqual(6);
     });
+  });
+});
+
+// ─── withRetry ───────────────────────────────────────────────────────────────
+
+describe("withRetry", () => {
+  test("succeeds on first attempt", async () => {
+    const fn = jest.fn().mockResolvedValue("ok");
+    const result = await withRetry(fn, 1, 0);
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries once on failure then succeeds", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValue("recovered");
+    const result = await withRetry(fn, 1, 0);
+    expect(result).toBe("recovered");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  test("throws after all retries exhausted", async () => {
+    const err = new Error("persistent failure");
+    const fn = jest.fn().mockRejectedValue(err);
+    await expect(withRetry(fn, 1, 0)).rejects.toThrow("persistent failure");
+    expect(fn).toHaveBeenCalledTimes(2); // initial + 1 retry
+  });
+
+  test("does not retry when retries=0", async () => {
+    const fn = jest.fn().mockRejectedValue(new Error("fail"));
+    await expect(withRetry(fn, 0, 0)).rejects.toThrow("fail");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns first success without further calls", async () => {
+    let callCount = 0;
+    const fn = jest.fn(async () => {
+      callCount++;
+      return callCount;
+    });
+    const result = await withRetry(fn, 2, 0);
+    expect(result).toBe(1);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
