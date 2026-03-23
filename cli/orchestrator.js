@@ -58,9 +58,16 @@ SUB-AGENT RESULTS:
 // ─── Concurrency Control ─────────────────────────────────────────────────────
 
 /**
- * Simple Promise-based semaphore for limiting concurrent operations.
- * @param {number} limit - Maximum concurrent operations
- * @returns {function(): Promise<function(): void>} acquire function that returns a release callback
+ * Creates a simple Promise-based semaphore for limiting concurrent operations.
+ * 
+ * @param {number} limit - Maximum number of concurrent operations allowed
+ * @returns {function(): Promise<function(): void>} A function that returns a promise resolving to a release callback
+ * 
+ * @example
+ * const acquire = createSemaphore(2);
+ * const release = await acquire();
+ * // Critical section
+ * release();
  */
 function createSemaphore(limit) {
   let active = 0;
@@ -87,9 +94,17 @@ function createSemaphore(limit) {
 // ─── Complexity Detection ────────────────────────────────────────────────────
 
 /**
- * Heuristic check whether a prompt contains multiple distinct goals.
- * @param {string} prompt
+ * Detects whether a prompt contains multiple distinct goals using heuristic analysis.
+ * 
+ * @param {string} prompt - The user prompt to analyze
  * @returns {{ isComplex: boolean, estimatedGoals: number, reason: string }}
+ *   - isComplex: true if prompt contains 3+ distinct goals
+ *   - estimatedGoals: estimated number of goals detected
+ *   - reason: explanation of detection criteria
+ * 
+ * @example
+ * const result = detectComplexPrompt("1. Fix bug A; 2. Add feature B; 3. Update docs");
+ * // Returns: { isComplex: true, estimatedGoals: 3, reason: "3 numbered items" }
  */
 function detectComplexPrompt(prompt) {
   if (!prompt || typeof prompt !== 'string') {
@@ -138,10 +153,15 @@ function detectComplexPrompt(prompt) {
 // ─── JSON Extraction ─────────────────────────────────────────────────────────
 
 /**
- * Extract JSON from an LLM response that may include markdown fences or text.
- * @param {string} text
- * @returns {any} parsed JSON
- * @throws {Error} if no valid JSON found
+ * Extracts JSON from an LLM response that may include markdown fences or surrounding text.
+ * 
+ * @param {string} text - The LLM response text
+ * @returns {any} Parsed JSON object or array
+ * @throws {Error} If no valid JSON can be extracted
+ * 
+ * @example
+ * const json = extractJSON('```json\n{"key": "value"}\n```');
+ * // Returns: { key: "value" }
  */
 function extractJSON(text) {
   if (!text || typeof text !== 'string') {
@@ -342,6 +362,20 @@ async function runOrchestrated(prompt, opts = {}) {
   const progress = new MultiProgress(labels);
   progress.start();
 
+  const WORKER_SYSTEM_PROMPT = `
+You are a focused coding agent executing ONE specific sub-task.
+Your scope is limited to the files listed in your task definition.
+
+RULES:
+- NEVER use external CLI tools for analysis (aspell, jq, sed, awk, grep for reading).
+  Use read_file + your own reasoning instead.
+- Be PROACTIVE: if something is missing, ADD it. Do not just search and report.
+- If your task says "fix typos" — read the file, find typos yourself, edit them.
+- If your task says "add X to README" — add it, don't check if it exists first.
+- Max 10 tool calls. If you need more, you are doing too much — narrow your scope.
+- When done: call {"valid": true} to signal completion.
+`;
+
   const agentPromises = subTasks.map(async (st, idx) => {
     const release = await acquire();
     try {
@@ -351,6 +385,7 @@ async function runOrchestrated(prompt, opts = {}) {
         max_iterations: Math.min(st.estimatedCalls || 10, 15),
         model: workerModel,
         _skipLog: true,
+        _systemPrompt: WORKER_SYSTEM_PROMPT,
       }, {
         onUpdate: () => {},
       });
@@ -386,7 +421,9 @@ async function runOrchestrated(prompt, opts = {}) {
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     const icon = r.status === 'done' ? `${C.green}\u2713${C.reset}` : r.status === 'truncated' ? `${C.yellow}\u26A0${C.reset}` : `${C.red}\u2717${C.reset}`;
-    console.log(`${icon} Agent ${i + 1}: ${r.task.substring(0, 60)}`);
+    const statusText = r.status === 'done' ? 'SUCCESS' : r.status === 'truncated' ? 'PARTIAL' : 'FAILED';
+    const summary = r.result ? `: ${r.result.substring(0, 50)}${r.result.length > 50 ? '...' : ''}` : '';
+    console.log(`${icon} Agent ${i + 1} [${statusText}]: ${r.task.substring(0, 50)}${r.task.length > 50 ? '...' : ''}${summary}`);
   }
   console.log('');
 

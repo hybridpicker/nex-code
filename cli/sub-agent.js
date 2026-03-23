@@ -200,7 +200,7 @@ async function runSubAgent(agentDef, callbacks = {}, _depth = 0) {
   const locksHeld = new Set();
   const bashFailCounts = new Map(); // track repeated failed bash commands
 
-  const systemPrompt = `You are a focused sub-agent. Complete this specific task efficiently.
+  const systemPrompt = agentDef._systemPrompt || `You are a focused sub-agent. Complete this specific task efficiently.
 
 TASK: ${agentDef.task}
 ${agentDef.context ? `\nCONTEXT: ${agentDef.context}` : ''}
