@@ -332,3 +332,35 @@ messages, and a deadlock where files couldn't be re-read after context wipe.
 **Impact:** ~3000-4000 fewer tokens wasted per problematic session.
 Session output is significantly cleaner — no more message spam on re-reads
 or compression cascades.
+
+---
+
+### v0.3.78 — Multi-Agent Orchestrator
+
+#### Architecture upgrade: orchestrated multi-agent execution
+
+Complex multi-goal prompts (e.g. "fix 4 bugs") previously caused context
+collapse — a single agent trying to solve everything in one context window.
+
+**New modules:**
+- `cli/orchestrator.js` — Decomposes prompts into sub-tasks, runs them via
+  parallel sub-agents (max 3 concurrent, SSH limit), synthesizes results
+- `cli/orchestrator-bench.js` — Benchmarks models on decompose/synthesize
+  quality (6 scenarios, separate from tool-calling benchmark)
+
+**Two-tier model architecture:**
+- Orchestrator model (default `kimi-k2.5`): reasoning + 262K context for
+  task decomposition and result synthesis (only 2 LLM calls)
+- Worker model (default `devstral-2:123b`): fast tool calling for parallel
+  sub-agent execution (5-15 calls per agent)
+
+**CLI integration:**
+- `/orchestrate <prompt>` slash command for interactive use
+- `--orchestrate` flag with `--task` for headless mode
+- `--orchestrator-model` flag for model override
+- Complexity hint in `processInput()` suggests orchestration for 3+ goals
+
+**Model discovery:**
+- `model-watcher.js` extended with orchestrator candidate detection
+- Auto-promotes new orchestrator model if benchmark score > current + 5%
+- See `docs/MODEL-SELECTION.md` for full model selection strategy

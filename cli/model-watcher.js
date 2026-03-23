@@ -280,6 +280,59 @@ function updateRoutingConfig(categoryWinners) {
   return { saved: true, envUpdated, changes };
 }
 
+// ─── Orchestrator Model Discovery ────────────────────────────────────────────
+
+const REASONING_PATTERNS = /thinking|reasoning|instruct|planner|orchestrat/i;
+
+/**
+ * Check if a model name suggests orchestrator/reasoning capability.
+ * @param {string} modelName
+ * @returns {boolean}
+ */
+function checkOrchestratorCandidate(modelName) {
+  return REASONING_PATTERNS.test(modelName);
+}
+
+/**
+ * Update NEX_ORCHESTRATOR_MODEL in models.env if a new winner exceeds
+ * the current best by more than 5%.
+ * @param {Array<{ model: string, overall: number }>} benchResults
+ * @returns {{ updated: boolean, previousModel?: string, newModel?: string }}
+ */
+function updateOrchestratorModel(benchResults) {
+  if (!benchResults || benchResults.length === 0) return { updated: false };
+
+  const envPath = path.join(os.homedir(), '.nex-code', 'models.env');
+  if (!fs.existsSync(envPath)) return { updated: false };
+
+  let content = fs.readFileSync(envPath, 'utf-8');
+  const currentMatch = content.match(/^NEX_ORCHESTRATOR_MODEL=(.+)$/m);
+  const currentModel = currentMatch ? currentMatch[1].trim() : null;
+
+  // Find current model score and best model
+  const sorted = [...benchResults].sort((a, b) => b.overall - a.overall);
+  const best = sorted[0];
+  const currentEntry = currentModel
+    ? benchResults.find(r => r.model === currentModel)
+    : null;
+  const currentScore = currentEntry ? currentEntry.overall : 0;
+
+  // Promote only if new winner exceeds current by >5%
+  if (best.model === currentModel) return { updated: false };
+  if (currentScore > 0 && best.overall < currentScore * 1.05) return { updated: false };
+
+  // Update models.env
+  const line = `NEX_ORCHESTRATOR_MODEL=${best.model}`;
+  if (currentMatch) {
+    content = content.replace(/^NEX_ORCHESTRATOR_MODEL=.+$/m, line);
+  } else {
+    content += `\n${line}\n`;
+  }
+  fs.writeFileSync(envPath, content);
+
+  return { updated: true, previousModel: currentModel, newModel: best.model };
+}
+
 module.exports = {
   findNewModels,
   fetchCloudModels,
@@ -289,6 +342,8 @@ module.exports = {
   updateModelsEnv,
   updateRoutingConfig,
   generateBenchmarkBlock,
+  checkOrchestratorCandidate,
+  updateOrchestratorModel,
   SENTINEL_START,
   SENTINEL_END,
 };

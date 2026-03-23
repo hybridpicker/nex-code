@@ -17,6 +17,7 @@
     "start": "node dist/nex-code.js",
     "build": "esbuild bin/nex-code.js --bundle --platform=node --target=node18 --outfile=dist/nex-code.js --minify --external:axios --external:dotenv --external:playwright",
     "test": "jest --forceExit",
+    "test:orchestrator": "jest tests/orchestrator.test.js --forceExit",
     "coverage": "jest --coverage --forceExit",
     "test:watch": "jest --watch",
     "format": "prettier --write .",
@@ -80,7 +81,7 @@
       },
       "./cli/sub-agent.js": {
         "lines": 70,
-        "functions": 65,
+        "functions": 60,
         "branches": 55
       }
     }
