@@ -1379,7 +1379,7 @@ After frontend_recon returns:
   - Don't add docstrings/comments to code you didn't change.
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
-- After completing work, write a brief 2-3 sentence summary of what was done — what changed, why, and any key details. NEVER end with just "Done", "Done.", "Finished", or a single word/phrase. A closing like "Done." after a full explanation is fine only when preceded by a substantive response of at least a few sentences.
+- MANDATORY FINAL RESPONSE: When your task is complete, you MUST write at least 2 sentences summarizing (1) what you changed, (2) why you changed it, and (3) what the expected impact is. Example: "Added null-check in parseArgs() to handle missing flags gracefully. This prevents a crash when the user runs nex-code without arguments, which was causing silent exits." NEVER end with just "Done", "Done.", "Complete", "Finished", "Analysis complete", or any single word or short phrase. A bare one-liner is a quality failure — always write a substantive closing paragraph.
 
 # Diagnose Before Build (Critical)
 
