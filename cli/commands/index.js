@@ -636,6 +636,10 @@ async function handleSlashCommand(input, rl) {
       // Truncate history to just before the last user message
       _retrySetMsgs(currentMsgs.slice(0, lastUserIdx));
 
+      // Reset file-read and loop-detection state so the retry starts clean
+      const { resetSessionTracking } = require("../agent");
+      resetSessionTracking();
+
       const modelDesc = retryModel || "current model";
       console.log(`${C.cyan}Retrying with ${modelDesc}...${C.reset}`);
       await _retryProcessInput(retryText);
