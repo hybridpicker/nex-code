@@ -343,6 +343,9 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 | `--json`               | Output `{"success":true,"response":"..."}` to stdout                                                          |
 | `--max-turns <n>`      | Override the agentic loop iteration limit                                                                     |
 | `--model <spec>`       | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
+| `--debug`              | Show internal diagnostic messages (compression, loop detection, guards)                                       |
+| `--auto-orchestrate`   | Automatically use the multi-agent orchestrator when ≥3 goals are detected (also: `NEX_AUTO_ORCHESTRATE=true`) |
+| `--orchestrator-model <m>` | Model for decomposition/synthesis step (default: `kimi-k2.5`)                                            |
 
 ---
 
@@ -956,6 +959,72 @@ Spawn parallel sub-agents for independent tasks:
 - File locking prevents concurrent writes to the same file (intra-process sub-agents)
 - Multi-progress display shows real-time status of each agent
 - Good for: reading multiple files, analyzing separate modules, independent research
+
+### Multi-Agent Orchestrator
+
+For complex tasks with multiple independent goals (e.g. "fix all TypeScript errors in auth/, add tests for utils/, and update the README"), the orchestrator decomposes the prompt into parallel sub-tasks, runs dedicated sub-agents on each, and synthesizes the results.
+
+**Trigger:**
+
+```bash
+# One-off: pass flag on the CLI
+nex-code --auto-orchestrate --task "fix all type errors in src/, add JSDoc to utils/, update CHANGELOG"
+
+# Headless with custom orchestrator model
+nex-code --auto-orchestrate --orchestrator-model kimi-k2.5 --task "..."
+
+# Always-on via env var
+NEX_AUTO_ORCHESTRATE=true nex-code
+
+# Set minimum goal count before orchestrator activates (default: 3)
+NEX_ORCHESTRATE_THRESHOLD=2 nex-code
+```
+
+**Interactive:** type `/orchestrate <task>` at the prompt.
+
+**Example output:**
+
+```
+Orchestrator  model: kimi-k2.5 | workers: devstral-2:123b | max parallel: 3
+
+Phase 1: Decomposing prompt into sub-tasks...
+Decomposed into 3 sub-tasks:
+  t1: Fix TypeScript errors in src/auth/
+     scope: src/auth/
+  t2: Add JSDoc comments to src/utils/
+     scope: src/utils/
+  t3: Update CHANGELOG with recent changes
+     scope: CHANGELOG.md
+
+Phase 2: Running 3 sub-agents (max 3 parallel)...
+
+✓ Agent 1 [devstral-2:123b]: Fix TypeScript errors in src/auth/: fixed 4 type errors in login.ts, ...
+✓ Agent 2 [devstral-2:123b]: Add JSDoc comments to src/utils/: documented 12 functions across 3 files
+✓ Agent 3 [devstral-2:123b]: Update CHANGELOG: added entries for v1.2.0 changes
+
+Phase 3: Synthesizing results...
+
+Summary: Fixed 4 TS errors in auth module, added JSDoc to 12 utility functions, updated CHANGELOG.
+Suggested commit: fix: resolve auth type errors and add utility docs
+```
+
+**Env vars:**
+
+| Variable                  | Default       | Description                                              |
+| ------------------------- | ------------- | -------------------------------------------------------- |
+| `NEX_AUTO_ORCHESTRATE`    | `false`       | Set to `true` to always use the orchestrator             |
+| `NEX_ORCHESTRATE_THRESHOLD` | `3`         | Minimum number of detected goals before auto-triggering  |
+
+**Model roles in orchestration:**
+
+| Role           | Default model       | Purpose                                      |
+| -------------- | ------------------- | -------------------------------------------- |
+| Orchestrator   | `kimi-k2.5`         | Decomposes prompt, synthesizes results       |
+| Worker         | `devstral-2:123b`   | Executes each sub-task (one agent per task)  |
+
+Override via `--orchestrator-model` (orchestrator) or `DEFAULT_MODEL` / `NEX_STANDARD_MODEL` (workers).
+
+---
 
 ### Parallel Sessions
 
