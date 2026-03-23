@@ -4,6 +4,7 @@
  */
 
 const { C, Spinner, TaskProgress, formatToolCall, formatToolSummary, formatSectionHeader, formatMilestone, setActiveTaskProgress } = require('./ui');
+const { debugLog, warnLog } = require('./debug');
 const { MilestoneTracker } = require('./milestone');
 const { callStream } = require('./providers/registry');
 const { parseToolArgs } = require('./ollama');
@@ -502,7 +503,7 @@ async function prepareToolCall(tc) {
     const allToolDefs = getAllToolDefinitions();
     const toolDef = allToolDefs.find(t => t.function.name === fnName);
     const schema = toolDef ? JSON.stringify(toolDef.function.parameters, null, 2) : 'unknown';
-    console.log(`${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`);
+    debugLog(`${C.yellow}  ⚠ ${fnName}: malformed arguments, sending schema hint${C.reset}`);
     return {
       callId, fnName, args: null, canExecute: false,
       errorResult: {
@@ -519,7 +520,7 @@ async function prepareToolCall(tc) {
   // Validate
   const validation = validateToolArgs(fnName, args);
   if (!validation.valid) {
-    console.log(`${C.yellow}  ⚠ ${fnName}: ${validation.error.split('\n')[0]}${C.reset}`);
+    debugLog(`${C.yellow}  ⚠ ${fnName}: ${validation.error.split('\n')[0]}${C.reset}`);
     return {
       callId, fnName, args, canExecute: false,
       errorResult: { role: 'tool', content: validation.error, tool_call_id: callId },
@@ -805,11 +806,13 @@ function _logCompression(msg, color) {
   if (msg === _lastCompressionMsg) {
     _compressionMsgCount++;
     // Overwrite the previous line with updated counter
-    process.stdout.write(`\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`);
+    if (require('./debug').DEBUG) {
+      process.stdout.write(`\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`);
+    }
   } else {
     _lastCompressionMsg = msg;
     _compressionMsgCount = 1;
-    console.log(`${color}  ⚠ ${msg}${C.reset}`);
+    debugLog(`${color}  ⚠ ${msg}${C.reset}`);
   }
 }
 
@@ -1467,20 +1470,32 @@ let _serverHooks = null;
  * @param {string} userInput
  * @param {{ onToken?: Function, onThinkingToken?: Function, onToolStart?: Function, onToolEnd?: Function } | null} [serverHooks]
  */
-async function processInput(userInput, serverHooks = null) {
+async function processInput(userInput, serverHooks = null, opts = {}) {
   _serverHooks = serverHooks;
   const userContent = buildUserContent(userInput);
   conversationMessages.push({ role: 'user', content: userContent });
   trimConversationHistory();
 
-  // Hint: suggest /orchestrate for complex multi-goal prompts
+  // Auto-orchestrate or hint for complex multi-goal prompts
+  const autoOrch = opts.autoOrchestrate || process.env.NEX_AUTO_ORCHESTRATE === 'true';
+  const orchThreshold = parseInt(process.env.NEX_ORCHESTRATE_THRESHOLD || '3', 10);
+
   try {
-    const { detectComplexPrompt } = require('./orchestrator');
+    const { detectComplexPrompt, runOrchestrated } = require('./orchestrator');
     const complexity = detectComplexPrompt(typeof userInput === 'string' ? userInput : '');
-    if (complexity.isComplex) {
-      console.log(`${C.dim}Hint: ~${complexity.estimatedGoals} goals detected. Use /orchestrate for parallel execution.${C.reset}`);
+
+    if (autoOrch && complexity.isComplex && complexity.estimatedGoals >= orchThreshold) {
+      console.log(`${C.yellow}⚡ Auto-orchestrate: ${complexity.estimatedGoals} goals → parallel agents${C.reset}`);
+      return await runOrchestrated(userInput, {
+        orchestratorModel: opts.orchestratorModel || process.env.NEX_ORCHESTRATOR_MODEL,
+        workerModel: opts.model,
+      });
     }
-  } catch { /* orchestrator not loaded — ignore */ }
+
+    if (complexity.isComplex) {
+      console.log(`${C.dim}Hint: ~${complexity.estimatedGoals} goals. Try --auto-orchestrate for parallel execution.${C.reset}`);
+    }
+  } catch { /* orchestrator not available */ }
 
   const { setOnChange } = require('./tasks');
   let taskProgress = null;
@@ -1549,10 +1564,10 @@ async function processInput(userInput, serverHooks = null) {
     console.log(`${C.dim}  [context compacted — summary (~${tokensRemoved} tokens freed)]${C.reset}`);
   } else if (compressed) {
     const pct = usage.limit > 0 ? Math.round((tokensRemoved / usage.limit) * 100) : 0;
-    console.log(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
+    debugLog(`${C.dim}  [context compressed — ~${tokensRemoved} tokens freed (${pct}%)]${C.reset}`);
   }
   if (usage.percentage > 85) {
-    console.log(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`);
+    debugLog(`${C.yellow}  ⚠ Context ${Math.round(usage.percentage)}% used (${Math.round(100 - usage.percentage)}% remaining) — consider /clear or /save + start fresh${C.reset}`);
   }
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
@@ -1695,7 +1710,7 @@ async function processInput(userInput, serverHooks = null) {
       const elapsed = Date.now() - lastTokenTime;
       if (elapsed >= STALE_ABORT_MS) {
         stream._clearCursorLine();
-        console.log(`${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`);
+        debugLog(`${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`);
         staleAbort.abort();
       } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
         staleWarned = true;
@@ -1703,7 +1718,7 @@ async function processInput(userInput, serverHooks = null) {
         const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
         const retryLabel = staleRetries > 0 ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})` : '';
         const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
-        console.log(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`);
+        debugLog(`${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`);
         if (fastModel && fastModel !== getActiveModelId()) {
           console.log(`${C.dim}  💡 Will auto-switch to ${fastModel} in ~${abortInSec}s if no tokens arrive${C.reset}`);
         } else {
@@ -1754,7 +1769,7 @@ async function processInput(userInput, serverHooks = null) {
             if (q.truncated) {
               _streamLoopSuppressed = true;
               stream._clearCursorLine?.();
-              console.log(`${C.yellow}  ⚠ LLM stream loop detected (${q.repeatCount}× repeated) — suppressing display${C.reset}`);
+              debugLog(`${C.yellow}  ⚠ LLM stream loop detected (${q.repeatCount}× repeated) — suppressing display${C.reset}`);
             }
           }
           if (_streamLoopSuppressed) return;
@@ -1809,7 +1824,7 @@ async function processInput(userInput, serverHooks = null) {
             const allTools = getAllToolDefinitions();
             const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools);
             apiMessages = compressedMsgs;
-            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) debugLog(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
             staleRetries = 0; // Reset so compressed context gets full retry attempts
             i--;
             continue;
@@ -1847,7 +1862,7 @@ async function processInput(userInput, serverHooks = null) {
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, true); // nuclear: 35% target
           apiMessages = compressedMsgs;
           if (tokensRemoved > 0) {
-            if (tokensRemoved > 50) console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            if (tokensRemoved > 50) debugLog(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           if (STALE_AUTO_SWITCH) {
             const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
@@ -1858,7 +1873,7 @@ async function processInput(userInput, serverHooks = null) {
             }
           }
         } else {
-          console.log(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Stale retry ${staleRetries}/${MAX_STALE_RETRIES} — retrying in ${delay / 1000}s...${C.reset}`);
         }
         const delaySpinner = new Spinner(`Waiting ${delay / 1000}s before retry...`);
         delaySpinner.start();
@@ -1927,7 +1942,7 @@ async function processInput(userInput, serverHooks = null) {
           const { messages: compressedMsgs, tokensRemoved } = forceCompress(apiMessages, allTools, nuclear);
           apiMessages = compressedMsgs;
           if (tokensRemoved > 50) {
-            console.log(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
+            debugLog(`${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`);
           }
           i--;
           continue;
@@ -2125,13 +2140,13 @@ async function processInput(userInput, serverHooks = null) {
     const loopCheck = detectAndTruncateLoop(rawContent || '');
     const afterLoopCheck = loopCheck.truncated ? loopCheck.text : rawContent;
     if (loopCheck.truncated) {
-      console.log(`${C.yellow}  ⚠ LLM output loop detected (${loopCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
+      debugLog(`${C.yellow}  ⚠ LLM output loop detected (${loopCheck.repeatCount}× repeated paragraph) — response truncated${C.reset}`);
     }
     // Then apply sentence-window repetition detection (catches multi-sentence loops)
     const repCheck = detectAndTruncateRepetition(afterLoopCheck || '');
     const content = repCheck.truncated ? repCheck.text : afterLoopCheck;
     if (repCheck.truncated) {
-      console.log(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated window) — response truncated${C.reset}`);
+      debugLog(`${C.yellow}  ⚠ LLM output loop detected (${repCheck.repeatCount}× repeated window) — response truncated${C.reset}`);
     }
 
     // Build assistant message for history
@@ -2180,7 +2195,7 @@ async function processInput(userInput, serverHooks = null) {
       if (isPlanMode() && hasText && totalSteps === 0) {
         _planRejectionCount++;
         if (_planRejectionCount > 2) {
-          console.log(`${C.yellow}  ⚠ Plan accepted despite no file reads (rejection loop cap reached)${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Plan accepted despite no file reads (rejection loop cap reached)${C.reset}`);
           // Fall through to normal plan handling below
         } else {
           const investigateNudge = {
@@ -2189,7 +2204,7 @@ async function processInput(userInput, serverHooks = null) {
           };
           conversationMessages.push(investigateNudge);
           apiMessages.push(investigateNudge);
-          console.log(`${C.yellow}  ⚠ Plan rejected (${_planRejectionCount}/2): no files read — forcing investigation${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Plan rejected (${_planRejectionCount}/2): no files read — forcing investigation${C.reset}`);
           continue;
         }
       }
@@ -2360,7 +2375,7 @@ async function processInput(userInput, serverHooks = null) {
         apiMessages.push(pressureMsg);
         if (ctxPct >= 85) {
           const reReadLabel = hasReRead ? ` (re-read of: ${reReadFiles.join(', ')})` : '';
-          console.log(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Context ${Math.round(ctxPct)}% used — agent warned to use targeted reads${reReadLabel}${C.reset}`);
         }
         // For re-reads at low context usage, don't show misleading "Context X% used" — the
         // hard-block message (below) already handles display for the user.
@@ -2571,7 +2586,7 @@ async function processInput(userInput, serverHooks = null) {
         _sshBlockedAfterStorm = false;
         _sshDeadlockRelaxCount++;
         _sessionConsecutiveSshCalls = Math.max(0, SSH_STORM_WARN - 2); // partial reset
-        console.log(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax ${_sshDeadlockRelaxCount}/1)]${C.reset}`);
+        debugLog(`${C.dim}  [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax ${_sshDeadlockRelaxCount}/1)]${C.reset}`);
       } else {
         for (const prep of _allSsh) {
           prep.canExecute = false;
@@ -2600,7 +2615,7 @@ async function processInput(userInput, serverHooks = null) {
           const { messages: _c } = forceCompress(apiMessages, _allTools);
           apiMessages = _c;
         }
-        console.log(`${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`);
+        debugLog(`${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`);
         prep.canExecute = false;
         prep.errorResult = {
           role: 'tool',
@@ -2672,7 +2687,7 @@ async function processInput(userInput, serverHooks = null) {
       if (preBlockContent.startsWith('BLOCKED:') || preBlockContent.startsWith('PLAN MODE:')) {
         consecutiveBlocks++;
         if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`);
+          debugLog(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2707,7 +2722,7 @@ async function processInput(userInput, serverHooks = null) {
         const wfInTestsDir = prep.args.path.includes('/tests/') || prep.args.path.includes('\\tests\\');
         const isTempPattern = /^(test_|demo_|temp_|tmp_|scratch_)/.test(wfBase);
         if (isTempPattern && !wfInTestsDir) {
-          console.log(`${C.yellow}  ⚠ Temp file: "${wfBase}" — delete with bash rm when done to keep the workspace clean${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Temp file: "${wfBase}" — delete with bash rm when done to keep the workspace clean${C.reset}`);
           const tempHint = {
             role: 'user',
             content: `[HINT] "${prep.args.path}" looks like a temporary test/demo file. Delete it with bash("rm ${prep.args.path}") as soon as you're done — orphaned temp files count against session quality.`,
@@ -2724,7 +2739,7 @@ async function processInput(userInput, serverHooks = null) {
           fileEditCounts.set(prep.args.path, count);
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
           if (count === LOOP_WARN_EDITS) {
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
+            debugLog(`${C.yellow}  ⚠ Loop warning: "${shortPath}" edited ${count}× — possible edit loop${C.reset}`);
             const loopWarning = {
               role: 'user',
               content: `[SYSTEM WARNING] "${prep.args.path}" edited ${count}×. One more edit max, then move on.`,
@@ -2732,7 +2747,7 @@ async function processInput(userInput, serverHooks = null) {
             conversationMessages.push(loopWarning);
             apiMessages.push(loopWarning);
           } else if (count >= LOOP_ABORT_EDITS) {
-            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
+            debugLog(`${C.red}  ✖ Loop abort: "${shortPath}" edited ${count}× — aborting to prevent runaway loop${C.reset}`);
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
             _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2748,7 +2763,7 @@ async function processInput(userInput, serverHooks = null) {
         const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
         bashCmdCounts.set(cmdKey, bashCount);
         if (bashCount === LOOP_WARN_BASH) {
-          console.log(`${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`);
           const bashWarning = {
             role: 'user',
             content: `[SYSTEM WARNING] Same bash command ${bashCount}×. Debug loop detected — try a different approach.`,
@@ -2756,7 +2771,7 @@ async function processInput(userInput, serverHooks = null) {
           conversationMessages.push(bashWarning);
           apiMessages.push(bashWarning);
         } else if (bashCount >= LOOP_ABORT_BASH) {
-          console.log(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
+          debugLog(`${C.red}  ✖ Loop abort: same bash command run ${bashCount}× — aborting runaway debug loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2770,7 +2785,7 @@ async function processInput(userInput, serverHooks = null) {
       if (prep.fnName === 'ssh_exec') {
         _sessionConsecutiveSshCalls++;
         if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
-          console.log(`${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
+          debugLog(`${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2785,7 +2800,7 @@ async function processInput(userInput, serverHooks = null) {
             apiMessages = _c;
           }
           _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
-          console.log(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`);
           const sshStormWarning = {
             role: 'user',
             content: `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Synthesize findings now — no more SSH.`,
@@ -2806,7 +2821,7 @@ async function processInput(userInput, serverHooks = null) {
         const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
         grepPatternCounts.set(patKey, grepCount);
         if (grepCount === LOOP_WARN_GREP) {
-          console.log(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`);
           const grepWarning = {
             role: 'user',
             content: `[SYSTEM WARNING] Same grep pattern ${grepCount}×. Results unchanged — use existing data or try different pattern.`,
@@ -2814,7 +2829,7 @@ async function processInput(userInput, serverHooks = null) {
           conversationMessages.push(grepWarning);
           apiMessages.push(grepWarning);
         } else if (grepCount >= LOOP_ABORT_GREP) {
-          console.log(`${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`);
+          debugLog(`${C.red}  ✖ Loop abort: grep pattern run ${grepCount}× — aborting runaway search loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2829,7 +2844,7 @@ async function processInput(userInput, serverHooks = null) {
           grepFileCounts.set(prep.args.path, fileGrepCount);
           if (fileGrepCount === LOOP_WARN_GREP_FILE) {
             const shortPath = prep.args.path.split('/').slice(-2).join('/');
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
+            debugLog(`${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`);
             const fileGrepWarning = {
               role: 'user',
               content: `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
@@ -2869,7 +2884,7 @@ async function processInput(userInput, serverHooks = null) {
       if (wasBlocked) {
         consecutiveBlocks++;
         if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`);
+          debugLog(`${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2883,7 +2898,7 @@ async function processInput(userInput, serverHooks = null) {
       if (!isOk) {
         consecutiveErrors++;
         if (consecutiveErrors === LOOP_WARN_ERRORS) {
-          console.log(`${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`);
+          debugLog(`${C.yellow}  ⚠ Loop warning: ${consecutiveErrors} consecutive tool errors — possible stuck loop${C.reset}`);
           const errWarning = {
             role: 'user',
             content: `[SYSTEM WARNING] ${consecutiveErrors} consecutive errors. Stuck loop — try fundamentally different approach or declare done.`,
@@ -2891,7 +2906,7 @@ async function processInput(userInput, serverHooks = null) {
           conversationMessages.push(errWarning);
           apiMessages.push(errWarning);
         } else if (consecutiveErrors >= LOOP_ABORT_ERRORS) {
-          console.log(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
+          debugLog(`${C.red}  ✖ Loop abort: ${consecutiveErrors} consecutive errors — aborting stuck loop${C.reset}`);
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2923,7 +2938,7 @@ async function processInput(userInput, serverHooks = null) {
             };
             conversationMessages.push(scrollWarning);
             apiMessages.push(scrollWarning);
-            console.log(`${C.yellow}  ⚠ Scroll warning: "${warnPath.split('/').slice(-2).join('/')}" — ${sectionCount} sections read — use grep instead${C.reset}`);
+            debugLog(`${C.yellow}  ⚠ Scroll warning: "${warnPath.split('/').slice(-2).join('/')}" — ${sectionCount} sections read — use grep instead${C.reset}`);
           }
           const shortPath = prep.args.path.split('/').slice(-2).join('/');
           // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
@@ -2940,7 +2955,7 @@ async function processInput(userInput, serverHooks = null) {
                 apiMessages = _c;
               }
             }
-            console.log(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read unbounded ${readCount}× — use line_start/line_end${C.reset}`);
+            debugLog(`${C.yellow}  ⚠ Loop warning: "${shortPath}" read unbounded ${readCount}× — use line_start/line_end${C.reset}`);
             const readWarning = {
               role: 'user',
               content: `[SYSTEM WARNING] "${prep.args.path}" read ${readCount}× without line ranges. Use line_start/line_end to read specific sections — do not re-read the full file.`,
@@ -2948,7 +2963,7 @@ async function processInput(userInput, serverHooks = null) {
             conversationMessages.push(readWarning);
             apiMessages.push(readWarning);
           } else if (wasUnbounded && readCount >= LOOP_ABORT_READS) {
-            console.log(`${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`);
+            debugLog(`${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`);
             if (taskProgress) { taskProgress.stop(); taskProgress = null; }
             setOnChange(null);
             _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime, { suppressHint: true });
@@ -2964,7 +2979,7 @@ async function processInput(userInput, serverHooks = null) {
         if (truncCount > 0 && doneCount === 0) {
           truncatedSwarmCount++;
           if (truncatedSwarmCount === LOOP_WARN_SWARM) {
-            console.log(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
+            debugLog(`${C.yellow}  ⚠ Swarm warning: all sub-agents hit iteration limit ${truncatedSwarmCount}× in a row${C.reset}`);
             const swarmWarning = {
               role: 'user',
               content: `[SYSTEM WARNING] Sub-agents truncated ${truncatedSwarmCount}× in a row. Stop spawning — try different approach or report findings.`,

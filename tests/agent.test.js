@@ -200,17 +200,21 @@ describe('agent.js', () => {
     });
 
     it('handles malformed tool arguments (null)', async () => {
+      process.env.NEX_DEBUG = 'true';
       mockStream('', [{ function: { name: 'bash', arguments: null }, id: 'c1' }]);
       mockStream('Oops');
       await processInput('test');
       expect(logOutput()).toContain('malformed');
+      delete process.env.NEX_DEBUG;
     });
 
     it('handles malformed tool arguments (bad string)', async () => {
+      process.env.NEX_DEBUG = 'true';
       mockStream('', [{ function: { name: 'bash', arguments: 'not-json{{{' }, id: 'c1' }]);
       mockStream('OK');
       await processInput('test');
       expect(logOutput()).toContain('malformed');
+      delete process.env.NEX_DEBUG;
     });
 
     it('malformed args include schema hint in error', async () => {
@@ -596,19 +600,23 @@ describe('agent.js', () => {
   // ─── context management ───────────────────────────────────
   describe('context management', () => {
     it('logs compression when context is compressed', async () => {
+      process.env.NEX_DEBUG = 'true';
       fitToContext.mockImplementationOnce((m) => ({ messages: m, compressed: true, tokensRemoved: 5000 }));
       mockStream('OK');
       await processInput('test');
       expect(logOutput()).toContain('context compressed');
       expect(logOutput()).toContain('5000');
+      delete process.env.NEX_DEBUG;
     });
 
     it('warns when context usage > 85%', async () => {
+      process.env.NEX_DEBUG = 'true';
       getUsage.mockReturnValueOnce({ used: 110000, limit: 128000, percentage: 86 });
       mockStream('OK');
       await processInput('test');
       expect(logOutput()).toContain('Context');
       expect(logOutput()).toContain('used');
+      delete process.env.NEX_DEBUG;
     });
   });
 
@@ -990,12 +998,14 @@ describe('agent.js', () => {
   // ─── compression log format ────────────────────────────────
   describe('compression log format', () => {
     it('includes percentage in compression log', async () => {
+      process.env.NEX_DEBUG = 'true';
       fitToContext.mockImplementationOnce((m) => ({ messages: m, compressed: true, tokensRemoved: 12800 }));
       getUsage.mockReturnValueOnce({ used: 110000, limit: 128000, percentage: 86 });
       mockStream('OK');
       await processInput('test');
       expect(logOutput()).toContain('context compressed');
       expect(logOutput()).toMatch(/\d+%/);
+      delete process.env.NEX_DEBUG;
     });
   });
 
@@ -1205,6 +1215,7 @@ describe('agent.js', () => {
   // ─── loop detection ────────────────────────────────────────
   describe('loop detection', () => {
     it('warns after editing the same file multiple times', async () => {
+      process.env.NEX_DEBUG = 'true';
       // First edit
       mockStream('', [{ function: { name: 'edit_file', arguments: { path: 'loop.js' } }, id: 'c1' }]);
       // Second edit — should trigger warning
@@ -1213,9 +1224,11 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('ok');
       await processInput('edit loop.js');
       expect(logOutput()).toContain('Loop warning');
+      delete process.env.NEX_DEBUG;
     });
 
     it('aborts after too many edits to the same file', async () => {
+      process.env.NEX_DEBUG = 'true';
       // 4 edits to trigger abort
       for (let i = 0; i < 4; i++) {
         mockStream('', [{ function: { name: 'edit_file', arguments: { path: 'stuck.js' } }, id: `c${i}` }]);
@@ -1224,9 +1237,11 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('ok');
       await processInput('keep editing');
       expect(logOutput()).toContain('Loop abort');
+      delete process.env.NEX_DEBUG;
     });
 
     it('warns after consecutive tool errors', async () => {
+      process.env.NEX_DEBUG = 'true';
       // 6 consecutive errors to trigger warning
       for (let i = 0; i < 6; i++) {
         mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail' } }, id: `c${i}` }]);
@@ -1235,9 +1250,11 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('ERROR: command failed');
       await processInput('keep failing');
       expect(logOutput()).toContain('consecutive');
+      delete process.env.NEX_DEBUG;
     });
 
     it('aborts after many consecutive tool errors', async () => {
+      process.env.NEX_DEBUG = 'true';
       // 10 consecutive errors to trigger abort
       for (let i = 0; i < 10; i++) {
         mockStream('', [{ function: { name: 'bash', arguments: { command: 'fail' } }, id: `c${i}` }]);
@@ -1246,6 +1263,7 @@ describe('agent.js', () => {
       executeTool.mockResolvedValue('ERROR: command failed');
       await processInput('keep failing');
       expect(logOutput()).toContain('Loop abort');
+      delete process.env.NEX_DEBUG;
     });
 
     it('resets consecutive error count on success', async () => {
@@ -1538,6 +1556,7 @@ describe('agent.js', () => {
     afterEach(() => restoreTimeout());
 
     it('retries with force-compress on first 400', async () => {
+      process.env.NEX_DEBUG = 'true';
       const { forceCompress } = require('../cli/context-engine');
       const err400 = new Error('400 Bad Request');
       callStream.mockRejectedValueOnce(err400);
@@ -1546,6 +1565,7 @@ describe('agent.js', () => {
       await processInput('test');
       expect(forceCompress).toHaveBeenCalled();
       expect(logOutput()).toContain('force-compress');
+      delete process.env.NEX_DEBUG;
     });
   });
 

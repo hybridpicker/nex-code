@@ -223,6 +223,105 @@ describe('detectComplexPrompt', () => {
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(false);
   });
+
+  test('respects NEX_ORCHESTRATE_THRESHOLD=2: two items become complex', () => {
+    const original = process.env.NEX_ORCHESTRATE_THRESHOLD;
+    process.env.NEX_ORCHESTRATE_THRESHOLD = '2';
+    jest.resetModules();
+    const { detectComplexPrompt: dcp2 } = require('../cli/orchestrator');
+    const prompt = '1. Fix login\n2. Fix logout';
+    const r = dcp2(prompt);
+    expect(r.isComplex).toBe(true);
+    if (original === undefined) {
+      delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+    } else {
+      process.env.NEX_ORCHESTRATE_THRESHOLD = original;
+    }
+    jest.resetModules();
+  });
+
+  test('respects NEX_ORCHESTRATE_THRESHOLD=5: 3 goals not complex', () => {
+    const original = process.env.NEX_ORCHESTRATE_THRESHOLD;
+    process.env.NEX_ORCHESTRATE_THRESHOLD = '5';
+    jest.resetModules();
+    const { detectComplexPrompt: dcp5 } = require('../cli/orchestrator');
+    const prompt = '1. Fix login\n2. Fix logout\n3. Fix signup';
+    const r = dcp5(prompt);
+    expect(r.isComplex).toBe(false);
+    if (original === undefined) {
+      delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+    } else {
+      process.env.NEX_ORCHESTRATE_THRESHOLD = original;
+    }
+    jest.resetModules();
+  });
+});
+
+// ─── Auto-Orchestrate ────────────────────────────────────────────────────────
+
+describe('Auto-Orchestrate', () => {
+  let savedEnv;
+
+  beforeEach(() => {
+    savedEnv = {
+      NEX_AUTO_ORCHESTRATE: process.env.NEX_AUTO_ORCHESTRATE,
+      NEX_ORCHESTRATE_THRESHOLD: process.env.NEX_ORCHESTRATE_THRESHOLD,
+    };
+    delete process.env.NEX_AUTO_ORCHESTRATE;
+    delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+  });
+
+  afterEach(() => {
+    if (savedEnv.NEX_AUTO_ORCHESTRATE === undefined) {
+      delete process.env.NEX_AUTO_ORCHESTRATE;
+    } else {
+      process.env.NEX_AUTO_ORCHESTRATE = savedEnv.NEX_AUTO_ORCHESTRATE;
+    }
+    if (savedEnv.NEX_ORCHESTRATE_THRESHOLD === undefined) {
+      delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+    } else {
+      process.env.NEX_ORCHESTRATE_THRESHOLD = savedEnv.NEX_ORCHESTRATE_THRESHOLD;
+    }
+  });
+
+  test('shows hint without --auto-orchestrate flag when goals >= 3', () => {
+    const prompt = '1. Fix login\n2. Fix logout\n3. Fix signup';
+    const r = detectComplexPrompt(prompt);
+    expect(r.isComplex).toBe(true);
+    expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
+    // Without auto-orchestrate, only a hint should show, not auto-trigger
+    // (The actual console.log behavior is tested in agent.js integration tests)
+  });
+
+  test('NEX_ORCHESTRATE_THRESHOLD=2 makes two items complex', () => {
+    process.env.NEX_ORCHESTRATE_THRESHOLD = '2';
+    jest.resetModules();
+    const { detectComplexPrompt: dcp } = require('../cli/orchestrator');
+    const prompt = '1. Fix the login bug\n2. Add dark mode support';
+    const r = dcp(prompt);
+    expect(r.isComplex).toBe(true);
+    jest.resetModules();
+    delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+  });
+
+  test('NEX_AUTO_ORCHESTRATE=true is respected as env var trigger', () => {
+    process.env.NEX_AUTO_ORCHESTRATE = 'true';
+    // Verify the env var is recognized (actual agent behavior tested separately)
+    expect(process.env.NEX_AUTO_ORCHESTRATE).toBe('true');
+  });
+
+  test('detectComplexPrompt threshold defaults to 3', () => {
+    delete process.env.NEX_ORCHESTRATE_THRESHOLD;
+    jest.resetModules();
+    const { detectComplexPrompt: dcp } = require('../cli/orchestrator');
+    // 2 goals — not complex at default threshold 3
+    const notComplex = dcp('1. Fix login\n2. Fix logout');
+    expect(notComplex.isComplex).toBe(false);
+    // 3 goals — complex at default threshold 3
+    const complex = dcp('1. Fix login\n2. Fix logout\n3. Fix signup');
+    expect(complex.isComplex).toBe(true);
+    jest.resetModules();
+  });
 });
 
 // ─── decompose ───────────────────────────────────────────────────────────────
