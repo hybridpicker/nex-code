@@ -458,6 +458,7 @@ async function runOrchestrated(prompt, opts = {}) {
     `${C.dim}Phase 2: Running ${subTasks.length} sub-agents (max ${maxParallel} parallel)...${C.reset}\n`,
   );
 
+  const startTime = Date.now();
   const acquire = createSemaphore(maxParallel);
 
   const labels = subTasks.map(
@@ -510,7 +511,7 @@ RULES:
       progress.update(idx, result.status === "failed" ? "error" : "done");
       totalTokens.input += result.tokensUsed?.input || 0;
       totalTokens.output += result.tokensUsed?.output || 0;
-      return result;
+      return { ...result, _scope: st.scope, _idx: idx };
     } catch (err) {
       progress.update(idx, "error");
       return {
@@ -533,22 +534,22 @@ RULES:
     clearAllLocks();
   }
 
-  // Show results summary
+  // Reprint agent lines with scope info — replaces the progress bar output cleanly
   console.log("");
+  const elapsed = Math.round((Date.now() - startTime) / 1000);
+  const dur = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    // Treat truncated-with-output as success — agent finished work but hit iteration cap
     const isSuccess =
       r.status === "done" ||
       (r.status === "truncated" && r.result && !r.result.startsWith("Error"));
-    const icon = isSuccess
-      ? `${C.green}\u2713${C.reset}`
-      : `${C.red}\u2717${C.reset}`;
-    const summary = r.result
-      ? `: ${r.result.substring(0, 60)}${r.result.length > 60 ? "..." : ""}`
-      : "";
+    const icon = isSuccess ? `${C.green}\u2713${C.reset}` : `${C.red}\u2717${C.reset}`;
+    const scope = r._scope && r._scope.length > 0
+      ? r._scope.map(f => f.replace(/^.*\//, '')).join(', ')
+      : r.task.substring(0, 35) + (r.task.length > 35 ? '...' : '');
+    const isLast = i === results.length - 1;
     console.log(
-      `${icon} Agent ${i + 1} [${r.modelSpec || "worker"}]: ${r.task.substring(0, 50)}${r.task.length > 50 ? "..." : ""}${summary}`,
+      `  ${icon} Agent ${i + 1}  ${C.dim}${scope}${C.reset}${isLast ? `   ${C.dim}${dur}${C.reset}` : ''}`
     );
   }
   console.log("");
