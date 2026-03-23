@@ -18,6 +18,7 @@ if (args.includes('--help') || args.includes('-h')) {
 
 Options:
   --task <prompt>          Run a single task and exit (headless mode)
+  --prompt <prompt>        Alias for --task
   --prompt-file <path>     Read prompt from file and run headless (avoids shell escaping)
   --delete-prompt-file     Delete the prompt file after reading (use with --prompt-file)
   --auto                   Skip all confirmations (implies --task / --prompt-file)
@@ -185,12 +186,13 @@ if (promptFileIdx !== -1) {
   preventSleep();
   runHeadlessTask(task);
 } else {
-  // ─── --task (headless mode) ──────────────────────────────────
-  const taskIdx = args.indexOf('--task');
+  // ─── --task / --prompt (headless mode) ──────────────────────
+  // --prompt is an alias for --task (shorter, easier to type in one-liners)
+  const taskIdx = args.indexOf('--task') !== -1 ? args.indexOf('--task') : args.indexOf('--prompt');
   if (taskIdx !== -1) {
     const task = args[taskIdx + 1];
     if (!task || task.startsWith('--')) {
-      console.error('--task requires a prompt');
+      console.error('--task/--prompt requires a prompt');
       process.exit(1);
     }
     preventSleep();
