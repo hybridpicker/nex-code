@@ -2612,7 +2612,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   p,
                   count >= TARGETED_READ_HARD_CAP - 2 ? count : 1,
                 );
-              _sessionFileReadRanges.clear(); // ranges gone after wipe — targeted reads restart fresh
+              // Preserve ranges for heavily-read files so scroll/overlap detection
+              // stays active post-wipe. Only reset ranges for files whose count was
+              // reset to 1 — those are light readers that legitimately need fresh
+              // navigation. Heavily-read files (count kept at 4+) keep their ranges
+              // so the 3-section scroll-block fires immediately on any new section read.
+              // Previously: clear() reset ALL ranges, letting the agent read 3 new
+              // sections of a heavily-read file post-wipe — causing 5× read loops.
+              for (const [p] of _sessionFileReadRanges) {
+                if ((_sessionFileReadCounts.get(p) || 0) < TARGETED_READ_HARD_CAP - 2)
+                  _sessionFileReadRanges.delete(p);
+              }
               _sessionLastEditFailed.clear();
               _sessionReReadBlockShown.clear();
               // Allow only 1 re-grep per file after wipe (abort-1 = 3), not 2 (warn-1 = 2).
