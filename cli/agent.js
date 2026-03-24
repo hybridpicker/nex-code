@@ -888,6 +888,12 @@ async function executeSingleTool(prep, quiet = false) {
     ) {
       finalContent +=
         "\nHINT: use list_directory instead of bash ls — it is the preferred tool for listing directory contents.";
+    } else if (
+      /\bfind\s+\S/.test(cmd) &&
+      !/git\b|npm\b|-exec\b|-delete\b|-print0\b/.test(cmd)
+    ) {
+      finalContent +=
+        "\nHINT: use glob instead of bash find for file discovery — it is faster and the preferred tool (e.g. glob('**/*.jsx')).";
     }
   }
 
