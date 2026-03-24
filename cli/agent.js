@@ -2019,7 +2019,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
-  const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file (unbounded + targeted combined)
+  const TARGETED_READ_HARD_CAP = 4; // absolute max reads of any single file (unbounded + targeted combined)
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
