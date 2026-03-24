@@ -2599,10 +2599,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // so the agent can't immediately repeat the same storm after context wipe.
               // SSH unblocks naturally when the agent sends a text-only response.
               _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
-              _sessionFileReadCounts.clear(); // file content is gone after wipe — allow re-reads
+              // Set counts to 1 (not 0) so unbounded re-reads stay blocked after wipe.
+              // The agent must use line_start/line_end — this matches the SYSTEM WARNING
+              // injected below. Without this, each wipe resets tracking and the same
+              // large file gets read from scratch 4× per cycle × N wipes (13× observed).
+              for (const [p] of _sessionFileReadCounts)
+                _sessionFileReadCounts.set(p, 1);
+              _sessionFileReadRanges.clear(); // ranges gone after wipe — targeted reads restart fresh
               _sessionLastEditFailed.clear();
               _sessionReReadBlockShown.clear();
-              _sessionGrepFileCounts.clear(); // same for grep flood counters
+              // Allow one re-grep per file after wipe, then re-block quickly
+              for (const [p] of _sessionGrepFileCounts)
+                _sessionGrepFileCounts.set(p, LOOP_WARN_GREP_FILE - 1);
 
               _logCompression(
                 `Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`,
