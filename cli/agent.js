@@ -3183,6 +3183,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`,
             );
+          } else if (blockShownCount === 2) {
+            // Model ignored the first BLOCKED tool result and tried again — escalate to a
+            // system-level warning injected into the conversation. Tool results are easy to
+            // ignore; user-role system messages break the retry loop more reliably.
+            debugLog(
+              `${C.red}  ✖ Escalated block: "${shortPath}" — model ignored BLOCKED, injecting system warning${C.reset}`,
+            );
+            const escalateMsg = {
+              role: "user",
+              content: `[SYSTEM WARNING] You already received a BLOCKED error for read_file("${path}") and tried again anyway. This file has reached its read cap (${TARGETED_READ_HARD_CAP}×). Do NOT attempt to read it again. Use grep_search to find specific content, or proceed with what you already know.`,
+            };
+            conversationMessages.push(escalateMsg);
+            apiMessages.push(escalateMsg);
           }
           prep.canExecute = false;
           prep.errorResult = {
@@ -3265,6 +3278,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`,
             );
+          } else if (blockShownCount === 2) {
+            // Model retried a blocked unbounded re-read — escalate to system-level warning.
+            debugLog(
+              `${C.red}  ✖ Escalated block: "${shortPath}" — model ignored unbounded re-read block, injecting system warning${C.reset}`,
+            );
+            const escalateMsg = {
+              role: "user",
+              content: `[SYSTEM WARNING] You already received a BLOCKED error for read_file("${path}") and tried again without line ranges. Full-file re-reads are permanently blocked for this file. Use line_start/line_end to read a specific section, or use grep_search to find what you need.`,
+            };
+            conversationMessages.push(escalateMsg);
+            apiMessages.push(escalateMsg);
           }
           prep.canExecute = false;
           prep.errorResult = {
