@@ -2631,9 +2631,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
               // After 1st super-nuclear, inject a skip-investigation hint (_superNuclearFires already incremented)
               if (_superNuclearFires >= 1) {
+                // List files already at or near the read hard cap so the model
+                // knows not to attempt reading them — prevents the most common
+                // post-wipe retry loop where the model re-reads a capped file.
+                const _cappedFiles = [..._sessionFileReadCounts.entries()]
+                  .filter(([, count]) => count >= TARGETED_READ_HARD_CAP)
+                  .map(([p]) => p.split("/").slice(-1)[0]);
+                const _cappedNote =
+                  _cappedFiles.length > 0
+                    ? `\n\nFiles already at read cap — use grep_search instead: ${_cappedFiles.join(", ")}`
+                    : "";
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.`,
+                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
