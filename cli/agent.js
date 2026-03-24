@@ -3154,12 +3154,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // identical: block at >= 1 to deny the very same read that triggers the
       // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
       // despite the warning; only the third attempt (count=2) was blocked.
+      //
+      // IMPORTANT: count is NOT incremented until post-execution.  If the model
+      // batches multiple read_file calls in a single turn, all of them would see
+      // the same pre-execution count — allowing all of them to pass the hard-cap
+      // check even though their combined total would exceed it.  Track pending
+      // reads per path in a local accumulator so each call in the batch accounts
+      // for reads already approved earlier in the same loop iteration.
+      const _pendingReadCounts = new Map();
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
         if (prep.fnName !== "read_file") continue;
         const path = prep.args?.path;
         if (!path) continue;
-        const alreadyRead = fileReadCounts.get(path) || 0;
+        const committed = fileReadCounts.get(path) || 0;
+        const pending = _pendingReadCounts.get(path) || 0;
+        const alreadyRead = committed + pending;
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.
@@ -3268,6 +3278,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
             tool_call_id: prep.callId,
           };
+        }
+        // If this read was approved, count it as pending so subsequent reads in
+        // the same batch see an accurate cumulative count and can't all slip
+        // through the hard-cap check simultaneously.
+        if (prep.canExecute) {
+          _pendingReadCounts.set(path, (_pendingReadCounts.get(path) || 0) + 1);
         }
       }
 
