@@ -2600,27 +2600,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // so the agent can't immediately repeat the same storm after context wipe.
               // SSH unblocks naturally when the agent sends a text-only response.
               _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
-              // Preserve read counts for heavily-read files after wipe so they can't
-              // restart flooding. Files read >= TARGETED_READ_HARD_CAP-2 (4+) keep their
-              // count — already near or at cap, allowing at most 2 more targeted reads.
-              // Files read <4× reset to 1 so unbounded re-reads stay blocked but targeted
-              // section reads are still allowed for navigation of genuinely large files.
-              // Previously: all counts reset to 1, allowing 5 more targeted reads per
-              // file per wipe — causing 8× read loops across 3 context wipes (observed).
+              // Preserve read counts for any file read ≥2× so it can't restart a
+              // flood cycle after a wipe. Files read once reset to 1 (unbounded
+              // re-reads stay blocked, one targeted section still allowed).
+              // Files read ≥2× keep their exact count — the agent is already near
+              // or past cap and gets at most a couple targeted reads left.
+              // Previously: only files read ≥4× were preserved; files read 2-3×
+              // reset to 1, allowing 5 more reads per wipe — causing 16× read
+              // loops across 3 context wipes (observed in jarvis session).
               for (const [p, count] of _sessionFileReadCounts)
-                _sessionFileReadCounts.set(
-                  p,
-                  count >= TARGETED_READ_HARD_CAP - 2 ? count : 1,
-                );
-              // Preserve ranges for heavily-read files so scroll/overlap detection
-              // stays active post-wipe. Only reset ranges for files whose count was
-              // reset to 1 — those are light readers that legitimately need fresh
-              // navigation. Heavily-read files (count kept at 4+) keep their ranges
-              // so the 3-section scroll-block fires immediately on any new section read.
-              // Previously: clear() reset ALL ranges, letting the agent read 3 new
-              // sections of a heavily-read file post-wipe — causing 5× read loops.
+                _sessionFileReadCounts.set(p, count >= 2 ? count : 1);
+              // Preserve ranges for any file whose count was kept (≥2 reads) so
+              // scroll/overlap detection stays active post-wipe. Files read only
+              // once still get fresh ranges for legitimate single-section reads.
               for (const [p] of _sessionFileReadRanges) {
-                if ((_sessionFileReadCounts.get(p) || 0) < TARGETED_READ_HARD_CAP - 2)
+                if ((_sessionFileReadCounts.get(p) || 0) < 2)
                   _sessionFileReadRanges.delete(p);
               }
               _sessionLastEditFailed.clear();
