@@ -2019,6 +2019,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
+  const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file (unbounded + targeted combined)
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -2599,18 +2600,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // so the agent can't immediately repeat the same storm after context wipe.
               // SSH unblocks naturally when the agent sends a text-only response.
               _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
-              // Set counts to 1 (not 0) so unbounded re-reads stay blocked after wipe.
-              // The agent must use line_start/line_end — this matches the SYSTEM WARNING
-              // injected below. Without this, each wipe resets tracking and the same
-              // large file gets read from scratch 4× per cycle × N wipes (13× observed).
-              for (const [p] of _sessionFileReadCounts)
-                _sessionFileReadCounts.set(p, 1);
+              // Preserve read counts for heavily-read files after wipe so they can't
+              // restart flooding. Files read >= TARGETED_READ_HARD_CAP-2 (4+) keep their
+              // count — already near or at cap, allowing at most 2 more targeted reads.
+              // Files read <4× reset to 1 so unbounded re-reads stay blocked but targeted
+              // section reads are still allowed for navigation of genuinely large files.
+              // Previously: all counts reset to 1, allowing 5 more targeted reads per
+              // file per wipe — causing 8× read loops across 3 context wipes (observed).
+              for (const [p, count] of _sessionFileReadCounts)
+                _sessionFileReadCounts.set(
+                  p,
+                  count >= TARGETED_READ_HARD_CAP - 2 ? count : 1,
+                );
               _sessionFileReadRanges.clear(); // ranges gone after wipe — targeted reads restart fresh
               _sessionLastEditFailed.clear();
               _sessionReReadBlockShown.clear();
-              // Allow one re-grep per file after wipe, then re-block quickly
+              // Allow only 1 re-grep per file after wipe (abort-1 = 3), not 2 (warn-1 = 2).
+              // Previously: LOOP_WARN_GREP_FILE-1 let the agent grep 2 more times post-wipe,
+              // causing 6-total grep floods across a single wipe cycle (observed).
               for (const [p] of _sessionGrepFileCounts)
-                _sessionGrepFileCounts.set(p, LOOP_WARN_GREP_FILE - 1);
+                _sessionGrepFileCounts.set(p, LOOP_ABORT_GREP_FILE - 1);
 
               _logCompression(
                 `Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`,
@@ -3147,10 +3156,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const isTargetedReRead = prep.args?.line_start != null;
         const lastEditFailed = _sessionLastEditFailed.get(path) === true;
 
-        // Hard cap: block if total reads (unbounded + targeted) >= 6 — prevents 13× read loops.
-        // Between 1 and 5: unbounded re-reads are blocked immediately; targeted reads are allowed
-        // since the model may need to navigate a large file in multiple sections.
-        const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file
+        // Hard cap: block if total reads (unbounded + targeted) >= TARGETED_READ_HARD_CAP.
+        // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
+        // allowed since the model may need to navigate a large file in multiple sections.
 
         if (alreadyRead >= TARGETED_READ_HARD_CAP) {
           // Hard cap exceeded — block regardless of targeted/unbounded
