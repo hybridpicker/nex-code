@@ -1026,6 +1026,7 @@ let _lastCompressionMsg = ""; // deduplicate consecutive identical compression m
 let _compressionMsgCount = 0; // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
+let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1516,6 +1517,7 @@ function clearConversation() {
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
+  _postWipeToolBudget = -1;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2600,6 +2602,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
               apiMessages = _superNuclear;
               _superNuclearFires++;
+              _postWipeToolBudget = 5; // enforce: model gets at most 5 more tool calls
               _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
               // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
               // If the SSH storm triggered the context overflow, we must keep SSH blocked
@@ -2649,7 +2652,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     : "";
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
+                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Budget: 5 tool calls remaining (enforced — all further calls are blocked once exhausted).\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
@@ -3469,6 +3472,40 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             tool_call_id: prep.callId,
           };
           break; // one block per batch is enough to redirect the agent
+        }
+      }
+
+      // ─── Enforce post-wipe tool call budget ─────────────────────────────────
+      // After a context wipe the model is told it has 5 tool calls left (enforced).
+      // Count only calls that would actually execute; blocked ones don't spend budget.
+      // When exhausted: block all remaining calls and inject a stop instruction so
+      // the model produces a final text response instead of continuing to loop.
+      if (_postWipeToolBudget >= 0) {
+        const executableNow = prepared.filter((p) => p.canExecute).length;
+        if (executableNow > 0) {
+          _postWipeToolBudget -= executableNow;
+          if (_postWipeToolBudget < 0) {
+            debugLog(
+              `${C.red}  ✖ Post-wipe tool budget exhausted — blocking all tool calls${C.reset}`,
+            );
+            for (const prep of prepared) {
+              if (!prep.canExecute) continue;
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: "tool",
+                content:
+                  "BLOCKED: post-wipe tool budget exhausted. No further tool calls are allowed. Summarise what was accomplished and stop.",
+                tool_call_id: prep.callId,
+              };
+            }
+            const budgetMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Post-wipe tool budget exhausted. All tool calls are now blocked. Respond with a final summary of what was done and stop — do not attempt any more tool calls.",
+            };
+            conversationMessages.push(budgetMsg);
+            apiMessages.push(budgetMsg);
+          }
         }
       }
 
