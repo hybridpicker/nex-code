@@ -939,6 +939,42 @@ async function executeSingleTool(prep, quiet = false) {
   return { msg, summary };
 }
 
+// ─── Root-cause detection patterns ──────────────────────────────────────────
+// These match unambiguous error signatures in SSH/bash output so the state
+// machine can transition from "investigation" to "fix" immediately on first hit.
+const ROOT_CAUSE_PATTERNS = [
+  { re: /TypeError:\s*([^\n]{0,120})/i, label: "TypeError" },
+  { re: /SyntaxError:\s*([^\n]{0,120})/i, label: "SyntaxError" },
+  { re: /ReferenceError:\s*([^\n]{0,120})/i, label: "ReferenceError" },
+  { re: /Cannot find module\s*'([^']+)'/i, label: "Cannot find module" },
+  { re: /Error:\s*ENOENT[^\n]{0,120}/i, label: "ENOENT" },
+  { re: /Error:\s*EACCES[^\n]{0,120}/i, label: "EACCES" },
+  { re: /Error:\s*EADDRINUSE[^\n]{0,120}/i, label: "EADDRINUSE" },
+  { re: /ImportError:\s*([^\n]{0,120})/i, label: "ImportError" },
+  { re: /ModuleNotFoundError:\s*([^\n]{0,120})/i, label: "ModuleNotFoundError" },
+  { re: /NameError:\s*([^\n]{0,120})/i, label: "NameError" },
+  { re: /AttributeError:\s*([^\n]{0,120})/i, label: "AttributeError" },
+  { re: /KeyError:\s*([^\n]{0,120})/i, label: "KeyError" },
+  { re: /ValueError:\s*([^\n]{0,120})/i, label: "ValueError" },
+  { re: /panic:\s*([^\n]{0,120})/i, label: "Go panic" },
+  { re: /java\.lang\.\w+Exception[^\n]{0,80}/i, label: "Java exception" },
+];
+
+/**
+ * Scan a string for unambiguous error signatures that indicate a root cause.
+ * Returns a short label+detail string, or null if no pattern matched.
+ */
+function detectRootCause(text) {
+  for (const { re, label } of ROOT_CAUSE_PATTERNS) {
+    const m = text.match(re);
+    if (m) {
+      const detail = (m[1] || "").trim();
+      return detail ? `${label}: ${detail}` : label;
+    }
+  }
+  return null;
+}
+
 /**
  * Execute prepared tool calls with parallel batching.
  * Consecutive PARALLEL_SAFE tools run via Promise.all.
@@ -2075,6 +2111,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     );
   let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
+  // ─── Pre-loop root-cause scan: briefing / initial context ────────────────
+  // The user's message may already contain error output from a prior run or
+  // a jarvis briefing. Scan it once so fix-phase kicks in from iteration 0.
+  if (!_rootCauseDetected) {
+    const _allInitial = conversationMessages
+      .filter((m) => m.role === "user" || m.role === "tool")
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    const _initCause = detectRootCause(_allInitial);
+    if (_initCause) {
+      _rootCauseDetected = true;
+      _rootCauseSummary = _initCause.slice(0, 120);
+      debugLog(
+        `${C.yellow}  ⚡ Root cause in briefing: ${_rootCauseSummary} — fix phase active from start (read budget: 3)${C.reset}`,
+      );
+    }
+  }
+
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
   const toolCounts = new Map();
@@ -2953,6 +3007,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       conversationMessages.push(assistantMsg);
       apiMessages.push(assistantMsg);
 
+      // ─── Root-cause scan: model's own analysis text ──────────────────────
+      // When the model identifies a root cause in its reasoning (e.g. writes
+      // "TypeError: checkAllAppsWithRetry is not a function"), treat that as a
+      // confirmed detection and switch to fix phase immediately.
+      if (!_rootCauseDetected && content && tool_calls && tool_calls.length > 0) {
+        const _textCause = detectRootCause(content);
+        if (_textCause) {
+          _rootCauseDetected = true;
+          _rootCauseSummary = _textCause.slice(0, 120);
+          _readOnlyCallsSinceEdit = 0;
+          _investigationCapFired = false;
+          debugLog(
+            `${C.yellow}  ⚡ Root cause in model analysis: ${_rootCauseSummary} — fix phase (read budget: 3)${C.reset}`,
+          );
+          const rcTextMsg = {
+            role: "user",
+            content: `[SYSTEM] Root cause identified: ${_rootCauseSummary}. Read only the file that needs fixing, then edit it. Do not read other files.`,
+          };
+          conversationMessages.push(rcTextMsg);
+          apiMessages.push(rcTextMsg);
+        }
+      }
+
       // No tool calls → response complete (or nudge if empty after tools)
       if (!tool_calls || tool_calls.length === 0) {
         const hasText =
@@ -3611,6 +3688,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── Block repeated ssh_exec commands ───────────────────────────────────────
+      // If the same normalized SSH command has already run ≥3× this session, the
+      // output is already in context — running it again wastes tokens and locks the
+      // agent into an investigation loop. Block before execution so the model is
+      // forced to reason from existing results.
+      const SSH_EXEC_REPEAT_BLOCK = 3;
+      const _pendingSshCmdCounts = new Map();
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== "ssh_exec") continue;
+        const rawSshCmd = prep.args?.command || "";
+        const sshCmdKey = rawSshCmd
+          .replace(/\d+/g, "N")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 100);
+        const pendingSsh = _pendingSshCmdCounts.get(sshCmdKey) || 0;
+        const alreadyRanSsh =
+          _getLoopCount(bashCmdCounts, sshCmdKey) + pendingSsh;
+        if (alreadyRanSsh >= SSH_EXEC_REPEAT_BLOCK) {
+          debugLog(
+            `${C.yellow}  ⚠ Blocked ssh_exec: same command run ${alreadyRanSsh}× — result already in context${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: ssh_exec denied — this command has already run ${alreadyRanSsh} times and the output is in your context. Use existing results to proceed or try a different command.`,
+            tool_call_id: prep.callId,
+          };
+        }
+        if (prep.canExecute) {
+          _pendingSshCmdCounts.set(sshCmdKey, pendingSsh + 1);
+        }
+      }
+
       // ─── SSH block after storm warning ──────────────────────────────────────────
       // After SSH storm warning fires, block all further ssh_exec calls. The agent
       // MUST synthesize with what it already has. Unblocked when the agent produces
@@ -3937,14 +4049,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
           }
-          if (_readOnlyCallsSinceEdit >= INVESTIGATION_CAP && !_investigationCapFired) {
+          // In fix phase (root cause already found) use a tight cap of 3 reads;
+          // otherwise fall back to the standard INVESTIGATION_CAP.
+          const _effectiveCap = _rootCauseDetected ? 3 : INVESTIGATION_CAP;
+          if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
             _investigationCapFired = true;
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
             );
             const capMsg = {
               role: "user",
-              content: `[SYSTEM] You have read enough files. Now implement your fix using edit_file.`,
+              content: _rootCauseDetected
+                ? `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`
+                : `[SYSTEM] You have read enough files. Now implement your fix using edit_file.`,
             };
             conversationMessages.push(capMsg);
             apiMessages.push(capMsg);
@@ -4320,6 +4437,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       for (const toolMsg of toolMessages) {
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
+      }
+
+      // ─── Root-cause detection: investigation → fix phase transition ──────────
+      // Scan SSH output for unambiguous error signatures. On first match, inject
+      // a focus message and tighten the read-only budget so the model goes straight
+      // to the relevant file instead of continuing to investigate.
+      if (!_rootCauseDetected) {
+        for (let _rci = 0; _rci < toolMessages.length; _rci++) {
+          if (!prepared[_rci] || prepared[_rci].fnName !== "ssh_exec") continue;
+          const _tm = toolMessages[_rci];
+          if (!_tm || typeof _tm.content !== "string") continue;
+          const _cause = detectRootCause(_tm.content);
+          if (_cause) {
+            _rootCauseDetected = true;
+            _rootCauseSummary = _cause.slice(0, 120);
+            _readOnlyCallsSinceEdit = 0; // start fix-phase budget fresh
+            _investigationCapFired = false;
+            debugLog(
+              `${C.yellow}  ⚡ Root cause detected: ${_rootCauseSummary} — fix phase (read budget: 3)${C.reset}`,
+            );
+            const rcMsg = {
+              role: "user",
+              content: `[SYSTEM] Root cause identified: ${_rootCauseSummary}. Read only the file that needs fixing, then edit it. Do not read other files.`,
+            };
+            conversationMessages.push(rcMsg);
+            apiMessages.push(rcMsg);
+            break;
+          }
+        }
       }
 
       // ─── Post-tool auto-compress ─────────────────────────────────────────────
