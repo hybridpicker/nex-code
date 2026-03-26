@@ -340,6 +340,7 @@ class OllamaProvider extends BaseProvider {
           options: {
             temperature: options.temperature ?? this.temperature,
             num_predict: maxTokens,
+            repeat_penalty: options.repeat_penalty ?? 1.05,
           },
         },
         {
@@ -387,6 +388,7 @@ class OllamaProvider extends BaseProvider {
           options: {
             temperature: options.temperature ?? this.temperature,
             num_predict: maxTokens,
+            repeat_penalty: options.repeat_penalty ?? 1.05,
           },
         },
         {

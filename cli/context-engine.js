@@ -22,6 +22,22 @@ const TOKEN_RATIOS = {
   local: 4.0,
 };
 
+// Per-model-family token ratios (more accurate than provider-level)
+// These override the provider ratio when the active model matches a prefix
+const MODEL_TOKEN_RATIOS = {
+  devstral: 3.8,
+  mistral: 3.8,
+  ministral: 3.8,
+  codestral: 3.8,
+  qwen: 3.5,
+  deepseek: 3.6,
+  kimi: 3.7,
+  gemma: 4.0,
+  llama: 3.8,
+  cogito: 3.6,
+  phi: 4.0,
+};
+
 // Token cache for strings (WeakMap prevents memory leaks)
 const tokenCache = new WeakMap();
 const stringTokenCache = new Map();
@@ -43,6 +59,14 @@ function getTokenRatio() {
   try {
     const model = getActiveModel();
     const provider = model?.provider || "ollama";
+    // Check model-family ratio first (more accurate than provider-level)
+    const modelId = (model?.id || "").toLowerCase();
+    for (const [prefix, ratio] of Object.entries(MODEL_TOKEN_RATIOS)) {
+      if (modelId.startsWith(prefix)) {
+        _cachedTokenRatio = ratio;
+        return _cachedTokenRatio;
+      }
+    }
     _cachedTokenRatio = TOKEN_RATIOS[provider] || 4.0;
     return _cachedTokenRatio;
   } catch {
@@ -250,6 +274,32 @@ const COMPRESSION_THRESHOLD =
   parseFloat(process.env.NEX_COMPRESSION_THRESHOLD) || 0.75;
 const SAFETY_MARGIN = parseFloat(process.env.NEX_SAFETY_MARGIN) || 0.1;
 const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
+
+// Per-tier compression thresholds: smaller models need earlier compression
+// because they are more sensitive to noise in context.
+const TIER_COMPRESSION_THRESHOLDS = {
+  essential: 0.60,
+  standard: 0.70,
+  full: COMPRESSION_THRESHOLD, // 0.75 default
+};
+
+/**
+ * Get the effective compression threshold for the active model tier.
+ * Smaller models compress earlier to reduce noise sensitivity.
+ * ENV override (NEX_COMPRESSION_THRESHOLD) takes priority.
+ * @returns {number}
+ */
+function getEffectiveCompressionThreshold() {
+  // Explicit ENV override always wins
+  if (process.env.NEX_COMPRESSION_THRESHOLD) return COMPRESSION_THRESHOLD;
+  try {
+    const { getActiveTier } = require("./tool-tiers");
+    const tier = getActiveTier();
+    return TIER_COMPRESSION_THRESHOLDS[tier] ?? COMPRESSION_THRESHOLD;
+  } catch {
+    return COMPRESSION_THRESHOLD;
+  }
+}
 const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
 const TRUNCATE_ASSISTANT = 1000; // Truncate old assistant content to N chars (was 500 — too aggressive, lost reasoning)
 
@@ -540,7 +590,7 @@ async function fitToContext(messages, tools, options = {}) {
     return _fitToContextCache.result;
   }
 
-  const threshold = options.threshold ?? COMPRESSION_THRESHOLD;
+  const threshold = options.threshold ?? getEffectiveCompressionThreshold();
   const safetyMargin = options.safetyMargin ?? SAFETY_MARGIN;
   const keepRecent = options.keepRecent ?? KEEP_RECENT;
 
@@ -861,7 +911,9 @@ module.exports = {
   truncateFileContent,
   invalidateTokenRatioCache,
   invalidateFitToContextCache,
+  getEffectiveCompressionThreshold,
   COMPRESSION_THRESHOLD,
+  TIER_COMPRESSION_THRESHOLDS,
   SAFETY_MARGIN,
   KEEP_RECENT,
 };

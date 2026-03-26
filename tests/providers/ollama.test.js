@@ -442,4 +442,48 @@ describe("providers/ollama.js", () => {
       expect(result).toEqual({ content: "", tool_calls: [] });
     });
   });
+
+  // ─── repeat_penalty ──────────────────────────────────────────
+  describe("repeat_penalty", () => {
+    it("sends repeat_penalty=1.05 in chat() by default", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { message: { content: "Hi" } },
+      });
+
+      await provider.chat([{ role: "user", content: "Hi" }], []);
+      const body = axios.post.mock.calls[0][1];
+      expect(body.options.repeat_penalty).toBe(1.05);
+    });
+
+    it("allows repeat_penalty override in chat()", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { message: { content: "Hi" } },
+      });
+
+      await provider.chat([], [], { repeat_penalty: 1.2 });
+      const body = axios.post.mock.calls[0][1];
+      expect(body.options.repeat_penalty).toBe(1.2);
+    });
+
+    it("sends repeat_penalty=1.05 in stream() by default", async () => {
+      const mockStream = new (require("events").EventEmitter)();
+      axios.post.mockResolvedValueOnce({ data: mockStream });
+
+      const promise = provider.stream(
+        [{ role: "user", content: "Hi" }],
+        [],
+        { onToken: () => {} },
+      );
+
+      // Emit done to resolve the stream
+      process.nextTick(() => {
+        mockStream.emit("data", Buffer.from(JSON.stringify({ done: true, message: { content: "" } }) + "\n"));
+        mockStream.emit("end");
+      });
+
+      await promise;
+      const body = axios.post.mock.calls[0][1];
+      expect(body.options.repeat_penalty).toBe(1.05);
+    });
+  });
 });

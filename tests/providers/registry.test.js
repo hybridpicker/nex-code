@@ -332,4 +332,17 @@ describe("providers/registry.js", () => {
       expect(registry.getProvider("custom").name).toBe("custom");
     });
   });
+
+  // ─── OLLAMA_FALLBACK_MODELS ───────────────────────────────────
+  describe("OLLAMA_FALLBACK_MODELS", () => {
+    it("is exported", () => {
+      expect(registry.OLLAMA_FALLBACK_MODELS).toBeDefined();
+      expect(Array.isArray(registry.OLLAMA_FALLBACK_MODELS)).toBe(true);
+    });
+
+    it("is empty when env var not set", () => {
+      // No OLLAMA_FALLBACK_CHAIN env var in test env
+      expect(registry.OLLAMA_FALLBACK_MODELS).toEqual([]);
+    });
+  });
 });

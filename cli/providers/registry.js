@@ -38,6 +38,12 @@ const MODEL_EQUIVALENTS = {
   },
 };
 
+// Intra-provider model fallback for Ollama (tried before jumping to different provider)
+const OLLAMA_FALLBACK_MODELS = (process.env.OLLAMA_FALLBACK_CHAIN || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
 // Reverse lookup: model → tier
 const _modelToTier = {};
 for (const [tier, mapping] of Object.entries(MODEL_EQUIVALENTS)) {
@@ -407,8 +413,26 @@ async function _tryProviders(callFn) {
       return await callFn(provider, provName, model);
     } catch (err) {
       lastError = err;
-      if (isRetryableError(err) && idx < providersToTry.length - 1) continue;
-      throw err;
+      if (!isRetryableError(err) || idx >= providersToTry.length - 1) throw err;
+
+      // Intra-provider fallback: try alternative Ollama models before jumping provider
+      if (provName === "ollama" && OLLAMA_FALLBACK_MODELS.length > 0) {
+        const tried = isFallback
+          ? resolveModelForProvider(activeModelId, provName)
+          : activeModelId;
+        for (const altModel of OLLAMA_FALLBACK_MODELS) {
+          if (altModel === tried) continue;
+          try {
+            process.stderr.write(`  [ollama fallback: ${altModel}]\n`);
+            return await callFn(provider, provName, altModel);
+          } catch (altErr) {
+            lastError = altErr;
+            if (!isRetryableError(altErr)) throw altErr;
+          }
+        }
+      }
+
+      continue;
     }
   }
 
@@ -539,5 +563,6 @@ module.exports = {
   getFallbackChain,
   resolveModelForProvider,
   MODEL_EQUIVALENTS,
+  OLLAMA_FALLBACK_MODELS,
   _reset,
 };

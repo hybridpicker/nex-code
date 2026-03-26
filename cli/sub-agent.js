@@ -135,6 +135,22 @@ function getExcludedTools(depth) {
 // Tools that need file locking
 const WRITE_TOOLS = new Set(["write_file", "edit_file", "patch_file"]);
 
+// Sub-agent type definitions — control tool access and system prompt suffix
+const SUB_AGENT_TYPES = {
+  explore: {
+    allowedTools: new Set(['bash', 'read_file', 'list_directory', 'glob', 'grep', 'search_files', 'web_fetch', 'web_search']),
+    systemSuffix: 'You are an exploration agent. Read and search code only. Do NOT modify any files.',
+  },
+  review: {
+    allowedTools: new Set(['read_file', 'list_directory', 'glob', 'grep', 'search_files']),
+    systemSuffix: 'You are a code review agent. Read code and report findings. Do NOT make changes.',
+  },
+  implement: {
+    allowedTools: null, // all tools
+    systemSuffix: '',
+  },
+};
+
 // ─── Task Classification + Model Routing ──────────────────────
 
 const FAST_PATTERNS =
@@ -285,7 +301,11 @@ ERROR RECOVERY:
 - If bash fails: read the error, fix the root cause, then retry.
 - After 2 failed attempts at the same operation, summarize the issue and stop.`;
 
-  const messages = [{ role: "system", content: systemPrompt }];
+  // Append type-specific system suffix if agent has a known type
+  const typeDef = agentDef.type && SUB_AGENT_TYPES[agentDef.type];
+  const typeSuffix = typeDef && typeDef.systemSuffix ? `\n\n${typeDef.systemSuffix}` : '';
+
+  const messages = [{ role: "system", content: systemPrompt + typeSuffix }];
   messages.push({ role: "user", content: agentDef.task });
 
   // Resolve model routing
@@ -299,10 +319,15 @@ ERROR RECOVERY:
 
   // Filter tools: exclude interactive/meta tools (depth-aware), apply tier override
   const excludedTools = getExcludedTools(_depth);
-  const availableTools = filterToolsForModel(
+  let availableTools = filterToolsForModel(
     TOOL_DEFINITIONS.filter((t) => !excludedTools.has(t.function.name)),
     agentTier,
   );
+
+  // Apply type-based tool filtering if agent has a known type with allowedTools
+  if (typeDef && typeDef.allowedTools) {
+    availableTools = availableTools.filter((t) => typeDef.allowedTools.has(t.function.name));
+  }
 
   // Log sub-agent model selection only when running standalone (not inside executeSpawnAgents)
   // When running via spawn_agents, the model is already shown in the progress bar label.
@@ -675,4 +700,5 @@ module.exports = {
   callWithRetry,
   getExcludedTools,
   LOCK_TIMEOUT_MS,
+  SUB_AGENT_TYPES,
 };
