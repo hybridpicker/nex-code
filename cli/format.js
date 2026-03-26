@@ -41,49 +41,49 @@ const TOOL_DOT_COLOR = {
   deploy: T.tool_sysadmin,
 };
 
-// Human-readable labels for tool names
+// Human-readable labels for tool names (Claude Code style: short, capitalized)
 const TOOL_LABELS = {
-  read_file: "Read file",
+  read_file: "Read",
   write_file: "Write",
-  edit_file: "Update",
-  patch_file: "Update",
-  list_directory: "List directory",
-  bash: "Run command",
-  grep: "Search code",
-  search_files: "Search files",
-  glob: "Find files",
-  web_fetch: "Fetch URL",
-  web_search: "Web search",
-  git_status: "Git status",
-  git_diff: "Git diff",
-  git_log: "Git log",
-  git_commit: "Git commit",
-  git_push: "Git push",
-  git_pull: "Git pull",
-  git_branch: "Git branch",
-  git_stash: "Git stash",
-  task_list: "Task list",
-  spawn_agents: "Spawn agents",
-  ask_user: "Ask user",
-  switch_model: "Switch model",
-  gh_run_list: "GH Actions",
-  gh_run_view: "GH Actions",
-  gh_workflow_trigger: "GH trigger",
-  browser_open: "Browser open",
-  browser_screenshot: "Screenshot",
-  browser_click: "Browser click",
-  browser_fill: "Browser fill",
-  ssh_exec: "SSH exec",
-  ssh_upload: "SSH upload",
-  ssh_download: "SSH download",
-  service_manage: "Service",
-  service_logs: "Service logs",
-  container_list: "Containers",
-  container_logs: "Container logs",
-  container_exec: "Container exec",
-  brain_write: "Brain write",
-  deploy: "Deploy",
-  frontend_recon: "Frontend recon",
+  edit_file: "Edit",
+  patch_file: "Edit",
+  list_directory: "List",
+  bash: "Bash",
+  grep: "Grep",
+  search_files: "Search",
+  glob: "Glob",
+  web_fetch: "WebFetch",
+  web_search: "WebSearch",
+  git_status: "Bash",
+  git_diff: "Bash",
+  git_log: "Bash",
+  git_commit: "Bash",
+  git_push: "Bash",
+  git_pull: "Bash",
+  git_branch: "Bash",
+  git_stash: "Bash",
+  task_list: "TaskList",
+  spawn_agents: "Agent",
+  ask_user: "AskUser",
+  switch_model: "SwitchModel",
+  gh_run_list: "Bash",
+  gh_run_view: "Bash",
+  gh_workflow_trigger: "Bash",
+  browser_open: "Browser",
+  browser_screenshot: "Browser",
+  browser_click: "Browser",
+  browser_fill: "Browser",
+  ssh_exec: "Bash",
+  ssh_upload: "Upload",
+  ssh_download: "Download",
+  service_manage: "Bash",
+  service_logs: "Bash",
+  container_list: "Bash",
+  container_logs: "Bash",
+  container_exec: "Bash",
+  brain_write: "Write",
+  deploy: "Bash",
+  frontend_recon: "Search",
 };
 
 // Section descriptions used in step headers (grouped action phrases)
@@ -136,10 +136,10 @@ const STEP_DESCRIPTIONS = {
  * Falls back to "Step N" if no tools or no mapping found.
  */
 function _dot(fnName, isError = false, frame = null) {
-  if (isError) return `${T.error}●${T.reset}`;
+  if (isError) return `${T.error}⏺${T.reset}`;
   const col = TOOL_DOT_COLOR[fnName] || T.tool_default;
-  if (frame === "blink") return `${col}\x1b[5m●\x1b[25m${T.reset}`;
-  const char = frame !== null ? frame : "●";
+  if (frame === "blink") return `${col}\x1b[5m⏺\x1b[25m${T.reset}`;
+  const char = frame !== null ? frame : "⏺";
   return `${col}${char}${T.reset}`;
 }
 
@@ -155,15 +155,16 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
     const a = t.args || {};
     const label = TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, " ");
     let arg = "";
-    if (a.path) arg = _shortPath(a.path);
-    else if (a.command) arg = String(a.command).substring(0, 60);
-    else if (a.query) arg = String(a.query).substring(0, 50);
-    else if (a.pattern) arg = String(a.pattern).substring(0, 50);
-    const argStr = arg ? `${C.dim}(${arg})${C.reset}` : "";
-    return `${_dot(t.fnName, isError, frame)} ${C.bold}${label}${C.reset} ${argStr}`;
+    if (a.path) arg = a.path;
+    else if (a.command) arg = String(a.command).substring(0, 80);
+    else if (a.query) arg = String(a.query).substring(0, 60);
+    else if (a.pattern) arg = String(a.pattern).substring(0, 60);
+    else if (a.url) arg = String(a.url).substring(0, 60);
+    const argStr = arg ? `(${C.dim}${arg}${C.reset})` : "";
+    return `${_dot(t.fnName, isError, frame)} ${C.bold}${label}${C.reset}${argStr}`;
   }
 
-  // Multi-tool: use first tool's color
+  // Multi-tool: use first tool's color, list unique labels
   const firstFn = tools[0].fnName;
   const labels = [
     ...new Set(
@@ -171,8 +172,8 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
     ),
   ];
   const title =
-    labels.length <= 3 ? labels.join(" · ") : `${tools.length} actions`;
-  return `${_dot(firstFn, isError, frame)} ${title}`;
+    labels.length <= 3 ? labels.join(", ") : `${tools.length} tools`;
+  return `${_dot(firstFn, isError, frame)} ${C.bold}${title}${C.reset}`;
 }
 
 function formatToolCall(name, args) {
@@ -183,7 +184,7 @@ function formatToolCall(name, args) {
     case "patch_file":
     case "read_file":
     case "list_directory":
-      primary = _shortPath(args.path);
+      primary = args.path || "";
       break;
     case "bash":
     case "ssh_exec":
@@ -208,7 +209,7 @@ function formatToolCall(name, args) {
       primary = JSON.stringify(args).substring(0, 80);
   }
   const label = TOOL_LABELS[name] || name.replace(/_/g, " ");
-  const argStr = primary ? ` ${C.dim}(${primary})${C.reset}` : "";
+  const argStr = primary ? `(${C.dim}${primary}${C.reset})` : "";
   return `${_dot(name)} ${C.bold}${label}${C.reset}${argStr}`;
 }
 
@@ -216,7 +217,7 @@ function formatResult(text, maxLines = 8) {
   const lines = text.split("\n");
   const shown = lines.slice(0, maxLines);
   const more = lines.length - maxLines;
-  const prefix0 = `${T.muted}  └  ${T.reset}`;
+  const prefix0 = `${T.muted}  ⎿  ${T.reset}`;
   const prefixN = `     `;
   let out = shown
     .map((l, i) => `${i === 0 ? prefix0 : prefixN}${T.success}${l}${T.reset}`)
@@ -318,7 +319,7 @@ function getToolSpinnerText(name, args) {
 
 /**
  * Compact 1-line summary for a tool execution result.
- * Displayed below the tool-call header as:  └ Human-readable summary
+ * Displayed below the tool-call header as:  ⎿  Human-readable summary
  */
 function formatToolSummary(name, args, result, isError) {
   const r = String(result || "");
@@ -333,7 +334,7 @@ function formatToolSummary(name, args, result, isError) {
         .replace(/\s*\(hard cap:.*?\)/, "")
         .trim()
         .substring(0, 70);
-      return `  ${T.muted}└ blocked: ${reason}${T.reset}`;
+      return `  ${T.muted}⎿  blocked: ${reason}${T.reset}`;
     }
     const errMsg = firstLine
       .replace(/^ERROR:\s*/i, "")
@@ -342,7 +343,7 @@ function formatToolSummary(name, args, result, isError) {
     const hintStr = hintMatch
       ? `\n     ${T.muted}${hintMatch[1].substring(0, 100)}${T.reset}`
       : "";
-    return `  ${T.error}└ ${errMsg}${T.reset}${hintStr}`;
+    return `  ${T.error}⎿  ${errMsg}${T.reset}${hintStr}`;
   }
 
   let summary;
@@ -730,7 +731,7 @@ function formatToolSummary(name, args, result, isError) {
     }
   }
 
-  return `  ${T.muted}└ ${summary}${T.reset}`;
+  return `  ${T.muted}⎿  ${summary}${T.reset}`;
 }
 
 function formatMilestone(
