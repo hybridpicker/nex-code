@@ -1125,6 +1125,7 @@ let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 let _sshStormCount = 0; // how many times the SSH storm warning has fired this session
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
 let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
+let _postWipeEverFired = false; // true once a context wipe has occurred this session
 let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
@@ -1615,6 +1616,7 @@ function _resetSessionTracking() {
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
   _postWipeToolBudget = -1;
+  _postWipeEverFired = false;
   _filesModifiedAtWipe = 0;
   _postWipeBudgetExtended = false;
   _readOnlyCallsSinceEdit = 0;
@@ -2770,6 +2772,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               apiMessages = _superNuclear;
               _superNuclearFires++;
               _postWipeToolBudget = 12; // enforce: model gets at most 12 more tool calls (extendable to 17 on progress)
+              _postWipeEverFired = true; // track that a wipe occurred (distinguishes exhausted from initial -1)
               _filesModifiedAtWipe = filesModified.size; // track progress baseline for budget extension
               _postWipeBudgetExtended = false; // one-time extension flag
               _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
@@ -3131,7 +3134,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           i < 3 &&
           _toolAvoidancePattern.test((content || "").slice(0, 600))
         ) {
-          if (_postWipeToolBudget === 0 || _sshBlockedAfterStorm) {
+          // Determine whether the model's claim of no tools is correct or hallucinatory.
+          // Budget exhausted: wipe fired AND budget is now ≤ 0.
+          const _budgetExhausted =
+            _postWipeEverFired && _postWipeToolBudget <= 0;
+          if (_budgetExhausted || _sshBlockedAfterStorm) {
             // Model is correct — tools/SSH are constrained. Tell it to ask user.
             debugLog(
               `${C.yellow}  ⚠ Tool avoidance (constrained context) — telling model to ask user${C.reset}`,
@@ -3144,7 +3151,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             apiMessages.push(askNudge);
             conversationMessages.push(askNudge);
             continue;
-          } else if (_postWipeToolBudget < 0) {
+          } else {
             // Model is hallucinating tool unavailability — nudge it to use tools.
             debugLog(
               `${C.yellow}  ⚠ Tool avoidance detected — nudging model to use tools${C.reset}`,
