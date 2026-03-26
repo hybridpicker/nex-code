@@ -30,10 +30,12 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("nex-code.switchModel", async () => {
       const models = [
-        "qwen3-coder:480b",
-        "kimi-k2:1t",
         "devstral-2:123b",
         "devstral-small-2:24b",
+        "kimi-k2.5",
+        "kimi-k2:1t",
+        "qwen3-coder:480b",
+        "minimax-m2.7:cloud",
         "claude-sonnet-4-6",
         "gpt-4o",
       ];

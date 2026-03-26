@@ -6,3 +6,5 @@ tsconfig.json
 esbuild.config.mjs
 **/*.map
 **/*.ts
+auto-build.log
+*.vsix
