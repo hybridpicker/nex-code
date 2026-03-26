@@ -480,8 +480,13 @@ describe("tools.js", () => {
     });
 
     it("uses CWD when no path specified", async () => {
-      const result = await executeTool("grep", { pattern: "nex-code" });
-      // Should find it in package.json
+      // Create a searchable file in tmpDir so we don't depend on real CWD
+      const fp = path.join(tmpDir, "searchable.txt");
+      fs.writeFileSync(fp, "hello nex-code world\n");
+      const result = await executeTool("grep", {
+        pattern: "nex-code",
+        path: tmpDir,
+      });
       expect(result).toContain("nex-code");
     });
   });

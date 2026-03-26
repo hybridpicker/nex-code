@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-3074-blue.svg" alt="Tests: 3074">
+  <img src="https://img.shields.io/badge/tests-3453-blue.svg" alt="Tests: 3453">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -107,7 +107,7 @@ npm update -g nex-code
 
 **Extensible.** Plugin API (`registerTool` + lifecycle hooks), skill system (install from any git URL), MCP server support.
 
-**Tested.** 3074 tests, 85% coverage, CI on every push.
+**Tested.** 3453 tests, 79% coverage, CI on every push.
 
 ---
 
@@ -1554,9 +1554,9 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-57 test suites, 2059 tests, 84% statement / 77% branch coverage.
+83 test suites, 3453 tests, 79% statement / 71% branch coverage.
 
-CI runs on GitHub Actions (Node 18/20/22).
+CI runs on GitHub Actions (Node 20 LTS).
 
 ---
 
