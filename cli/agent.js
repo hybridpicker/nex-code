@@ -1131,6 +1131,7 @@ let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, S
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
+let _sshBlockedPreCallNudgeSent = false; // true after the pre-call SSH-blocked nudge has fired once
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1620,6 +1621,7 @@ function _resetSessionTracking() {
   _investigationCapFired = false;
   _rootCauseDetected = false;
   _rootCauseSummary = "";
+  _sshBlockedPreCallNudgeSent = false;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2200,6 +2202,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
           }
         }
+      }
+
+      // ─── Pre-call SSH-blocked nudge ──────────────────────────────────────────
+      // When SSH is blocked after a storm and no root cause has been found,
+      // inject a system message BEFORE the LLM generates its response so it
+      // knows upfront that SSH is unavailable and should ask the user for
+      // specific information rather than falling back to reading local files.
+      // Fire only once per storm block to avoid flooding the context.
+      if (
+        _sshBlockedAfterStorm &&
+        !_rootCauseDetected &&
+        !_sshBlockedPreCallNudgeSent
+      ) {
+        _sshBlockedPreCallNudgeSent = true;
+        const sshBlockedNudge = {
+          role: "user",
+          content:
+            "[SYSTEM] SSH access is temporarily unavailable. Do not read local files to investigate a remote server issue. Instead, state clearly what specific information you need from the server and ask the user to provide it (e.g., log output, process list, error messages).",
+        };
+        apiMessages.push(sshBlockedNudge);
+        conversationMessages.push(sshBlockedNudge);
+        debugLog(
+          `${C.yellow}  ⚠ Pre-call SSH-blocked nudge injected — model told to ask user${C.reset}`,
+        );
+      }
+      // Reset the nudge flag when SSH becomes available again so future storms
+      // can fire the nudge again.
+      if (!_sshBlockedAfterStorm) {
+        _sshBlockedPreCallNudgeSent = false;
       }
 
       // Step indicator — deferred, only shown for tool iterations (matches résumé count)
@@ -3080,31 +3111,48 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
           continue; // retry — don't count as a new step
         }
-        // Tool avoidance nudge: if the model's first response has text but no tool
-        // calls, and it mentions "keine Tools", "can't use tools", "Tool-Budget", or
-        // similar — it's hallucinating that it can't use tools. Nudge it to actually
-        // use ssh_exec. Cap at 2 nudges to prevent infinite loop.
+        // Tool avoidance nudge: if the model says it cannot use tools but it
+        // actually can, nudge it to use them. Two cases:
+        //   A) Post-wipe budget exhausted — model is correct that tools are
+        //      blocked; tell it to summarize findings and ask the user for any
+        //      information it still needs (don't push SSH which is also blocked).
+        //   B) No active budget constraint — model is hallucinating; nudge it
+        //      to use tools normally.
+        // Cap at 3 nudges (i < 3) to prevent infinite loops.
+        const _toolAvoidancePattern =
+          /keine.*Tool|can.?t use.*tool|Tool.?Budget|nicht.*zugreifen|cannot.*access|no.*tool.*access|keine.*Werkzeug|da ich keine.*kann/i;
         if (
           hasText &&
-          totalSteps <= 1 &&
           i < 3 &&
-          !_sshBlockedAfterStorm &&
-          _postWipeToolBudget < 0 && // no active budget constraint
-          /keine.*Tool|can.?t use.*tool|Tool.?Budget|nicht.*zugreifen|cannot.*access/i.test(
-            (content || "").slice(0, 500),
-          )
+          _toolAvoidancePattern.test((content || "").slice(0, 600))
         ) {
-          debugLog(
-            `${C.yellow}  ⚠ Tool avoidance detected — nudging model to use tools${C.reset}`,
-          );
-          const toolNudge = {
-            role: "user",
-            content:
-              "[SYSTEM] You have full tool access. Use ssh_exec to investigate the server now. Do not say you cannot use tools — you can.",
-          };
-          apiMessages.push(toolNudge);
-          conversationMessages.push(toolNudge);
-          continue; // retry without counting as a step
+          if (_postWipeToolBudget === 0 || _sshBlockedAfterStorm) {
+            // Model is correct — tools/SSH are constrained. Tell it to ask user.
+            debugLog(
+              `${C.yellow}  ⚠ Tool avoidance (constrained context) — telling model to ask user${C.reset}`,
+            );
+            const askNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] Correct — remote access is currently limited. Summarize what you have found so far and tell the user exactly what specific information (logs, process list, error output) you need from the server to continue.",
+            };
+            apiMessages.push(askNudge);
+            conversationMessages.push(askNudge);
+            continue;
+          } else if (_postWipeToolBudget < 0) {
+            // Model is hallucinating tool unavailability — nudge it to use tools.
+            debugLog(
+              `${C.yellow}  ⚠ Tool avoidance detected — nudging model to use tools${C.reset}`,
+            );
+            const toolNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] You have full tool access. Use your tools to investigate and implement the fix directly — do not say you cannot use tools.",
+            };
+            apiMessages.push(toolNudge);
+            conversationMessages.push(toolNudge);
+            continue; // retry without counting as a step
+          }
         }
         // In plan mode: if the LLM presented a plan without reading ANY files first,
         // reject it and force investigation. A plan based on zero tool calls is pure
@@ -3760,7 +3808,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
-              content: `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Synthesize findings now.`,
+              content: _rootCauseDetected
+                ? `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Root cause is known (${_rootCauseSummary}). Edit the file now.`
+                : `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). No root cause found yet. Do not read local files — state what is missing and ask the user.`,
               tool_call_id: prep.callId,
             };
           }
@@ -4152,9 +4202,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.yellow}  ⚠ SSH storm warning (#${_sshStormCount}): ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`,
             );
+            const _stormMsg = _rootCauseDetected
+              ? `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Root cause identified (${_rootCauseSummary}). Read the file that needs fixing, then edit it.`
+              : `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls — no root cause found yet. Do NOT read local files. Instead: state what specific crash info is still missing and ask the user to provide it (e.g. a stack trace or specific log).`;
             const sshStormWarning = {
               role: "user",
-              content: `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Synthesize findings now — no more SSH.`,
+              content: _stormMsg,
             };
             conversationMessages.push(sshStormWarning);
             apiMessages.push(sshStormWarning);
