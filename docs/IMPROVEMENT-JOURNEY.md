@@ -429,3 +429,63 @@ Starting with v0.4.0, nex-code graduates from a single-agent loop to a
 - Auto-orchestrate for 3+ goal prompts (`--auto-orchestrate` or env var)
 - Debug mode hides all internal noise (`--debug` or `NEX_DEBUG=true`)
 - Clean terminal output: no duplicate lists, no empty scope fields
+
+---
+
+### 2026-03-26 — Server Investigation State Machine
+
+**Problem:** On Jarvis server debug tasks the model investigated too broadly —
+reading 5+ unrelated files instead of fixing after root cause was identified.
+SSH storm (6 calls, no error found) caused the model to fall back to local file
+reads instead of asking the user for missing information. False-positive
+`{"valid":true}` stop signal fired on `tail logs/api.log` when app logs
+happened to contain that JSON fragment.
+
+#### Root-cause detection (investigation → fix phase)
+
+`detectRootCause(text)` scans SSH output (and initial briefing context) for 16
+error patterns: `TypeError`, `SyntaxError`, `ReferenceError`, `ENOENT`,
+`EACCES`, `EADDRINUSE`, `Cannot find module`, Python exceptions, Go panic, Java
+exceptions. On first match:
+
+- Sets `_rootCauseDetected = true`, stores `_rootCauseSummary`
+- Resets `_readOnlyCallsSinceEdit` (fix-phase budget starts fresh)
+- Injects: `[SYSTEM] Root cause identified: <summary>. Read only the file that needs fixing, then edit it.`
+- Investigation cap drops from 12 → **3 reads** in fix phase
+
+Also scans the model's own analysis text — if the model writes
+`"TypeError: foo is not a function"` in its response, that counts as a
+confirmed detection.
+
+#### SSH storm differentiation
+
+When SSH storm fires, the message is now context-aware:
+
+- **Root cause known:** `Root cause is known (X). Edit the file now.`
+- **No root cause yet:** `Do NOT read local files. State what specific crash info is still missing and ask the user.`
+
+Previously the model received `"Synthesize findings now"` in both cases and
+interpreted it as permission to switch to local file archaeology.
+
+#### False-positive stop-signal fix
+
+The `{"valid":true}` health-check stop trigger now only fires when the SSH
+command itself matches a health/status/check/ping/validate pattern. Prevents
+false stops when `tail logs/api.log` returns app logs that happen to contain
+that JSON fragment.
+
+#### Jarvis-local guard: German crash vocabulary
+
+Extended `_isJarvisDebugging` regex to cover German crash terms (`gecrasht`,
+`abgestürzt`) and Swarm-agent crash patterns. Previously `"Swarm: 2 Agents
+gecrasht"` did not activate the guard.
+
+#### Output: compact warnings
+
+- **BLOCKED messages in terminal** — truncated to one short line
+  (`└ blocked: read_file("file.js") denied`); full guidance text still sent
+  to the model
+- **Session score issues** — for scores ≥ 7, issues shown inline as a dim
+  compact summary instead of one `⚠` line per issue
+
+**Outcome:** Session score on Jarvis server investigation task: 3.5 → **9.5/10**.
