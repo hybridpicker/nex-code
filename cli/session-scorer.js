@@ -688,10 +688,14 @@ function scoreMessages(messages) {
   // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
   // A BLOCKED message means the agent attempted something it shouldn't have.
   // Exclude blocks already penalized individually (e.g. sed -n) to avoid double-counting.
+  // Exclude SSH-storm blocks (already penalized by check #9) and deadlock-induced
+  // local blocks (model had no viable alternative when SSH was paused).
   const blockedResults = toolResults.filter(
     (tr) =>
       tr.content.startsWith("BLOCKED:") &&
-      !tr.content.includes("BLOCKED: sed -n"),
+      !tr.content.includes("BLOCKED: sed -n") &&
+      !tr.content.includes("SSH paused") &&
+      !tr.content.includes("SSH temporarily paused"),
   );
   if (blockedResults.length > 0) {
     const penalty = Math.min(blockedResults.length * 0.5, 1.5);

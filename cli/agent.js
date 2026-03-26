@@ -3851,7 +3851,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
       // locally. Fires once per session. Must be pre-execution (before executeBatch)
       // — post-execution warnings can't prevent the tool from running.
-      if (_isJarvisDebugging && _jarvisLocalWarnFired < 3) {
+      // SKIP when SSH is blocked after storm — local tools are the only fallback.
+      if (_isJarvisDebugging && _jarvisLocalWarnFired < 3 && !_sshBlockedAfterStorm) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
           if (!["bash", "read_file", "find_files"].includes(prep.fnName))
