@@ -54,42 +54,37 @@ function clearAllLocks() {
   lockedFiles.clear();
 }
 
-// ─── Retry Logic ─────────────────────────────────────────────
+// ─── Error Classification & Retry Logic ─────────────────────────────────────
+
+/**
+ * Classify an error into a category for smarter recovery decisions.
+ * @param {Error} err
+ * @returns {'rate_limit'|'server'|'network'|'auth'|'context_overflow'|'unknown'}
+ */
+function classifyError(err) {
+  const msg = (err.message || "").toLowerCase();
+  const code = err.code || "";
+
+  if (msg.includes("429") || msg.includes("rate limit")) return "rate_limit";
+  if (msg.includes("401") || msg.includes("403") || msg.includes("unauthorized") || msg.includes("forbidden")) return "auth";
+  if (msg.includes("context") && (msg.includes("too long") || msg.includes("overflow") || msg.includes("maximum"))) return "context_overflow";
+  if (msg.includes("400") && (msg.includes("content") || msg.includes("length"))) return "context_overflow";
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504")) return "server";
+  if (
+    code === "ECONNRESET" || code === "ECONNABORTED" || code === "ETIMEDOUT" ||
+    code === "ECONNREFUSED" || code === "ENOTFOUND" ||
+    msg.includes("socket disconnected") || msg.includes("tls") ||
+    msg.includes("econnreset") || msg.includes("fetch failed") ||
+    msg.includes("etimedout") || msg.includes("enotfound")
+  ) return "network";
+
+  return "unknown";
+}
 
 function isRetryableError(err) {
-  const msg = err.message || "";
-  const code = err.code || "";
-  // Rate limit
-  if (msg.includes("429")) return true;
-  // Server errors
-  if (
-    msg.includes("500") ||
-    msg.includes("502") ||
-    msg.includes("503") ||
-    msg.includes("504")
-  )
-    return true;
-  // Network errors
-  if (
-    code === "ECONNRESET" ||
-    code === "ECONNABORTED" ||
-    code === "ETIMEDOUT" ||
-    code === "ECONNREFUSED"
-  )
-    return true;
-  if (
-    msg.includes("socket disconnected") ||
-    msg.includes("TLS") ||
-    msg.includes("ECONNRESET")
-  )
-    return true;
-  if (
-    msg.includes("fetch failed") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("ENOTFOUND")
-  )
-    return true;
-  return false;
+  const category = classifyError(err);
+  // Auth and context_overflow errors are NOT retryable — retrying won't help
+  return category === "rate_limit" || category === "server" || category === "network";
 }
 
 async function callWithRetry(messages, tools, options) {
@@ -99,10 +94,22 @@ async function callWithRetry(messages, tools, options) {
       return await callStream(messages, tools, options);
     } catch (err) {
       lastError = err;
+      const category = classifyError(err);
+
+      // Non-retryable: fail fast with a clear explanation
+      if (category === "auth") {
+        err.message = `Authentication failed — check your API key or permissions. (${err.message})`;
+        throw err;
+      }
+      if (category === "context_overflow") {
+        err.message = `Context window exceeded — reduce message history or use a model with a larger context. (${err.message})`;
+        throw err;
+      }
+
       if (attempt < MAX_CHAT_RETRIES && isRetryableError(err)) {
         // Rate limits: full exponential backoff (provider needs recovery time)
         // Server/network errors: shorter delay — callStream already tried the full fallback chain
-        const isRateLimit = (err.message || "").includes("429");
+        const isRateLimit = category === "rate_limit";
         const delay = isRateLimit
           ? Math.min(2000 * Math.pow(2, attempt), 15000)
           : Math.min(500 * Math.pow(2, attempt), 4000);
@@ -663,6 +670,7 @@ module.exports = {
   classifyTask,
   pickModelForTier,
   resolveSubAgentModel,
+  classifyError,
   isRetryableError,
   callWithRetry,
   getExcludedTools,
