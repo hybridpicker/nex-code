@@ -22,7 +22,7 @@ export class ConfigManager {
   getModel(): string {
     return vscode.workspace
       .getConfiguration("nexCode")
-      .get("defaultModel", "qwen3-coder:480b");
+      .get("defaultModel", "devstral-2:123b");
   }
 
   buildEnv(): AgentEnv {
