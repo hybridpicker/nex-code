@@ -7,7 +7,6 @@ const { T } = require("./theme");
 const C = T;
 
 function colorLine(text, rgb) {
-  // Color all visible chars in a line with a single RGB color
   return (
     [...text]
       .map((ch) => {
@@ -30,14 +29,13 @@ function lerpColor(stops, t) {
 }
 
 // Dog mascot — minimal 8×6 pixel art (1 = filled, 0 = background)
-// Renders to 3 half-block rows
 const DOG_MATRIX = [
-  "01100110", // ears
-  "01111110", // head
-  "01111110", // head solid
-  "01011010", // face — eye gaps at cols 2 and 5
-  "01111110", // snout
-  "00111100", // body base (narrower)
+  "01100110",
+  "01111110",
+  "01111110",
+  "01011010",
+  "01111110",
+  "00111100",
 ];
 
 function renderDog(matrix, color) {
@@ -65,7 +63,6 @@ function banner(modelName, cwd, opts = {}) {
   const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : "";
   const version = require("../package.json").version;
 
-  // 3 text lines — same height as dog
   const subtitles = [
     `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
     `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${yoloTag}`,

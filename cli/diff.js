@@ -322,11 +322,11 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
 
   // Header
   console.log(
-    `\n${C.green}●${C.reset} ${C.bold}${label}(${relPath})${C.reset}`,
+    `\n${C.green}⏺${C.reset} ${C.bold}${label}(${relPath})${C.reset}`,
   );
 
   if (added === 0 && removed === 0) {
-    console.log(`  ${C.dim}└  (no changes)${C.reset}\n`);
+    console.log(`  ${C.dim}⎿  (no changes)${C.reset}\n`);
     return;
   }
 
@@ -355,7 +355,7 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
     parts.push(`found ${issueParts.join(", ")}`);
   }
 
-  console.log(`  ${C.dim}└  ${parts.join(", ")}${C.reset}`);
+  console.log(`  ${C.dim}⎿  ${parts.join(", ")}${C.reset}`);
 
   // Build hunks: groups of changes with surrounding context
   const changeIndices = [];
@@ -447,7 +447,7 @@ function showClaudeNewFile(filePath, content, options = {}) {
   const lines = content.split("\n");
   const annotations = options.annotations || [];
 
-  console.log(`\n${C.green}●${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
+  console.log(`\n${C.green}⏺${C.reset} ${C.bold}Create(${relPath})${C.reset}`);
 
   const parts = [`${lines.length} line${lines.length !== 1 ? "s" : ""}`];
   const issueCount = annotations.length;
@@ -468,7 +468,7 @@ function showClaudeNewFile(filePath, content, options = {}) {
       issueParts.push(`${C.cyan}${info} info${info !== 1 ? "s" : ""}${C.dim}`);
     parts.push(`found ${issueParts.join(", ")}`);
   }
-  console.log(`  ${C.dim}└  ${parts.join(", ")}${C.reset}`);
+  console.log(`  ${C.dim}⎿  ${parts.join(", ")}${C.reset}`);
 
   const PAD = "      ";
   const termWidth = process.stdout.columns || 120;

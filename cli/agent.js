@@ -994,10 +994,10 @@ async function executeBatch(prepared, quiet = false, options = {}) {
       if (execTools.length === 1) {
         const p = execTools[0];
         const preview = _argPreview(p.fnName, p.args);
-        label = `● ${p.fnName}${preview ? `(${preview})` : ""}`;
+        label = `⏺ ${p.fnName}${preview ? `(${preview})` : ""}`;
       } else {
         const names = execTools.map((p) => p.fnName).join(", ");
-        label = `● ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + "…" : names}`;
+        label = `⏺ ${execTools.length} tools: ${names.length > 60 ? names.substring(0, 57) + "…" : names}`;
       }
       spinner = new Spinner(label);
       spinner.start();
@@ -2168,8 +2168,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 6; // warn after 6 consecutive ssh_exec calls
-  const SSH_STORM_ABORT = 10; // hard abort after 10 consecutive ssh_exec calls
+  const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
+  const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
   const INVESTIGATION_CAP = 12; // after 12 read-only calls without an edit, force implementation
 
   let i;
@@ -2209,8 +2209,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // ─── Pre-call SSH-blocked nudge ──────────────────────────────────────────
       // When SSH is blocked after a storm and no root cause has been found,
       // inject a system message BEFORE the LLM generates its response so it
-      // knows upfront that SSH is unavailable and should ask the user for
-      // specific information rather than falling back to reading local files.
+      // synthesizes findings before continuing. SSH will be unblocked after
+      // the model produces a text-only response (synthesis).
       // Fire at most 2 times per storm block to prevent context flooding while
       // still reinforcing the message if the model ignores the first nudge.
       if (
@@ -2222,12 +2222,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const sshBlockedNudge = {
           role: "user",
           content:
-            "[SYSTEM] SSH access is temporarily unavailable. Do not read local files to investigate a remote server issue. Instead, state clearly what specific information you need from the server and ask the user to provide it (e.g., log output, process list, error messages).",
+            "[SYSTEM] SSH paused — you have made many consecutive SSH calls. Synthesize your findings so far: summarize what you learned and what the likely issue is. After your synthesis, SSH will be available again for targeted follow-up commands.",
         };
         apiMessages.push(sshBlockedNudge);
         conversationMessages.push(sshBlockedNudge);
         debugLog(
-          `${C.yellow}  ⚠ Pre-call SSH-blocked nudge #${_sshBlockedPreCallNudgeCount} injected — model told to ask user${C.reset}`,
+          `${C.yellow}  ⚠ Pre-call SSH-blocked nudge #${_sshBlockedPreCallNudgeCount} injected — model told to synthesize${C.reset}`,
         );
       }
       // Reset the nudge counter when SSH becomes available again so future storms
@@ -3085,8 +3085,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           } else {
             _sshBlockedAfterStorm = false;
-            // Give reduced budget (1 call) instead of full reset — just enough for a targeted follow-up
-            _sessionConsecutiveSshCalls = SSH_STORM_WARN - 1;
+            // Give reduced budget (4 calls) instead of full reset — enough for targeted follow-up
+            _sessionConsecutiveSshCalls = SSH_STORM_WARN - 4;
             _justUnblockedSsh = true;
           }
         }
@@ -3837,8 +3837,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.errorResult = {
               role: "tool",
               content: _rootCauseDetected
-                ? `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). Root cause is known (${_rootCauseSummary}). Edit the file now.`
-                : `BLOCKED: ssh_exec denied — SSH storm (${SSH_STORM_WARN}+ calls). No root cause found yet. Do not read local files — state what is missing and ask the user.`,
+                ? `BLOCKED: ssh_exec denied — SSH paused (${SSH_STORM_WARN}+ calls). Root cause is known (${_rootCauseSummary}). Edit the file now.`
+                : `BLOCKED: ssh_exec denied — SSH temporarily paused (${SSH_STORM_WARN}+ calls). Provide a text summary of your findings first. Do NOT ask the user to run commands. SSH re-enables after your summary.`,
               tool_call_id: prep.callId,
             };
           }
@@ -3937,7 +3937,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         stepPrinted = true;
         batchOpts.skipSpinner = true;
         if (process.stdout.isTTY) {
-          // Blink the ● via ANSI \x1b[5m while the tool executes — no interval needed,
+          // Blink the ⏺ via ANSI \x1b[5m while the tool executes — no interval needed,
           // the terminal handles blinking natively so it works even for sub-ms tools
           process.stdout.write(
             formatSectionHeader(prepared, totalSteps, false, "blink"),
@@ -4154,7 +4154,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _capContent = `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`;
             } else if (_sshBlockedAfterStorm) {
               _capContent =
-                "[SYSTEM] SSH is currently unavailable and no root cause was found from local files. Stop reading files — summarize what you know and ask the user for the specific server output (logs, stack trace) you still need.";
+                "[SYSTEM] SSH temporarily paused. Summarize your findings and state the likely diagnosis. Do NOT ask the user to run commands — SSH re-enables after your summary.";
             } else {
               _capContent =
                 "[SYSTEM] You have read enough files. Now implement your fix using edit_file.";
@@ -4254,7 +4254,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             const _stormMsg = _rootCauseDetected
               ? `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls. Root cause identified (${_rootCauseSummary}). Read the file that needs fixing, then edit it.`
-              : `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls — no root cause found yet. Do NOT read local files. Instead: state what specific crash info is still missing and ask the user to provide it (e.g. a stack trace or specific log).`;
+              : `[SYSTEM WARNING] ${_sessionConsecutiveSshCalls} consecutive SSH calls — SSH temporarily paused for synthesis. Summarize what you found and state the likely diagnosis. Do NOT ask the user to run commands or provide logs. SSH will be re-enabled after your summary so you can continue.`;
             const sshStormWarning = {
               role: "user",
               content: _stormMsg,
