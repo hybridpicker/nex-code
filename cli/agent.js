@@ -2110,7 +2110,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Only trigger for actual server debugging, not for feature development tasks.
   // "jarvis" alone is too broad — e.g. "add feature to jarvis" should NOT block local reads.
   const _isJarvisDebugging =
-    /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken).{0,30}jarvis/i.test(
+    /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken|gecrasht|abgestürzt).{0,30}jarvis|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
       _firstUserText,
     );
   let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
@@ -4322,11 +4322,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
         }
-        // Health-check stop signal — inject strong stop instruction when tool result
-        // contains {"valid":true} so the agent doesn't keep reading logs needlessly.
+        // Health-check stop signal — inject strong stop instruction when a dedicated
+        // health/status check command returns {"valid":true}. Only fires when the
+        // command itself is a health-check (contains health, status, check, ping,
+        // validate, or /health / /status patterns) to avoid false positives from
+        // log tails and greps that happen to contain "valid":true in their output.
+        const _cmdStr =
+          (prep.args?.command || prep.args?.cmd || prep.args?.script || "")
+            .toLowerCase();
+        const _isHealthCheckCmd =
+          /\b(health|healthcheck|health-check|status|check|ping|validate|alive|ready)\b/.test(
+            _cmdStr,
+          ) ||
+          /\/(health|status|ping|ready|alive)\b/.test(_cmdStr);
         if (
           isOk &&
           (prep.fnName === "bash" || prep.fnName === "ssh_exec") &&
+          _isHealthCheckCmd &&
           res.includes('"valid":true')
         ) {
           // Pre-compress before injecting the STOP message: if context is already at
