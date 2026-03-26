@@ -2821,9 +2821,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   _cappedFiles.length > 0
                     ? `\n\nFiles already at read cap — use grep_search instead: ${_cappedFiles.join(", ")}`
                     : "";
+                const _skipBase =
+                  _sshBlockedAfterStorm && !_rootCauseDetected
+                    ? "[SYSTEM] Context was compressed. SSH is currently unavailable — do not read more local files. Summarize what you found and ask the user for the server output you need."
+                    : `[SYSTEM] Context was compressed. Use the findings above to implement your fix. If you need to re-read a file, use line_start/line_end for the specific section.${_cappedNote}`;
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM] Context was compressed. Use the findings above to implement your fix. If you need to re-read a file, use line_start/line_end for the specific section.${_cappedNote}`,
+                  content: _skipBase,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
@@ -3148,7 +3152,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const toolNudge = {
               role: "user",
               content:
-                "[SYSTEM] You have full tool access. Use your tools to investigate and implement the fix directly — do not say you cannot use tools.",
+                "[SYSTEM] You have full tool access. Use your tools to investigate and implement the fix directly — do not say you cannot use tools. If SSH is needed, use a single targeted command that captures the most relevant information rather than multiple sequential calls.",
             };
             apiMessages.push(toolNudge);
             conversationMessages.push(toolNudge);
