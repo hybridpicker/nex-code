@@ -3544,9 +3544,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _sessionLastEditFailed.delete(path);
           } else {
             // Check if this targeted re-read overlaps significantly with a range already read.
-            // ≥70% overlap means the model is re-reading content it already has in context.
-            // Block the read outright — a warning-only approach is insufficient because the
-            // LLM can ignore injected warnings and still execute the duplicate read.
+            // ≥70% overlap (from either direction) means the model is re-reading context it
+            // already has. Two cases:
+            //   • overlapLen/newLen ≥ 0.7 — new range is mostly covered by the old range
+            //   • overlapLen/oldLen ≥ 0.7 — old range is subsumed by the new (e.g. reading
+            //     [1,350] after [1,50]: 14% from new perspective but 100% from old). Blocking
+            //     this prevents large-range "superread" that re-floods content already in context
+            //     and wastes read budget. Block message guides model to skip the already-read part.
             const newStart = prep.args.line_start || 1;
             const newEnd = prep.args.line_end || newStart + 350;
             const prevRanges = _sessionFileReadRanges.get(path) || [];
@@ -3557,14 +3561,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               if (overlapEnd > overlapStart) {
                 const overlapLen = overlapEnd - overlapStart;
                 const newLen = newEnd - newStart || 1;
-                if (overlapLen / newLen >= 0.7) {
+                const oldLen = pe - ps || 1;
+                const superreads = overlapLen / oldLen >= 0.7 && overlapLen / newLen < 0.7;
+                if (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7) {
                   const shortPath = path.split("/").slice(-2).join("/");
                   const rangeKey = `${path}:${newStart}-${newEnd}`;
                   const rangeBlockCount = (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
                   _sessionRangeBlockCounts.set(rangeKey, rangeBlockCount);
-                  debugLog(
-                    `${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context, block #${rangeBlockCount})${C.reset}`,
-                  );
+                  if (superreads) {
+                    debugLog(
+                      `${C.red}  ✖ Blocked superread: "${shortPath}" lines ${newStart}-${newEnd} subsumes already-read ${ps}-${pe} — use line_start=${pe + 1} to skip known content (block #${rangeBlockCount})${C.reset}`,
+                    );
+                  } else {
+                    debugLog(
+                      `${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context, block #${rangeBlockCount})${C.reset}`,
+                    );
+                  }
                   if (rangeBlockCount >= 2) {
                     // Model ignored the BLOCKED result and requested the same range again.
                     // Inject a strong system-level stop into the conversation — tool results
@@ -3574,7 +3586,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     );
                     const escalateMsg = {
                       role: "user",
-                      content: `[SYSTEM WARNING] You have now been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context and their content will NOT change. Do NOT request this range again. Use grep_search to locate specific content, or proceed with what you already know.`,
+                      content: superreads
+                        ? `[SYSTEM WARNING] You have been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context. Use line_start=${pe + 1} to read only the content beyond what you already have, or use grep_search for specific lines.`
+                        : `[SYSTEM WARNING] You have now been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context and their content will NOT change. Do NOT request this range again. Use grep_search to locate specific content, or proceed with what you already know.`,
                     };
                     conversationMessages.push(escalateMsg);
                     apiMessages.push(escalateMsg);
@@ -3582,7 +3596,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   prep.canExecute = false;
                   prep.errorResult = {
                     role: "tool",
-                    content: `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) is a duplicate — lines ${ps}-${pe} are already in your context (≥70% overlap). Use grep to find specific content instead of re-reading.`,
+                    content: superreads
+                      ? `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) re-reads lines ${ps}-${pe} already in context. Use line_start=${pe + 1} to read only the new content beyond line ${pe}.`
+                      : `BLOCKED: read_file("${path}", lines ${newStart}-${newEnd}) is a duplicate — lines ${ps}-${pe} are already in your context (≥70% overlap). Use grep to find specific content instead of re-reading.`,
                     tool_call_id: prep.callId,
                   };
                   blocked = true;
@@ -4108,11 +4124,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
             );
+            let _capContent;
+            if (_rootCauseDetected) {
+              _capContent = `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`;
+            } else if (_sshBlockedAfterStorm) {
+              _capContent =
+                "[SYSTEM] SSH is currently unavailable and no root cause was found from local files. Stop reading files — summarize what you know and ask the user for the specific server output (logs, stack trace) you still need.";
+            } else {
+              _capContent =
+                "[SYSTEM] You have read enough files. Now implement your fix using edit_file.";
+            }
             const capMsg = {
               role: "user",
-              content: _rootCauseDetected
-                ? `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`
-                : `[SYSTEM] You have read enough files. Now implement your fix using edit_file.`,
+              content: _capContent,
             };
             conversationMessages.push(capMsg);
             apiMessages.push(capMsg);
