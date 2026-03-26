@@ -352,12 +352,11 @@ function scoreMessages(messages) {
   }
 
   // ── 9. SSH reconnect storm (-0.5) ─────────────────────────────────────────
-  // ssh_exec calls in rapid succession (8+) — threshold raised from 7 to 8
-  // because complex Jarvis debugging legitimately needs 5-7 SSH calls
-  // (api.log + api-error.log + grep for each error + targeted search + verify)
+  // ssh_exec calls in rapid succession (5+) — threshold lowered from 8 to 5
+  // to match tighter agent-side storm detection (warn@4, abort@6)
   const sshCalls = toolCalls.filter((tc) => tc.name === "ssh_exec");
-  if (sshCalls.length >= 8) {
-    // Check if 8+ consecutive ssh calls exist (adjacent message indices)
+  if (sshCalls.length >= 5) {
+    // Check if 5+ consecutive ssh calls exist (adjacent message indices)
     let maxConsecutive = 0;
     let current = 1;
     for (let i = 1; i < sshCalls.length; i++) {
@@ -369,7 +368,7 @@ function scoreMessages(messages) {
       }
     }
     maxConsecutive = Math.max(maxConsecutive, current);
-    if (maxConsecutive >= 8) {
+    if (maxConsecutive >= 5) {
       score -= 0.5;
       issues.push(
         `SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`,

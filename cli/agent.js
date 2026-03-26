@@ -1090,6 +1090,8 @@ let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxe
 let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
 let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
+let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
+let _investigationCapFired = false; // true once the investigation cap warning has been injected
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1336,7 +1338,7 @@ Response patterns by request type:
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details. When diagnosing a bug (memory leak, race condition, logic error): always proceed from diagnosis to concrete fix — write the corrected code and apply it. Do not stop after identifying the root cause unless the user explicitly asked for analysis only.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
-- **Server/SSH commands**: After running remote commands, ALWAYS present the results: service status, log errors, findings.
+- **Server/SSH commands**: When the user asks about a server issue, crash, error, or status — you MUST ssh into the server and investigate. NEVER just give advice or recommend manual steps. The user expects you to DO the investigation, not tell them how to do it. Use ssh_exec to check logs, service status, and diagnose the root cause yourself. After investigating, present your findings with specific log lines and a concrete fix.
 - **Server investigation rule**: When investigating errors via SSH, the moment you see a clear root cause, STOP reading more logs immediately. State the finding, then execute the fix. Never expand log line ranges after identifying the error — reading more of the same log is not progress, it is an investigation loop.
 
   **Immediate stop triggers** — seeing ANY of these in tool output means root cause found, act now:
@@ -1356,9 +1358,13 @@ Response patterns by request type:
   NEVER use sequential sed -n 'N,Mp' to scroll backwards through a log file — use grep to find the exact line instead.
   NEVER use grep -B or -A with values larger than 20 — large context windows flood the LLM context and cause 400 errors. Use -B5 or -B10 at most.
 
-  **SSH command batching**: Combine diagnostic commands into a single ssh_exec using && or ;.
-  Example — instead of 3 separate calls: ssh_exec("systemctl status svc --no-pager && journalctl -u svc -n 30 --no-pager && grep -n 'ERROR\\|FATAL' /var/log/svc.log | tail -15")
-  ALWAYS batch diagnostic commands into one ssh_exec call. Use separate ssh_exec calls ONLY when one command's output determines the next command.
+  **SSH command batching (CRITICAL — you have a limited SSH budget)**:
+  Combine multiple diagnostic commands into a SINGLE ssh_exec call using && or ;.
+  Your first ssh_exec should gather ALL initial diagnostics in one call:
+  ssh_exec("systemctl status svc --no-pager; echo '---SEPARATOR---'; journalctl -u svc -n 50 --no-pager; echo '---SEPARATOR---'; tail -50 /path/to/app.log; echo '---SEPARATOR---'; grep -n 'ERROR\\|FATAL\\|crash\\|exception' /path/to/app.log | tail -20")
+  This gives you service status + journal + app logs + errors in ONE call instead of 4.
+  After analyzing the first result, use a second targeted ssh_exec only if needed.
+  NEVER use more than 3 ssh_exec calls for a single investigation — batch aggressively.
 
   **Health-check stop signal**: If a health/token-validation endpoint returns {"valid":true} AND the API responds with HTTP 200, the problem is intermittent or already resolved. STOP reading logs immediately. Report to the user: the token is valid, the service is reachable, the error was transient — no fix is needed. Do NOT continue reading log files after seeing {"valid":true} from a health check.
 - **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
@@ -1598,6 +1604,8 @@ function _resetSessionTracking() {
   _postWipeToolBudget = -1;
   _filesModifiedAtWipe = 0;
   _postWipeBudgetExtended = false;
+  _readOnlyCallsSinceEdit = 0;
+  _investigationCapFired = false;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2124,8 +2132,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 6; // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
-  const SSH_STORM_ABORT = 8; // hard abort after 12 consecutive ssh_exec calls
+  const SSH_STORM_WARN = 4; // warn after 4 consecutive ssh_exec calls
+  const SSH_STORM_ABORT = 6; // hard abort after 6 consecutive ssh_exec calls
+  const INVESTIGATION_CAP = 20; // after 20 read-only calls without an edit, force implementation
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -2982,8 +2991,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           } else {
             _sshBlockedAfterStorm = false;
-            // Give reduced budget (2 calls) instead of full reset (was 0 → full SSH_STORM_WARN budget)
-            _sessionConsecutiveSshCalls = SSH_STORM_WARN - 2;
+            // Give reduced budget (1 call) instead of full reset — just enough for a targeted follow-up
+            _sessionConsecutiveSshCalls = SSH_STORM_WARN - 1;
             _justUnblockedSsh = true;
           }
         }
@@ -3887,6 +3896,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
         }
+        // ─── Investigation cap: force implementation after too many read-only calls ───
+        // When the model reads files, searches, and SSHes without ever editing, it's
+        // stuck in an investigation loop. After INVESTIGATION_CAP calls, inject a hard
+        // "stop investigating, implement now" message.
+        if (isOk && prep.canExecute) {
+          const READ_ONLY_TOOLS = ["read_file", "grep", "search_files", "glob", "list_directory", "ssh_exec", "find_files"];
+          const EDIT_TOOLS = ["write_file", "edit_file", "patch_file"];
+          if (EDIT_TOOLS.includes(prep.fnName)) {
+            _readOnlyCallsSinceEdit = 0; // reset on successful edit
+            _investigationCapFired = false; // allow re-investigation after an edit
+          } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
+            _readOnlyCallsSinceEdit++;
+          }
+          if (_readOnlyCallsSinceEdit >= INVESTIGATION_CAP && !_investigationCapFired) {
+            _investigationCapFired = true;
+            debugLog(
+              `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
+            );
+            const capMsg = {
+              role: "user",
+              content: `[SYSTEM] Investigation cap reached (${_readOnlyCallsSinceEdit} read-only calls without editing a file). You have gathered enough information. STOP investigating and START implementing your fix NOW. Use edit_file or write_file in your NEXT response. Do not read any more files or run any more SSH commands.`,
+            };
+            conversationMessages.push(capMsg);
+            apiMessages.push(capMsg);
+          }
+        }
         // sed -n is now blocked in the pre-batch phase — no post-execution action needed here
         // Bash/SSH command loop detection — tool is named 'bash', not 'bash_exec'
         if (
@@ -3934,10 +3969,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
         // The existing bash-loop detector only fires on *similar* commands; an agent running 16
         // different grep/cat patterns via ssh_exec bypasses it while still burning context.
-        // Failed SSH calls (connection errors, command failures) add minimal context and should
-        // NOT count toward the storm limit — only successful calls that fill the context count.
+        // ALL SSH calls count toward storm limit — failed calls (grep EXIT 1, connection
+        // errors) still waste tool calls and indicate grep archaeology / search loops.
+        // Previously only successful calls counted, which let the agent bypass the storm
+        // cap by running greps that return no matches (EXIT 1 → not counted).
         if (prep.fnName === "ssh_exec") {
-          if (isOk) _sessionConsecutiveSshCalls++;
+          _sessionConsecutiveSshCalls++;
           if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
             debugLog(
               `${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`,
