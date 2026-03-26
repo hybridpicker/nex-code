@@ -4130,7 +4130,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // In fix phase (root cause already found) use a tight cap of 3 reads;
           // otherwise fall back to the standard INVESTIGATION_CAP.
           const _effectiveCap = _rootCauseDetected ? 3 : INVESTIGATION_CAP;
-          if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
+          // After the cap has already fired in fix phase, hard-block further reads
+          // instead of silently allowing them. One nudge is not enough — the model
+          // continues reading new files after the nudge, causing the investigation
+          // loop to persist through multiple context wipes.
+          if (_investigationCapFired && _rootCauseDetected && READ_ONLY_TOOLS.includes(prep.fnName)) {
+            debugLog(
+              `${C.red}  ✖ Blocked read-only tool in fix phase: cap already fired, root cause known (${_rootCauseSummary})${C.reset}`,
+            );
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: "tool",
+              content: `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`,
+              tool_call_id: prep.callId,
+            };
+          } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
             _investigationCapFired = true;
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
