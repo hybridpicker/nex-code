@@ -2117,8 +2117,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_GREP = 4; // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7; // abort after 7 identical grep patterns
   const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
-  const LOOP_WARN_GREP_FILE = 3; // warn after 3 different-pattern greps on same file
-  const LOOP_ABORT_GREP_FILE = 4; // hard-block further greps on same file after 4
+  const LOOP_WARN_GREP_FILE = 2; // warn after 2 different-pattern greps on same file
+  const LOOP_ABORT_GREP_FILE = 3; // hard-block further greps on same file after 3
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
@@ -3563,12 +3563,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // After LOOP_ABORT_GREP_FILE different-pattern greps on the same file, hard-block
       // further greps on that file. The file content is already in context — searching
       // it again only wastes tokens and scores worse on the session scorer.
+      // Batch-level dedup: track pending greps so multiple greps on the same file
+      // in a single batch don't all slip through the threshold check.
+      const _pendingGrepFileCounts = new Map();
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
         if (prep.fnName !== "grep") continue;
         const grepPath = prep.args?.path;
         if (!grepPath) continue;
-        const alreadyGrepped = _getLoopCount(grepFileCounts, grepPath);
+        const pending = _pendingGrepFileCounts.get(grepPath) || 0;
+        const alreadyGrepped = _getLoopCount(grepFileCounts, grepPath) + pending;
         if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
@@ -3577,9 +3581,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
-            content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results.`,
+            content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results or read the file instead.`,
             tool_call_id: prep.callId,
           };
+        }
+        if (prep.canExecute) {
+          _pendingGrepFileCounts.set(grepPath, pending + 1);
         }
       }
 
