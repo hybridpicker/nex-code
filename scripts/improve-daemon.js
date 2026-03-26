@@ -80,7 +80,7 @@ function scoreSession() {
       const r = scoreMessages(d.messages || []);
       process.stdout.write(JSON.stringify({ score: r.score, grade: r.grade, issues: r.issues }));
     } catch(e) {
-      process.stdout.write(JSON.stringify({ score: 0, grade: 'F', issues: [e.message] }));
+      process.stdout.write(JSON.stringify({ score: -1, grade: 'X', issues: ['scorer error: ' + e.message] }));
     }
   `;
   const res = spawnSync(NODE_BIN, ["-e", script], {
