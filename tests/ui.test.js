@@ -113,7 +113,7 @@ describe("ui.js", () => {
       // formatToolCall shows human-readable labels, not raw tool names
       expect(result).toMatch(/[Ww]rite/);
       expect(result).toContain("test.js");
-      // ⏺ removed — now uses ● (colored per category)
+      // Uses ⏺ (colored per category)
     });
 
     it("formats edit_file with path only", () => {
@@ -122,7 +122,7 @@ describe("ui.js", () => {
         old_text: "a",
         new_text: "b",
       });
-      expect(result).toMatch(/[Uu]pdate/);
+      expect(result).toMatch(/[Ee]dit/);
       expect(result).toContain("test.js");
     });
 
@@ -310,7 +310,7 @@ describe("ui.js", () => {
         "ERROR: command not found",
         true,
       );
-      expect(result).toContain("└");
+      expect(result).toContain("⎿");
       expect(result).toContain("command not found");
     });
 
@@ -333,7 +333,7 @@ describe("ui.js", () => {
         "file1\nfile2",
         false,
       );
-      expect(result).toContain("└");
+      expect(result).toContain("⎿");
     });
 
     // read_file
@@ -537,7 +537,7 @@ describe("ui.js", () => {
         "abc123 feat: stuff",
         false,
       );
-      expect(result).toContain("└");
+      expect(result).toContain("⎿");
     });
 
     // web tools
@@ -615,7 +615,7 @@ describe("ui.js", () => {
     // edge cases
     it("handles null/undefined result", () => {
       const result = formatToolSummary("bash", { command: "ls" }, null, false);
-      expect(result).toContain("└");
+      expect(result).toContain("⎿");
     });
 
     it("handles missing args", () => {

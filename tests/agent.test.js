@@ -1382,10 +1382,10 @@ describe("agent.js", () => {
       expect(
         spinnerLabels().some(
           (l) =>
-            l.includes("Read file") ||
+            l.includes("Read") ||
             l.includes("read_file") ||
             l.includes("2 tools") ||
-            l.includes("·"),
+            l.includes(","),
         ),
       ).toBe(true);
     });
@@ -1407,7 +1407,7 @@ describe("agent.js", () => {
           (l) =>
             l.includes("actions") ||
             l.includes("tools") ||
-            l.includes("Read file"),
+            l.includes("Read"),
         ),
       ).toBe(true);
     });

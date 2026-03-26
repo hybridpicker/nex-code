@@ -46,7 +46,7 @@ const {
 describe("formatToolCall()", () => {
   it("formats read_file with path", () => {
     const out = formatToolCall("read_file", { path: "src/utils/helper.js" });
-    expect(out).toContain("Read file");
+    expect(out).toContain("Read");
     expect(out).toContain("utils/helper.js");
   });
 
@@ -58,13 +58,13 @@ describe("formatToolCall()", () => {
 
   it("formats edit_file with path", () => {
     const out = formatToolCall("edit_file", { path: "deep/nested/file.js" });
-    expect(out).toContain("Update");
+    expect(out).toContain("Edit");
     expect(out).toContain("nested/file.js");
   });
 
   it("formats bash with command", () => {
     const out = formatToolCall("bash", { command: "npm test" });
-    expect(out).toContain("Run command");
+    expect(out).toContain("Bash");
     expect(out).toContain("npm test");
   });
 
@@ -76,7 +76,7 @@ describe("formatToolCall()", () => {
 
   it("formats grep with pattern and path", () => {
     const out = formatToolCall("grep", { pattern: "TODO", path: "src/" });
-    expect(out).toContain("Search code");
+    expect(out).toContain("Grep");
     expect(out).toContain('"TODO"');
     expect(out).toContain("in src/");
   });
@@ -88,25 +88,25 @@ describe("formatToolCall()", () => {
 
   it("formats glob with pattern", () => {
     const out = formatToolCall("glob", { pattern: "**/*.ts" });
-    expect(out).toContain("Find files");
+    expect(out).toContain("Glob");
     expect(out).toContain("**/*.ts");
   });
 
   it("formats web_fetch with URL", () => {
     const out = formatToolCall("web_fetch", { url: "https://example.com/api" });
-    expect(out).toContain("Fetch URL");
+    expect(out).toContain("WebFetch");
     expect(out).toContain("example.com");
   });
 
   it("formats web_search with query", () => {
     const out = formatToolCall("web_search", { query: "node.js streams" });
-    expect(out).toContain("Web search");
+    expect(out).toContain("WebSearch");
     expect(out).toContain("node.js streams");
   });
 
   it("formats list_directory with path", () => {
     const out = formatToolCall("list_directory", { path: "src/" });
-    expect(out).toContain("List directory");
+    expect(out).toContain("List");
   });
 
   it("formats unknown tool with JSON args", () => {
@@ -117,12 +117,12 @@ describe("formatToolCall()", () => {
 
   it("formats patch_file with path", () => {
     const out = formatToolCall("patch_file", { path: "lib/main.js" });
-    expect(out).toContain("Update");
+    expect(out).toContain("Edit");
   });
 
   it("handles empty args for grep", () => {
     const out = formatToolCall("grep", {});
-    expect(out).toContain("Search code");
+    expect(out).toContain("Grep");
   });
 });
 
@@ -131,7 +131,7 @@ describe("formatResult()", () => {
   it("formats single line result", () => {
     const out = formatResult("Success");
     expect(out).toContain("Success");
-    expect(out).toContain("\u2514"); // └
+    expect(out).toContain("⎿");
   });
 
   it("formats multiple lines", () => {
@@ -728,7 +728,7 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("Read file");
+    expect(out).toContain("Read");
     expect(out).toContain("index.js");
   });
 
@@ -737,7 +737,7 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "bash", args: { command: "npm test" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("Run command");
+    expect(out).toContain("Bash");
     expect(out).toContain("npm test");
   });
 
@@ -746,7 +746,7 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "web_search", args: { query: "node js" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("Web search");
+    expect(out).toContain("WebSearch");
   });
 
   it("formats single tool with pattern arg", () => {
@@ -754,7 +754,7 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "grep", args: { pattern: "TODO" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("Search code");
+    expect(out).toContain("Grep");
   });
 
   it("formats multi-tool with labels", () => {
@@ -765,7 +765,7 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("Read file");
+    expect(out).toContain("Read");
   });
 
   it("formats multi-tool with different labels", () => {
@@ -776,11 +776,10 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    // Multiple different labels joined with '·'
-    expect(out).toContain("Read file");
+    expect(out).toContain("Read");
   });
 
-  it("shows N actions for > 3 unique labels", () => {
+  it("shows N tools for > 3 unique labels", () => {
     const out = formatSectionHeader(
       [
         { fnName: "read_file", args: {}, canExecute: true },
@@ -790,7 +789,7 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("4 actions");
+    expect(out).toContain("4 tools");
   });
 
   it("filters out tools with canExecute=false", () => {
