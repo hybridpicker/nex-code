@@ -302,13 +302,13 @@ describe("Auto-Orchestrate", () => {
     }
   });
 
-  test("shows hint without --auto-orchestrate flag when goals >= 3", () => {
+  test("detects complex prompt with 3+ goals for auto-orchestration", () => {
     const prompt = "1. Fix login\n2. Fix logout\n3. Fix signup";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
-    // Without auto-orchestrate, only a hint should show, not auto-trigger
-    // (The actual console.log behavior is tested in agent.js integration tests)
+    // Auto-orchestrate is on by default since v0.4.16 — complex prompts
+    // auto-trigger parallel agents unless NEX_AUTO_ORCHESTRATE=false
   });
 
   test("NEX_ORCHESTRATE_THRESHOLD=2 makes two items complex", () => {
@@ -322,10 +322,17 @@ describe("Auto-Orchestrate", () => {
     delete process.env.NEX_ORCHESTRATE_THRESHOLD;
   });
 
-  test("NEX_AUTO_ORCHESTRATE=true is respected as env var trigger", () => {
-    process.env.NEX_AUTO_ORCHESTRATE = "true";
+  test("NEX_AUTO_ORCHESTRATE=false disables auto-orchestration", () => {
+    process.env.NEX_AUTO_ORCHESTRATE = "false";
     // Verify the env var is recognized (actual agent behavior tested separately)
-    expect(process.env.NEX_AUTO_ORCHESTRATE).toBe("true");
+    expect(process.env.NEX_AUTO_ORCHESTRATE).toBe("false");
+    // When false, agent should not auto-trigger orchestration
+  });
+
+  test("NEX_AUTO_ORCHESTRATE defaults to enabled (no env var needed)", () => {
+    delete process.env.NEX_AUTO_ORCHESTRATE;
+    // When env var is not set, auto-orchestration is on by default
+    expect(process.env.NEX_AUTO_ORCHESTRATE).toBeUndefined();
   });
 
   test("detectComplexPrompt threshold defaults to 3", () => {

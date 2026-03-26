@@ -344,7 +344,7 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 | `--max-turns <n>`          | Override the agentic loop iteration limit                                                                     |
 | `--model <spec>`           | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
 | `--debug`                  | Show internal diagnostic messages (compression, loop detection, guards)                                       |
-| `--auto-orchestrate`       | Automatically use the multi-agent orchestrator when ≥3 goals are detected (also: `NEX_AUTO_ORCHESTRATE=true`) |
+| `--no-auto-orchestrate`    | Disable auto-orchestration for multi-goal prompts (on by default; also: `NEX_AUTO_ORCHESTRATE=false`)         |
 | `--orchestrator-model <m>` | Model for decomposition/synthesis step (default: `kimi-k2.5`)                                                 |
 
 ---
@@ -965,19 +965,19 @@ Spawn parallel sub-agents for independent tasks:
 
 For complex tasks with multiple independent goals (e.g. "fix all TypeScript errors in auth/, add tests for utils/, and update the README"), the orchestrator decomposes the prompt into parallel sub-tasks, runs dedicated sub-agents on each, and synthesizes the results.
 
-**Trigger:**
+**Auto-orchestration is on by default** for prompts with ≥3 goals.
 
 ```bash
-# One-off: pass flag on the CLI
-nex-code --auto-orchestrate --task "fix all type errors in src/, add JSDoc to utils/, update CHANGELOG"
+# Just use it — multi-goal prompts auto-decompose into parallel agents
+nex-code --task "fix all type errors in src/, add JSDoc to utils/, update CHANGELOG"
 
-# Headless with custom orchestrator model
-nex-code --auto-orchestrate --orchestrator-model kimi-k2.5 --task "..."
+# Custom orchestrator model
+nex-code --orchestrator-model kimi-k2.5 --task "..."
 
-# Always-on via env var
-NEX_AUTO_ORCHESTRATE=true nex-code
+# Disable auto-orchestration
+NEX_AUTO_ORCHESTRATE=false nex-code
 
-# Set minimum goal count before orchestrator activates (default: 3)
+# Lower the goal threshold (default: 3)
 NEX_ORCHESTRATE_THRESHOLD=2 nex-code
 ```
 
@@ -1013,7 +1013,7 @@ Suggested commit: fix: resolve auth type errors and add utility docs
 
 | Variable                    | Default | Description                                             |
 | --------------------------- | ------- | ------------------------------------------------------- |
-| `NEX_AUTO_ORCHESTRATE`      | `false` | Set to `true` to always use the orchestrator            |
+| `NEX_AUTO_ORCHESTRATE`      | `true`  | Set to `false` to disable auto-orchestration            |
 | `NEX_ORCHESTRATE_THRESHOLD` | `3`     | Minimum number of detected goals before auto-triggering |
 
 **Model roles in orchestration:**
