@@ -1131,7 +1131,7 @@ let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, S
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
-let _sshBlockedPreCallNudgeSent = false; // true after the pre-call SSH-blocked nudge has fired once
+let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1621,7 +1621,7 @@ function _resetSessionTracking() {
   _investigationCapFired = false;
   _rootCauseDetected = false;
   _rootCauseSummary = "";
-  _sshBlockedPreCallNudgeSent = false;
+  _sshBlockedPreCallNudgeCount = 0;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2209,13 +2209,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // inject a system message BEFORE the LLM generates its response so it
       // knows upfront that SSH is unavailable and should ask the user for
       // specific information rather than falling back to reading local files.
-      // Fire only once per storm block to avoid flooding the context.
+      // Fire at most 2 times per storm block to prevent context flooding while
+      // still reinforcing the message if the model ignores the first nudge.
       if (
         _sshBlockedAfterStorm &&
         !_rootCauseDetected &&
-        !_sshBlockedPreCallNudgeSent
+        _sshBlockedPreCallNudgeCount < 2
       ) {
-        _sshBlockedPreCallNudgeSent = true;
+        _sshBlockedPreCallNudgeCount++;
         const sshBlockedNudge = {
           role: "user",
           content:
@@ -2224,13 +2225,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         apiMessages.push(sshBlockedNudge);
         conversationMessages.push(sshBlockedNudge);
         debugLog(
-          `${C.yellow}  ⚠ Pre-call SSH-blocked nudge injected — model told to ask user${C.reset}`,
+          `${C.yellow}  ⚠ Pre-call SSH-blocked nudge #${_sshBlockedPreCallNudgeCount} injected — model told to ask user${C.reset}`,
         );
       }
-      // Reset the nudge flag when SSH becomes available again so future storms
+      // Reset the nudge counter when SSH becomes available again so future storms
       // can fire the nudge again.
       if (!_sshBlockedAfterStorm) {
-        _sshBlockedPreCallNudgeSent = false;
+        _sshBlockedPreCallNudgeCount = 0;
       }
 
       // Step indicator — deferred, only shown for tool iterations (matches résumé count)
