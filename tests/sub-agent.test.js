@@ -37,6 +37,7 @@ jest.mock("../cli/ui", () => ({
 
 const {
   clearAllLocks,
+  classifyError,
   isRetryableError,
   getExcludedTools,
   LOCK_TIMEOUT_MS,
@@ -66,6 +67,27 @@ describe("sub-agent utilities", () => {
     });
   });
 
+  // ─── classifyError ────────────────────────────────────────
+  describe("classifyError", () => {
+    test.each([
+      ["429 rate limit", { message: "Error 429 Too Many Requests" }, "rate_limit"],
+      ["rate limit text", { message: "rate limit exceeded" }, "rate_limit"],
+      ["401 unauthorized", { message: "401 Unauthorized" }, "auth"],
+      ["403 forbidden", { message: "403 Forbidden" }, "auth"],
+      ["500 server", { message: "Server error 500" }, "server"],
+      ["502 gateway", { message: "502 Bad Gateway" }, "server"],
+      ["ECONNRESET", { message: "conn", code: "ECONNRESET" }, "network"],
+      ["ETIMEDOUT", { message: "timed out", code: "ETIMEDOUT" }, "network"],
+      ["fetch failed", { message: "fetch failed" }, "network"],
+      ["context overflow", { message: "400 context too long" }, "context_overflow"],
+      ["content length", { message: "400 maximum content length" }, "context_overflow"],
+      ["unknown", { message: "syntax error" }, "unknown"],
+      ["empty", { message: "" }, "unknown"],
+    ])("%s → %s", (_label, err, expected) => {
+      expect(classifyError(err)).toBe(expected);
+    });
+  });
+
   // ─── isRetryableError ──────────────────────────────────────
   describe("isRetryableError", () => {
     test.each([
@@ -87,6 +109,8 @@ describe("sub-agent utilities", () => {
       ["normal error", { message: "syntax error" }, false],
       ["404 not found", { message: "404 Not Found" }, false],
       ["empty error", { message: "" }, false],
+      ["auth error (not retryable)", { message: "401 Unauthorized" }, false],
+      ["context overflow (not retryable)", { message: "400 context too long" }, false],
     ])("%s → %s", (_label, err, expected) => {
       expect(isRetryableError(err)).toBe(expected);
     });
