@@ -367,11 +367,11 @@ function scoreMessages(messages) {
   }
 
   // ── 9. SSH reconnect storm (-0.5) ─────────────────────────────────────────
-  // ssh_exec calls in rapid succession (5+) — threshold lowered from 8 to 5
-  // to match tighter agent-side storm detection (warn@4, abort@6)
+  // ssh_exec calls in rapid succession (8+) — aligned with agent-side storm
+  // detection (warn@10, abort@16)
   const sshCalls = toolCalls.filter((tc) => tc.name === "ssh_exec");
-  if (sshCalls.length >= 5) {
-    // Check if 5+ consecutive ssh calls exist (adjacent message indices)
+  if (sshCalls.length >= 8) {
+    // Check if 8+ consecutive ssh calls exist (adjacent message indices)
     let maxConsecutive = 0;
     let current = 1;
     for (let i = 1; i < sshCalls.length; i++) {
@@ -383,10 +383,24 @@ function scoreMessages(messages) {
       }
     }
     maxConsecutive = Math.max(maxConsecutive, current);
-    if (maxConsecutive >= 5) {
+    if (maxConsecutive >= 8) {
       score -= 0.5;
       issues.push(
         `SSH reconnect storm: ${maxConsecutive} consecutive SSH calls`,
+      );
+    }
+  }
+
+  // ── 9b. Surrender penalty (-2.0) ──────────────────────────────────────────
+  // When the model gives up and asks the user to manually provide server
+  // output, that's a task failure — the agent's job is to gather info itself.
+  if (hasAnyAssistantMsg && sshCalls.length > 0) {
+    const surrenderPatterns =
+      /\b(Könntest du|könntest du|Bitte (bereitstellen|kopier)|kannst du mir .* bereitstellen|could you (provide|share|paste)|please (provide|share|run .* and paste)|I (cannot|can't) access the server|nicht (auf den Server )?zugreifen|SSH .* (nicht verfügbar|unavailable|temporarily unavailable))\b/i;
+    if (surrenderPatterns.test(lastAssistantText)) {
+      score -= 2.0;
+      issues.push(
+        "Surrender: model asked user to manually provide server output instead of gathering it",
       );
     }
   }

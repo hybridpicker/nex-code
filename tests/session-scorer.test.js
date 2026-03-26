@@ -348,7 +348,7 @@ describe("session-scorer.js", () => {
     });
 
     // Penalty 9: SSH reconnect storm
-    it("penalizes SSH reconnect storm (-0.5)", () => {
+    it("penalizes SSH reconnect storm (-0.5) at 8+ consecutive calls", () => {
       const msgs = [];
       for (let i = 0; i < 9; i++) {
         msgs.push(toolUse("ssh_exec", { command: `check ${i}` }));
@@ -362,6 +362,53 @@ describe("session-scorer.js", () => {
       const r = scoreMessages(msgs);
       expect(r.issues).toEqual(
         expect.arrayContaining([expect.stringContaining("SSH reconnect")]),
+      );
+    });
+
+    it("does not penalize SSH storm below 8 consecutive calls", () => {
+      const msgs = [];
+      for (let i = 0; i < 6; i++) {
+        msgs.push(toolUse("ssh_exec", { command: `check ${i}` }));
+        msgs.push(toolResult("ok"));
+      }
+      msgs.push(
+        assistantText(
+          "Server diagnostics complete. All services healthy.",
+        ),
+      );
+      const r = scoreMessages(msgs);
+      expect(r.issues).not.toEqual(
+        expect.arrayContaining([expect.stringContaining("SSH reconnect")]),
+      );
+    });
+
+    // Penalty 9b: Surrender
+    it("penalizes surrender when model asks user to provide server output (-2.0)", () => {
+      const msgs = [];
+      for (let i = 0; i < 4; i++) {
+        msgs.push(toolUse("ssh_exec", { command: `check ${i}` }));
+        msgs.push(toolResult("ok"));
+      }
+      msgs.push(
+        assistantText(
+          "Ich kann aktuell nicht direkt auf den Server zugreifen, da SSH temporär nicht verfügbar ist. Könntest du mir bitte die Logs bereitstellen?",
+        ),
+      );
+      const r = scoreMessages(msgs);
+      expect(r.issues).toEqual(
+        expect.arrayContaining([expect.stringContaining("Surrender")]),
+      );
+    });
+
+    it("does not penalize surrender when no SSH calls were made", () => {
+      const msgs = [
+        assistantText(
+          "Könntest du mir bitte die Logs bereitstellen?",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.issues).not.toEqual(
+        expect.arrayContaining([expect.stringContaining("Surrender")]),
       );
     });
 
