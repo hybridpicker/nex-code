@@ -109,7 +109,7 @@ describe("model-watcher.js", () => {
     });
 
     it("fetches and returns model names", async () => {
-      process.env.OLLAMA_API_KEY = "test-key";
+      process.env.OLLAMA_API_KEY = "test_dummy_not_real";
       axios.get.mockResolvedValue({
         data: {
           models: [
@@ -126,7 +126,7 @@ describe("model-watcher.js", () => {
     });
 
     it("strips :latest suffix", async () => {
-      process.env.OLLAMA_API_KEY = "test-key";
+      process.env.OLLAMA_API_KEY = "test_dummy_not_real";
       axios.get.mockResolvedValue({
         data: { models: [{ name: "my-model:latest" }] },
       });
@@ -138,7 +138,7 @@ describe("model-watcher.js", () => {
 
   describe("findNewModels()", () => {
     it("returns only unbenchmarked models", async () => {
-      process.env.OLLAMA_API_KEY = "test-key";
+      process.env.OLLAMA_API_KEY = "test_dummy_not_real";
       axios.get.mockResolvedValue({
         data: { models: [{ name: "model-a" }, { name: "model-b" }, { name: "model-c" }] },
       });
