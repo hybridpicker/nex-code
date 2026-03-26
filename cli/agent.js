@@ -1338,35 +1338,7 @@ Response patterns by request type:
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details. When diagnosing a bug (memory leak, race condition, logic error): always proceed from diagnosis to concrete fix — write the corrected code and apply it. Do not stop after identifying the root cause unless the user explicitly asked for analysis only.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
-- **Server/SSH commands**: When the user asks about a server issue, crash, error, or status — you MUST ssh into the server and investigate. NEVER just give advice or recommend manual steps. The user expects you to DO the investigation, not tell them how to do it. Use ssh_exec to check logs, service status, and diagnose the root cause yourself. After investigating, present your findings with specific log lines and a concrete fix.
-- **Server investigation rule**: When investigating errors via SSH, the moment you see a clear root cause, STOP reading more logs immediately. State the finding, then execute the fix. Never expand log line ranges after identifying the error — reading more of the same log is not progress, it is an investigation loop.
-
-  **Immediate stop triggers** — seeing ANY of these in tool output means root cause found, act now:
-  - "core-dump" / "code=dumped" / "status=11/SEGV" / "status=6/ABRT" → process crashed, investigate crash not symptoms
-  - "Cannot find module" / "MODULE_NOT_FOUND" → missing file/package, fix path or run npm install
-  - "ENOENT" / "no such file" / "file not found" → wrong path, locate with glob/ls
-  - "EACCES" / "permission denied" → fix permissions, don't retry
-  - "401 Unauthorized" / "token expired" / "auth failed" → renew credentials
-  - "ECONNREFUSED" / "port not reachable" → service down, check systemctl status
-  - "OOM" / "JavaScript heap out of memory" → memory issue, restart + increase limits
-
-  **Correct investigation order** (stop at the first step that gives a clear answer):
-  1. systemctl status <service> — is it running? any recent crash?
-  2. journalctl -u <service> -n 50 --no-pager — last 50 journal lines
-  3. grep -n "ERROR|FATAL|fail" <logfile> | tail -20 — recent errors
-  4. Only if still unclear: targeted grep -B5 -A5 "<specific error>" around the known error string
-  NEVER use sequential sed -n 'N,Mp' to scroll backwards through a log file — use grep to find the exact line instead.
-  NEVER use grep -B or -A with values larger than 20 — large context windows flood the LLM context and cause 400 errors. Use -B5 or -B10 at most.
-
-  **SSH command batching (CRITICAL — you have a limited SSH budget)**:
-  Combine multiple diagnostic commands into a SINGLE ssh_exec call using && or ;.
-  Your first ssh_exec should gather ALL initial diagnostics in one call:
-  ssh_exec("systemctl status svc --no-pager; echo '---SEPARATOR---'; journalctl -u svc -n 50 --no-pager; echo '---SEPARATOR---'; tail -50 /path/to/app.log; echo '---SEPARATOR---'; grep -n 'ERROR\\|FATAL\\|crash\\|exception' /path/to/app.log | tail -20")
-  This gives you service status + journal + app logs + errors in ONE call instead of 4.
-  After analyzing the first result, use a second targeted ssh_exec only if needed.
-  NEVER use more than 3 ssh_exec calls for a single investigation — batch aggressively.
-
-  **Health-check stop signal**: If a health/token-validation endpoint returns {"valid":true} AND the API responds with HTTP 200, the problem is intermittent or already resolved. STOP reading logs immediately. Report to the user: the token is valid, the service is reachable, the error was transient — no fix is needed. Do NOT continue reading log files after seeing {"valid":true} from a health check.
+- **Server/SSH commands**: When the user asks about a server issue, crash, or status — your FIRST tool call must be ssh_exec. Combine commands with ; to get everything in one call. Example: ssh_exec("systemctl status svc --no-pager; echo '==='; journalctl -u svc -n 50 --no-pager; echo '==='; tail -30 /path/to/app.log"). Analyze the output, state the root cause, then fix it. Only read local files if you need to edit them for a fix.
 - **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
 - **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES IN DIFF OUTPUT: Diff lines start with '+' (added) or '-' (removed) — the actual code content comes AFTER the leading '+'/'-'. This means 'grep -v "^\s*//"' does NOT exclude comment lines in diff output because the line starts with '+', not with whitespace. CORRECT pipeline for detecting console.log in staged .js changes while excluding comment lines: 'git diff --cached -- "*.js" | grep "^+" | grep -v "^+++" | grep -v "^\+[[:space:]]*//" | grep -q "console\.log"'. The key pattern is '^\+[[:space:]]*//' — match lines where after the '+' prefix comes optional whitespace then '//'. Always use this exact pipeline, never 'grep -v "^\s*//"' on diff output. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
@@ -2132,9 +2104,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 4; // warn after 4 consecutive ssh_exec calls
-  const SSH_STORM_ABORT = 6; // hard abort after 6 consecutive ssh_exec calls
-  const INVESTIGATION_CAP = 20; // after 20 read-only calls without an edit, force implementation
+  const SSH_STORM_WARN = 6; // warn after 6 consecutive ssh_exec calls
+  const SSH_STORM_ABORT = 10; // hard abort after 10 consecutive ssh_exec calls
+  const INVESTIGATION_CAP = 12; // after 12 read-only calls without an edit, force implementation
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -2759,7 +2731,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     : "";
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Budget: 12 tool calls remaining (enforced — extendable to 17 if you make progress by editing files).\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
+                  content: `[SYSTEM] Context was compressed. Use the findings above to implement your fix. If you need to re-read a file, use line_start/line_end for the specific section.${_cappedNote}`,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
@@ -3024,6 +2996,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           apiMessages.push(nudge);
           conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
           continue; // retry — don't count as a new step
+        }
+        // Tool avoidance nudge: if the model's first response has text but no tool
+        // calls, and it mentions "keine Tools", "can't use tools", "Tool-Budget", or
+        // similar — it's hallucinating that it can't use tools. Nudge it to actually
+        // use ssh_exec. Cap at 2 nudges to prevent infinite loop.
+        if (
+          hasText &&
+          totalSteps <= 1 &&
+          i < 3 &&
+          !_sshBlockedAfterStorm &&
+          _postWipeToolBudget < 0 && // no active budget constraint
+          /keine.*Tool|can.?t use.*tool|Tool.?Budget|nicht.*zugreifen|cannot.*access/i.test(
+            (content || "").slice(0, 500),
+          )
+        ) {
+          debugLog(
+            `${C.yellow}  ⚠ Tool avoidance detected — nudging model to use tools${C.reset}`,
+          );
+          const toolNudge = {
+            role: "user",
+            content:
+              "[SYSTEM] You have full tool access. Use ssh_exec to investigate the server now. Do not say you cannot use tools — you can.",
+          };
+          apiMessages.push(toolNudge);
+          conversationMessages.push(toolNudge);
+          continue; // retry without counting as a step
         }
         // In plan mode: if the LLM presented a plan without reading ANY files first,
         // reject it and force investigation. A plan based on zero tool calls is pure
@@ -3320,7 +3318,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           } else if (hasUnboundedRead) {
             advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
           } else {
-            advice = `Context ${Math.round(ctxPct)}% used. Avoid large reads, wrap up with what you have.`;
+            advice = `Use targeted reads (line_start/line_end) to save space.`;
           }
           const pressureMsg = {
             role: "user",
@@ -3923,7 +3921,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             const capMsg = {
               role: "user",
-              content: `[SYSTEM] Investigation cap reached (${_readOnlyCallsSinceEdit} read-only calls without editing a file). You have gathered enough information. STOP investigating and START implementing your fix NOW. Use edit_file or write_file in your NEXT response. Do not read any more files or run any more SSH commands.`,
+              content: `[SYSTEM] You have read enough files. Now implement your fix using edit_file.`,
             };
             conversationMessages.push(capMsg);
             apiMessages.push(capMsg);
