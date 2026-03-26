@@ -1079,6 +1079,7 @@ const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of tar
 const _sessionFileEditCounts = new Map();
 const _sessionLastEditFailed = new Map(); // path → true when last edit_file on that file failed with "old_text not found"
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
+const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
 let _planRejectionCount = 0; // times plan-without-reads was rejected this session (cap: 2)
@@ -1092,6 +1093,8 @@ let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
+let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
+let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1568,6 +1571,7 @@ function _resetSessionTracking() {
   _sessionFileEditCounts.clear();
   _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
+  _sessionRangeBlockCounts.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _planRejectionCount = 0;
@@ -1578,6 +1582,8 @@ function _resetSessionTracking() {
   _postWipeBudgetExtended = false;
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
+  _rootCauseDetected = false;
+  _rootCauseSummary = "";
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -3427,9 +3433,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 const newLen = newEnd - newStart || 1;
                 if (overlapLen / newLen >= 0.7) {
                   const shortPath = path.split("/").slice(-2).join("/");
+                  const rangeKey = `${path}:${newStart}-${newEnd}`;
+                  const rangeBlockCount = (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
+                  _sessionRangeBlockCounts.set(rangeKey, rangeBlockCount);
                   debugLog(
-                    `${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context)${C.reset}`,
+                    `${C.red}  ✖ Blocked duplicate read: "${shortPath}" lines ${newStart}-${newEnd} (≥70% overlap with lines ${ps}-${pe} already in context, block #${rangeBlockCount})${C.reset}`,
                   );
+                  if (rangeBlockCount >= 2) {
+                    // Model ignored the BLOCKED result and requested the same range again.
+                    // Inject a strong system-level stop into the conversation — tool results
+                    // are easy to overlook; user-role messages are harder to ignore.
+                    debugLog(
+                      `${C.red}  ✖ Escalated range-block: "${shortPath}" lines ${newStart}-${newEnd} — model ignored BLOCKED, injecting system warning${C.reset}`,
+                    );
+                    const escalateMsg = {
+                      role: "user",
+                      content: `[SYSTEM WARNING] You have now been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context and their content will NOT change. Do NOT request this range again. Use grep_search to locate specific content, or proceed with what you already know.`,
+                    };
+                    conversationMessages.push(escalateMsg);
+                    apiMessages.push(escalateMsg);
+                  }
                   prep.canExecute = false;
                   prep.errorResult = {
                     role: "tool",
