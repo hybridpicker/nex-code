@@ -58,14 +58,12 @@ jest.mock("../cli/planner", () => ({
 }));
 jest.mock("../cli/render", () => ({
   renderMarkdown: jest.fn().mockImplementation((t) => t || ""),
-  StreamRenderer: jest
-    .fn()
-    .mockImplementation(() => ({
-      push: jest.fn(),
-      flush: jest.fn(),
-      startCursor: jest.fn(),
-      stopCursor: jest.fn(),
-    })),
+  StreamRenderer: jest.fn().mockImplementation(() => ({
+    push: jest.fn(),
+    flush: jest.fn(),
+    startCursor: jest.fn(),
+    stopCursor: jest.fn(),
+  })),
 }));
 jest.mock("../cli/hooks", () => ({ runHooks: jest.fn().mockReturnValue([]) }));
 jest.mock("../cli/mcp", () => ({

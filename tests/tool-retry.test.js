@@ -5,13 +5,11 @@
 // Mock the provider registry before requiring agent
 jest.mock("../cli/providers/registry", () => ({
   callStream: jest.fn(),
-  getActiveModel: jest
-    .fn()
-    .mockReturnValue({
-      id: "kimi-k2.5",
-      name: "Kimi K2.5",
-      provider: "ollama",
-    }),
+  getActiveModel: jest.fn().mockReturnValue({
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    provider: "ollama",
+  }),
   getActiveProviderName: jest.fn().mockReturnValue("ollama"),
   getActiveModelId: jest.fn().mockReturnValue("kimi-k2.5"),
   _reset: jest.fn(),
@@ -96,14 +94,12 @@ jest.mock("../cli/planner", () => ({
 }));
 jest.mock("../cli/render", () => ({
   renderMarkdown: jest.fn().mockImplementation((text) => text || ""),
-  StreamRenderer: jest
-    .fn()
-    .mockImplementation(() => ({
-      push: jest.fn(),
-      flush: jest.fn(),
-      startCursor: jest.fn(),
-      stopCursor: jest.fn(),
-    })),
+  StreamRenderer: jest.fn().mockImplementation(() => ({
+    push: jest.fn(),
+    flush: jest.fn(),
+    startCursor: jest.fn(),
+    stopCursor: jest.fn(),
+  })),
 }));
 jest.mock("../cli/hooks", () => ({ runHooks: jest.fn().mockReturnValue([]) }));
 jest.mock("../cli/mcp", () => ({
