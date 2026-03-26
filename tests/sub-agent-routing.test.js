@@ -511,3 +511,49 @@ describe("executeSpawnAgents() depth guard", () => {
     expect(labels[0]).not.toMatch(/↳/);
   });
 });
+
+// ─── SUB_AGENT_TYPES ───────────────────────────────────────────────
+
+describe("SUB_AGENT_TYPES", () => {
+  const { SUB_AGENT_TYPES } = require("../cli/sub-agent");
+
+  it("is exported", () => {
+    expect(SUB_AGENT_TYPES).toBeDefined();
+  });
+
+  it("defines explore type with read-only tools", () => {
+    const explore = SUB_AGENT_TYPES.explore;
+    expect(explore).toBeDefined();
+    expect(explore.allowedTools).toBeInstanceOf(Set);
+    expect(explore.allowedTools.has("read_file")).toBe(true);
+    expect(explore.allowedTools.has("glob")).toBe(true);
+    expect(explore.allowedTools.has("grep")).toBe(true);
+    expect(explore.allowedTools.has("bash")).toBe(true);
+    // Should NOT include write tools
+    expect(explore.allowedTools.has("write_file")).toBe(false);
+    expect(explore.allowedTools.has("edit_file")).toBe(false);
+    expect(explore.allowedTools.has("patch_file")).toBe(false);
+  });
+
+  it("defines review type with read-only tools (no bash)", () => {
+    const review = SUB_AGENT_TYPES.review;
+    expect(review).toBeDefined();
+    expect(review.allowedTools).toBeInstanceOf(Set);
+    expect(review.allowedTools.has("read_file")).toBe(true);
+    expect(review.allowedTools.has("grep")).toBe(true);
+    // Review should not have bash
+    expect(review.allowedTools.has("bash")).toBe(false);
+    expect(review.allowedTools.has("write_file")).toBe(false);
+  });
+
+  it("defines implement type with all tools (null)", () => {
+    const impl = SUB_AGENT_TYPES.implement;
+    expect(impl).toBeDefined();
+    expect(impl.allowedTools).toBeNull();
+  });
+
+  it("explore and review types have system suffixes", () => {
+    expect(SUB_AGENT_TYPES.explore.systemSuffix).toContain("Do NOT modify");
+    expect(SUB_AGENT_TYPES.review.systemSuffix).toContain("Do NOT make changes");
+  });
+});

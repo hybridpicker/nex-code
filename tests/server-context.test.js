@@ -125,3 +125,35 @@ describe("getProfileNames", () => {
     expect(getProfileNames()).toEqual([]);
   });
 });
+
+describe("getDeploymentContextBlock — Jarvis rules", () => {
+  const { getDeploymentContextBlock } = require("../cli/server-context");
+
+  // Mock fs.readFileSync to simulate NEX.md with server keyword
+  beforeEach(() => {
+    jest.spyOn(require("fs"), "readFileSync").mockReturnValue("server deployment");
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test("includes Jarvis rules when profile has host 203.0.113.10", () => {
+    loadServerProfiles.mockReturnValue({
+      jarvis: { host: "203.0.113.10", user: "root", os: "almalinux9" },
+    });
+    const block = getDeploymentContextBlock();
+    expect(block).toBeDefined();
+    expect(block).toContain("Jarvis Debugging Rules");
+    expect(block).toContain("ssh_exec");
+    expect(block).toContain("/home/jarvis/remote-service/logs/");
+  });
+
+  test("omits Jarvis rules when no profile has Jarvis host", () => {
+    loadServerProfiles.mockReturnValue({
+      web: { host: "example.com", user: "deploy", os: "ubuntu" },
+    });
+    const block = getDeploymentContextBlock();
+    expect(block).toBeDefined();
+    expect(block).not.toContain("Jarvis Debugging Rules");
+  });
+});
