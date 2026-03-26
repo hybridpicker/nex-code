@@ -87,10 +87,16 @@ function scoreSession() {
     encoding: "utf8",
     timeout: 15_000,
   });
+  if (res.error) {
+    log(`Scorer child process error: ${res.error.message}`);
+    return { score: -1, grade: "X", issues: ["scorer error: " + res.error.message] };
+  }
   try {
     return JSON.parse(res.stdout);
   } catch {
-    return { score: 0, grade: "F", issues: ["scorer error"] };
+    const stderr = (res.stderr || "").trim().slice(0, 200);
+    log(`Scorer stdout not parseable. stderr: ${stderr || "(empty)"}`);
+    return { score: -1, grade: "X", issues: ["scorer error: unparseable output"] };
   }
 }
 
@@ -207,6 +213,12 @@ function onSessionChange() {
     log(
       `Score: ${score}/10 ${grade}  Issues: ${issues.length ? issues.join("; ") : "none"}`,
     );
+
+    // Scorer itself failed — don't count as a real score or run improvement
+    if (score < 0) {
+      log("Scorer error — skipping this session (will retry on next change).");
+      return;
+    }
 
     state.scores.push(score);
     state.pass++;
