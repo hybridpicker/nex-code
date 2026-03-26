@@ -66,11 +66,12 @@ function estimateTokens(text) {
   if (!text) return 0;
   if (typeof text !== "string") text = JSON.stringify(text);
 
-  // Check cache — key: first 80 chars + length to avoid O(n) key comparison on large strings
+  // Check cache — key includes length + 3 spread samples for collision resistance.
+  // Previous key (len + first60 + last20) collided on strings with same bookends.
   const cacheKey =
-    text.length <= 80
+    text.length <= 120
       ? text
-      : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length - 20)}`;
+      : `${text.length}:${text.substring(0, 60)}:${text.substring(text.length >> 1, (text.length >> 1) + 30)}:${text.substring(text.length - 30)}`;
   const cached = stringTokenCache.get(cacheKey);
   if (cached !== undefined) {
     // LRU: move to end of insertion order
@@ -250,7 +251,7 @@ const COMPRESSION_THRESHOLD =
 const SAFETY_MARGIN = parseFloat(process.env.NEX_SAFETY_MARGIN) || 0.1;
 const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
 const TRUNCATE_TOOL_RESULT = 200; // Truncate old tool results to N chars
-const TRUNCATE_ASSISTANT = 500; // Truncate old assistant content to N chars
+const TRUNCATE_ASSISTANT = 1000; // Truncate old assistant content to N chars (was 500 — too aggressive, lost reasoning)
 
 /**
  * Smart compression for tool result content.
@@ -519,7 +520,26 @@ function extractActiveFiles(messages, recentCount = 10) {
  * @param {object} [options] - { threshold, keepRecent }
  * @returns {{ messages: Array, compressed: boolean, tokensRemoved: number }}
  */
+// Skip-cache: if message count + last message identity haven't changed,
+// the previous fitToContext result is still valid.
+let _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
+
+function invalidateFitToContextCache() {
+  _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
+}
+
 async function fitToContext(messages, tools, options = {}) {
+  // Fast path: skip full recalculation when messages haven't changed
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  if (
+    !options.force &&
+    _fitToContextCache.result &&
+    messages.length === _fitToContextCache.msgCount &&
+    lastMsg === _fitToContextCache.lastMsgRef
+  ) {
+    return _fitToContextCache.result;
+  }
+
   const threshold = options.threshold ?? COMPRESSION_THRESHOLD;
   const safetyMargin = options.safetyMargin ?? SAFETY_MARGIN;
   const keepRecent = options.keepRecent ?? KEEP_RECENT;
@@ -534,7 +554,9 @@ async function fitToContext(messages, tools, options = {}) {
 
   // Under threshold → no compression needed
   if (totalUsed <= targetMax) {
-    return { messages, compressed: false, compacted: false, tokensRemoved: 0 };
+    const r = { messages, compressed: false, compacted: false, tokensRemoved: 0 };
+    _fitToContextCache = { msgCount: messages.length, lastMsgRef: lastMsg, result: r };
+    return r;
   }
 
   const originalTokens = currentTokens;
@@ -838,6 +860,7 @@ module.exports = {
   forceCompress,
   truncateFileContent,
   invalidateTokenRatioCache,
+  invalidateFitToContextCache,
   COMPRESSION_THRESHOLD,
   SAFETY_MARGIN,
   KEEP_RECENT,

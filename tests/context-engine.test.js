@@ -254,7 +254,7 @@ describe("context-engine.js", () => {
     });
 
     it("truncates long assistant content (light)", () => {
-      const msg = { role: "assistant", content: "a".repeat(1000) };
+      const msg = { role: "assistant", content: "a".repeat(2000) };
       const compressed = compressMessage(msg, "light");
       expect(compressed.content.length).toBeLessThan(msg.content.length);
       expect(compressed.content).toContain("truncated");
