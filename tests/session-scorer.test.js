@@ -427,6 +427,22 @@ describe("session-scorer.js", () => {
       );
     });
 
+    it("does not penalize SSH-storm blocks as denied actions", () => {
+      const msgs = [
+        toolUse("ssh_exec", { server: "almalinux9", command: "tail -50 logs/api.log" }),
+        toolResult("BLOCKED: ssh_exec denied — SSH paused (10+ calls). Root cause is known (TypeError). Edit the file now."),
+        toolUse("ssh_exec", { server: "almalinux9", command: "grep -n foo bar.js" }),
+        toolResult("BLOCKED: ssh_exec denied — SSH temporarily paused (10+ calls). Provide a text summary first."),
+        assistantText(
+          "The root cause is a TypeError in the checkAllAppsWithRetry function. The function is not exported correctly from the django-apps module. I need to fix the export.",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.issues).not.toEqual(
+        expect.arrayContaining([expect.stringContaining("blocked (agent attempted denied actions)")]),
+      );
+    });
+
     // Penalty 15: super-nuclear context wipe
     it("penalizes super-nuclear context wipes", () => {
       const msgs = [
