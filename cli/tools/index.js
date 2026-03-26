@@ -437,7 +437,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "bash",
       description:
-        "Execute a bash command in the project directory. Timeout: 90s. Use for: running tests, installing packages, git commands, build tools, starting servers. Do NOT use bash for file operations when a dedicated tool exists — use read_file instead of cat, edit_file instead of sed, glob instead of find, grep instead of grep/rg. Always quote paths with spaces. Prefer specific commands over rm -rf. Destructive or dangerous commands require user confirmation.",
+        "Execute a bash command in the project directory. Timeout: 90s (commands that exceed this are killed). Use for: running tests, installing packages, git commands, build tools, starting servers, compiling code. AVOID using bash for: cat/head/tail (use read_file), sed/awk (use edit_file), find/ls (use glob or list_directory), grep/rg (use grep tool). Using dedicated tools is faster and produces better-formatted output. Always quote file paths containing spaces with double quotes. Check the exit code in output — non-zero means the command failed. For long-running commands (large builds, full test suites), warn the user if they may exceed 90s. Destructive or dangerous commands (rm -rf, git push, npm publish, sudo) require user confirmation.",
       parameters: {
         type: "object",
         properties: {
@@ -455,7 +455,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a file's contents with line numbers. Always read a file BEFORE editing it to see exact content. Use line_start/line_end for large files to read specific sections. Prefer this over bash cat/head/tail. Files are read with UTF-8 encoding. For binary files, use bash with appropriate flags. Alternative: use util.promisify(fs.readFile) for programmatic access.",
+        "Read a file's contents with line numbers. You MUST use this tool at least once on a file BEFORE calling edit_file or patch_file on it — this ensures you have the exact current content and edits will match. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding.",
       parameters: {
         type: "object",
         properties: {
@@ -497,7 +497,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. Always read_file first to see the exact content before editing. If old_text is not found, the edit fails. For multiple changes to the same file, prefer patch_file instead.",
+        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message to re-read that specific region with line_start/line_end, then retry with the exact text. For multiple changes to the same file, prefer patch_file (single atomic operation).",
       parameters: {
         type: "object",
         properties: {
@@ -558,7 +558,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "glob",
       description:
-        "Find files matching a glob pattern. Fast file search by name/extension. Use this to find files before reading them. Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src). Prefer this over bash find/ls.",
+        "Find files matching a glob pattern. Fast file search by name/extension. Returns paths sorted by modification time. Use this to FIND files before reading them — never guess file paths, always glob first. Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to find the path, then read_file to read it.",
       parameters: {
         type: "object",
         properties: {
@@ -580,7 +580,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "grep",
       description:
-        "Search file contents with regex. Returns matching lines with file paths and line numbers. Supports output modes (content/files_with_matches/count), context lines, head_limit, offset, type filter, and multiline. Prefer this over bash grep/rg.",
+        "Search file contents with regex. Returns matching lines with file paths and line numbers. Prefer this over bash grep/rg — this tool returns structured, formatted output. Use output_mode='files_with_matches' when you only need file paths (faster, less output). Use output_mode='content' (default) for matching lines with context. Use head_limit to cap results and avoid overwhelming output on broad searches. Use include to filter by file type (e.g. '*.js'). Supports context lines (context, before_context, after_context), offset for pagination, type filter, and multiline for cross-line patterns.",
       parameters: {
         type: "object",
         properties: {

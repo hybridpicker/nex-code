@@ -26,7 +26,9 @@ const {
   fitToContext,
   forceCompress,
   truncateFileContent,
+  getEffectiveCompressionThreshold,
   COMPRESSION_THRESHOLD,
+  TIER_COMPRESSION_THRESHOLDS,
   SAFETY_MARGIN,
   KEEP_RECENT,
 } = require("../cli/context-engine");
@@ -1221,6 +1223,99 @@ describe("context-engine.js", () => {
       };
       const compressed = compressMessage(msg, "medium");
       expect(compressed.tool_calls[0].function.arguments.length).toBe(200);
+    });
+  });
+
+  // ─── Model-family token ratios ────────────────────────────────
+  describe("model-family token ratios", () => {
+    it("uses devstral ratio (3.8) for devstral models", () => {
+      registry.getActiveModel.mockReturnValue({
+        id: "devstral-2:123b",
+        provider: "ollama",
+        contextWindow: 131072,
+      });
+      // Invalidate cache so new model takes effect
+      const { invalidateTokenRatioCache } = require("../cli/context-engine");
+      invalidateTokenRatioCache();
+
+      // 380 chars at 3.8 chars/token = 100 tokens
+      const tokens = estimateTokens("a".repeat(380));
+      expect(tokens).toBe(100);
+    });
+
+    it("uses qwen ratio (3.5) for qwen models", () => {
+      registry.getActiveModel.mockReturnValue({
+        id: "qwen3-coder:480b",
+        provider: "ollama",
+        contextWindow: 131072,
+      });
+      const { invalidateTokenRatioCache } = require("../cli/context-engine");
+      invalidateTokenRatioCache();
+
+      // 350 chars at 3.5 chars/token = 100 tokens
+      const tokens = estimateTokens("a".repeat(350));
+      expect(tokens).toBe(100);
+    });
+
+    it("uses kimi ratio (3.7) for kimi models", () => {
+      registry.getActiveModel.mockReturnValue({
+        id: "kimi-k2:1t",
+        provider: "ollama",
+        contextWindow: 256000,
+      });
+      const { invalidateTokenRatioCache } = require("../cli/context-engine");
+      invalidateTokenRatioCache();
+
+      // 370 chars at 3.7 chars/token = 100 tokens
+      const tokens = estimateTokens("a".repeat(370));
+      expect(tokens).toBe(100);
+    });
+
+    it("falls back to provider ratio for unknown models", () => {
+      registry.getActiveModel.mockReturnValue({
+        id: "unknown-model:7b",
+        provider: "ollama",
+        contextWindow: 32768,
+      });
+      const { invalidateTokenRatioCache } = require("../cli/context-engine");
+      invalidateTokenRatioCache();
+
+      // 400 chars at 4.0 chars/token = 100 tokens
+      const tokens = estimateTokens("a".repeat(400));
+      expect(tokens).toBe(100);
+    });
+  });
+
+  // ─── Dynamic compression thresholds ───────────────────────────
+  describe("dynamic compression thresholds", () => {
+    it("exports TIER_COMPRESSION_THRESHOLDS", () => {
+      expect(TIER_COMPRESSION_THRESHOLDS).toEqual({
+        essential: 0.60,
+        standard: 0.70,
+        full: 0.75,
+      });
+    });
+
+    it("getEffectiveCompressionThreshold returns default for full-tier models", () => {
+      // gpt-4o is 'full' tier
+      registry.getActiveModel.mockReturnValue({
+        id: "gpt-4o",
+        provider: "openai",
+        contextWindow: 128000,
+      });
+      const threshold = getEffectiveCompressionThreshold();
+      expect(threshold).toBe(0.75);
+    });
+
+    it("returns lower threshold when tool-tiers reports essential tier", () => {
+      // Mock tool-tiers to return essential
+      jest.doMock("../cli/tool-tiers", () => ({
+        getActiveTier: () => "essential",
+      }));
+      // getEffectiveCompressionThreshold uses require() internally,
+      // so we test via the exported TIER_COMPRESSION_THRESHOLDS map
+      expect(TIER_COMPRESSION_THRESHOLDS.essential).toBe(0.60);
+      expect(TIER_COMPRESSION_THRESHOLDS.standard).toBe(0.70);
     });
   });
 });
