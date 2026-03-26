@@ -27,7 +27,7 @@ Options:
   --model <spec>           Set model (e.g. openai:gpt-4o)
   --max-turns <n>          Max agentic loop iterations (default: 50)
   --orchestrate            Use multi-agent orchestrator (with --task)
-  --auto-orchestrate       Automatically use orchestrator when ≥3 goals detected
+  --no-auto-orchestrate    Disable auto-orchestration for multi-goal prompts (on by default)
   --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
   --debug                  Show internal diagnostic messages (compression, loop detection, guards)
   --json                   Output result as JSON (for CI parsing)
@@ -155,9 +155,8 @@ function runHeadlessTask(task) {
       process.env.HEADLESS_MODEL || "devstral-small-2:24b";
     setActiveModel(fastHeadlessModel);
   }
-  const autoOrchestrate =
-    args.includes("--auto-orchestrate") ||
-    process.env.NEX_AUTO_ORCHESTRATE === "true";
+  const autoOrchestrate = !args.includes("--no-auto-orchestrate") &&
+    process.env.NEX_AUTO_ORCHESTRATE !== "false";
   const orchModelIdx = args.indexOf("--orchestrator-model");
   const orchestratorModel =
     orchModelIdx !== -1 ? args[orchModelIdx + 1] : undefined;

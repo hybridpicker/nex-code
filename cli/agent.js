@@ -1899,9 +1899,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
 
-  // Auto-orchestrate or hint for complex multi-goal prompts
+  // Auto-orchestrate for complex multi-goal prompts (default: on).
+  // Disable with NEX_AUTO_ORCHESTRATE=false or --no-auto-orchestrate.
   const autoOrch =
-    opts.autoOrchestrate || process.env.NEX_AUTO_ORCHESTRATE === "true";
+    opts.autoOrchestrate !== false &&
+    process.env.NEX_AUTO_ORCHESTRATE !== "false";
   const orchThreshold = parseInt(
     process.env.NEX_ORCHESTRATE_THRESHOLD || "3",
     10,
@@ -1930,7 +1932,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
     if (complexity.isComplex) {
       console.log(
-        `${C.dim}Hint: ~${complexity.estimatedGoals} goals. Try --auto-orchestrate for parallel execution.${C.reset}`,
+        `${C.dim}Hint: ~${complexity.estimatedGoals} goals detected. Disable with NEX_AUTO_ORCHESTRATE=false${C.reset}`,
       );
     }
   } catch {
