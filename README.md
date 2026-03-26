@@ -119,19 +119,18 @@ Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks agai
 ### Flat-Rate / Pay-as-you-go
 
 <!-- nex-benchmark-start -->
-<!-- Updated: 2026-03-20 — run `/benchmark --discover` after new Ollama Cloud releases -->
+<!-- Updated: 2026-03-26 — run `/benchmark --discover` after new Ollama Cloud releases -->
 
-| Rank | Model                  | Score  | Avg Latency | Context | Best For                                              |
-| ---- | ---------------------- | ------ | ----------- | ------- | ----------------------------------------------------- |
-| 🥇   | `devstral-2:123b`      | **84** | 1.5s        | 131K    | Default — fastest + most reliable tool selection      |
-| 🥈   | `qwen3-coder:480b`     | 79     | 2.9s        | 131K    | Coding-heavy sessions, heavy sub-agents               |
-| 🥉   | `kimi-k2:1t`           | 79     | 2.7s        | 256K    | Large repos (>100K tokens)                            |
-| —    | `minimax-m2.7:cloud`   | 73     | 3.5s        | 200K    | Complex swarm / multi-agent sessions (Toolathon SOTA) |
-| —    | `devstral-small-2:24b` | 73     | 1.0s        | 131K    | Fast sub-agents, simple lookups                       |
+| Rank | Model | Score | Avg Latency | Context | Best For |
+|---|---|---|---|---|---|
+| 🥇 | `devstral-2:123b` | **82.5** | 1.7s | 131K | Default — fastest + most reliable tool selection |
+| 🥈 | `devstral-small-2:24b` | 75 | 3.1s | 131K | Fast sub-agents, simple lookups |
+| 🥉 | `qwen3-coder:480b` | 72.5 | 8.4s | 131K | Coding-heavy sessions, heavy sub-agents |
+| — | `kimi-k2:1t` | 67.5 | 6.6s | 256K | Large repos (>100K tokens) |
+| — | `minimax-m2.7:cloud` | 64.1 | 5.0s | 200K | Complex swarm / multi-agent sessions (Toolathon SOTA) |
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
-
 <!-- nex-benchmark-end -->
 
 ### Recommended `.env` for Ollama Cloud (Flat-Rate)
