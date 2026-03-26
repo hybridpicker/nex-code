@@ -793,8 +793,15 @@ function formatScore(result, C = null) {
   let out = `\n${dim}  Session score: ${reset}${bold}${color}${score}/10 (${grade})${reset}`;
   if (summary) out += `  ${dim}${summary}${reset}`;
   if (issues.length > 0) {
-    for (const issue of issues) {
-      out += `\n  ${yellow}⚠${reset} ${dim}${issue}${reset}`;
+    // High-scoring sessions: show issues inline as a compact dim note, no ⚠ per line.
+    // Low-scoring sessions: show each issue on its own line with ⚠ so they're easy to scan.
+    if (score >= 7) {
+      const compact = issues.map((s) => s.replace(/:\s+\d+.*$/, "").replace(/\s*\(.*?\)/, "")).join(" · ");
+      out += `\n  ${dim}${compact}${reset}`;
+    } else {
+      for (const issue of issues) {
+        out += `\n  ${yellow}⚠${reset} ${dim}${issue}${reset}`;
+      }
     }
   }
   return out;

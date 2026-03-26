@@ -324,8 +324,18 @@ function formatToolSummary(name, args, result, isError) {
   const r = String(result || "");
 
   if (isError) {
-    const errMsg = r
-      .split("\n")[0]
+    const firstLine = r.split("\n")[0];
+    // BLOCKED messages: show compact one-liner, skip the verbose guidance text
+    if (firstLine.startsWith("BLOCKED:")) {
+      const reason = firstLine
+        .replace(/^BLOCKED:\s*/, "")
+        .replace(/\s*—.*$/, "")   // strip everything after the em-dash
+        .replace(/\s*\(hard cap:.*?\)/, "")
+        .trim()
+        .substring(0, 70);
+      return `  ${T.muted}└ blocked: ${reason}${T.reset}`;
+    }
+    const errMsg = firstLine
       .replace(/^ERROR:\s*/i, "")
       .substring(0, 80);
     const hintMatch = r.match(/\nHINT: (.+)/);
