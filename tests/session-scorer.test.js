@@ -217,7 +217,7 @@ describe("session-scorer.js", () => {
     });
 
     // Penalty 2: sed -n
-    it("penalizes sed -n usage (-1.5)", () => {
+    it("penalizes sed -n usage (-1.5) when not blocked", () => {
       const msgs = [
         toolUse("bash", { command: "sed -n '1,10p' file.js" }),
         toolResult("line1\nline2"),
@@ -225,6 +225,21 @@ describe("session-scorer.js", () => {
       ];
       const r = scoreMessages(msgs);
       expect(r.score).toBe(8.5);
+    });
+
+    it("applies reduced penalty (-0.25) when sed -n was blocked by agent guard", () => {
+      const msgs = [
+        toolUse("bash", { command: "sed -n '520,550p' startup/cron-jobs.js" }),
+        toolResult(
+          'BLOCKED: sed -n is forbidden \u2014 it floods context with line ranges. Use grep -n "pattern" <file> | head -30 to read a specific section, or cat <file> for the full file.',
+        ),
+        assistantText(
+          "This is a detailed diagnosis that exceeds one hundred characters to avoid triggering the no-diagnosis penalty in session scoring logic.",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.score).toBe(9.8); // 10 - 0.25 = 9.75, rounded to 1 decimal
+      expect(r.issues[0]).toMatch(/blocked by agent guard/);
     });
 
     // Penalty 3: heavy grep context

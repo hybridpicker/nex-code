@@ -221,7 +221,7 @@ function scoreMessages(messages) {
     );
   }
 
-  // ── 2. sed -n used (-1.5) ─────────────────────────────────────────────────
+  // ── 2. sed -n used (-1.5 if executed, -0.25 if blocked) ─────────────────
   const sedNCall = toolCalls.find((tc) => {
     const cmd = tc.input?.command || tc.input?.cmd || "";
     return /\bsed\s+-n\b/.test(cmd);
@@ -231,8 +231,18 @@ function scoreMessages(messages) {
       0,
       80,
     );
-    score -= 1.5;
-    issues.push(`sed -n anti-pattern used: ${cmd}`);
+    const sedBlocked = toolResults.some(
+      (tr) =>
+        tr.content.includes("BLOCKED: sed -n is forbidden") ||
+        tr.content.includes("BLOCKED: sed -n"),
+    );
+    if (sedBlocked) {
+      score -= 0.25;
+      issues.push(`sed -n attempted but blocked by agent guard: ${cmd}`);
+    } else {
+      score -= 1.5;
+      issues.push(`sed -n anti-pattern used: ${cmd}`);
+    }
   }
 
   // ── 3. grep with >20 context lines (-1.0) ─────────────────────────────────
@@ -663,8 +673,11 @@ function scoreMessages(messages) {
 
   // ── 14. BLOCKED tool calls (-0.5 per, max -1.5) ─────────────────────────
   // A BLOCKED message means the agent attempted something it shouldn't have.
-  const blockedResults = toolResults.filter((tr) =>
-    tr.content.startsWith("BLOCKED:"),
+  // Exclude blocks already penalized individually (e.g. sed -n) to avoid double-counting.
+  const blockedResults = toolResults.filter(
+    (tr) =>
+      tr.content.startsWith("BLOCKED:") &&
+      !tr.content.includes("BLOCKED: sed -n"),
   );
   if (blockedResults.length > 0) {
     const penalty = Math.min(blockedResults.length * 0.5, 1.5);
