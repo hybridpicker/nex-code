@@ -3342,10 +3342,10 @@ async function _executeToolInner(name, args, options = {}) {
           .join("\n");
       }
 
-      // Cap SSH output at 200 lines — keeps last 200 (most relevant for log commands).
-      // Grep commands with -B or -A get a tighter cap (100 lines) because context blocks
-      // multiply quickly and fill the LLM context when several grep calls run in parallel.
-      const SSH_MAX_LINES = isGrepCmd ? 100 : 200;
+      // Cap SSH output to save context — keeps last N lines (most relevant for log commands).
+      // Grep commands with -B or -A get a tighter cap because context blocks multiply quickly.
+      // Previously 200/100 — reduced to 100/60 to prevent context overflow on multi-SSH tasks.
+      const SSH_MAX_LINES = isGrepCmd ? 60 : 100;
       const outputLines = processedOutput.split("\n");
       if (outputLines.length > SSH_MAX_LINES) {
         const dropped = outputLines.length - SSH_MAX_LINES;
