@@ -658,6 +658,11 @@ async function query(userQuery, options = {}) {
  * @param {string} userQuery
  * @returns {Promise<string>}
  */
+// Cache brain context per query to avoid redundant index lookups + scoring.
+// Invalidated when query changes or 5 minutes elapse.
+let _brainContextCache = { queryKey: null, result: null, ts: 0 };
+const BRAIN_CACHE_TTL_MS = 300_000; // 5 minutes
+
 async function getBrainContext(userQuery) {
   if (!userQuery || !userQuery.trim()) return "";
 
@@ -666,6 +671,16 @@ async function getBrainContext(userQuery) {
   if (!fs.existsSync(brainDir)) return "";
   const docs = listDocuments();
   if (docs.length === 0) return "";
+
+  // Return cached result if same query keywords and within TTL
+  const queryKey = userQuery.trim().toLowerCase().slice(0, 200);
+  if (
+    _brainContextCache.result !== null &&
+    _brainContextCache.queryKey === queryKey &&
+    Date.now() - _brainContextCache.ts < BRAIN_CACHE_TTL_MS
+  ) {
+    return _brainContextCache.result;
+  }
 
   let results;
   try {
@@ -705,8 +720,13 @@ async function getBrainContext(userQuery) {
     if (totalTokens >= MAX_BRAIN_TOKENS) break;
   }
 
-  if (parts.length === 0) return "";
-  return `KNOWLEDGE BASE (auto-selected):\n\n${parts.join("\n\n")}`;
+  if (parts.length === 0) {
+    _brainContextCache = { queryKey, result: "", ts: Date.now() };
+    return "";
+  }
+  const result = `KNOWLEDGE BASE (auto-selected):\n\n${parts.join("\n\n")}`;
+  _brainContextCache = { queryKey, result, ts: Date.now() };
+  return result;
 }
 
 // ─── Exports ──────────────────────────────────────────────────
