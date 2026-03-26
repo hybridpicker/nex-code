@@ -1085,8 +1085,11 @@ let _planRejectionCount = 0; // times plan-without-reads was rejected this sessi
 let _lastCompressionMsg = ""; // deduplicate consecutive identical compression messages
 let _compressionMsgCount = 0; // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
+let _sshStormCount = 0; // how many times the SSH storm warning has fired this session
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
 let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
+let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
+let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1353,6 +1356,10 @@ Response patterns by request type:
   NEVER use sequential sed -n 'N,Mp' to scroll backwards through a log file — use grep to find the exact line instead.
   NEVER use grep -B or -A with values larger than 20 — large context windows flood the LLM context and cause 400 errors. Use -B5 or -B10 at most.
 
+  **SSH command batching**: Combine diagnostic commands into a single ssh_exec using && or ;.
+  Example — instead of 3 separate calls: ssh_exec("systemctl status svc --no-pager && journalctl -u svc -n 30 --no-pager && grep -n 'ERROR\\|FATAL' /var/log/svc.log | tail -15")
+  ALWAYS batch diagnostic commands into one ssh_exec call. Use separate ssh_exec calls ONLY when one command's output determines the next command.
+
   **Health-check stop signal**: If a health/token-validation endpoint returns {"valid":true} AND the API responds with HTTP 200, the problem is intermittent or already resolved. STOP reading logs immediately. Report to the user: the token is valid, the service is reachable, the error was transient — no fix is needed. Do NOT continue reading log files after seeing {"valid":true} from a health check.
 - **Regex explanations**: Show the original pattern, test it with concrete examples, then provide BOTH: (1) a named-constant rewrite (e.g. const OCTET = '...'; const IP_RE = new RegExp(...)) AND (2) a step-by-step validation function that replaces the regex entirely using split/conditions — this is often the most readable alternative. Named groups are engine-specific — prefer named constants or the validation function. Verify the rewrite matches all edge cases of the original before claiming equivalence.
 - **Encoding/buffer handling**: When discussing file operations, mention utf8 encoding or buffer considerations. Use correct flags like --zero instead of -0 for null-delimited output.
@@ -1589,6 +1596,8 @@ function _resetSessionTracking() {
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
   _postWipeToolBudget = -1;
+  _filesModifiedAtWipe = 0;
+  _postWipeBudgetExtended = false;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2115,8 +2124,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
-  const SSH_STORM_WARN = 8; // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
-  const SSH_STORM_ABORT = 12; // hard abort after 12 consecutive ssh_exec calls
+  const SSH_STORM_WARN = 6; // warn after 8 consecutive ssh_exec calls (matches scorer penalty threshold)
+  const SSH_STORM_ABORT = 8; // hard abort after 12 consecutive ssh_exec calls
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -2590,7 +2599,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // Extract investigation findings before wiping history so the agent
               // can continue implementing fixes instead of re-investigating from scratch.
               const _findingParts = [];
-              // Last 3 assistant messages with actual text content (skip pure tool-call turns)
+              // Last 5 assistant messages with actual text content (skip pure tool-call turns)
               const _assistantTexts = conversationMessages
                 .filter(
                   (m) =>
@@ -2598,9 +2607,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     typeof m.content === "string" &&
                     m.content.trim().length > 30,
                 )
-                .slice(-3)
+                .slice(-5)
                 .map((m) =>
-                  m.content.trim().slice(0, 120).replace(/\n+/g, " "),
+                  m.content.trim().slice(0, 300).replace(/\n+/g, " "),
                 );
               if (_assistantTexts.length > 0) {
                 _findingParts.push(
@@ -2608,7 +2617,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     _assistantTexts.map((t) => `- ${t}`).join("\n"),
                 );
               }
-              // Last 2-3 tool result messages with meaningful output (skip BLOCKED: messages)
+              // Last 5 tool result messages with meaningful output (skip BLOCKED: messages)
               const _toolResults = conversationMessages
                 .filter(
                   (m) =>
@@ -2617,14 +2626,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     !m.content.startsWith("BLOCKED:") &&
                     m.content.trim().length > 10,
                 )
-                .slice(-3)
+                .slice(-5)
                 .map((m) =>
                   m.content
                     .trim()
                     .split("\n")
-                    .slice(0, 3)
+                    .slice(0, 8)
                     .join("\n")
-                    .slice(0, 200),
+                    .slice(0, 500),
                 );
               if (_toolResults.length > 0) {
                 _findingParts.push(
@@ -2640,6 +2649,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 _findingParts.unshift(
                   `Already modified: ${_modifiedList} — use edit_file to add missing pieces only, DO NOT use write_file on these files.`,
                 );
+              }
+              // Include files already read so the model knows what it investigated
+              if (filesRead.size > 0) {
+                const _readList = [...filesRead]
+                  .map((f) => f.split("/").slice(-2).join("/"))
+                  .join(", ");
+                _findingParts.push(`Files already investigated: ${_readList}`);
               }
               if (_findingParts.length > 0) {
                 const _findingsMsg = {
@@ -2680,7 +2696,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
               apiMessages = _superNuclear;
               _superNuclearFires++;
-              _postWipeToolBudget = 5; // enforce: model gets at most 5 more tool calls
+              _postWipeToolBudget = 12; // enforce: model gets at most 12 more tool calls (extendable to 17 on progress)
+              _filesModifiedAtWipe = filesModified.size; // track progress baseline for budget extension
+              _postWipeBudgetExtended = false; // one-time extension flag
               _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
               // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
               // If the SSH storm triggered the context overflow, we must keep SSH blocked
@@ -2732,7 +2750,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     : "";
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Budget: 5 tool calls remaining (enforced — all further calls are blocked once exhausted).\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
+                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Budget: 12 tool calls remaining (enforced — extendable to 17 if you make progress by editing files).\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
@@ -2952,12 +2970,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       if (!tool_calls || tool_calls.length === 0) {
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
-        // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up
+        // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up.
+        // After the 2nd storm, SSH stays permanently blocked — no more unblocking.
+        // After the 1st storm, give a reduced budget (SSH_STORM_WARN - 3) instead of full reset.
         let _justUnblockedSsh = false;
         if (_sshBlockedAfterStorm && hasText) {
-          _sshBlockedAfterStorm = false;
-          _sessionConsecutiveSshCalls = 0; // fresh budget for any follow-up
-          _justUnblockedSsh = true;
+          if (_sshStormCount >= 2) {
+            // 2+ storms: SSH stays permanently blocked — agent must work with what it has
+            debugLog(
+              `${C.yellow}  ⚠ SSH permanently blocked after ${_sshStormCount} storm warnings — no further SSH calls allowed${C.reset}`,
+            );
+          } else {
+            _sshBlockedAfterStorm = false;
+            // Give reduced budget (2 calls) instead of full reset (was 0 → full SSH_STORM_WARN budget)
+            _sessionConsecutiveSshCalls = SSH_STORM_WARN - 2;
+            _justUnblockedSsh = true;
+          }
         }
         // If the agent just got unblocked but responded with a question instead of acting,
         // nudge it to continue implementing the fix without asking.
@@ -3621,35 +3649,50 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       // ─── Enforce post-wipe tool call budget ─────────────────────────────────
-      // After a context wipe the model is told it has 5 tool calls left (enforced).
+      // After a context wipe the model gets 10 tool calls (extendable to 15 on progress).
       // Count only calls that would actually execute; blocked ones don't spend budget.
-      // When exhausted: block all remaining calls and inject a stop instruction so
-      // the model produces a final text response instead of continuing to loop.
+      // When exhausted: check for progress (new file edits since wipe) and grant 5 bonus
+      // calls once. If still exhausted after extension, block and inject a stop instruction.
       if (_postWipeToolBudget >= 0) {
         const executableNow = prepared.filter((p) => p.canExecute).length;
         if (executableNow > 0) {
           _postWipeToolBudget -= executableNow;
           if (_postWipeToolBudget < 0) {
-            debugLog(
-              `${C.red}  ✖ Post-wipe tool budget exhausted — blocking all tool calls${C.reset}`,
-            );
-            for (const prep of prepared) {
-              if (!prep.canExecute) continue;
-              prep.canExecute = false;
-              prep.errorResult = {
-                role: "tool",
-                content:
-                  "BLOCKED: post-wipe tool budget exhausted. No further tool calls are allowed. Summarise what was accomplished and stop.",
-                tool_call_id: prep.callId,
+            // Progress extension: if the model made file edits since the wipe, grant 5 bonus calls (once)
+            if (!_postWipeBudgetExtended && filesModified.size > _filesModifiedAtWipe) {
+              _postWipeBudgetExtended = true;
+              _postWipeToolBudget = 5; // grant 5 bonus calls (total cap: 15)
+              debugLog(
+                `${C.green}  ✓ Post-wipe progress detected (${filesModified.size - _filesModifiedAtWipe} files modified) — granting 5 bonus tool calls${C.reset}`,
+              );
+              const progressMsg = {
+                role: "user",
+                content: "[SYSTEM] Progress detected — 5 bonus tool calls granted. Budget: 5 remaining.",
               };
+              conversationMessages.push(progressMsg);
+              apiMessages.push(progressMsg);
+            } else {
+              debugLog(
+                `${C.red}  ✖ Post-wipe tool budget exhausted — blocking all tool calls${C.reset}`,
+              );
+              for (const prep of prepared) {
+                if (!prep.canExecute) continue;
+                prep.canExecute = false;
+                prep.errorResult = {
+                  role: "tool",
+                  content:
+                    "BLOCKED: post-wipe tool budget exhausted. No further tool calls are allowed. Summarise what was accomplished and stop.",
+                  tool_call_id: prep.callId,
+                };
+              }
+              const budgetMsg = {
+                role: "user",
+                content:
+                  "[SYSTEM] Post-wipe tool budget exhausted. All tool calls are now blocked. Respond with a final summary of what was done and stop — do not attempt any more tool calls.",
+              };
+              conversationMessages.push(budgetMsg);
+              apiMessages.push(budgetMsg);
             }
-            const budgetMsg = {
-              role: "user",
-              content:
-                "[SYSTEM] Post-wipe tool budget exhausted. All tool calls are now blocked. Respond with a final summary of what was done and stop — do not attempt any more tool calls.",
-            };
-            conversationMessages.push(budgetMsg);
-            apiMessages.push(budgetMsg);
           }
         }
       }
@@ -3891,8 +3934,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // SSH storm detection — cap consecutive ssh_exec calls regardless of command uniqueness.
         // The existing bash-loop detector only fires on *similar* commands; an agent running 16
         // different grep/cat patterns via ssh_exec bypasses it while still burning context.
+        // Failed SSH calls (connection errors, command failures) add minimal context and should
+        // NOT count toward the storm limit — only successful calls that fill the context count.
         if (prep.fnName === "ssh_exec") {
-          _sessionConsecutiveSshCalls++;
+          if (isOk) _sessionConsecutiveSshCalls++;
           if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
             debugLog(
               `${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`,
@@ -3921,8 +3966,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               apiMessages = _c;
             }
             _sshBlockedAfterStorm = true; // block all further SSH calls until agent synthesizes
+            _sshStormCount++;
             debugLog(
-              `${C.yellow}  ⚠ SSH storm warning: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`,
+              `${C.yellow}  ⚠ SSH storm warning (#${_sshStormCount}): ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — blocking further SSH${C.reset}`,
             );
             const sshStormWarning = {
               role: "user",
