@@ -137,12 +137,16 @@ const HEAVY_PATTERNS =
 
 /**
  * Classify a task description into a complexity tier.
+ * Uses regex keyword matching + task length heuristic.
+ * Long tasks (>300 chars) with multiple goals are likely complex.
  * @param {string} taskDesc
  * @returns {'essential'|'standard'|'full'}
  */
 function classifyTask(taskDesc) {
   if (HEAVY_PATTERNS.test(taskDesc)) return "full";
   if (FAST_PATTERNS.test(taskDesc)) return "essential";
+  // Length heuristic: long multi-goal tasks are likely complex
+  if (taskDesc.length > 300) return "full";
   return "standard";
 }
 
@@ -458,6 +462,24 @@ ERROR RECOVERY:
 
       const toolMessages = await Promise.all(toolResultPromises);
       messages.push(...toolMessages);
+
+      // Light context compression for sub-agents at iteration 8+ to prevent
+      // hitting context limits on long-running sub-tasks. Only compress old
+      // tool results and assistant content — never drop messages entirely.
+      if (i >= 7 && messages.length > 12) {
+        try {
+          const { compressMessage } = require("./context-engine");
+          // Compress messages older than the last 6 (keep system + recent)
+          const compressUpTo = messages.length - 6;
+          for (let ci = 1; ci < compressUpTo; ci++) {
+            if (!messages[ci]._subAgentCompressed) {
+              messages[ci] = { ...compressMessage(messages[ci], "light"), _subAgentCompressed: true };
+            }
+          }
+        } catch {
+          /* non-critical — skip compression if context-engine not available */
+        }
+      }
 
       // Track repeated failed bash commands for stuck-detection reporting
       for (let j = 0; j < tool_calls.length; j++) {

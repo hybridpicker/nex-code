@@ -526,7 +526,17 @@ function clearToolFilterCache() {
  * Quick hash of project context to detect changes.
  * Uses mtime of key files + git HEAD ref.
  */
+// Debounced project context hash — reuse cached value within TTL to avoid
+// async file-stat calls on every turn (saves 20-100ms per iteration).
+let _contextHashCache = { hash: null, ts: 0 };
+const CONTEXT_HASH_TTL_MS = 30_000; // 30 seconds
+
 async function getProjectContextHash() {
+  // Return cached hash if within TTL
+  if (_contextHashCache.hash && Date.now() - _contextHashCache.ts < CONTEXT_HASH_TTL_MS) {
+    return _contextHashCache.hash;
+  }
+
   try {
     const fs = require("fs").promises;
     const path = require("path");
@@ -561,7 +571,9 @@ async function getProjectContextHash() {
     } catch {
       /* ignore */
     }
-    return hashes.join("|");
+    const hash = hashes.join("|");
+    _contextHashCache = { hash, ts: Date.now() };
+    return hash;
   } catch {
     return `fallback:${Date.now()}`;
   }
@@ -573,6 +585,7 @@ async function getProjectContextHash() {
 function invalidateSystemPromptCache() {
   cachedSystemPrompt = null;
   cachedContextHash = null;
+  _contextHashCache = { hash: null, ts: 0 };
   cachedModelRoutingGuide = null;
 }
 
@@ -909,6 +922,12 @@ async function executeSingleTool(prep, quiet = false) {
     ) {
       finalContent +=
         "\nHINT: use list_directory instead of bash ls — it is the preferred tool for listing directory contents.";
+    } else if (
+      /\bfind\s+\S/.test(cmd) &&
+      !/git\b|npm\b|-exec\b|-delete\b|-print0\b/.test(cmd)
+    ) {
+      finalContent +=
+        "\nHINT: use glob instead of bash find for file discovery — it is faster and the preferred tool (e.g. glob('**/*.jsx')).";
     }
   }
 
@@ -1026,6 +1045,32 @@ const MAX_CONVERSATION_HISTORY = 300;
 // Without this, each processInput() call resets the counters, allowing the agent
 // to run e.g. 7 sed calls per turn indefinitely across many turns.
 // Reset in clearConversation() so /clear starts fresh.
+// Session loop counters — each entry stores { count, ts }.
+// Entries older than LOOP_COUNTER_TTL_MS are treated as expired (count 0)
+// so valid work isn't blocked by stale counters from 10+ turns ago.
+const LOOP_COUNTER_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function _getLoopCount(map, key) {
+  const entry = map.get(key);
+  if (!entry) return 0;
+  if (Date.now() - entry.ts > LOOP_COUNTER_TTL_MS) {
+    map.delete(key);
+    return 0;
+  }
+  return entry.count;
+}
+
+function _incLoopCount(map, key) {
+  const entry = map.get(key);
+  const count = entry && Date.now() - entry.ts <= LOOP_COUNTER_TTL_MS ? entry.count + 1 : 1;
+  map.set(key, { count, ts: Date.now() });
+  return count;
+}
+
+function _setLoopCount(map, key, count) {
+  map.set(key, { count, ts: Date.now() });
+}
+
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
@@ -1041,6 +1086,7 @@ let _lastCompressionMsg = ""; // deduplicate consecutive identical compression m
 let _compressionMsgCount = 0; // count consecutive identical compression messages
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
+let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1531,6 +1577,7 @@ function _resetSessionTracking() {
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
+  _postWipeToolBudget = -1;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -2045,6 +2092,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
+  const TARGETED_READ_HARD_CAP = 4; // absolute max reads of any single file (unbounded + targeted combined)
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -2619,16 +2667,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
               apiMessages = _superNuclear;
               _superNuclearFires++;
+              _postWipeToolBudget = 5; // enforce: model gets at most 5 more tool calls
               _sessionConsecutiveSshCalls = 0; // fresh SSH budget after context wipe
               // NOTE: intentionally do NOT reset _sshBlockedAfterStorm here.
               // If the SSH storm triggered the context overflow, we must keep SSH blocked
               // so the agent can't immediately repeat the same storm after context wipe.
               // SSH unblocks naturally when the agent sends a text-only response.
               _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
-              _sessionFileReadCounts.clear(); // file content is gone after wipe — allow re-reads
+              // Preserve read counts for any file read ≥2× so it can't restart a
+              // flood cycle after a wipe. Files read once reset to 1 (unbounded
+              // re-reads stay blocked, one targeted section still allowed).
+              // Files read ≥2× keep their exact count — the agent is already near
+              // or past cap and gets at most a couple targeted reads left.
+              // Previously: only files read ≥4× were preserved; files read 2-3×
+              // reset to 1, allowing 5 more reads per wipe — causing 16× read
+              // loops across 3 context wipes (observed in jarvis session).
+              for (const [p, entry] of _sessionFileReadCounts) {
+                const c = entry?.count ?? entry ?? 0;
+                _setLoopCount(_sessionFileReadCounts, p, c >= 2 ? c : 1);
+              }
+              // Preserve ranges for any file whose count was kept (≥2 reads) so
+              // scroll/overlap detection stays active post-wipe. Files read only
+              // once still get fresh ranges for legitimate single-section reads.
+              for (const [p] of _sessionFileReadRanges) {
+                if (_getLoopCount(_sessionFileReadCounts, p) < 2)
+                  _sessionFileReadRanges.delete(p);
+              }
               _sessionLastEditFailed.clear();
               _sessionReReadBlockShown.clear();
-              _sessionGrepFileCounts.clear(); // same for grep flood counters
+              // Allow only 1 re-grep per file after wipe (abort-1 = 3), not 2 (warn-1 = 2).
+              // Previously: LOOP_WARN_GREP_FILE-1 let the agent grep 2 more times post-wipe,
+              // causing 6-total grep floods across a single wipe cycle (observed).
+              for (const [p] of _sessionGrepFileCounts)
+                _setLoopCount(_sessionGrepFileCounts, p, LOOP_ABORT_GREP_FILE - 1);
 
               _logCompression(
                 `Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`,
@@ -2636,9 +2707,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
               // After 1st super-nuclear, inject a skip-investigation hint (_superNuclearFires already incremented)
               if (_superNuclearFires >= 1) {
+                // List files already at or near the read hard cap so the model
+                // knows not to attempt reading them — prevents the most common
+                // post-wipe retry loop where the model re-reads a capped file.
+                const _cappedFiles = [..._sessionFileReadCounts.entries()]
+                  .filter(([, count]) => count >= TARGETED_READ_HARD_CAP)
+                  .map(([p]) => p.split("/").slice(-1)[0]);
+                const _cappedNote =
+                  _cappedFiles.length > 0
+                    ? `\n\nFiles already at read cap — use grep_search instead: ${_cappedFiles.join(", ")}`
+                    : "";
                 const skipMsg = {
                   role: "user",
-                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Max 5 tool calls total, then finish.\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.`,
+                  content: `[SYSTEM WARNING] Context wiped ${_superNuclearFires}×. SKIP investigation — implement directly using findings above. Budget: 5 tool calls remaining (enforced — all further calls are blocked once exhausted).\n\nCRITICAL: If you must re-read a file, use line_start/line_end to read ONLY the section you need (e.g. last 50 lines). Never read a full large file again — that is what caused the context overflow.${_cappedNote}`,
                 };
                 conversationMessages.push(skipMsg);
                 apiMessages.push(skipMsg);
@@ -3168,7 +3249,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               p.canExecute &&
               p.fnName === "read_file" &&
               p.args?.path &&
-              fileReadCounts.get(p.args.path) >= 1 &&
+              _getLoopCount(fileReadCounts, p.args.path) >= 1 &&
               !p.args?.line_start,
           )
           .map((p) => p.args.path.split("/").slice(-2).join("/"));
@@ -3218,22 +3299,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // identical: block at >= 1 to deny the very same read that triggers the
       // warning.  Using >= 2 was off-by-one — the second read (count=1) executed
       // despite the warning; only the third attempt (count=2) was blocked.
+      //
+      // IMPORTANT: count is NOT incremented until post-execution.  If the model
+      // batches multiple read_file calls in a single turn, all of them would see
+      // the same pre-execution count — allowing all of them to pass the hard-cap
+      // check even though their combined total would exceed it.  Track pending
+      // reads per path in a local accumulator so each call in the batch accounts
+      // for reads already approved earlier in the same loop iteration.
+      const _pendingReadCounts = new Map();
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
         if (prep.fnName !== "read_file") continue;
         const path = prep.args?.path;
         if (!path) continue;
-        const alreadyRead = fileReadCounts.get(path) || 0;
+        const committed = _getLoopCount(fileReadCounts, path);
+        const pending = _pendingReadCounts.get(path) || 0;
+        const alreadyRead = committed + pending;
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.
         const isTargetedReRead = prep.args?.line_start != null;
         const lastEditFailed = _sessionLastEditFailed.get(path) === true;
 
-        // Hard cap: block if total reads (unbounded + targeted) >= 6 — prevents 13× read loops.
-        // Between 1 and 5: unbounded re-reads are blocked immediately; targeted reads are allowed
-        // since the model may need to navigate a large file in multiple sections.
-        const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file
+        // Hard cap: block if total reads (unbounded + targeted) >= TARGETED_READ_HARD_CAP.
+        // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
+        // allowed since the model may need to navigate a large file in multiple sections.
 
         if (alreadyRead >= TARGETED_READ_HARD_CAP) {
           // Hard cap exceeded — block regardless of targeted/unbounded
@@ -3244,6 +3334,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Blocked: "${shortPath}" read ${alreadyRead}× — hard cap (${TARGETED_READ_HARD_CAP}) reached${C.reset}`,
             );
+          } else if (blockShownCount === 2) {
+            // Model ignored the first BLOCKED tool result and tried again — escalate to a
+            // system-level warning injected into the conversation. Tool results are easy to
+            // ignore; user-role system messages break the retry loop more reliably.
+            debugLog(
+              `${C.red}  ✖ Escalated block: "${shortPath}" — model ignored BLOCKED, injecting system warning${C.reset}`,
+            );
+            const escalateMsg = {
+              role: "user",
+              content: `[SYSTEM WARNING] You already received a BLOCKED error for read_file("${path}") and tried again anyway. This file has reached its read cap (${TARGETED_READ_HARD_CAP}×). Do NOT attempt to read it again. Use grep_search to find specific content, or proceed with what you already know.`,
+            };
+            conversationMessages.push(escalateMsg);
+            apiMessages.push(escalateMsg);
           }
           prep.canExecute = false;
           prep.errorResult = {
@@ -3326,6 +3429,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Blocked unbounded re-read: "${shortPath}" — already in context. Use line_start/line_end for specific sections.${C.reset}`,
             );
+          } else if (blockShownCount === 2) {
+            // Model retried a blocked unbounded re-read — escalate to system-level warning.
+            debugLog(
+              `${C.red}  ✖ Escalated block: "${shortPath}" — model ignored unbounded re-read block, injecting system warning${C.reset}`,
+            );
+            const escalateMsg = {
+              role: "user",
+              content: `[SYSTEM WARNING] You already received a BLOCKED error for read_file("${path}") and tried again without line ranges. Full-file re-reads are permanently blocked for this file. Use line_start/line_end to read a specific section, or use grep_search to find what you need.`,
+            };
+            conversationMessages.push(escalateMsg);
+            apiMessages.push(escalateMsg);
           }
           prep.canExecute = false;
           prep.errorResult = {
@@ -3333,6 +3447,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
             tool_call_id: prep.callId,
           };
+        }
+        // If this read was approved, count it as pending so subsequent reads in
+        // the same batch see an accurate cumulative count and can't all slip
+        // through the hard-cap check simultaneously.
+        if (prep.canExecute) {
+          _pendingReadCounts.set(path, (_pendingReadCounts.get(path) || 0) + 1);
         }
       }
 
@@ -3398,7 +3518,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (prep.fnName !== "grep") continue;
         const grepPath = prep.args?.path;
         if (!grepPath) continue;
-        const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
+        const alreadyGrepped = _getLoopCount(grepFileCounts, grepPath);
         if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
@@ -3484,6 +3604,40 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             tool_call_id: prep.callId,
           };
           break; // one block per batch is enough to redirect the agent
+        }
+      }
+
+      // ─── Enforce post-wipe tool call budget ─────────────────────────────────
+      // After a context wipe the model is told it has 5 tool calls left (enforced).
+      // Count only calls that would actually execute; blocked ones don't spend budget.
+      // When exhausted: block all remaining calls and inject a stop instruction so
+      // the model produces a final text response instead of continuing to loop.
+      if (_postWipeToolBudget >= 0) {
+        const executableNow = prepared.filter((p) => p.canExecute).length;
+        if (executableNow > 0) {
+          _postWipeToolBudget -= executableNow;
+          if (_postWipeToolBudget < 0) {
+            debugLog(
+              `${C.red}  ✖ Post-wipe tool budget exhausted — blocking all tool calls${C.reset}`,
+            );
+            for (const prep of prepared) {
+              if (!prep.canExecute) continue;
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: "tool",
+                content:
+                  "BLOCKED: post-wipe tool budget exhausted. No further tool calls are allowed. Summarise what was accomplished and stop.",
+                tool_call_id: prep.callId,
+              };
+            }
+            const budgetMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Post-wipe tool budget exhausted. All tool calls are now blocked. Respond with a final summary of what was done and stop — do not attempt any more tool calls.",
+            };
+            conversationMessages.push(budgetMsg);
+            apiMessages.push(budgetMsg);
+          }
         }
       }
 
@@ -3643,8 +3797,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (prep.args && prep.args.path) {
             _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
             filesModified.add(prep.args.path);
-            const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
-            fileEditCounts.set(prep.args.path, count);
+            const count = _incLoopCount(fileEditCounts, prep.args.path);
             const shortPath = prep.args.path.split("/").slice(-2).join("/");
             if (count === LOOP_WARN_EDITS) {
               debugLog(
@@ -3690,8 +3843,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             .replace(/\s+/g, " ")
             .trim()
             .slice(0, 100);
-          const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
-          bashCmdCounts.set(cmdKey, bashCount);
+          const bashCount = _incLoopCount(bashCmdCounts, cmdKey);
           if (bashCount === LOOP_WARN_BASH) {
             debugLog(
               `${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`,
@@ -3776,8 +3928,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Grep pattern loop detection — repeated identical patterns waste context
         if (isOk && prep.fnName === "grep" && prep.args && prep.args.pattern) {
           const patKey = `${prep.args.pattern}|${prep.args.path || ""}`;
-          const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
-          grepPatternCounts.set(patKey, grepCount);
+          const grepCount = _incLoopCount(grepPatternCounts, patKey);
           if (grepCount === LOOP_WARN_GREP) {
             debugLog(
               `${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`,
@@ -3812,8 +3963,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // This catches "search flood" where the agent greps the same file repeatedly
           // with varying patterns instead of reading it once and using the context.
           if (prep.args.path) {
-            const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
-            grepFileCounts.set(prep.args.path, fileGrepCount);
+            const fileGrepCount = _incLoopCount(grepFileCounts, prep.args.path);
             if (fileGrepCount === LOOP_WARN_GREP_FILE) {
               const shortPath = prep.args.path.split("/").slice(-2).join("/");
               debugLog(
@@ -3930,8 +4080,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (isOk && prep.fnName === "read_file") {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
-            const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
-            fileReadCounts.set(prep.args.path, readCount);
+            const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record targeted read range so overlap detection can warn on duplicates
             if (prep.args.line_start != null) {
               const rs = prep.args.line_start || 1;
