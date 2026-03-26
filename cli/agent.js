@@ -505,7 +505,17 @@ function clearToolFilterCache() {
  * Quick hash of project context to detect changes.
  * Uses mtime of key files + git HEAD ref.
  */
+// Debounced project context hash — reuse cached value within TTL to avoid
+// async file-stat calls on every turn (saves 20-100ms per iteration).
+let _contextHashCache = { hash: null, ts: 0 };
+const CONTEXT_HASH_TTL_MS = 30_000; // 30 seconds
+
 async function getProjectContextHash() {
+  // Return cached hash if within TTL
+  if (_contextHashCache.hash && Date.now() - _contextHashCache.ts < CONTEXT_HASH_TTL_MS) {
+    return _contextHashCache.hash;
+  }
+
   try {
     const fs = require("fs").promises;
     const path = require("path");
@@ -540,7 +550,9 @@ async function getProjectContextHash() {
     } catch {
       /* ignore */
     }
-    return hashes.join("|");
+    const hash = hashes.join("|");
+    _contextHashCache = { hash, ts: Date.now() };
+    return hash;
   } catch {
     return `fallback:${Date.now()}`;
   }
@@ -552,6 +564,7 @@ async function getProjectContextHash() {
 function invalidateSystemPromptCache() {
   cachedSystemPrompt = null;
   cachedContextHash = null;
+  _contextHashCache = { hash: null, ts: 0 };
   cachedModelRoutingGuide = null;
 }
 
@@ -1011,6 +1024,32 @@ const MAX_CONVERSATION_HISTORY = 300;
 // Without this, each processInput() call resets the counters, allowing the agent
 // to run e.g. 7 sed calls per turn indefinitely across many turns.
 // Reset in clearConversation() so /clear starts fresh.
+// Session loop counters — each entry stores { count, ts }.
+// Entries older than LOOP_COUNTER_TTL_MS are treated as expired (count 0)
+// so valid work isn't blocked by stale counters from 10+ turns ago.
+const LOOP_COUNTER_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function _getLoopCount(map, key) {
+  const entry = map.get(key);
+  if (!entry) return 0;
+  if (Date.now() - entry.ts > LOOP_COUNTER_TTL_MS) {
+    map.delete(key);
+    return 0;
+  }
+  return entry.count;
+}
+
+function _incLoopCount(map, key) {
+  const entry = map.get(key);
+  const count = entry && Date.now() - entry.ts <= LOOP_COUNTER_TTL_MS ? entry.count + 1 : 1;
+  map.set(key, { count, ts: Date.now() });
+  return count;
+}
+
+function _setLoopCount(map, key, count) {
+  map.set(key, { count, ts: Date.now() });
+}
+
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
@@ -2617,13 +2656,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // Previously: only files read ≥4× were preserved; files read 2-3×
               // reset to 1, allowing 5 more reads per wipe — causing 16× read
               // loops across 3 context wipes (observed in jarvis session).
-              for (const [p, count] of _sessionFileReadCounts)
-                _sessionFileReadCounts.set(p, count >= 2 ? count : 1);
+              for (const [p, entry] of _sessionFileReadCounts) {
+                const c = entry?.count ?? entry ?? 0;
+                _setLoopCount(_sessionFileReadCounts, p, c >= 2 ? c : 1);
+              }
               // Preserve ranges for any file whose count was kept (≥2 reads) so
               // scroll/overlap detection stays active post-wipe. Files read only
               // once still get fresh ranges for legitimate single-section reads.
               for (const [p] of _sessionFileReadRanges) {
-                if ((_sessionFileReadCounts.get(p) || 0) < 2)
+                if (_getLoopCount(_sessionFileReadCounts, p) < 2)
                   _sessionFileReadRanges.delete(p);
               }
               _sessionLastEditFailed.clear();
@@ -2632,7 +2673,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // Previously: LOOP_WARN_GREP_FILE-1 let the agent grep 2 more times post-wipe,
               // causing 6-total grep floods across a single wipe cycle (observed).
               for (const [p] of _sessionGrepFileCounts)
-                _sessionGrepFileCounts.set(p, LOOP_ABORT_GREP_FILE - 1);
+                _setLoopCount(_sessionGrepFileCounts, p, LOOP_ABORT_GREP_FILE - 1);
 
               _logCompression(
                 `Super-nuclear compression — dropped all history, keeping original task only (${_beforeTokens - _afterTokens} tokens freed)`,
@@ -3117,7 +3158,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               p.canExecute &&
               p.fnName === "read_file" &&
               p.args?.path &&
-              fileReadCounts.get(p.args.path) >= 1 &&
+              _getLoopCount(fileReadCounts, p.args.path) >= 1 &&
               !p.args?.line_start,
           )
           .map((p) => p.args.path.split("/").slice(-2).join("/"));
@@ -3180,7 +3221,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (prep.fnName !== "read_file") continue;
         const path = prep.args?.path;
         if (!path) continue;
-        const committed = fileReadCounts.get(path) || 0;
+        const committed = _getLoopCount(fileReadCounts, path);
         const pending = _pendingReadCounts.get(path) || 0;
         const alreadyRead = committed + pending;
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
@@ -3386,7 +3427,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (prep.fnName !== "grep") continue;
         const grepPath = prep.args?.path;
         if (!grepPath) continue;
-        const alreadyGrepped = grepFileCounts.get(grepPath) || 0;
+        const alreadyGrepped = _getLoopCount(grepFileCounts, grepPath);
         if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
@@ -3665,8 +3706,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (prep.args && prep.args.path) {
             _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
             filesModified.add(prep.args.path);
-            const count = (fileEditCounts.get(prep.args.path) || 0) + 1;
-            fileEditCounts.set(prep.args.path, count);
+            const count = _incLoopCount(fileEditCounts, prep.args.path);
             const shortPath = prep.args.path.split("/").slice(-2).join("/");
             if (count === LOOP_WARN_EDITS) {
               debugLog(
@@ -3712,8 +3752,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             .replace(/\s+/g, " ")
             .trim()
             .slice(0, 100);
-          const bashCount = (bashCmdCounts.get(cmdKey) || 0) + 1;
-          bashCmdCounts.set(cmdKey, bashCount);
+          const bashCount = _incLoopCount(bashCmdCounts, cmdKey);
           if (bashCount === LOOP_WARN_BASH) {
             debugLog(
               `${C.yellow}  ⚠ Loop warning: same bash command run ${bashCount}× — possible debug loop${C.reset}`,
@@ -3798,8 +3837,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Grep pattern loop detection — repeated identical patterns waste context
         if (isOk && prep.fnName === "grep" && prep.args && prep.args.pattern) {
           const patKey = `${prep.args.pattern}|${prep.args.path || ""}`;
-          const grepCount = (grepPatternCounts.get(patKey) || 0) + 1;
-          grepPatternCounts.set(patKey, grepCount);
+          const grepCount = _incLoopCount(grepPatternCounts, patKey);
           if (grepCount === LOOP_WARN_GREP) {
             debugLog(
               `${C.yellow}  ⚠ Loop warning: grep pattern "${prep.args.pattern.slice(0, 40)}" run ${grepCount}× — possible search loop${C.reset}`,
@@ -3834,8 +3872,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // This catches "search flood" where the agent greps the same file repeatedly
           // with varying patterns instead of reading it once and using the context.
           if (prep.args.path) {
-            const fileGrepCount = (grepFileCounts.get(prep.args.path) || 0) + 1;
-            grepFileCounts.set(prep.args.path, fileGrepCount);
+            const fileGrepCount = _incLoopCount(grepFileCounts, prep.args.path);
             if (fileGrepCount === LOOP_WARN_GREP_FILE) {
               const shortPath = prep.args.path.split("/").slice(-2).join("/");
               debugLog(
@@ -3952,8 +3989,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (isOk && prep.fnName === "read_file") {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
-            const readCount = (fileReadCounts.get(prep.args.path) || 0) + 1;
-            fileReadCounts.set(prep.args.path, readCount);
+            const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record targeted read range so overlap detection can warn on duplicates
             if (prep.args.line_start != null) {
               const rs = prep.args.line_start || 1;
