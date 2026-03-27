@@ -60,12 +60,14 @@ function getModelProfile(modelId) {
 
   const base = match ? { ...PROFILES[match] } : { ...DEFAULTS };
 
-  // ENV overrides always win
-  if (process.env.NEX_STALE_WARN_MS) {
-    base.staleWarn = parseInt(process.env.NEX_STALE_WARN_MS, 10);
-  }
-  if (process.env.NEX_STALE_ABORT_MS) {
-    base.staleAbort = parseInt(process.env.NEX_STALE_ABORT_MS, 10);
+  // ENV overrides always win (validated: must be integer in [1000, 300000])
+  for (const [envKey, field] of [["NEX_STALE_WARN_MS", "staleWarn"], ["NEX_STALE_ABORT_MS", "staleAbort"]]) {
+    if (process.env[envKey]) {
+      const parsed = parseInt(process.env[envKey], 10);
+      if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 300000) {
+        base[field] = parsed;
+      }
+    }
   }
 
   return base;
