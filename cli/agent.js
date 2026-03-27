@@ -4160,14 +4160,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // instead of silently allowing them. One nudge is not enough — the model
           // continues reading new files after the nudge, causing the investigation
           // loop to persist through multiple context wipes.
-          if (_investigationCapFired && _rootCauseDetected && READ_ONLY_TOOLS.includes(prep.fnName)) {
+          // Also hard-block post-edit reads after the cap fires: if an edit was made,
+          // the model already has the fix — re-reading is verification bloat.
+          if (_investigationCapFired && (_rootCauseDetected || _editsMadeThisSession > 0) && READ_ONLY_TOOLS.includes(prep.fnName)) {
+            const _blockReason = _rootCauseDetected
+              ? `root cause already identified (${_rootCauseSummary})`
+              : `${_editsMadeThisSession} file edit(s) already made`;
             debugLog(
-              `${C.red}  ✖ Blocked read-only tool in fix phase: cap already fired, root cause known (${_rootCauseSummary})${C.reset}`,
+              `${C.red}  ✖ Blocked read-only tool: cap fired, ${_blockReason}${C.reset}`,
             );
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
-              content: `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`,
+              content: _rootCauseDetected
+                ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`
+                : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
               tool_call_id: prep.callId,
             };
           } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
