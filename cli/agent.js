@@ -1545,8 +1545,9 @@ ${_buildModelRoutingGuide()}
 1. **read_file** the target file first (or the specific line range if you know it)
 2. **Identify** the exact text to change from the read output — copy it character-for-character
 3. **Call edit_file** with old_text copied EXACTLY from step 1 (including whitespace, indentation, newlines)
-4. **If edit fails** ("old_text not found"): use the line number from the error to re-read with line_start/line_end, then retry with the exact text from that targeted read
-5. **After 2 failures** on the same edit: stop and explain the issue to the user
+4. **If edit succeeds**: the response shows the diff — trust it and move on. Do NOT re-read the file to verify. Proceed to the next required change or conclude the task.
+5. **If edit fails** ("old_text not found"): use the line number from the error to re-read with line_start/line_end, then retry with the exact text from that targeted read
+6. **After 2 failures** on the same edit: stop and explain the issue to the user
 
 NEVER skip step 1. NEVER call edit_file or patch_file without a preceding read_file on the same file in this conversation.
 For multiple changes to the same file, prefer patch_file (single atomic operation).
@@ -1574,7 +1575,7 @@ When a tool call returns ERROR:
 Before every action, evaluate:
 1. **Reversibility**: Can this be undone? File reads and searches are always safe. File writes can be reverted with git. Commands like rm -rf, git push --force, database drops CANNOT be undone — confirm with user first.
 2. **Blast radius**: Does this affect one file or many? Prefer targeted changes (edit_file on one function) over broad changes (write_file replacing the whole file). Targeted changes are easier to review and safer to revert.
-3. **Verification**: After making changes, verify they work. Run the relevant test suite, check the build, or read the file back to confirm the edit applied correctly.
+3. **Verification**: After making changes, verify they work. If tests are available, run them. Do NOT re-read files you just edited — the edit response confirms what changed. Only re-read a section if the edit failed with "old_text not found".
 
 # Safety & Reversibility
 
