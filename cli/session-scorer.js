@@ -38,6 +38,7 @@ function extractToolCalls(messages) {
             name: block.name || "",
             input: block.input || {},
             index: msgIndex,
+            id: block.id || null,
           });
         }
       });
@@ -56,11 +57,48 @@ function extractToolCalls(messages) {
         } catch {
           /* unparseable args — leave empty */
         }
-        calls.push({ name, input, index: msgIndex });
+        calls.push({ name, input, index: msgIndex, id: tc.id || null });
       });
     }
   });
   return calls;
+}
+
+/**
+ * Build a Set of tool call IDs whose result started with "BLOCKED:".
+ * Used to exclude guard-blocked calls from loop-detection checks (the blocked-calls
+ * penalty already covers those; double-counting them as read/grep loops inflates the score drop).
+ * @param {Array} messages
+ * @returns {Set<string>}
+ */
+function extractBlockedCallIds(messages) {
+  const blocked = new Set();
+  messages.forEach((msg) => {
+    // Anthropic-style: role:'tool' with tool_call_id
+    if (
+      msg.role === "tool" &&
+      typeof msg.content === "string" &&
+      msg.content.startsWith("BLOCKED:") &&
+      msg.tool_call_id
+    ) {
+      blocked.add(msg.tool_call_id);
+    }
+    // OpenAI-style: role:'user' with content array of tool_result blocks
+    if (msg.role === "user" && Array.isArray(msg.content)) {
+      msg.content.forEach((block) => {
+        if (
+          block &&
+          block.type === "tool_result" &&
+          block.tool_use_id &&
+          typeof block.content === "string" &&
+          block.content.startsWith("BLOCKED:")
+        ) {
+          blocked.add(block.tool_use_id);
+        }
+      });
+    }
+  });
+  return blocked;
 }
 
 /**
@@ -200,6 +238,11 @@ function scoreMessages(messages) {
   const toolCalls = extractToolCalls(messages);
   const toolResults = extractToolResults(messages);
   const totalToolCalls = toolCalls.length;
+  // Build set of call IDs that were blocked by the agent guard — used to exclude
+  // them from read-loop and grep-flood checks (blocked-calls penalty already covers them).
+  const blockedCallIds = extractBlockedCallIds(messages);
+  // Non-blocked tool calls only — used for loop-pattern detection.
+  const nonBlockedToolCalls = toolCalls.filter((tc) => !tc.id || !blockedCallIds.has(tc.id));
 
   // ── 1. Loop-warning injected (-2.0) ───────────────────────────────────────
   // Detect the SYSTEM WARNING messages injected by agent.js loop detection.
@@ -325,7 +368,8 @@ function scoreMessages(messages) {
   }
 
   // ── 7. Repeated identical tool call (3+ times) (-1.0) ────────────────────
-  const dupCounts = countDuplicateToolCalls(toolCalls);
+  // Use non-blocked calls only — blocked attempts are already penalized separately.
+  const dupCounts = countDuplicateToolCalls(nonBlockedToolCalls);
   let worstDupCount = 0;
   let worstDupKey = "";
   for (const [key, count] of dupCounts) {
@@ -413,7 +457,7 @@ function scoreMessages(messages) {
   // a previously read range), which means the agent forgot and re-read the same
   // section.
   const readFileData = new Map(); // path → { count, ranges: [[start, end], ...] }
-  for (const tc of toolCalls) {
+  for (const tc of nonBlockedToolCalls) {
     if (tc.name === "read_file" && tc.input?.path) {
       const p = tc.input.path;
       if (!readFileData.has(p)) readFileData.set(p, { count: 0, ranges: [] });
@@ -463,6 +507,24 @@ function scoreMessages(messages) {
       if (!hasLoop) continue; // distinct non-overlapping sections — handled by scroll check below
     }
 
+    // Mixed reads: one or more unbounded + some targeted reads.
+    // If only 1 read was unbounded (the initial full read) and the remaining targeted
+    // reads are non-overlapping sections, this is legitimate large-file navigation —
+    // exempt from the loop penalty.
+    const unboundedCount = d.count - d.ranges.length;
+    if (unboundedCount <= 1 && d.ranges.length >= 1) {
+      let hasOverlap = false;
+      const seen = [];
+      for (const [rs, re] of d.ranges) {
+        if (seen.length > 0 && hasSignificantOverlap(rs, re, seen)) {
+          hasOverlap = true;
+          break;
+        }
+        seen.push([rs, re]);
+      }
+      if (!hasOverlap) continue; // 1 full read + targeted non-overlapping sections — not a loop
+    }
+
     if (d.count > worstReadCount) {
       worstReadCount = d.count;
       worstReadPath = p;
@@ -509,7 +571,7 @@ function scoreMessages(messages) {
   // Detect when the agent greps the same target file 3+ times with different
   // patterns instead of using the file content already in context.
   const grepFilePatterns = new Map(); // file → Set of distinct patterns
-  for (const tc of toolCalls) {
+  for (const tc of nonBlockedToolCalls) {
     if (tc.name === "grep" && tc.input?.path && tc.input?.pattern) {
       const f = tc.input.path;
       if (!grepFilePatterns.has(f)) grepFilePatterns.set(f, new Set());
@@ -519,6 +581,10 @@ function scoreMessages(messages) {
   let worstGrepFileCount = 0;
   let worstGrepFile = "";
   for (const [f, patterns] of grepFilePatterns) {
+    // Skip directory-level greps (no file extension) — searching a directory with
+    // multiple patterns is normal codebase exploration, not a flood.
+    const basename = f.split("/").pop();
+    if (!basename.includes(".")) continue; // no extension = likely a directory
     if (patterns.size > worstGrepFileCount) {
       worstGrepFileCount = patterns.size;
       worstGrepFile = f;
