@@ -1871,6 +1871,40 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "save_memory",
+      description:
+        "Save a typed memory for cross-session persistence. Use this to remember user preferences, feedback, project context, or external references.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["user", "feedback", "project", "reference"],
+            description:
+              "Memory type: user (role/prefs), feedback (approach guidance), project (ongoing work), reference (external pointers)",
+          },
+          name: {
+            type: "string",
+            description:
+              "Short slug identifier for this memory (e.g. 'testing-preference', 'deploy-workflow')",
+          },
+          content: {
+            type: "string",
+            description: "Markdown content of the memory",
+          },
+          description: {
+            type: "string",
+            description:
+              "One-line description for the memory index (optional, defaults to first line of content)",
+          },
+        },
+        required: ["type", "name", "content"],
+      },
+    },
+  },
 ];
 
 // ─── Kubernetes Helper ────────────────────────────────────────
@@ -4829,6 +4863,15 @@ fi
         default:
           return `ERROR: Unknown sysadmin action: ${args.action}`;
       }
+    }
+
+    case "save_memory": {
+      const { saveMemory } = require("../memory");
+      const result = saveMemory(args.type, args.name, args.content, args.description);
+      if (result.ok) {
+        return `Memory saved: ${args.type}/${args.name} → ${result.path}`;
+      }
+      return `ERROR: ${result.error}`;
     }
 
     default: {

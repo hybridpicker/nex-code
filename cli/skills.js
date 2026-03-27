@@ -138,6 +138,31 @@ function validateScriptSkill(mod, filePath) {
 }
 
 /**
+ * Parse optional YAML-like frontmatter from a markdown string.
+ * Extracts `trigger:` list entries. No yaml dependency needed.
+ * @param {string} raw
+ * @returns {{ triggers: string[], body: string }}
+ */
+function parseFrontmatter(raw) {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { triggers: [], body: raw };
+  const fm = match[1];
+  const body = match[2].trim();
+  const triggers = [];
+  let inTrigger = false;
+  for (const line of fm.split("\n")) {
+    const trimmed = line.trim();
+    if (/^trigger:\s*$/i.test(trimmed)) { inTrigger = true; continue; }
+    if (inTrigger && trimmed.startsWith("- ")) {
+      triggers.push(trimmed.slice(2).trim().replace(/^["']|["']$/g, ""));
+    } else if (inTrigger && trimmed && !trimmed.startsWith("#")) {
+      inTrigger = false;
+    }
+  }
+  return { triggers, body };
+}
+
+/**
  * Load a single .md skill
  * @param {string} filePath
  * @returns {Object|null}
@@ -147,11 +172,13 @@ function loadMarkdownSkill(filePath) {
     const content = fs.readFileSync(filePath, "utf-8").trim();
     if (!content) return null;
     const name = path.basename(filePath, ".md");
+    const { triggers, body } = parseFrontmatter(content);
     return {
       name,
       type: "prompt",
       filePath,
-      instructions: content,
+      instructions: body || content,
+      triggers,
       commands: [],
       tools: [],
     };
@@ -596,6 +623,29 @@ function removeSkill(name) {
   }
 }
 
+/**
+ * Match a task description against skill triggers.
+ * Returns skills whose trigger patterns match (case-insensitive substring).
+ * Each matched skill's instructions are truncated to 3 lines max.
+ * @param {string} taskDescription — the user's first message
+ * @returns {Array<{ name: string, instructions: string }>}
+ */
+function matchSkillTriggers(taskDescription) {
+  if (!taskDescription) return [];
+  const lower = taskDescription.toLowerCase();
+  const matched = [];
+  for (const skill of loadedSkills) {
+    if (!skill.enabled || !skill.triggers || skill.triggers.length === 0)
+      continue;
+    const hit = skill.triggers.some((t) => lower.includes(t.toLowerCase()));
+    if (hit) {
+      const lines = (skill.instructions || "").split("\n").slice(0, 3).join("\n");
+      matched.push({ name: skill.name, instructions: lines });
+    }
+  }
+  return matched;
+}
+
 module.exports = {
   initSkillsDir,
   loadAllSkills,
@@ -611,9 +661,11 @@ module.exports = {
   installSkill,
   searchSkills,
   removeSkill,
+  matchSkillTriggers,
   // exported for testing
   _getSkillsDir: getSkillsDir,
   _validateScriptSkill: validateScriptSkill,
   _loadMarkdownSkill: loadMarkdownSkill,
   _loadScriptSkill: loadScriptSkill,
+  _parseFrontmatter: parseFrontmatter,
 };

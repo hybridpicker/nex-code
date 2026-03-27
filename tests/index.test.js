@@ -267,6 +267,7 @@ jest.mock("../cli/skills", () => ({
   installSkill: jest.fn().mockResolvedValue({ ok: true, name: "test-skill" }),
   searchSkills: jest.fn().mockResolvedValue([]),
   removeSkill: jest.fn().mockReturnValue({ ok: true }),
+  matchSkillTriggers: jest.fn().mockReturnValue([]),
 }));
 
 const {
@@ -608,6 +609,7 @@ describe("index.js (REPL commands)", () => {
         disableSkill: jest.fn().mockReturnValue(false),
         getSkillCommands: jest.fn().mockReturnValue([]),
         handleSkillCommand: jest.fn().mockReturnValue(false),
+        matchSkillTriggers: jest.fn().mockReturnValue([]),
       }));
 
       const { startREPL } = require("../cli/index");
@@ -760,6 +762,7 @@ describe("index.js (REPL commands)", () => {
         disableSkill: jest.fn().mockReturnValue(false),
         getSkillCommands: jest.fn().mockReturnValue([]),
         handleSkillCommand: jest.fn().mockReturnValue(false),
+        matchSkillTriggers: jest.fn().mockReturnValue([]),
       }));
 
       const mockRl = {
@@ -989,6 +992,7 @@ describe("index.js (REPL commands)", () => {
         disableSkill: jest.fn().mockReturnValue(false),
         getSkillCommands: jest.fn().mockReturnValue([]),
         handleSkillCommand: jest.fn().mockReturnValue(false),
+        matchSkillTriggers: jest.fn().mockReturnValue([]),
       }));
 
       const { startREPL } = require("../cli/index");
@@ -1831,6 +1835,7 @@ describe("index.js (REPL commands)", () => {
         disableSkill: jest.fn(),
         getSkillCommands: jest.fn().mockReturnValue([]),
         handleSkillCommand: jest.fn(),
+        matchSkillTriggers: jest.fn().mockReturnValue([]),
       }));
 
       const { getPrompt } = require("../cli/index");

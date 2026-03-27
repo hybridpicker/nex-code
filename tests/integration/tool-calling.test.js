@@ -38,6 +38,7 @@ jest.mock("../../cli/tools", () => ({
 
 jest.mock("../../cli/skills", () => ({
   getSkillToolDefinitions: jest.fn().mockReturnValue([]),
+  matchSkillTriggers: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock("../../cli/mcp", () => ({
