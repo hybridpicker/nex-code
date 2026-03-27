@@ -138,6 +138,7 @@ const {
   getSkillInstructions,
   getSkillToolDefinitions,
   routeSkillCall,
+  matchSkillTriggers,
 } = require("./skills");
 const { trackUsage, estimateTokens: _estimateTokens } = require("./costs");
 /** Fallback token estimator (~4 chars per token). Works even when costs mock omits estimateTokens. */
@@ -159,6 +160,7 @@ const {
   setActiveModel,
   MODEL_EQUIVALENTS,
 } = require("./providers/registry");
+const { getModelProfile } = require("./model-profiles");
 const fsSync = require("fs");
 const path = require("path");
 
@@ -620,8 +622,9 @@ const SEQUENTIAL_ONLY = new Set(["spawn_agents"]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_NETWORK_RETRIES = 3;
 const MAX_STALE_RETRIES = 2;
-const STALE_WARN_MS = parseInt(process.env.NEX_STALE_WARN_MS || "60000", 10); // Warn after 60s without tokens (ENV: NEX_STALE_WARN_MS)
-const STALE_ABORT_MS = parseInt(process.env.NEX_STALE_ABORT_MS || "120000", 10); // Abort after 120s without tokens (ENV: NEX_STALE_ABORT_MS)
+// Stale thresholds: resolved per-session from model profile (ENV overrides via getModelProfile)
+let STALE_WARN_MS = 60000;
+let STALE_ABORT_MS = 120000;
 const STALE_AUTO_SWITCH = process.env.NEX_STALE_AUTO_SWITCH !== "0"; // Auto-switch to fast model on 2nd stale retry (disable: NEX_STALE_AUTO_SWITCH=0)
 // Use process.cwd() dynamically
 
@@ -1943,6 +1946,11 @@ let _serverHooks = null;
  * @param {{ onToken?: Function, onThinkingToken?: Function, onToolStart?: Function, onToolEnd?: Function } | null} [serverHooks]
  */
 async function processInput(userInput, serverHooks = null, opts = {}) {
+  // Resolve per-model guard profile at session start
+  const _profile = getModelProfile(getActiveModelId());
+  STALE_WARN_MS = _profile.staleWarn;
+  STALE_ABORT_MS = _profile.staleAbort;
+
   _serverHooks = serverHooks;
   const userContent = buildUserContent(userInput);
   conversationMessages.push({ role: "user", content: userContent });
@@ -2023,6 +2031,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     /* brain is optional */
     if (process.env.NEX_DEBUG)
       console.error("[agent] brain context failed:", err.message);
+  }
+
+  // Trigger-based skill activation: match user message against skill triggers
+  const triggerInput = typeof userInput === "string" ? userInput : "";
+  const triggered = matchSkillTriggers(triggerInput);
+  if (triggered.length > 0) {
+    const triggerBlock = triggered
+      .map((s) => `[Triggered: ${s.name}]\n${s.instructions}`)
+      .join("\n");
+    effectiveSystemPrompt += "\n" + triggerBlock + "\n";
   }
 
   const fullMessages = [
@@ -2173,7 +2191,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
-  const INVESTIGATION_CAP = 12; // after 12 read-only calls without an edit, force implementation
+  const INVESTIGATION_CAP = _profile.investigationCap; // per-model: read-only calls before forcing edit
 
   let i;
   let iterLimit = MAX_ITERATIONS;
@@ -4155,7 +4173,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // after already making changes — it should verify the edit and move on.
           // Before any edit, use the full INVESTIGATION_CAP (12 calls).
           // In fix phase (root cause already found) use a tight cap of 3 reads.
-          const POST_EDIT_CAP = 10;
+          const POST_EDIT_CAP = _profile.postEditCap;
           const _effectiveCap = _rootCauseDetected ? 3 : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
           // After the cap has already fired in fix phase (root cause detected), hard-block
           // further reads — one nudge is not enough when SSH output already pinpointed the issue.

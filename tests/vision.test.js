@@ -74,6 +74,7 @@ jest.mock("../cli/skills", () => ({
   getSkillInstructions: jest.fn().mockReturnValue(""),
   getSkillToolDefinitions: jest.fn().mockReturnValue([]),
   routeSkillCall: jest.fn().mockResolvedValue(null),
+  matchSkillTriggers: jest.fn().mockReturnValue([]),
 }));
 jest.mock("../cli/costs", () => ({ trackUsage: jest.fn() }));
 jest.mock("../cli/tool-validator", () => ({

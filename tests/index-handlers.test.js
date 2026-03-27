@@ -259,6 +259,7 @@ jest.mock("../cli/skills", () => ({
   installSkill: jest.fn().mockResolvedValue({ ok: true, name: "test-skill" }),
   searchSkills: jest.fn().mockResolvedValue([]),
   removeSkill: jest.fn().mockReturnValue({ ok: true }),
+  matchSkillTriggers: jest.fn().mockReturnValue([]),
 }));
 
 const { handleSlashCommand, getPrompt } = require("../cli/index");
