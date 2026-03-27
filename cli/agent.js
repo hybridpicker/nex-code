@@ -1130,6 +1130,7 @@ let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
+let _editsMadeThisSession = 0; // count of successful file edits this session (used to tighten post-edit caps)
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
@@ -1621,6 +1622,7 @@ function _resetSessionTracking() {
   _postWipeBudgetExtended = false;
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
+  _editsMadeThisSession = 0;
   _rootCauseDetected = false;
   _rootCauseSummary = "";
   _sshBlockedPreCallNudgeCount = 0;
@@ -4143,12 +4145,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (EDIT_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit = 0; // reset on successful edit
             _investigationCapFired = false; // allow re-investigation after an edit
+            _editsMadeThisSession++; // track how many edits have been made
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
           }
-          // In fix phase (root cause already found) use a tight cap of 3 reads;
-          // otherwise fall back to the standard INVESTIGATION_CAP.
-          const _effectiveCap = _rootCauseDetected ? 3 : INVESTIGATION_CAP;
+          // After the first file edit, tighten the post-edit investigation cap to
+          // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
+          // after already making changes — it should verify the edit and move on.
+          // Before any edit, use the full INVESTIGATION_CAP (12 calls).
+          // In fix phase (root cause already found) use a tight cap of 3 reads.
+          const POST_EDIT_CAP = 5;
+          const _effectiveCap = _rootCauseDetected ? 3 : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
           // After the cap has already fired in fix phase, hard-block further reads
           // instead of silently allowing them. One nudge is not enough — the model
           // continues reading new files after the nudge, causing the investigation
