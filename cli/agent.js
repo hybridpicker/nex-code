@@ -1113,7 +1113,7 @@ const _sessionGrepFileCounts = new Map(); // per-file grep count (different patt
 const _sessionFileReadCounts = new Map();
 const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
-const _sessionLastEditFailed = new Map(); // path → true when last edit_file on that file failed with "old_text not found"
+const _sessionLastEditFailed = new Map(); // path → number of consecutive edit failures (old_text not found) for that file
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
 let _sessionConsecutiveSshCalls = 0;
@@ -3510,7 +3510,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.
         const isTargetedReRead = prep.args?.line_start != null;
-        const lastEditFailed = _sessionLastEditFailed.get(path) === true;
+        const editFailCount = _sessionLastEditFailed.get(path) || 0;
+        const lastEditFailed = editFailCount > 0;
+        const EDIT_RECOVERY_MAX = 2; // max times we allow unconditional edit-recovery reads per file
 
         // Hard cap: block if total reads (unbounded + targeted) >= TARGETED_READ_HARD_CAP.
         // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
@@ -3547,12 +3549,27 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           };
         } else if (alreadyRead >= 1 && isTargetedReRead) {
           // Targeted re-read within cap — allow. Clear edit-failure flag when used.
-          if (lastEditFailed) {
+          // Edit recovery: allow up to EDIT_RECOVERY_MAX unconditional re-reads per file after
+          // a failed edit. Beyond that, the model must use existing context instead of re-reading.
+          if (lastEditFailed && editFailCount <= EDIT_RECOVERY_MAX) {
             const shortPath = path.split("/").slice(-2).join("/");
             console.log(
-              `${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery${C.reset}`,
+              `${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery #${editFailCount}${C.reset}`,
             );
-            _sessionLastEditFailed.delete(path);
+            // Decrement the fail count (don't delete — preserve remaining recovery budget)
+            _sessionLastEditFailed.set(path, editFailCount - 1);
+          } else if (lastEditFailed && editFailCount > EDIT_RECOVERY_MAX) {
+            // Edit recovery budget exhausted — block and guide model to use grep instead.
+            const shortPath = path.split("/").slice(-2).join("/");
+            debugLog(
+              `${C.red}  ✖ Edit recovery blocked: "${shortPath}" — ${EDIT_RECOVERY_MAX} recovery reads already used. Use grep to find the exact line numbers, then retry.${C.reset}`,
+            );
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: "tool",
+              content: `BLOCKED: read_file("${path}") denied — edit recovery budget exhausted (${EDIT_RECOVERY_MAX} recovery reads used). You already have the file content. Use grep_search to find the exact line numbers of the text you want to change, then retry edit_file with the exact text shown.`,
+              tool_call_id: prep.callId,
+            };
           } else {
             // Check if this targeted re-read overlaps significantly with a range already read.
             // ≥70% overlap (from either direction) means the model is re-reading context it
@@ -4048,7 +4065,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           prep.args?.path
         ) {
           if (firstLine.includes("old_text not found")) {
-            _sessionLastEditFailed.set(prep.args.path, true);
+            const prevCount = _sessionLastEditFailed.get(prep.args.path) || 0;
+            _sessionLastEditFailed.set(prep.args.path, prevCount + 1);
           }
         }
         if (isOk && prep.fnName === "write_file" && prep.args?.path) {
