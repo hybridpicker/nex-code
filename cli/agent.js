@@ -4307,16 +4307,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Per-file grep loop detection — multiple different patterns on same file
           // This catches "search flood" where the agent greps the same file repeatedly
           // with varying patterns instead of reading it once and using the context.
+          // If the file was already fully read (unbounded), warn on the very first grep
+          // since all its content is already in context — searching it again is redundant.
           if (prep.args.path) {
             const fileGrepCount = _incLoopCount(grepFileCounts, prep.args.path);
-            if (fileGrepCount === LOOP_WARN_GREP_FILE) {
+            const fileAlreadyRead = _getLoopCount(fileReadCounts, prep.args.path) >= 1;
+            const warnThreshold = fileAlreadyRead ? 1 : LOOP_WARN_GREP_FILE;
+            if (fileGrepCount === warnThreshold) {
               const shortPath = prep.args.path.split("/").slice(-2).join("/");
               debugLog(
                 `${C.yellow}  ⚠ Loop warning: "${shortPath}" grepped ${fileGrepCount}× with different patterns — context flood risk${C.reset}`,
               );
               const fileGrepWarning = {
                 role: "user",
-                content: `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
+                content: fileAlreadyRead
+                  ? `[SYSTEM WARNING] "${prep.args.path}" was already fully read — its content is in context. Do NOT grep it again. Use the context you already have.`
+                  : `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
               };
               conversationMessages.push(fileGrepWarning);
               apiMessages.push(fileGrepWarning);
