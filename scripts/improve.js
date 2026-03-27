@@ -134,14 +134,25 @@ function checkSafetyBounds() {
   const agentPath = path.join(ROOT, "cli", "agent.js");
   const content = fs.readFileSync(agentPath, "utf-8");
 
+  // Also check model-profiles.js since investigationCap lives there now
+  let profileContent = "";
+  const profilePath = path.join(ROOT, "cli", "model-profiles.js");
+  try { profileContent = fs.readFileSync(profilePath, "utf-8"); } catch { /* ignore */ }
+  const combined = content + "\n" + profileContent;
+
   for (const [name, [lo, hi]] of Object.entries(SAFETY_BOUNDS)) {
-    // Match patterns like: const SSH_STORM_WARN = 10;
-    const re = new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*(\\d+)`, "g");
-    let match;
-    while ((match = re.exec(content)) !== null) {
-      const val = parseInt(match[1], 10);
-      if (val < lo || val > hi) {
-        return { ok: false, violation: `${name} = ${val} (bounds: [${lo}, ${hi}])` };
+    // Match multiple patterns: const X = 10, X = 10, X: 10 (object property)
+    const patterns = [
+      new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*(\\d+)`, "g"),
+      new RegExp(`${name}\\s*:\\s*(\\d+)`, "g"),
+    ];
+    for (const re of patterns) {
+      let match;
+      while ((match = re.exec(combined)) !== null) {
+        const val = parseInt(match[1], 10);
+        if (val < lo || val > hi) {
+          return { ok: false, violation: `${name} = ${val} (bounds: [${lo}, ${hi}])` };
+        }
       }
     }
   }
@@ -205,13 +216,32 @@ function runClaudeCodeFix(prompt) {
     env: { ...process.env, NEX_AUTO_ORCHESTRATE: "false" },
   });
 
-  const stdout = (result.stdout || "").toString();
   const stderr = (result.stderr || "").toString();
   if (result.status !== 0) {
     console.error("  Fix attempt failed (exit code:", result.status, ")");
     if (stderr) console.error("  stderr:", stderr.slice(-300));
+    return { ok: false, reason: "exit-code" };
   }
-  return result.status === 0;
+
+  // Validate: check git diff to verify actual code changes were made
+  try {
+    const diff = execSync("git diff cli/", { cwd: ROOT, encoding: "utf-8" });
+    if (!diff || !diff.includes("@@")) {
+      return { ok: false, reason: "no-changes" };
+    }
+    // Count added/removed lines (exclude comments-only changes)
+    const addedLines = (diff.match(/^\+[^+]/gm) || []).length;
+    const removedLines = (diff.match(/^-[^-]/gm) || []).length;
+    const totalChanged = addedLines + removedLines;
+
+    if (totalChanged === 0) return { ok: false, reason: "no-changes" };
+    if (totalChanged > 200) return { ok: false, reason: "too-large" };
+
+    console.log(`  Fix applied: +${addedLines}/-${removedLines} lines`);
+    return { ok: true, linesChanged: totalChanged };
+  } catch {
+    return { ok: false, reason: "diff-failed" };
+  }
 }
 
 // ─── Main Loop ──────────────────────────────────────────────────
@@ -284,9 +314,9 @@ async function main() {
     // 3. Implement fix
     console.log("  Running fix...");
     const fixPrompt = buildFixPrompt(cluster);
-    const fixOk = runClaudeCodeFix(fixPrompt);
-    if (!fixOk) {
-      console.log("  Fix attempt failed, reverting");
+    const fixResult = runClaudeCodeFix(fixPrompt);
+    if (!fixResult.ok) {
+      console.log(`  Fix failed: ${fixResult.reason} — reverting`);
       revert();
       state.plateaus++;
       if (state.plateaus >= MAX_PLATEAUS) {

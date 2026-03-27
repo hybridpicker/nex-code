@@ -83,9 +83,17 @@ function migrateIfNeeded() {
   }
   for (const key of keys) {
     const entry = data[key];
-    const slug = key.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
-    saveMemory("project", slug, entry.value || String(entry));
+    const value = entry.value || String(entry);
+    const slug = key.replace(/[^a-z0-9_-]/gi, "-").toLowerCase().replace(/-+/g, "-").replace(/^-|-$/g, "");
+    if (!slug) continue;
+    // Write directly to bypass validation (legacy entries can be short)
+    const dir = ensureTypeDir("project");
+    const filePath = path.join(dir, `${slug}.md`);
+    const desc = value.split("\n")[0].slice(0, 100);
+    const md = `---\nname: ${key}\ndescription: ${desc}\ntype: project\n---\n\n${value}\n`;
+    atomicWrite(filePath, md);
   }
+  rebuildIndex();
   try { fs.renameSync(jsonFile, jsonFile + ".bak"); } catch { /* ignore */ }
 }
 
@@ -103,17 +111,35 @@ function saveMemory(type, name, content, description) {
   if (!VALID_TYPES.includes(type)) {
     return { ok: false, path: "", error: `Invalid type: ${type}. Must be one of: ${VALID_TYPES.join(", ")}` };
   }
-  if (!name || !content) {
-    return { ok: false, path: "", error: "name and content are required" };
+  if (!name || typeof name !== "string") {
+    return { ok: false, path: "", error: "name must be a non-empty string" };
   }
-  const slug = name.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
+  if (!content || typeof content !== "string" || content.trim().length < 5) {
+    return { ok: false, path: "", error: "content must be at least 5 characters" };
+  }
+  // Sanitize slug: only ASCII alphanumeric, dashes, underscores
+  const slug = name.replace(/[^a-z0-9_-]/gi, "-").toLowerCase().replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (!slug) {
+    return { ok: false, path: "", error: "name produces empty slug after sanitization" };
+  }
   const dir = ensureTypeDir(type);
   const filePath = path.join(dir, `${slug}.md`);
+
+  // Dedup check: if file exists with similar content (first 200 chars match), update instead of duplicate
+  if (fs.existsSync(filePath)) {
+    try {
+      const existing = parseMemoryFile(fs.readFileSync(filePath, "utf-8"));
+      if (existing.body.slice(0, 200) === content.slice(0, 200)) {
+        return { ok: true, path: filePath, updated: false };
+      }
+    } catch { /* overwrite on parse error */ }
+  }
+
   const desc = description || content.split("\n")[0].slice(0, 100);
   const md = `---\nname: ${name}\ndescription: ${desc}\ntype: ${type}\n---\n\n${content}\n`;
   atomicWrite(filePath, md);
   rebuildIndex();
-  return { ok: true, path: filePath };
+  return { ok: true, path: filePath, updated: true };
 }
 
 /**
@@ -335,7 +361,15 @@ function getMemoryContext() {
     );
   }
 
-  return parts.join("\n\n");
+  const result = parts.join("\n\n");
+
+  // Context size guard: warn if memory context exceeds ~2000 tokens (~8000 chars)
+  if (result.length > 8000) {
+    const truncated = result.slice(0, 8000) + "\n\n[Memory context truncated — consider pruning old entries]";
+    return truncated;
+  }
+
+  return result;
 }
 
 module.exports = {

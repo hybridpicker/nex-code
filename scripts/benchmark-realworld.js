@@ -314,30 +314,39 @@ function runTask(task, model) {
     const startTime = Date.now();
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
 
     const proc = spawn("node", args, {
       cwd: tmpDir,
       env: { ...process.env, NEX_SKIP_BUILTIN_SKILLS: "1", NEX_AUTO_ORCHESTRATE: "false" },
-      timeout: 120000,
     });
+
+    // Hard timeout: 120s
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGTERM");
+    }, 120000);
 
     proc.stdout.on("data", (d) => { stdout += d; });
     proc.stderr.on("data", (d) => { stderr += d; });
 
     proc.on("close", (code) => {
+      clearTimeout(timer);
       const elapsed = Date.now() - startTime;
-      const result = evaluateTask(task, tmpDir, stdout, elapsed);
-      // Cleanup
+      const completionReason = timedOut ? "timeout" : code === 0 ? "success" : "error";
+      const result = evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason);
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
       resolve(result);
     });
 
     proc.on("error", (err) => {
+      clearTimeout(timer);
       resolve({
         id: task.id,
         category: task.category,
         score: 0,
         elapsed: Date.now() - startTime,
+        completionReason: "error",
         error: err.message,
         details: {},
       });
@@ -347,19 +356,31 @@ function runTask(task, model) {
 
 // ─── Evaluation ─────────────────────────────────────────────────
 
-function evaluateTask(task, tmpDir, stdout, elapsed) {
-  const details = { editsFound: [], editsMissing: [], toolCalls: 0 };
+function countToolCalls(stdout, stderr) {
+  let count = 0;
+  // Method 1: parse tool execution markers from stderr (nex-code logs "✓ tool_name" to stderr)
+  const stderrMarkers = (stderr || "").match(/✓\s+\w+\(/g);
+  if (stderrMarkers) count = stderrMarkers.length;
+  // Method 2: count tool_use blocks in stdout (if --json returns conversation)
+  if (count === 0) {
+    const toolUseMatches = (stdout || "").match(/"type"\s*:\s*"function"|"tool_use"|"tool_call"/g);
+    if (toolUseMatches) count = toolUseMatches.length;
+  }
+  // Method 3: count spinner lines (nex-code prints "[tool] ..." lines)
+  if (count === 0) {
+    const spinnerLines = (stderr || "").match(/^\s*\[.*?\]/gm);
+    if (spinnerLines) count = spinnerLines.length;
+  }
+  return count;
+}
 
-  // Count tool calls from JSON output
-  try {
-    const lines = stdout.split("\n").filter(Boolean);
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.tool_calls) details.toolCalls += parsed.tool_calls;
-      } catch { /* not json */ }
-    }
-  } catch { /* ignore */ }
+function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
+  const details = {
+    editsFound: [],
+    editsMissing: [],
+    toolCalls: countToolCalls(stdout, stderr),
+    completionReason,
+  };
 
   // Check expected edits
   let editScore = 0;
@@ -413,18 +434,25 @@ function evaluateTask(task, tmpDir, stdout, elapsed) {
   const taskCompletion = totalChecks > 0 ? (editScore / totalChecks) : 0;
   const editPrecision = taskCompletion; // for local eval, same as completion
   const efficiency = details.toolCalls > 0
-    ? Math.max(0, 1 - (details.toolCalls - task.maxToolCalls) / task.maxToolCalls)
-    : 0.5; // unknown
+    ? Math.max(0, 1 - Math.max(0, details.toolCalls - task.maxToolCalls) / task.maxToolCalls)
+    : 0.5; // unknown tool count
 
-  const score = Math.round(
+  let score = Math.round(
     (taskCompletion * 30 + editPrecision * 40 + Math.min(1, efficiency) * 30),
   );
+
+  // Penalty: cap score at 50 if timed out or hit max turns
+  if (completionReason === "timeout") {
+    score = Math.min(score, 50);
+    details.penalty = "timeout";
+  }
 
   return {
     id: task.id,
     category: task.category,
     score,
     elapsed,
+    completionReason,
     details: {
       ...details,
       taskCompletion: Math.round(taskCompletion * 100),

@@ -41,6 +41,70 @@
 7. Publish to npm: `npm publish`
 8. Return to development: `git checkout devel && git merge main`
 
+## Improvement Loop
+
+The proactive improvement loop benchmarks nex-code against real-world tasks and auto-fixes regressions:
+
+```bash
+npm run improve              # full loop: benchmark → fix → validate → commit
+npm run improve -- --dry-run # benchmark once, show failure clusters
+npm run benchmark:realworld  # run 20-task benchmark only
+```
+
+**How it works:**
+1. `scripts/benchmark-realworld.js` runs 20 commit-sized tasks (simple edits, multi-file, investigation, creation) in temp directories using nex-code headless mode
+2. Results are scored: taskCompletion (30%) + editPrecision (40%) + efficiency (30%)
+3. `scripts/improve.js` clusters failures, picks the top pattern, runs nex-code to implement ONE fix
+4. Rebuilds dist, re-benchmarks, commits if improved, reverts if regressed
+5. Stops after 3 plateaus, score >= 95, or 8 passes
+
+**Safety bounds** are enforced before every commit:
+- SSH_STORM_WARN: [6, 12], SSH_STORM_ABORT: [8, 18]
+- INVESTIGATION_CAP: [10, 18], POST_WIPE_BUDGET: [10, 17]
+
+## Model Profiles
+
+`cli/model-profiles.js` provides per-model guard thresholds. Each model family gets tuned stale timeouts and investigation caps:
+
+| Model | staleWarn | staleAbort | investigationCap | postEditCap |
+|-------|-----------|------------|------------------|-------------|
+| devstral-2 | 30s | 90s | 12 | 10 |
+| devstral-small | 20s | 60s | 10 | 8 |
+| qwen3-coder | 60s | 180s | 15 | 12 |
+| kimi-k2 | 45s | 120s | 15 | 12 |
+
+ENV overrides (`NEX_STALE_WARN_MS`, `NEX_STALE_ABORT_MS`) always take precedence.
+
+## Memory System
+
+`cli/memory.js` provides typed persistent memory stored in `.nex/memory/{type}/`:
+
+- **Types:** user, feedback, project, reference
+- **Storage:** Individual .md files with YAML frontmatter
+- **Index:** Auto-generated `MEMORY.md` (max 50 entries) injected into system prompt
+- **Tool:** `save_memory(type, name, content)` registered in tools/index.js
+- **Dedup:** Skips save if existing file has identical first 200 chars
+- **Context guard:** Truncates at ~2000 tokens to prevent context pressure
+
+Legacy `remember(key, value)` / `recall(key)` API remains for backward compatibility.
+
+## Trigger-Based Skills
+
+`.nex/skills/*.md` files support YAML frontmatter with trigger patterns:
+
+```markdown
+---
+trigger:
+  - drums
+  - drumcomputer
+  - beat sequencer
+---
+
+Instructions injected when any trigger matches the user's first message.
+```
+
+`cli/skills.js` matches task descriptions against triggers at session start. Matched skills inject max 3 lines of instructions into the system prompt.
+
 ## Handling Merge Conflicts
 
 If merge conflicts occur during the merge from `devel` to `main`:
