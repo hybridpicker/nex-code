@@ -2147,8 +2147,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
   const fileEditCounts = _sessionFileEditCounts;
-  const LOOP_WARN_EDITS = 2; // warn agent after 2 edits to same file (early warning)
-  const LOOP_ABORT_EDITS = 4; // abort loop after 4 edits to same file
+  const LOOP_WARN_EDITS = 3; // warn agent after 3 edits to same file (early warning)
+  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
   const bashCmdCounts = _sessionBashCmdCounts;
   const LOOP_WARN_BASH = 5; // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8; // abort after 8 similar bash commands
@@ -2156,12 +2156,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_GREP = 4; // warn after 4 identical grep patterns
   const LOOP_ABORT_GREP = 7; // abort after 7 identical grep patterns
   const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
-  const LOOP_WARN_GREP_FILE = 2; // warn after 2 different-pattern greps on same file
-  const LOOP_ABORT_GREP_FILE = 3; // hard-block further greps on same file after 3
+  const LOOP_WARN_GREP_FILE = 3; // warn after 3 different-pattern greps on same file
+  const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
   const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
-  const TARGETED_READ_HARD_CAP = 4; // absolute max reads of any single file (unbounded + targeted combined)
+  const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file (unbounded + targeted combined)
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -3460,7 +3460,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           let advice;
           if (hasReRead) {
             urgency = "WARNING";
-            advice = `Unbounded re-read of ${reReadFiles.join(", ")} — already in context. Use line_start/line_end to read specific sections instead.`;
+            advice = `Full-file read of ${reReadFiles.join(", ")} already done — use line_start/line_end for specific sections instead.`;
           } else if (hasUnboundedRead) {
             advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
           } else {
@@ -3618,8 +3618,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                     const escalateMsg = {
                       role: "user",
                       content: superreads
-                        ? `[SYSTEM WARNING] You have been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context. Use line_start=${pe + 1} to read only the content beyond what you already have, or use grep_search for specific lines.`
-                        : `[SYSTEM WARNING] You have now been blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} are already in your context and their content will NOT change. Do NOT request this range again. Use grep_search to locate specific content, or proceed with what you already know.`,
+                        ? `[SYSTEM] Read blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} were already read. Use line_start=${pe + 1} to read only new content, or use grep_search for specific lines.`
+                        : `[SYSTEM] Read blocked ${rangeBlockCount}× for read_file("${path}", lines ${newStart}-${newEnd}). Lines ${ps}-${pe} were already read and will NOT change. Use grep_search to find specific content instead.`,
                     };
                     conversationMessages.push(escalateMsg);
                     apiMessages.push(escalateMsg);
@@ -3644,8 +3644,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
               const sectionCount = prevRanges.length; // sections already committed
-              const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
-              const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
+              const SCROLL_WARN_SECTIONS = 3; // after 3 prior sections (4th read) — warn
+              const SCROLL_BLOCK_SECTIONS = 5; // after 5 prior sections (6th read) — hard block
               if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
                 const shortPath = path.split("/").slice(-2).join("/");
                 debugLog(
@@ -3680,7 +3680,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             const escalateMsg = {
               role: "user",
-              content: `[SYSTEM WARNING] You already received a BLOCKED error for read_file("${path}") and tried again without line ranges. Full-file re-reads are permanently blocked for this file. Use line_start/line_end to read a specific section, or use grep_search to find what you need.`,
+              content: `[SYSTEM] read_file("${path}") was blocked again — full-file reads are disabled after the first read. Use line_start/line_end for a specific section, or use grep_search to find what you need.`,
             };
             conversationMessages.push(escalateMsg);
             apiMessages.push(escalateMsg);
@@ -4155,15 +4155,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // after already making changes — it should verify the edit and move on.
           // Before any edit, use the full INVESTIGATION_CAP (12 calls).
           // In fix phase (root cause already found) use a tight cap of 3 reads.
-          const POST_EDIT_CAP = 5;
+          const POST_EDIT_CAP = 10;
           const _effectiveCap = _rootCauseDetected ? 3 : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
-          // After the cap has already fired in fix phase, hard-block further reads
-          // instead of silently allowing them. One nudge is not enough — the model
-          // continues reading new files after the nudge, causing the investigation
-          // loop to persist through multiple context wipes.
-          // Also hard-block post-edit reads after the cap fires: if an edit was made,
-          // the model already has the fix — re-reading is verification bloat.
-          if (_investigationCapFired && (_rootCauseDetected || _editsMadeThisSession > 0) && READ_ONLY_TOOLS.includes(prep.fnName)) {
+          // After the cap has already fired in fix phase (root cause detected), hard-block
+          // further reads — one nudge is not enough when SSH output already pinpointed the issue.
+          // For post-edit reads: only hard-block in fix phase, not on ordinary edits where the
+          // agent may still need to read adjacent sections to complete multi-file changes.
+          if (_investigationCapFired && _rootCauseDetected && READ_ONLY_TOOLS.includes(prep.fnName)) {
             const _blockReason = _rootCauseDetected
               ? `root cause already identified (${_rootCauseSummary})`
               : `${_editsMadeThisSession} file edit(s) already made`;
@@ -4354,8 +4352,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               const fileGrepWarning = {
                 role: "user",
                 content: fileAlreadyRead
-                  ? `[SYSTEM WARNING] "${prep.args.path}" was already fully read — its content is in context. Do NOT grep it again. Use the context you already have.`
-                  : `[SYSTEM WARNING] "${prep.args.path}" grepped ${fileGrepCount}× — file already in context. Use existing data, stop searching.`,
+                  ? `[SYSTEM NOTE] "${prep.args.path}" was already fully read — its content is in context. Grepping it again is redundant; use the context you already have.`
+                  : `[SYSTEM NOTE] "${prep.args.path}" grepped ${fileGrepCount}× — use the search results already in context instead of searching again.`,
               };
               conversationMessages.push(fileGrepWarning);
               apiMessages.push(fileGrepWarning);

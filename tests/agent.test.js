@@ -1808,20 +1808,15 @@ describe("agent.js", () => {
   describe("loop detection", () => {
     it("warns after editing the same file multiple times", async () => {
       process.env.NEX_DEBUG = "true";
-      // First edit
-      mockStream("", [
-        {
-          function: { name: "edit_file", arguments: { path: "loop.js" } },
-          id: "c1",
-        },
-      ]);
-      // Second edit — should trigger warning
-      mockStream("", [
-        {
-          function: { name: "edit_file", arguments: { path: "loop.js" } },
-          id: "c2",
-        },
-      ]);
+      // Three edits to trigger warning (LOOP_WARN_EDITS = 3)
+      for (let i = 0; i < 3; i++) {
+        mockStream("", [
+          {
+            function: { name: "edit_file", arguments: { path: "loop.js" } },
+            id: `c${i}`,
+          },
+        ]);
+      }
       mockStream("Done");
       executeTool.mockResolvedValue("ok");
       await processInput("edit loop.js");
@@ -1831,8 +1826,8 @@ describe("agent.js", () => {
 
     it("aborts after too many edits to the same file", async () => {
       process.env.NEX_DEBUG = "true";
-      // 4 edits to trigger abort
-      for (let i = 0; i < 4; i++) {
+      // 5 edits to trigger abort (LOOP_ABORT_EDITS = 5)
+      for (let i = 0; i < 5; i++) {
         mockStream("", [
           {
             function: { name: "edit_file", arguments: { path: "stuck.js" } },
