@@ -187,9 +187,10 @@ describe("memory.js", () => {
       memory.remember("framework", "React");
       memory.remember("style", "functional");
       const ctx = memory.getMemoryContext();
-      expect(ctx).toContain("PROJECT MEMORY");
-      expect(ctx).toContain("framework: React");
-      expect(ctx).toContain("style: functional");
+      // After migration, memories appear in the MEMORY.md index
+      expect(ctx).toContain("Project Memory Index");
+      expect(ctx).toContain("framework");
+      expect(ctx).toContain("style");
     });
 
     it("includes both NEX.md and memories", () => {
@@ -197,7 +198,7 @@ describe("memory.js", () => {
       memory.remember("lang", "TypeScript");
       const ctx = memory.getMemoryContext();
       expect(ctx).toContain("PROJECT INSTRUCTIONS");
-      expect(ctx).toContain("PROJECT MEMORY");
+      expect(ctx).toContain("Project Memory Index");
     });
 
     it("includes global NEX.md content", () => {
@@ -216,7 +217,7 @@ describe("memory.js", () => {
       const ctx = memory.getMemoryContext();
       expect(ctx).toContain("GLOBAL INSTRUCTIONS");
       expect(ctx).toContain("PROJECT INSTRUCTIONS");
-      expect(ctx).toContain("PROJECT MEMORY");
+      expect(ctx).toContain("Project Memory Index");
     });
 
     it("global instructions appear before project instructions", () => {
