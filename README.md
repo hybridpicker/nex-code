@@ -689,10 +689,10 @@ deploy the latest build to prod
 The agent loop uses a bouncing-ball spinner (`● · · · ·` → `· ● · · ·` → …) during tool execution, then prints compact 1-line summaries:
 
 ```
-  ●     ▸ 3 tools: read_file, grep, edit_file
-  ✓ read_file src/app.js (45 lines)
-  ✓ grep TODO → 12 matches
-  ✗ edit_file src/x.js → old_text not found
+  ⏺ Read, Grep, Edit
+  ⎿  Read 45 lines from app.js
+  ⎿  12 matches "TODO"
+  ⎿  old_text not found
 ```
 
 After multi-step tasks, a résumé and context-aware follow-up suggestions are shown:
@@ -946,7 +946,7 @@ When the agent creates a task list, a **live animated display** replaces the sta
      ◻ Run tests
 ```
 
-- Bouncing-ball spinner (`●` ping-pong across 5 positions) with elapsed time display
+- Bouncing-ball spinner (⏺ ping-pong across 5 positions) with elapsed time display
 - Per-task status icons: `✔` done, `◼` in progress, `◻` pending, `✗` failed
 - Automatically pauses during text streaming and resumes during tool execution
 - Falls back to the static `/tasks` view when no live display is active
