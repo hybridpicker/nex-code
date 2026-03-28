@@ -1140,6 +1140,7 @@ let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked
 let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
 const _autoCompletedTasks = new Set(); // taskIds auto-completed by file-write matching
+let _lastCreationSummary = null; // persists across turns: brief note of what the last creation task produced
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1642,6 +1643,7 @@ function _resetSessionTracking() {
 
 function clearConversation() {
   conversationMessages = [];
+  _lastCreationSummary = null;
   _resetSessionTracking();
 }
 
@@ -1969,7 +1971,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   STALE_ABORT_MS = _profile.staleAbort;
 
   _serverHooks = serverHooks;
-  const userContent = buildUserContent(userInput);
+  // Prepend creation-task context note from the previous turn so the model
+  // can answer follow-up questions without re-investigating the codebase.
+  let _resolvedInput = userInput;
+  if (_lastCreationSummary && typeof userInput === "string") {
+    _resolvedInput = `${_lastCreationSummary}\n\n${userInput}`;
+    _lastCreationSummary = null; // consume once
+  }
+  const userContent = buildUserContent(_resolvedInput);
   conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
 
@@ -3444,6 +3453,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           filesRead,
           startTime,
         );
+        // ─── Persist creation-task context for next turn ───────────────────────
+        // When a creation task produced files, store a one-line context note so
+        // the next user message can reference what was built without the model
+        // re-investigating from scratch (especially after follow-up questions
+        // like "the app won't start").
+        if (_isCreationTask && filesModified.size >= 3) {
+          const _shortNames = [...filesModified]
+            .map((f) => f.split("/").pop())
+            .slice(0, 8)
+            .join(", ");
+          const _hasPkg = [...filesModified].some((f) =>
+            f.endsWith("package.json"),
+          );
+          const _hasReqs = [...filesModified].some((f) =>
+            f.endsWith("requirements.txt"),
+          );
+          const _hasLock = [...filesModified].some(
+            (f) =>
+              f.endsWith("package-lock.json") ||
+              f.endsWith("yarn.lock") ||
+              f.endsWith("pnpm-lock.yaml"),
+          );
+          const _pendingCmds =
+            _hasPkg && !_hasLock
+              ? "npm install not yet run"
+              : _hasReqs
+                ? "pip install not yet run"
+                : null;
+          _lastCreationSummary =
+            `[Previous session created ${filesModified.size} files: ${_shortNames}` +
+            (_pendingCmds ? ` — ${_pendingCmds}` : "") +
+            `. Use this context to answer follow-up questions without re-reading files.]`;
+        }
         // ─── Post-turn enforcement: daemon session summary ─────────────────────
         // If the model ran tool calls (totalSteps > 0) but ended with a terse
         // "Done." message, make one direct LLM call for a proper summary.
@@ -3780,6 +3822,49 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── bash find / ls pre-execution redirect ──────────────────────────────
+      // Block bash calls that use find or ls when dedicated tools exist.
+      // find <path> → use glob; ls → use list_directory.
+      // Exclusions: complex pipelines, git/npm/make find, -exec patterns.
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (prep.fnName !== "bash") continue;
+        const _bcmd = (prep.args?.command || "").trim();
+
+        // ls — simple directory listing, no pipeline
+        if (
+          /^\s*ls(\s+-[a-zA-Z]+)*(\s+\S+)?\s*$/.test(_bcmd) &&
+          !/npm|yarn|pnpm|make|git/.test(_bcmd)
+        ) {
+          debugLog(
+            `${C.red}  ✖ Blocked bash ls — use list_directory tool instead${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: bash("ls ...") denied — use the list_directory tool instead. It returns structured output and does not penalize the session score.`,
+            tool_call_id: prep.callId,
+          };
+          continue;
+        }
+
+        // find <path> — file search, no complex pipeline / -exec
+        if (
+          /\bfind\s+[\S.]/.test(_bcmd) &&
+          !/git\s|npm\s|yarn\s|-exec\s+\S|-execdir/.test(_bcmd)
+        ) {
+          debugLog(
+            `${C.red}  ✖ Blocked bash find — use glob tool with a pattern instead${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: bash("find ...") denied — use the glob tool with a pattern like "**/*.py" or "src/**/*.js" instead. It is faster and does not penalize the session score.`,
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
       // ─── sed -n pre-execution block ──────────────────────────────────────────
       // Block sed -n line-range commands BEFORE they execute. Previously only a
       // post-execution warning was injected — the command still ran and flooded context.
@@ -4084,11 +4169,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
       // Resume TaskProgress animation during tool execution so the UI never looks frozen
       if (taskProgress && taskProgress._paused) taskProgress.resume();
+
+      // For long-running bash/ssh commands: update the header line with elapsed time
+      // every second after 3s so the user knows it's still running (not stuck).
+      let _longCmdTimer = null;
+      if (_spinAnim && process.stdout.isTTY) {
+        const _hasLong = prepared.some(
+          (p) =>
+            p.canExecute && (p.fnName === "bash" || p.fnName === "ssh_exec"),
+        );
+        if (_hasLong) {
+          const _longStart = Date.now();
+          _longCmdTimer = setInterval(() => {
+            const _elapsed = Math.round((Date.now() - _longStart) / 1000);
+            if (_elapsed >= 3) {
+              process.stdout.write(
+                `\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false, "blink")} ${C.dim}[${_elapsed}s]${C.reset}`,
+              );
+            }
+          }, 1000);
+        }
+      }
+
       const { results: toolMessages, summaries: batchSummaries } =
         await executeBatch(prepared, true, {
           ...batchOpts,
           skipSummaries: true,
         });
+
+      // Stop elapsed-time updater
+      if (_longCmdTimer) {
+        clearInterval(_longCmdTimer);
+        _longCmdTimer = null;
+      }
 
       // Stop blink, finalize header with static dot
       if (_spinAnim) {

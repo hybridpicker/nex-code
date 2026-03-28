@@ -375,16 +375,19 @@ function formatToolSummary(name, args, result, isError) {
       const header = fname
         ? `Wrote ${fname} · ${lineCount} line${lineCount !== 1 ? "s" : ""}`
         : `Wrote ${lineCount} line${lineCount !== 1 ? "s" : ""}`;
+      // Syntax-highlight content when a language can be detected
+      const { highlightLines: _hl } = require("./syntax");
+      const hlLines = _hl(args.content || "", args.path || null);
       // For small files show the full content; for larger files show a preview
       const WRITE_SHOW = 40;
       const WRITE_PREVIEW = 8;
       if (lineCount <= WRITE_SHOW) {
-        const block = contentLines
+        const block = hlLines
           .map((l) => `     ${T.muted}${l}${T.reset}`)
           .join("\n");
         summary = `${header}\n${block}`;
       } else {
-        const shown = contentLines
+        const shown = hlLines
           .slice(0, WRITE_PREVIEW)
           .map((l) => `     ${T.muted}${l}${T.reset}`)
           .join("\n");
@@ -401,14 +404,17 @@ function formatToolSummary(name, args, result, isError) {
       const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : "";
       const firstOld = oldLines.find((l) => l.trim());
       const firstNew = newLines.find((l) => l.trim());
+      // Highlight the diff preview lines
+      const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
+      const _lang = _dl(args.path || null);
       const diffLines = [];
       if (firstOld)
         diffLines.push(
-          `    ${T.diff_rem}- ${T.reset}${T.muted}${firstOld.trimEnd().substring(0, 72)}${T.reset}`,
+          `    ${T.diff_rem}- ${T.reset}${T.muted}${_hlLine(firstOld.trimEnd().substring(0, 72), _lang)}${T.reset}`,
         );
       if (firstNew)
         diffLines.push(
-          `    ${T.diff_add}+ ${T.reset}${T.muted}${firstNew.trimEnd().substring(0, 72)}${T.reset}`,
+          `    ${T.diff_add}+ ${T.reset}${T.muted}${_hlLine(firstNew.trimEnd().substring(0, 72), _lang)}${T.reset}`,
         );
       summary =
         `${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}${fnameStr}` +

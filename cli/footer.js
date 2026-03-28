@@ -347,7 +347,25 @@ class StickyFooter {
         }
         self._origWrite(self._goto(anchorRow));
       }
-      return self._origStderrWrite(data, ...rest);
+      const result = self._origStderrWrite(data, ...rest);
+      // Animation frames (_render) always end with a cursor-up sequence
+      // (\x1b[NА) to restore position for the next frame. Final renders
+      // (_renderFinal, _renderFinal-like) do not — they end with \n and
+      // leave the cursor wherever the last task line landed. If that happens
+      // to be the input row (because _cursorOnInputRow was true when the
+      // frame fired), the last task line bleeds into the prompt area.
+      // Fix: after any multi-line stderr write that lacks a cursor-up,
+      // redraw the footer and clear the input row.
+      if (
+        typeof data === "string" &&
+        data.includes("\n") &&
+        !/\x1b\[\d+A/.test(data) &&
+        self._cursorOnInputRow
+      ) {
+        self.drawFooter();
+        self._origWrite(self._goto(self._rowInput) + "\x1b[2K");
+      }
+      return result;
     };
 
     // ── console.log / console.error ───────────────────────────────────────
