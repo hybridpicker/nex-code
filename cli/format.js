@@ -383,13 +383,13 @@ function formatToolSummary(name, args, result, isError) {
       const WRITE_PREVIEW = 8;
       if (lineCount <= WRITE_SHOW) {
         const block = hlLines
-          .map((l) => `     ${T.muted}${l}${T.reset}`)
+          .map((l) => `     ${l}`)
           .join("\n");
         summary = `${header}\n${block}`;
       } else {
         const shown = hlLines
           .slice(0, WRITE_PREVIEW)
-          .map((l) => `     ${T.muted}${l}${T.reset}`)
+          .map((l) => `     ${l}`)
           .join("\n");
         summary = `${header}\n${shown}\n     ${T.subtle}… +${lineCount - WRITE_PREVIEW} lines${T.reset}`;
       }
@@ -410,11 +410,11 @@ function formatToolSummary(name, args, result, isError) {
       const diffLines = [];
       if (firstOld)
         diffLines.push(
-          `    ${T.diff_rem}- ${T.reset}${T.muted}${_hlLine(firstOld.trimEnd().substring(0, 72), _lang)}${T.reset}`,
+          `    ${T.diff_rem}- ${T.reset}${_hlLine(firstOld.trimEnd().substring(0, 72), _lang)}${T.reset}`,
         );
       if (firstNew)
         diffLines.push(
-          `    ${T.diff_add}+ ${T.reset}${T.muted}${_hlLine(firstNew.trimEnd().substring(0, 72), _lang)}${T.reset}`,
+          `    ${T.diff_add}+ ${T.reset}${_hlLine(firstNew.trimEnd().substring(0, 72), _lang)}${T.reset}`,
         );
       summary =
         `${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}${fnameStr}` +
