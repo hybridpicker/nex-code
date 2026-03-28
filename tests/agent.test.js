@@ -2543,31 +2543,33 @@ describe("agent.js", () => {
       expect(hasNote).toBe(true);
     });
 
-    it("detects npm install needed when package.json written without lock file", async () => {
+    it("injects bootstrap continuation when package.json written without npm install", async () => {
       mockStream("creating project", [
         writeCall(1, "/project/package.json"),
         writeCall(2, "/project/index.js"),
         writeCall(3, "/project/server.js"),
       ]);
       executeTool.mockResolvedValue("written");
+      // Model says "Done!" without running npm install → framework injects verification
       mockStream("Done!");
+      // Model responds to verification injection by bootstrapping
+      mockStream("Running npm install", [
+        { function: { name: "bash", arguments: JSON.stringify({ command: "npm install" }) }, id: "b1" },
+      ]);
+      executeTool.mockResolvedValue("added 42 packages");
+      mockStream("npm install completed. The Express server project is ready in /project. Run `node server.js` to start.");
 
       await processInput("Create an Express server");
 
-      callStream.mockReset();
-      executeTool.mockReset();
-      mockStream("ok");
-
-      await processInput("Server won't start");
-
       const msgs = getConversationMessages();
-      const noteMsg = msgs.find(
+      // Framework should have injected the bootstrap verification message
+      const verifyMsg = msgs.find(
         (m) =>
           typeof m.content === "string" &&
-          m.content.includes("Previous session created"),
+          m.content.includes("FRAMEWORK") &&
+          m.content.includes("npm install"),
       );
-      expect(noteMsg).toBeTruthy();
-      expect(noteMsg.content).toContain("npm install not yet run");
+      expect(verifyMsg).toBeTruthy();
     });
 
     it("does NOT inject context for non-creation tasks", async () => {
