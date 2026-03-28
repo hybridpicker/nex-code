@@ -362,6 +362,70 @@ const TASKS = [
     },
   },
 
+  // ── Resilience — error recovery & robustness ──────────────────────────────
+  // These tasks simulate real failure scenarios that nex-code encounters in
+  // production. The correct response is always a targeted recovery action.
+  {
+    id: "resilience-edit-failed",
+    category: "resilience",
+    prompt:
+      "Your edit_file call on server.js failed: old_string 'const PORT = 3000' was not found in the file. What do you do next to recover?",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && args.path.includes("server"),
+  },
+  {
+    id: "resilience-file-not-found",
+    category: "resilience",
+    prompt:
+      "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. What tool do you use?",
+    expectedTool: ["glob_files", "bash"],
+    validateArgs: (args) => {
+      const s = JSON.stringify(args).toLowerCase();
+      return s.includes("src") || s.includes("helper") || s.includes("util") || s.includes("*.js");
+    },
+  },
+  {
+    id: "resilience-large-file-nav",
+    category: "resilience",
+    prompt:
+      "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. What is the most efficient tool to use — read_file or bash with grep?",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("awk")),
+  },
+  {
+    id: "resilience-broken-import",
+    category: "resilience",
+    prompt:
+      "TypeScript reports: Cannot find module './config'. The file was recently renamed. What tool do you use to find the new location?",
+    expectedTool: ["glob_files", "bash"],
+    validateArgs: (args) => {
+      const s = JSON.stringify(args).toLowerCase();
+      return s.includes("config") || s.includes("*.ts") || s.includes("*.js") || s.includes("find");
+    },
+  },
+  {
+    id: "resilience-bash-error-recover",
+    category: "resilience",
+    prompt:
+      "The command 'npm test' failed with exit code 1. The output contains 'SyntaxError: Unexpected token' in src/parser.js:45. What is your next action?",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && args.path.includes("parser"),
+  },
+  {
+    id: "resilience-grep-no-match",
+    category: "resilience",
+    prompt:
+      "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. What bash command finds all exported function names in src/ to identify the current name?",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("src")),
+  },
+
   // ── Agentic ───────────────────────────────────────────────────────────────
   {
     id: "agentic-test-first",
@@ -528,6 +592,7 @@ const TASK_CATEGORIES = [
   "sysadmin",
   "data",
   "agentic",
+  "resilience",
 ];
 
 // Map each category to the broader routing key (for task-router.js)
@@ -542,6 +607,7 @@ const CATEGORY_ROUTE_KEY = {
   sysadmin: "sysadmin",
   data: "data",
   agentic: "agentic",
+  resilience: "coding", // resilience is a core coding-agent skill
 };
 
 function buildSummary(modelResults) {

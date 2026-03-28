@@ -276,6 +276,82 @@ const TASKS = [
     ],
     maxToolCalls: 8,
   },
+
+  // Category 5: Resilience — error recovery under realistic failure conditions
+  {
+    id: "resilience-syntax-fix",
+    category: "resilience",
+    description: "Running 'node index.js' crashes with 'SyntaxError: Unexpected token }' in routes.js. Find and fix the syntax error.",
+    files: {
+      "routes.js": `const express = require('express');\nconst router = express.Router();\n\nrouter.get('/users', (req, res) => {\n  res.json({ users: [] });\n});\n\nrouter.post('/users', (req, res)) => {\n  const { name } = req.body;\n  res.json({ id: 1, name });\n});\n\nmodule.exports = router;\n`,
+      "index.js": `const express = require('express');\nconst routes = require('./routes');\nconst app = express();\napp.use(express.json());\napp.use('/api', routes);\napp.listen(3000);\n`,
+    },
+    expectedEdits: [
+      { file: "routes.js", notContains: "(req, res))" },
+    ],
+    maxToolCalls: 8,
+  },
+  {
+    id: "resilience-rename-across-files",
+    category: "resilience",
+    description: "Rename the function 'calcTotal' to 'calculateTotal' in all files where it appears.",
+    files: {
+      "math.js": `function calcTotal(items) {\n  return items.reduce((s, i) => s + i.price, 0);\n}\nmodule.exports = { calcTotal };\n`,
+      "cart.js": `const { calcTotal } = require('./math');\n\nfunction checkout(items) {\n  const total = calcTotal(items);\n  return { total, tax: total * 0.1 };\n}\nmodule.exports = { checkout };\n`,
+      "invoice.js": `const { calcTotal } = require('./math');\n\nfunction generateInvoice(items) {\n  return { subtotal: calcTotal(items), date: new Date() };\n}\nmodule.exports = { generateInvoice };\n`,
+    },
+    expectedEdits: [
+      { file: "math.js", contains: "calculateTotal" },
+      { file: "math.js", notContains: "calcTotal" },
+      { file: "cart.js", contains: "calculateTotal" },
+      { file: "invoice.js", contains: "calculateTotal" },
+    ],
+    maxToolCalls: 14,
+  },
+  {
+    id: "resilience-add-error-handling",
+    category: "resilience",
+    description: "Add proper try/catch error handling to all three async functions in api.js. Each catch block should log the error and rethrow it.",
+    files: {
+      "api.js": `const axios = require('axios');\n\nasync function getUser(id) {\n  const res = await axios.get(\`/users/\${id}\`);\n  return res.data;\n}\n\nasync function createUser(data) {\n  const res = await axios.post('/users', data);\n  return res.data;\n}\n\nasync function deleteUser(id) {\n  await axios.delete(\`/users/\${id}\`);\n  return true;\n}\n\nmodule.exports = { getUser, createUser, deleteUser };\n`,
+    },
+    expectedEdits: [
+      { file: "api.js", contains: "try" },
+      { file: "api.js", contains: "catch" },
+      { file: "api.js", contains: "throw" },
+    ],
+    maxToolCalls: 8,
+  },
+  {
+    id: "resilience-fix-broken-import",
+    category: "resilience",
+    description: "The app crashes because db/connection.js was moved to lib/database.js. Update all import paths in the two files that reference the old path.",
+    files: {
+      "lib/database.js": `const { Pool } = require('pg');\nconst pool = new Pool({ connectionString: process.env.DATABASE_URL });\nmodule.exports = { pool };\n`,
+      "models/user.js": `const { pool } = require('../db/connection');\n\nasync function findById(id) {\n  const { rows } = await pool.query('SELECT * FROM users WHERE id=$1', [id]);\n  return rows[0];\n}\nmodule.exports = { findById };\n`,
+      "models/post.js": `const { pool } = require('../db/connection');\n\nasync function findAll() {\n  const { rows } = await pool.query('SELECT * FROM posts');\n  return rows;\n}\nmodule.exports = { findAll };\n`,
+    },
+    expectedEdits: [
+      { file: "models/user.js", notContains: "../db/connection" },
+      { file: "models/user.js", contains: "../lib/database" },
+      { file: "models/post.js", notContains: "../db/connection" },
+      { file: "models/post.js", contains: "../lib/database" },
+    ],
+    maxToolCalls: 12,
+  },
+  {
+    id: "resilience-complete-stub",
+    category: "resilience",
+    description: "Complete the three TODO stubs in validator.js. Each stub has a comment describing what it should do.",
+    files: {
+      "validator.js": `function validateEmail(email) {\n  // TODO: return true if email contains '@' and a '.' after it, false otherwise\n}\n\nfunction validateAge(age) {\n  // TODO: return true if age is a number between 0 and 150 inclusive\n}\n\nfunction validateUsername(username) {\n  // TODO: return true if username is 3-20 chars, only letters/numbers/underscores\n}\n\nmodule.exports = { validateEmail, validateAge, validateUsername };\n`,
+    },
+    expectedEdits: [
+      { file: "validator.js", notContains: "// TODO:" },
+      { file: "validator.js", contains: "return" },
+    ],
+    maxToolCalls: 8,
+  },
 ];
 
 // ─── Task Runner ────────────────────────────────────────────────
