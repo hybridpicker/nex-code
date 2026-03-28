@@ -1613,7 +1613,113 @@ You have access to a persistent knowledge base in .nex/brain/.
 - Include tags in frontmatter for better retrieval
 - The user reviews all brain writes via /brain review or git diff
 
-`;
+# Framework-Specific Patterns
+
+## Django Critical Patterns
+
+**CRITICAL BUG: Class-level queryset slicing does NOT work in Django views**
+\`\`\`python
+# ❌ WRONG - This silently fails, returns all objects
+class MyListView(ListAPIView):
+    queryset = Model.objects.all()[:10]  # Slicing ignored!
+
+# ✅ CORRECT - Use get_queryset() method
+class MyListView(ListAPIView):
+    def get_queryset(self):
+        return Model.objects.all()[:10]
+\`\`\`
+
+**Django Model Best Practices:**
+- Always add \`db_index=True\` to foreign keys and frequently queried fields
+- Use \`select_related()\` for ForeignKey lookups to prevent N+1 queries
+- Use \`prefetch_related()\` for ManyToMany and reverse ForeignKey lookups
+- Add \`unique_together\` constraints in Meta when appropriate
+- Never use \`filter().count()\` - use \`exists()\` for boolean checks
+
+**Django Settings Security:**
+\`\`\`python
+# ✅ CORRECT - Fail immediately if environment variable missing
+SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+
+# ❌ WRONG - Insecure defaults allow production deployment with dev settings
+SECRET_KEY = os.getenv('SECRET_KEY', 'insecure-dev-key')
+DEBUG = bool(os.getenv('DEBUG', True))
+\`\`\`
+
+**Django REST Framework Serializers:**
+- Use \`read_only=True\` for computed fields
+- Use \`write_only=True\` for passwords
+- Add validation methods: \`def validate_<field>(self, value)\`
+- Use \`extra_kwargs\` to enforce required fields
+
+## React/TypeScript Critical Patterns
+
+**API Configuration - Never hardcode URLs:**
+\`\`\`typescript
+// ✅ CORRECT - Centralized API configuration with environment variables
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+export const apiClient = axios.create({ baseURL: API_BASE_URL });
+
+// ❌ WRONG - Hardcoded URLs scattered across components
+fetch('http://localhost:8000/api/users')
+\`\`\`
+
+**Error Boundaries - ALWAYS wrap components that fetch data:**
+\`\`\`typescript
+class ErrorBoundary extends React.Component {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) return <ErrorFallback error={this.state.error} />;
+    return this.props.children;
+  }
+}
+\`\`\`
+
+**React Hooks Rules:**
+- NEVER call hooks conditionally or in loops
+- Use \`useCallback\` for event handlers passed to child components
+- Use \`useMemo\` for expensive computations, not for every value
+- Extract custom hooks when logic is reused across 2+ components
+
+## Testing Requirements
+
+**Backend Testing (Django/Python):**
+- Minimum 80% line coverage (measured with pytest-cov or coverage.py)
+- Test all models: \`__str__\`, custom methods, validators, constraints
+- Test all views: GET/POST/PUT/DELETE, authentication, permissions, edge cases
+- Test all serializers: validation, required fields, read-only fields
+- ALWAYS run tests before declaring task complete
+
+**Frontend Testing (React/TypeScript):**
+- Minimum 75% line coverage (measured with Jest)
+- Test all components: render, props, user interactions, edge cases
+- Test all hooks: state changes, side effects, cleanup
+- Use React Testing Library - test behavior, not implementation
+- Mock API calls with MSW (Mock Service Worker)
+
+## Security Checklist
+
+**Environment Variables:**
+- NEVER commit .env files to git
+- ALWAYS use \`os.environ['KEY']\` (fails if missing) not \`os.getenv('KEY', 'default')\`
+- Create .env.example with placeholder values, not real secrets
+- Document required variables in README
+
+**Input Validation:**
+- Validate ALL user input on both frontend and backend
+- Use serializers/schemas for API validation (Django REST Framework, Pydantic)
+- Never trust client-side validation alone
+- Sanitize data before displaying in HTML
+
+**Database Security:**
+- Use parameterized queries - Django ORM does this automatically
+- NEVER concatenate user input into raw SQL queries
+- Use migrations for schema changes, never manual ALTER TABLE
+- Add database-level constraints (unique, foreign key, check) not just app-level
+
+`;`;
 
   cachedContextHash = currentHash;
   return cachedSystemPrompt;
