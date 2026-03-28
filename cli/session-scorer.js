@@ -822,6 +822,60 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 15. Wrote setup files but never bootstrapped the environment (-1.0) ─────
+  // Detect: agent wrote requirements.txt or package.json (new project creation)
+  // but never ran pip install / python -m venv / npm install.
+  // This produces broken setup instructions — the user can't run the project.
+  {
+    const wroteRequirements = toolCalls.some(
+      (tc) =>
+        (tc.name === "write_file" || tc.name === "Write") &&
+        tc.input?.path &&
+        (tc.input.path.endsWith("requirements.txt") ||
+          tc.input.path.endsWith("Pipfile") ||
+          tc.input.path.endsWith("pyproject.toml")),
+    );
+    const wrotePkgJson = toolCalls.some(
+      (tc) =>
+        (tc.name === "write_file" || tc.name === "Write") &&
+        tc.input?.path &&
+        tc.input.path.endsWith("package.json"),
+    );
+
+    const bashCmds = toolCalls
+      .filter(
+        (tc) =>
+          (tc.name === "bash" || tc.name === "Bash") && tc.input?.command,
+      )
+      .map((tc) => tc.input.command);
+
+    const ranPipInstall = bashCmds.some(
+      (cmd) => /pip\s+install|python\s+-m\s+venv/.test(cmd),
+    );
+    const ranNpmInstall = bashCmds.some((cmd) => /npm\s+install/.test(cmd));
+
+    if (wroteRequirements && !ranPipInstall) {
+      score -= 1.0;
+      issues.push(
+        "wrote requirements.txt but never ran pip install — environment not bootstrapped",
+      );
+    } else if (wrotePkgJson && !ranNpmInstall) {
+      // Only penalise for new projects. Heuristic: session also wrote src files.
+      const wroteSrcFile = toolCalls.some(
+        (tc) =>
+          (tc.name === "write_file" || tc.name === "Write") &&
+          tc.input?.path &&
+          /(\/src\/|index\.js|App\.js|main\.js)/.test(tc.input.path),
+      );
+      if (wroteSrcFile) {
+        score -= 0.75;
+        issues.push(
+          "created new React/Node project but never ran npm install — project is not runnable",
+        );
+      }
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
