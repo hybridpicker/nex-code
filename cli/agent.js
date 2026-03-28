@@ -2275,6 +2275,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(
                 `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`,
               );
+            // ── Post-compress state anchor for creation tasks ─────────────────
+            // After compression the model may lose track of what was already
+            // built and restart from scratch. Inject a compact progress note so
+            // it continues rather than re-investigating.
+            if (_isCreationTask && filesModified.size >= 3) {
+              const _doneFiles = [...filesModified]
+                .map((f) => f.split("/").pop())
+                .slice(0, 10)
+                .join(", ");
+              const _anchor = {
+                role: "user",
+                content:
+                  `[FRAMEWORK — context compressed] Task is IN PROGRESS. Already created ${filesModified.size} files: ${_doneFiles}. ` +
+                  `DO NOT restart or re-investigate what was already done. Continue from where you left off.`,
+              };
+              apiMessages.push(_anchor);
+            }
           }
         }
       }
@@ -3558,9 +3575,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           );
           const _ranNpmV = _allBashCmds.some((cmd) => /npm\s+install/.test(cmd));
 
+          // Also detect React projects where source files exist but package.json
+          // was never written (model creates App.js etc. without the manifest).
+          // Require App.js/tsx specifically (root-level React entry point) to
+          // avoid false-positives on plain JS or single-file projects.
+          const _hasReactSrc = [...filesModified].some((f) =>
+            /\/App\.(js|ts|jsx|tsx)$/.test(f),
+          );
+          const _missingPkg = _hasReactSrc && !_hasPkgV && !_ranNpmV;
+
           const _needsBootstrap =
             (_hasReqsV && !_ranPipV) ||
-            (_hasPkgV && !_hasLockV && !_ranNpmV);
+            (_hasPkgV && !_hasLockV && !_ranNpmV) ||
+            _missingPkg;
 
           if (_needsBootstrap) {
             _verificationInjected = true;
@@ -3569,7 +3596,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               steps.push(
                 "python -m venv venv && source venv/bin/activate && pip install -r requirements.txt",
               );
-            if (_hasPkgV && !_hasLockV && !_ranNpmV) steps.push("npm install");
+            if (_missingPkg)
+              steps.push(
+                "create package.json for the React frontend (with react, react-dom, react-scripts dependencies), then run npm install",
+              );
+            else if (_hasPkgV && !_hasLockV && !_ranNpmV)
+              steps.push("npm install");
             const verifyMsg =
               `[FRAMEWORK — post-creation check] You wrote dependency files but never ran the installer. ` +
               `Run now: ${steps.join(" && ")}. Verify it succeeds, fix any errors, then write a closing summary.`;
