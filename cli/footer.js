@@ -279,20 +279,8 @@ class StickyFooter {
       }
 
       if (self._cursorOnInputRow) {
-        // Agent streaming output: has \n, substantial, no \r.
-        if (data.includes("\n") && data.length > 4 && !data.includes("\r")) {
-          _dbg(
-            "STDOUT: agent output, leaving input row, data=" +
-              JSON.stringify(data).slice(0, 100),
-          );
-          self._cursorOnInputRow = false;
-          rawWrite(
-            self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)),
-          );
-          // fall through to row-tracking
-        }
-        // Single printable char: readline fast-path echo.
-        else if (
+        // Single printable char: readline fast-path echo — keep on input row.
+        if (
           data.length <= 4 &&
           !data.includes("\n") &&
           !data.includes("\r") &&
@@ -304,12 +292,18 @@ class StickyFooter {
           }
           return true;
         }
-        // Everything else on input row: strip \n.
-        else {
-          const stripped = data.replace(/\n/g, "");
-          if (!stripped) return true;
-          return rawWrite(stripped, ...rest);
-        }
+        // All other writes (agent output, section headers, \r-based animations,
+        // token streams): anchor to the workspace so nothing lands on the
+        // input/status rows. The footer must always stay free for the user.
+        _dbg(
+          "STDOUT: non-echo on input row, anchoring to workspace, data=" +
+            JSON.stringify(data).slice(0, 100),
+        );
+        self._cursorOnInputRow = false;
+        rawWrite(
+          self._goto(Math.min(self._lastOutputRow + 1, self._scrollEnd)),
+        );
+        // fall through to row-tracking
       }
 
       // Row tracking for scroll-region content.
