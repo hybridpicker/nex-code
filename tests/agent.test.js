@@ -521,7 +521,7 @@ describe("agent.js", () => {
       expect(toolMsg.content).toContain("read_file");
     });
 
-    it("appends HINT when bash uses ls instead of list_directory", async () => {
+    it("blocks bash ls and redirects to list_directory", async () => {
       mockStream("", [
         {
           function: { name: "bash", arguments: { command: "ls src/" } },
@@ -529,11 +529,13 @@ describe("agent.js", () => {
         },
       ]);
       mockStream("Done");
-      executeTool.mockResolvedValueOnce("index.js\nutils.js");
       await processInput("list files");
       const toolMsg = getConversationMessages().find((m) => m.role === "tool");
-      expect(toolMsg.content).toContain("HINT");
+      // Pre-execution block: executeTool is never called, message starts with BLOCKED:
+      expect(toolMsg.content).toContain("BLOCKED:");
       expect(toolMsg.content).toContain("list_directory");
+      const bashCalls = executeTool.mock.calls.filter((c) => c[0] === "bash");
+      expect(bashCalls.length).toBe(0);
     });
 
     it("does not append HINT for cat write redirects", async () => {
@@ -2438,6 +2440,162 @@ describe("agent.js", () => {
       // "out1" doesn't overlap with "snakegame" — use a matching filename instead.
       // This test verifies the registry is populated (no crash) and log is clean.
       expect(output).not.toMatch(/Error|TypeError/);
+    });
+  });
+
+  // ─── bash find/ls pre-execution block ─────────────────────
+  describe("bash find/ls pre-execution block", () => {
+    function bashCall(cmd, id = "b1") {
+      return {
+        function: { name: "bash", arguments: { command: cmd } },
+        id,
+      };
+    }
+
+    it("blocks bare ls command and redirects to list_directory", async () => {
+      mockStream("looking around", [bashCall("ls -la /tmp")]);
+      executeTool.mockResolvedValue("should not reach");
+      mockStream("ok done");
+
+      await processInput("What files are here?");
+
+      const msgs = getConversationMessages();
+      const blocked = msgs.some(
+        (m) =>
+          typeof m.content === "string" && m.content.includes("list_directory"),
+      );
+      expect(blocked).toBe(true);
+      // executeTool should NOT have been called for the blocked ls
+      const bashCalls = executeTool.mock.calls.filter((c) => c[0] === "bash");
+      expect(bashCalls.length).toBe(0);
+    });
+
+    it("blocks find command and redirects to glob", async () => {
+      mockStream("searching", [bashCall("find . -name '*.js'")]);
+      executeTool.mockResolvedValue("should not reach");
+      mockStream("ok done");
+
+      await processInput("Find all JS files");
+
+      const msgs = getConversationMessages();
+      const blocked = msgs.some(
+        (m) =>
+          typeof m.content === "string" && m.content.includes("glob"),
+      );
+      expect(blocked).toBe(true);
+      const bashCalls = executeTool.mock.calls.filter((c) => c[0] === "bash");
+      expect(bashCalls.length).toBe(0);
+    });
+
+    it("does NOT block ls inside npm/git commands", async () => {
+      mockStream("running npm", [bashCall("npm install && ls node_modules")]);
+      executeTool.mockResolvedValue("installed");
+      mockStream("done");
+
+      await processInput("Install and check");
+
+      const bashCalls = executeTool.mock.calls.filter((c) => c[0] === "bash");
+      expect(bashCalls.length).toBe(1);
+    });
+  });
+
+  // ─── post-session creation context ────────────────────────
+  describe("post-session creation context", () => {
+    function writeCall(n, name = null) {
+      return {
+        function: {
+          name: "write_file",
+          arguments: {
+            path: name || `/project/file${n}.js`,
+            content: "x",
+          },
+        },
+        id: `w${n}`,
+      };
+    }
+
+    it("injects creation summary on follow-up message", async () => {
+      // Turn 1: creation task — write 3+ files
+      mockStream("building game", [
+        writeCall(1, "/project/index.js"),
+        writeCall(2, "/project/game.js"),
+        writeCall(3, "/project/style.css"),
+      ]);
+      executeTool.mockResolvedValue("written");
+      mockStream("Done, snake game created!");
+
+      await processInput("Create a Snake game in plain JS");
+
+      // Turn 2: follow-up question
+      callStream.mockReset();
+      executeTool.mockReset();
+      mockStream("The app needs npm install first");
+
+      await processInput("The app won't start on localhost:3000");
+
+      // The context note should have been injected into the conversation
+      const msgs = getConversationMessages();
+      const hasNote = msgs.some(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("Previous session created"),
+      );
+      expect(hasNote).toBe(true);
+    });
+
+    it("detects npm install needed when package.json written without lock file", async () => {
+      mockStream("creating project", [
+        writeCall(1, "/project/package.json"),
+        writeCall(2, "/project/index.js"),
+        writeCall(3, "/project/server.js"),
+      ]);
+      executeTool.mockResolvedValue("written");
+      mockStream("Done!");
+
+      await processInput("Create an Express server");
+
+      callStream.mockReset();
+      executeTool.mockReset();
+      mockStream("ok");
+
+      await processInput("Server won't start");
+
+      const msgs = getConversationMessages();
+      const noteMsg = msgs.find(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("Previous session created"),
+      );
+      expect(noteMsg).toBeTruthy();
+      expect(noteMsg.content).toContain("npm install not yet run");
+    });
+
+    it("does NOT inject context for non-creation tasks", async () => {
+      // Debug task: no creation regex match, 3 reads only
+      mockStream("investigating", [
+        {
+          function: { name: "read_file", arguments: { path: "/src/app.js" } },
+          id: "r1",
+        },
+      ]);
+      executeTool.mockResolvedValue("content");
+      mockStream("Found the bug in app.js");
+
+      await processInput("Why is the login page slow?");
+
+      callStream.mockReset();
+      executeTool.mockReset();
+      mockStream("ok");
+
+      await processInput("Any other issues?");
+
+      const msgs = getConversationMessages();
+      const hasNote = msgs.some(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("Previous session created"),
+      );
+      expect(hasNote).toBe(false);
     });
   });
 });
