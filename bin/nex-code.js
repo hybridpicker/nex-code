@@ -160,6 +160,16 @@ function runHeadlessTask(task) {
   const orchModelIdx = args.indexOf("--orchestrator-model");
   const orchestratorModel =
     orchModelIdx !== -1 ? args[orchModelIdx + 1] : undefined;
+  // Slash commands (e.g. /bench, /benchmark, /trend) must be routed to the
+  // command handler, not sent to the model as a prompt.
+  if (task.startsWith("/")) {
+    const { handleSlashCommand } = require("../cli/commands/index");
+    handleSlashCommand(task, null)
+      .then(() => process.exit(0))
+      .catch((err) => { console.error(err.message); process.exit(1); });
+    return;
+  }
+
   const { processInput, getConversationMessages } = require("../cli/agent");
   processInput(task, null, { autoOrchestrate, orchestratorModel })
     .then(() => {
