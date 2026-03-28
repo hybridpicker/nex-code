@@ -2904,6 +2904,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
               _sessionLastEditFailed.clear();
               _sessionReReadBlockShown.clear();
+              // For creation tasks where files are already written, fire the
+              // investigation cap immediately after the wipe — the model should
+              // continue writing, not re-explore what was already done.
+              if (_isCreationTask && _editsMadeThisSession > 0) {
+                _investigationCapFired = true;
+                debugLog(
+                  `${C.cyan}  ⚡ Post-wipe creation guard: cap pre-fired (${_editsMadeThisSession} edits already made)${C.reset}`,
+                );
+              }
               // Allow only 1 re-grep per file after wipe (abort-1 = 3), not 2 (warn-1 = 2).
               // Previously: LOOP_WARN_GREP_FILE-1 let the agent grep 2 more times post-wipe,
               // causing 6-total grep floods across a single wipe cycle (observed).
