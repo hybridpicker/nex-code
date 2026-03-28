@@ -1245,10 +1245,12 @@ async function runJarvisBenchmark({
   }
 
   const activeModel = (() => {
-    if (model) return model;
+    if (model) return typeof model === "object" ? (model.id || "unknown") : model;
     try {
       const { getActiveModel } = require("./ollama");
-      return getActiveModel ? getActiveModel() || "unknown" : "unknown";
+      const m = getActiveModel ? getActiveModel() : null;
+      if (!m) return "unknown";
+      return typeof m === "object" ? (m.id || "unknown") : m;
     } catch {
       return "unknown";
     }
