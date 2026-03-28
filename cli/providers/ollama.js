@@ -33,7 +33,7 @@ const OLLAMA_MODELS = {
     id: "qwen3-coder-next",
     name: "Qwen3 Coder Next",
     maxTokens: 16384,
-    contextWindow: 131072,
+    contextWindow: 262144,
   },
   "devstral-2:123b": {
     id: "devstral-2:123b",
@@ -146,17 +146,35 @@ const OLLAMA_MODELS = {
     maxTokens: 16384,
     contextWindow: 131072,
   },
+  "glm-5:cloud": {
+    id: "glm-5:cloud",
+    name: "GLM 5 Cloud",
+    maxTokens: 16384,
+    contextWindow: 200000,
+  },
   "glm-5": {
     id: "glm-5",
     name: "GLM 5",
     maxTokens: 16384,
-    contextWindow: 128000,
+    contextWindow: 200000,
+  },
+  "glm-4.6": {
+    id: "glm-4.6",
+    name: "GLM 4.6",
+    maxTokens: 16384,
+    contextWindow: 200000,
   },
   "glm-4.7": {
     id: "glm-4.7",
     name: "GLM 4.7",
     maxTokens: 16384,
     contextWindow: 128000,
+  },
+  "nemotron-3-super:cloud": {
+    id: "nemotron-3-super:cloud",
+    name: "Nemotron 3 Super Cloud",
+    maxTokens: 16384,
+    contextWindow: 262144,
   },
   // Small / fast models
   "qwen3.5:9b": {

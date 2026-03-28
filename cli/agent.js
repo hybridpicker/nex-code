@@ -1719,7 +1719,7 @@ class ErrorBoundary extends React.Component {
 - Use migrations for schema changes, never manual ALTER TABLE
 - Add database-level constraints (unique, foreign key, check) not just app-level
 
-`;`;
+`;
 
   cachedContextHash = currentHash;
   return cachedSystemPrompt;
