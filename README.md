@@ -1,13 +1,16 @@
-```
- ██▄▄██   nex-code  v0.3.54
- █▀██▀█   devstral-2:123b  ·  /help
- ▀████▀
-```
+<h1 align="center">nex-code</h1>
 
 <p align="center">
-  <b>The open-source agentic coding CLI for Ollama Cloud.</b><br>
-  Use it in the terminal or install the built-in <b>VS Code extension</b> for a sidebar chat panel.<br>
-  Built and optimized for <a href="https://ollama.com">Ollama Cloud</a> — OpenAI, Anthropic, and Gemini are also supported.
+  <b>Run 400B+ open coding models on your codebase — without the hardware bill.</b><br>
+  Ollama Cloud first. OpenAI, Anthropic, and Gemini when you need them.
+</p>
+
+<p align="center">
+  <code>npx nex-code</code>
+</p>
+
+<p align="center">
+  <a href="https://github.com/hybridpicker/nex-code/stargazers">⭐ If this saves you time, a star helps others find it.</a>
 </p>
 
 <p align="center">
@@ -22,6 +25,14 @@
   <img src="https://img.shields.io/badge/tests-3453-blue.svg" alt="Tests: 3453">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
+
+---
+
+```
+ ██▄▄██   nex-code  v0.3.54
+ █▀██▀█   devstral-2:123b  ·  /help
+ ▀████▀
+```
 
 ---
 
@@ -62,6 +73,21 @@ To update to the latest version:
 ```bash
 npm update -g nex-code
 ```
+
+---
+
+## vs. Claude Code & Gemini CLI
+
+| | nex-code | Claude Code | Gemini CLI |
+|---|---|---|---|
+| Free tier | ✅ Ollama Cloud flat-rate | ❌ subscription required | ⚠️ limited free quota |
+| Open models | ✅ devstral, Kimi K2, Qwen3 | ❌ Anthropic only | ❌ Google only |
+| Local Ollama | ✅ | ❌ | ❌ |
+| Multi-provider | ✅ swap with one env var | ❌ | ❌ |
+| VS Code sidebar | ✅ built-in, same install | ✅ | ❌ |
+| Startup time | ~100ms | ~2–4s | ~1–2s |
+| Runtime deps | 2 | heavy | heavy |
+| Infra tools | ✅ SSH, Docker, K8s built-in | ❌ | ❌ |
 
 ---
 
