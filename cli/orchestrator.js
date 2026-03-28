@@ -15,6 +15,7 @@ const {
   getActiveProviderName,
   getActiveModelId,
 } = require("./providers/registry");
+const { detectCategory, getModelForCategory } = require("./task-router");
 const { MultiProgress, C } = require("./ui");
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -507,9 +508,17 @@ async function runOrchestrated(prompt, opts = {}) {
     _lock: false,
   };
 
+  // Pre-compute the best model for each sub-task based on task-type routing.
+  // Falls back to workerModel if no routing configured for that category.
+  const subTaskModels = subTasks.map((st) => {
+    const category = detectCategory(st.task);
+    const routed = category ? getModelForCategory(category.id) : null;
+    return routed || workerModel;
+  });
+
   const labels = subTasks.map(
     (st, i) =>
-      `Agent ${i + 1} [${workerModel}]: ${st.task.substring(0, 40)}${st.task.length > 40 ? "..." : ""}`,
+      `Agent ${i + 1} [${subTaskModels[i]}]: ${st.task.substring(0, 40)}${st.task.length > 40 ? "..." : ""}`,
   );
   const progress = new MultiProgress(labels);
   progress.start();
@@ -548,23 +557,34 @@ RULES:
         st.scope.length > 0 ? `Focus on files: ${st.scope.join(", ")}` : "",
       ].filter(Boolean);
 
+      // Model for this specific sub-task (routed by category)
+      const taskModel = subTaskModels[idx];
+      // Fallback model used on server/timeout errors — prefer a fast model
+      const fallbackModel =
+        process.env.NEX_FALLBACK_MODEL ||
+        getModelForCategory("agentic") ||
+        workerModel;
+
       let _retryAttempt = 0;
       const result = await withRetry(
         async () => {
-          if (_retryAttempt > 0) {
+          const isRetry = _retryAttempt > 0;
+          if (isRetry) {
             progress.update(idx, "retry");
             process.stderr.write(
               `  ${C.dim}[Agent ${idx + 1}] retrying after error...${C.reset}\n`,
             );
           }
           _retryAttempt++;
+          // On first retry, switch to fallback model to avoid repeating a timeout
+          const activeModel = isRetry && taskModel !== fallbackModel ? fallbackModel : taskModel;
           return runSubAgent(
             {
               task: st.task,
               context:
                 contextParts.length > 0 ? contextParts.join("\n") : undefined,
               max_iterations: Math.min(st.estimatedCalls || 10, 15),
-              model: workerModel,
+              model: activeModel,
               _skipLog: true,
               _systemPrompt: WORKER_SYSTEM_PROMPT,
             },

@@ -14,6 +14,7 @@
 const { C } = require("./ui");
 const registry = require("./providers/registry");
 const { TOOL_DEFINITIONS } = require("./tools");
+const { saveRoutingConfig } = require("./task-router");
 
 // ─── Task Definitions ─────────────────────────────────────────────────────────
 // Each task mirrors a real nex-code workflow.
@@ -597,6 +598,10 @@ function buildSummary(modelResults) {
  */
 function buildCategoryWinners(summary) {
   const winners = {};
+  // Within this score band, prefer the faster model over the marginally better one.
+  // Avoids routing to a slow model for only a trivial quality gain.
+  const LATENCY_TIEBREAK_BAND = 5;
+
   for (const routeKey of [
     "coding",
     "frontend",
@@ -604,15 +609,23 @@ function buildCategoryWinners(summary) {
     "data",
     "agentic",
   ]) {
-    const ranked = summary
+    const candidates = summary
       .filter((r) => r.categoryScores[routeKey] !== undefined)
       .sort((a, b) => b.categoryScores[routeKey] - a.categoryScores[routeKey]);
-    if (ranked.length > 0) {
-      winners[routeKey] = {
-        model: ranked[0].model,
-        score: ranked[0].categoryScores[routeKey],
-      };
-    }
+    if (candidates.length === 0) continue;
+
+    const best = candidates[0];
+    // Within the tiebreak band, pick the lowest-latency model
+    const inBand = candidates.filter(
+      (r) => best.categoryScores[routeKey] - r.categoryScores[routeKey] <= LATENCY_TIEBREAK_BAND
+    );
+    const winner = inBand.sort((a, b) => a.avgLatency - b.avgLatency)[0];
+
+    winners[routeKey] = {
+      model: winner.model,
+      score: winner.categoryScores[routeKey],
+      avgLatency: winner.avgLatency,
+    };
   }
   return winners;
 }
@@ -707,6 +720,38 @@ function printResults(summary, taskCount) {
   console.log();
 }
 
+// ─── Routing Auto-Update ──────────────────────────────────────────────────────
+
+/**
+ * Given a benchmark summary, save the per-category winners to model-routing.json.
+ * Only updates categories where at least one model was tested — leaves others untouched.
+ * Skips if the summary covers fewer than 2 models (single-model run = no comparison).
+ */
+function autoUpdateRouting(summary) {
+  if (!summary || summary.length < 2) return;
+  try {
+    const winners = buildCategoryWinners(summary);
+    // Merge with existing config so untested categories are preserved
+    const { loadRoutingConfig } = require("./task-router");
+    const existing = loadRoutingConfig();
+    const updated = { ...existing };
+    for (const [cat, { model }] of Object.entries(winners)) {
+      updated[cat] = model;
+    }
+    saveRoutingConfig(updated);
+    const changed = Object.entries(winners)
+      .filter(([cat, { model }]) => existing[cat] !== model)
+      .map(([cat, { model }]) => `${cat}→${model}`);
+    if (changed.length > 0) {
+      console.log(
+        `\n${C.dim}  Routing updated: ${changed.join(", ")}${C.reset}`,
+      );
+    }
+  } catch {
+    /* non-fatal — routing update failure must not break benchmark output */
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 async function runBenchmark({ models, quick = false, onProgress } = {}) {
@@ -734,6 +779,7 @@ async function runBenchmark({ models, quick = false, onProgress } = {}) {
 
   const summary = buildSummary(modelResults);
   printResults(summary, tasks.length);
+  autoUpdateRouting(summary);
   return summary;
 }
 
@@ -779,6 +825,7 @@ async function runDiscoverBenchmark({
   merged.sort((a, b) => b.score - a.score);
 
   printResults(merged, TASKS.length);
+  autoUpdateRouting(merged);
   return merged;
 }
 
