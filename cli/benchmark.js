@@ -426,6 +426,95 @@ const TASKS = [
       (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("src")),
   },
 
+  // ── SSH ───────────────────────────────────────────────────────────────────
+  {
+    id: "ssh-exec-log",
+    category: "ssh",
+    prompt:
+      'Show the last 50 lines of /var/log/nginx/error.log on server "prod-1".',
+    expectedTool: "ssh_exec",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("tail") || args.command.includes("log")) &&
+      (typeof args.host === "string" || typeof args.profile === "string"),
+  },
+  {
+    id: "ssh-exec-service",
+    category: "ssh",
+    prompt: 'Restart the nginx service on server "prod-1".',
+    expectedTool: "ssh_exec",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("nginx") ||
+        args.command.includes("systemctl") ||
+        args.command.includes("restart")) &&
+      (typeof args.host === "string" || typeof args.profile === "string"),
+  },
+  {
+    id: "ssh-exec-port",
+    category: "ssh",
+    prompt: 'Check if port 8080 is listening on server "prod-1".',
+    expectedTool: "ssh_exec",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("8080") ||
+        args.command.includes("ss") ||
+        args.command.includes("netstat") ||
+        args.command.includes("lsof")) &&
+      (typeof args.host === "string" || typeof args.profile === "string"),
+  },
+  {
+    id: "ssh-exec-processes",
+    category: "ssh",
+    prompt: 'Show the top CPU-consuming processes on server "prod-1".',
+    expectedTool: "ssh_exec",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      (args.command.includes("top") ||
+        args.command.includes("ps") ||
+        args.command.includes("htop")) &&
+      (typeof args.host === "string" || typeof args.profile === "string"),
+  },
+
+  // ── Git (native tools) ────────────────────────────────────────────────────
+  {
+    id: "git-diff-staged",
+    category: "git",
+    prompt: "Show all staged changes before committing.",
+    expectedTool: ["git_diff", "bash"],
+    validateArgs: (args) => {
+      if (args.staged === true || args.staged === "true") return true;
+      if (typeof args.command === "string" && args.command.includes("diff"))
+        return true;
+      return false;
+    },
+  },
+  {
+    id: "git-log-recent",
+    category: "git",
+    prompt: "Show the last 5 commit messages with their hashes.",
+    expectedTool: ["git_log", "bash"],
+    validateArgs: (args) => {
+      if (typeof args.limit === "number" || typeof args.n === "number")
+        return true;
+      if (typeof args.command === "string" && args.command.includes("log"))
+        return true;
+      return false;
+    },
+  },
+  {
+    id: "git-status-check",
+    category: "git",
+    prompt: "Check if there are any uncommitted changes in the repository.",
+    expectedTool: ["git_status", "bash"],
+    validateArgs: (args) => {
+      if (args.path === undefined && args.command === undefined) return false;
+      if (typeof args.command === "string" && args.command.includes("status"))
+        return true;
+      return true; // git_status takes no required args
+    },
+  },
+
   // ── Agentic ───────────────────────────────────────────────────────────────
   {
     id: "agentic-test-first",
@@ -458,17 +547,35 @@ const TASKS = [
       typeof args.command === "string" &&
       (args.command.includes("build") || args.command.includes("npm")),
   },
+  {
+    id: "agentic-spawn-parallel",
+    category: "agentic",
+    prompt:
+      "Search for all TODO comments and all FIXME comments across the codebase in parallel using multiple agents.",
+    expectedTool: "spawn_agents",
+    validateArgs: (args) =>
+      Array.isArray(args.agents) && args.agents.length >= 2,
+  },
+  {
+    id: "agentic-multi-investigate",
+    category: "agentic",
+    prompt:
+      "The app is crashing on startup. Spawn parallel agents to check: (1) recent git changes, (2) npm dependency issues, (3) the main entry file for syntax errors.",
+    expectedTool: "spawn_agents",
+    validateArgs: (args) =>
+      Array.isArray(args.agents) && args.agents.length >= 2,
+  },
 ];
 
 const DEFAULT_MODELS = [
-  "glm-5:cloud",
-  "nemotron-3-super:cloud",
-  "minimax-m2.7:cloud",
-  "qwen3-coder:480b",
-  "kimi-k2:1t",
   "devstral-2:123b",
-  "devstral-small-2:24b",
+  "kimi-k2.5",
+  "glm-5:cloud",
+  "qwen3-coder:480b",
   "qwen3-coder-next",
+  "ministral-3:14b",
+  "minimax-m2.7:cloud",
+  "kimi-k2:1t",
 ];
 
 const QUICK_MODELS = [
@@ -608,6 +715,8 @@ const CATEGORY_ROUTE_KEY = {
   data: "data",
   agentic: "agentic",
   resilience: "coding", // resilience is a core coding-agent skill
+  ssh: "sysadmin",      // SSH tasks route to sysadmin model
+  git: "coding",        // git workflow is a coding-category skill
 };
 
 function buildSummary(modelResults) {
@@ -797,18 +906,35 @@ function autoUpdateRouting(summary) {
   if (!summary || summary.length < 2) return;
   try {
     const winners = buildCategoryWinners(summary);
-    // Merge with existing config so untested categories are preserved
     const { loadRoutingConfig } = require("./task-router");
     const existing = loadRoutingConfig();
     const updated = { ...existing };
-    for (const [cat, { model }] of Object.entries(winners)) {
-      updated[cat] = model;
+    const changed = [];
+
+    for (const [cat, { model, score }] of Object.entries(winners)) {
+      const currentModel = existing[cat];
+
+      // If the currently-routed model was also tested in this run, only update
+      // if the new winner genuinely beats it (buildCategoryWinners already handles
+      // this for full runs). For partial runs (subset of models), skip update if
+      // the current routing model was NOT in this benchmark — we can't compare.
+      if (currentModel && currentModel !== model) {
+        const currentInRun = summary.find((r) => r.model === currentModel);
+        if (!currentInRun) {
+          // Current routing model wasn't tested — don't overwrite blindly.
+          // It may still be the global best; we just don't know from this run.
+          continue;
+        }
+      }
+
+      if (updated[cat] !== model) {
+        updated[cat] = model;
+        changed.push(`${cat}→${model}`);
+      }
     }
-    saveRoutingConfig(updated);
-    const changed = Object.entries(winners)
-      .filter(([cat, { model }]) => existing[cat] !== model)
-      .map(([cat, { model }]) => `${cat}→${model}`);
+
     if (changed.length > 0) {
+      saveRoutingConfig(updated);
       console.log(
         `\n${C.dim}  Routing updated: ${changed.join(", ")}${C.reset}`,
       );
