@@ -1016,7 +1016,7 @@ describe("agent.js", () => {
         },
       ]);
       mockStreamSilent("", []); // empty — triggers nudge
-      mockStream("Here is the summary");
+      mockStream("Here is the summary of what was done, including the output from the bash command and the final result.");
       executeTool.mockResolvedValueOnce("output");
       await processInput("test");
       expect(callStream).toHaveBeenCalledTimes(3);
