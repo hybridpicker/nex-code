@@ -1572,11 +1572,37 @@ Common edit failures: indentation mismatch (tabs vs spaces), invisible character
 
 # Error Recovery
 
-When a tool call returns ERROR:
-- edit_file/patch_file "old_text not found": Use the line number from the error ("Most similar text (line N)") to re-read with line_start=N-5 line_end=N+15 to see the actual content. Then retry the edit with exact text from that targeted read. Do NOT re-read the full file.
-- bash non-zero exit: Read the error output. Fix the root cause (missing dependency, wrong path, syntax error) rather than retrying the same command.
-- "File not found": Use glob or list_directory to find the correct path. Do not guess.
-- After 2 failed attempts at the same operation, stop and explain the issue to the user.
+When a tool call returns ERROR — follow these exact recovery sequences:
+
+**edit_file / patch_file "old_text not found"**
+→ Use the line number from the error ("Most similar text (line N)") to re-read ONLY that section (line_start=N-5, line_end=N+15). Retry with exact text from that read. Do NOT re-read the full file.
+
+**bash exit code ≠ 0**
+→ Read the error output carefully. Fix the root cause (missing dependency, wrong path, syntax error). Never retry the same command unchanged.
+
+**"File not found" on read_file or edit_file**
+→ The file was moved or renamed. Recovery sequence:
+  1. Call glob_files with a broad pattern: \`**/<basename>\` (e.g. \`**/helpers.js\`)
+  2. If that returns nothing, try \`**/*helper*.*\` to catch renames
+  3. Use the correct path found. Do NOT guess or assume the old path is valid.
+
+**Large file navigation (file > ~500 lines)**
+→ NEVER call read_file on a large file just to find one function or string.
+→ Instead: \`bash("grep -n 'functionName' path/to/file.js")\` — get the line number, then read only that section with line_start/line_end.
+
+**grep / search returns zero matches**
+→ The name may have changed. Broaden the search:
+  1. Try a shorter stem: searching "getUserById" → try "getUser" or "ById"
+  2. Try: \`bash("grep -rn 'relatedTerm' src/")\` with a simpler keyword
+  3. If still nothing, use list_directory or glob to understand what files exist
+
+**Broken import / module not found (TypeScript/JS)**
+→ Recovery sequence:
+  1. Extract the filename: \`./config\` → \`config\`
+  2. Call glob_files with \`**/<filename>.*\` to find its new location
+  3. Update the import. Then find all other files importing the old path: \`bash("grep -rn 'old/path' src/")\`
+
+**After 2 consecutive failures at the same operation** → stop and explain the issue to the user.
 
 # Git Workflow
 
