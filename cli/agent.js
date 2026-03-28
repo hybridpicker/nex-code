@@ -1350,7 +1350,8 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
-${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}
+${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone
+- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}
 
 # Plan Mode
 
@@ -2023,7 +2024,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       });
     }
 
-    if (complexity.isComplex) {
+    if (complexity.isComplex && process.stdout.isTTY) {
       console.log(
         `${C.dim}Hint: ~${complexity.estimatedGoals} goals detected. Disable with NEX_AUTO_ORCHESTRATE=false${C.reset}`,
       );
