@@ -229,5 +229,84 @@ describe("memory.js", () => {
       const projectIdx = ctx.indexOf("PROJECT INSTRUCTIONS");
       expect(globalIdx).toBeLessThan(projectIdx);
     });
+
+    it("never truncates NEX.md instructions", () => {
+      // Write a large NEX.md (6000 chars) + memories
+      const bigContent = "X".repeat(6000);
+      fs.writeFileSync(nexMdPath, bigContent, "utf-8");
+      memory.saveMemory("project", "test-mem", "This is a test memory entry for truncation testing");
+      const ctx = memory.getMemoryContext();
+      // NEX.md must be fully present
+      expect(ctx).toContain(bigContent);
+      // Memory hint must still appear
+      expect(ctx).toContain("save_memory");
+    });
+  });
+
+  describe("saveMemory()", () => {
+    it("creates typed .md file with frontmatter", () => {
+      const result = memory.saveMemory("user", "test-pref", "Prefers dark mode");
+      expect(result.ok).toBe(true);
+      expect(fs.existsSync(result.path)).toBe(true);
+      const content = fs.readFileSync(result.path, "utf-8");
+      expect(content).toContain("type: user");
+      expect(content).toContain("Prefers dark mode");
+    });
+
+    it("rejects invalid type", () => {
+      const result = memory.saveMemory("invalid", "x", "content here");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Invalid type");
+    });
+
+    it("rejects content shorter than 5 chars", () => {
+      const result = memory.saveMemory("user", "x", "ab");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("5 characters");
+    });
+
+    it("deduplicates identical content", () => {
+      memory.saveMemory("project", "dup-test", "Exactly the same content here");
+      const result = memory.saveMemory("project", "dup-test", "Exactly the same content here");
+      expect(result.ok).toBe(true);
+      expect(result.updated).toBe(false);
+    });
+
+    it("updates when content changes", () => {
+      memory.saveMemory("project", "change-test", "Original content value");
+      const result = memory.saveMemory("project", "change-test", "Updated content value now");
+      expect(result.ok).toBe(true);
+      expect(result.updated).toBe(true);
+    });
+
+    it("sanitizes name to safe slug", () => {
+      const result = memory.saveMemory("user", "My Cool Pref!", "Content for testing");
+      expect(result.ok).toBe(true);
+      expect(result.path).toContain("my-cool-pref");
+    });
+
+    it("rebuilds MEMORY.md index after save", () => {
+      memory.saveMemory("feedback", "idx-test", "Index rebuild test content");
+      const index = memory.loadMemoryIndex();
+      expect(index).toContain("idx-test");
+    });
+  });
+
+  describe("deleteMemory()", () => {
+    it("deletes existing memory", () => {
+      memory.saveMemory("user", "del-target", "To be deleted soon enough");
+      expect(memory.deleteMemory("user", "del-target")).toBe(true);
+    });
+
+    it("returns false for non-existent memory", () => {
+      expect(memory.deleteMemory("user", "ghost-entry")).toBe(false);
+    });
+
+    it("updates index after deletion", () => {
+      memory.saveMemory("project", "will-delete", "Temporary memory for deletion test");
+      expect(memory.loadMemoryIndex()).toContain("will-delete");
+      memory.deleteMemory("project", "will-delete");
+      expect(memory.loadMemoryIndex()).not.toContain("will-delete");
+    });
   });
 });
