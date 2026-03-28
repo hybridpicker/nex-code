@@ -3494,16 +3494,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             (_pendingCmds ? ` — ${_pendingCmds}` : "") +
             `. Use this context to answer follow-up questions without re-reading files.]`;
         }
-        // ─── Post-turn enforcement: daemon session summary ─────────────────────
+        // ─── Post-turn enforcement: session summary ────────────────────────────
         // If the model ran tool calls (totalSteps > 0) but ended with a terse
         // "Done." message, make one direct LLM call for a proper summary.
-        // Only runs in auto-confirm (daemon/headless) mode — interactive
-        // sessions let the user ask follow-up questions themselves.
+        // Runs in both interactive and auto-confirm mode — devstral-2 consistently
+        // ignores the MANDATORY FINAL RESPONSE system-prompt rule, so we enforce
+        // it mechanically whenever files were modified or tool calls were made.
         // Does NOT use processInput() to avoid touching conversationMessages.
         if (
           totalSteps > 0 &&
           !opts._isSummaryTurn &&
-          getAutoConfirm() &&
           isTooShort(content)
         ) {
           try {
@@ -3514,7 +3514,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               ...apiMessages,
               {
                 role: "user",
-                content: "Please summarize what you just did in 2-3 sentences.",
+                content: "Write a closing summary (3+ sentences): what files changed and why, what the result is, anything the user should know or do next.",
               },
             ];
             const summaryRes = await callStream(summaryMessages, [], {});
@@ -3526,7 +3526,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 {
                   role: "user",
                   content:
-                    "Please summarize what you just did in 2-3 sentences.",
+                    "Write a closing summary (3+ sentences): what files changed and why, what the result is, anything the user should know or do next.",
                 },
                 { role: "assistant", content: summaryText },
               );
