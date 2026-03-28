@@ -22,7 +22,7 @@ const _keepAliveHttps = new https.Agent({
 });
 
 const OLLAMA_MODELS = {
-  // Primary: Best coding models for agentic workflows
+  // Primary: Best coding models for agentic workflows (2026)
   "qwen3-coder:480b": {
     id: "qwen3-coder:480b",
     name: "Qwen3 Coder 480B",
@@ -44,6 +44,12 @@ const OLLAMA_MODELS = {
   "devstral-small-2:24b": {
     id: "devstral-small-2:24b",
     name: "Devstral Small 2 24B",
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  "minimax-m2.7:cloud": {
+    id: "minimax-m2.7:cloud",
+    name: "MiniMax M2.7 Cloud",
     maxTokens: 16384,
     contextWindow: 131072,
   },
