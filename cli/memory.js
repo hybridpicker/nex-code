@@ -330,46 +330,58 @@ function getMemoryContext() {
   // Run migration on first call
   migrateIfNeeded();
 
-  const parts = [];
+  // Build instructions (high priority — never truncated)
+  const instructionParts = [];
 
   const globalInstructions = loadGlobalInstructions();
   if (globalInstructions) {
-    parts.push(`GLOBAL INSTRUCTIONS (~/.nex/NEX.md):\n${globalInstructions}`);
+    instructionParts.push(`GLOBAL INSTRUCTIONS (~/.nex/NEX.md):\n${globalInstructions}`);
   }
 
   const instructions = loadProjectInstructions();
   if (instructions) {
-    parts.push(`PROJECT INSTRUCTIONS (NEX.md):\n${instructions}`);
+    instructionParts.push(`PROJECT INSTRUCTIONS (NEX.md):\n${instructions}`);
   }
 
-  // Prefer typed memory index; fall back to legacy JSON
+  // Build memory section (lower priority — truncated if needed)
+  let memorySection = "";
   const index = loadMemoryIndex();
   if (index) {
-    parts.push(index);
+    memorySection = index;
   } else {
     const memories = listMemories();
     if (memories.length > 0) {
       const memStr = memories.map((m) => `  ${m.key}: ${m.value}`).join("\n");
-      parts.push(`PROJECT MEMORY:\n${memStr}`);
+      memorySection = `PROJECT MEMORY:\n${memStr}`;
     }
   }
 
-  // Positive framing for the model
-  if (parts.length > 0) {
-    parts.push(
-      "You can save insights across sessions with save_memory(type, name, content). Types: user, feedback, project, reference.",
-    );
+  const instructionText = instructionParts.join("\n\n");
+  const hint = "You can save insights with save_memory(type, name, content) and remove them with delete_memory(type, name).";
+
+  // Budget: memory index always gets at least 1500 chars (even with large NEX.md)
+  const MIN_MEMORY_BUDGET = 1500;
+  const MAX_TOTAL = 16000;
+  const memoryBudget = Math.max(MIN_MEMORY_BUDGET, MAX_TOTAL - instructionText.length - hint.length - 10);
+
+  if (memorySection.length > memoryBudget && memoryBudget > 200) {
+    // Truncate memory index, keeping first N lines
+    const lines = memorySection.split("\n");
+    let truncated = "";
+    for (const line of lines) {
+      if (truncated.length + line.length + 1 > memoryBudget - 60) break;
+      truncated += line + "\n";
+    }
+    memorySection = truncated.trimEnd() + "\n[Memory index truncated — use delete_memory to prune old entries]";
+  } else if (memorySection.length > memoryBudget) {
+    memorySection = ""; // no space at all
   }
 
-  const result = parts.join("\n\n");
+  const parts = [...instructionParts];
+  if (memorySection) parts.push(memorySection);
+  if (parts.length > 0) parts.push(hint);
 
-  // Context size guard: warn if memory context exceeds ~2000 tokens (~8000 chars)
-  if (result.length > 8000) {
-    const truncated = result.slice(0, 8000) + "\n\n[Memory context truncated — consider pruning old entries]";
-    return truncated;
-  }
-
-  return result;
+  return parts.join("\n\n");
 }
 
 module.exports = {

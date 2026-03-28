@@ -1905,6 +1905,29 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "delete_memory",
+      description:
+        "Delete a typed memory entry. Use this to prune outdated or incorrect memories.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["user", "feedback", "project", "reference"],
+            description: "Memory type to delete from",
+          },
+          name: {
+            type: "string",
+            description: "Slug identifier of the memory to delete",
+          },
+        },
+        required: ["type", "name"],
+      },
+    },
+  },
 ];
 
 // ─── Kubernetes Helper ────────────────────────────────────────
@@ -4869,9 +4892,19 @@ fi
       const { saveMemory } = require("../memory");
       const result = saveMemory(args.type, args.name, args.content, args.description);
       if (result.ok) {
-        return `Memory saved: ${args.type}/${args.name} → ${result.path}`;
+        return result.updated === false
+          ? `Memory unchanged (duplicate): ${args.type}/${args.name}`
+          : `Memory saved: ${args.type}/${args.name} → ${result.path}`;
       }
       return `ERROR: ${result.error}`;
+    }
+
+    case "delete_memory": {
+      const { deleteMemory } = require("../memory");
+      const deleted = deleteMemory(args.type, args.name);
+      return deleted
+        ? `Memory deleted: ${args.type}/${args.name}`
+        : `Memory not found: ${args.type}/${args.name}`;
     }
 
     default: {
