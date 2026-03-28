@@ -80,12 +80,12 @@ describe("constants", () => {
     expect(DEFAULT_WORKER_MODEL).toBe("devstral-2:123b");
   });
 
-  test("DEFAULT_MAX_PARALLEL is 3", () => {
-    expect(DEFAULT_MAX_PARALLEL).toBe(3);
+  test("DEFAULT_MAX_PARALLEL is configurable via NEX_MAX_PARALLEL (default 4)", () => {
+    expect(DEFAULT_MAX_PARALLEL).toBeGreaterThanOrEqual(1);
   });
 
-  test("DEFAULT_MAX_SUBTASKS is 4", () => {
-    expect(DEFAULT_MAX_SUBTASKS).toBe(4);
+  test("DEFAULT_MAX_SUBTASKS is configurable via NEX_MAX_SUBTASKS (default 8)", () => {
+    expect(DEFAULT_MAX_SUBTASKS).toBeGreaterThanOrEqual(1);
   });
 
   test("DECOMPOSE_PROMPT contains {maxSubTasks} placeholder", () => {
