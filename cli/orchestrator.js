@@ -20,8 +20,8 @@ const { MultiProgress, C } = require("./ui");
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_MAX_PARALLEL = 3; // SSH session limit
-const DEFAULT_MAX_SUBTASKS = 4;
+const DEFAULT_MAX_PARALLEL = parseInt(process.env.NEX_MAX_PARALLEL || "4", 10);
+const DEFAULT_MAX_SUBTASKS = parseInt(process.env.NEX_MAX_SUBTASKS || "8", 10);
 const DEFAULT_WORKER_MODEL = "devstral-2:123b";
 const DEFAULT_ORCHESTRATOR_MODEL = "kimi-k2.5";
 
@@ -320,7 +320,7 @@ async function decompose(prompt, model, opts = {}) {
   // Guard: if total estimated calls exceed a reasonable session budget,
   // warn so the caller can decide to re-decompose with more sub-tasks.
   const totalEstimated = filtered.reduce((s, t) => s + t.estimatedCalls, 0);
-  const SESSION_BUDGET = 40;
+  const SESSION_BUDGET = DEFAULT_MAX_SUBTASKS * PER_TASK_CALL_CAP;
   if (totalEstimated > SESSION_BUDGET) {
     const { debugLog: _dl } = require("./debug");
     _dl(
