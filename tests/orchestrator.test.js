@@ -408,11 +408,11 @@ describe("decompose", () => {
     const result = await decompose("test", "test-model");
     expect(result[0].id).toBe("t1");
     expect(result[0].scope).toEqual([]);
-    expect(result[0].estimatedCalls).toBe(10);
+    expect(result[0].estimatedCalls).toBe(8); // default when not specified
     expect(result[0].priority).toBe(1);
   });
 
-  test("caps estimatedCalls at 15", async () => {
+  test("caps estimatedCalls at 10 per sub-task", async () => {
     mockDecomposeResponse([
       {
         id: "t1",
@@ -424,7 +424,7 @@ describe("decompose", () => {
     ]);
 
     const result = await decompose("test", "test-model");
-    expect(result[0].estimatedCalls).toBe(15);
+    expect(result[0].estimatedCalls).toBe(10);
   });
 
   test("filters out empty tasks", async () => {
@@ -951,5 +951,58 @@ describe("withRetry", () => {
     const result = await withRetry(fn, 2, 0);
     expect(result).toBe(1);
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── per-task call budget (Change 5) ─────────────────────────────────────────
+
+describe("decompose — per-task call budget", () => {
+  function mockDecompose(tasks) {
+    callStream.mockImplementationOnce(async () => ({
+      content: JSON.stringify(tasks),
+      tool_calls: [],
+    }));
+  }
+
+  test("caps estimatedCalls at 10 per sub-task", async () => {
+    mockDecompose([
+      { id: "t1", task: "Build React frontend", scope: ["src/"], estimatedCalls: 20, priority: 1 },
+      { id: "t2", task: "Build Django backend", scope: ["api/"], estimatedCalls: 15, priority: 2 },
+    ]);
+
+    const tasks = await decompose("Build a full-stack app", "test-model");
+    expect(tasks[0].estimatedCalls).toBe(10);
+    expect(tasks[1].estimatedCalls).toBe(10);
+  });
+
+  test("uses default of 8 when estimatedCalls is missing", async () => {
+    mockDecompose([
+      { id: "t1", task: "Implement feature", scope: [] },
+    ]);
+
+    const tasks = await decompose("Add a feature", "test-model");
+    expect(tasks[0].estimatedCalls).toBe(8);
+  });
+
+  test("preserves estimatedCalls below cap unchanged", async () => {
+    mockDecompose([
+      { id: "t1", task: "Fix a small bug", scope: [], estimatedCalls: 5, priority: 1 },
+    ]);
+
+    const tasks = await decompose("Fix bug", "test-model");
+    expect(tasks[0].estimatedCalls).toBe(5);
+  });
+
+  test("total estimated calls across tasks is computable", async () => {
+    mockDecompose([
+      { id: "t1", task: "Task A", scope: [], estimatedCalls: 10, priority: 1 },
+      { id: "t2", task: "Task B", scope: [], estimatedCalls: 10, priority: 2 },
+      { id: "t3", task: "Task C", scope: [], estimatedCalls: 10, priority: 3 },
+      { id: "t4", task: "Task D", scope: [], estimatedCalls: 10, priority: 4 },
+    ]);
+
+    const tasks = await decompose("Build complex system", "test-model", { maxSubTasks: 4 });
+    const total = tasks.reduce((s, t) => s + t.estimatedCalls, 0);
+    expect(total).toBe(40);
   });
 });

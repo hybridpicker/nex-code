@@ -1137,6 +1137,9 @@ let _editsMadeThisSession = 0; // count of successful file edits this session (u
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
+let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
+const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
+const _autoCompletedTasks = new Set(); // taskIds auto-completed by file-write matching
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1630,6 +1633,9 @@ function _resetSessionTracking() {
   _rootCauseDetected = false;
   _rootCauseSummary = "";
   _sshBlockedPreCallNudgeCount = 0;
+  _isCreationTask = false;
+  _taskRegistry.clear();
+  _autoCompletedTasks.clear();
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -1827,6 +1833,17 @@ function _printResume(
         ? `Done — ${filesModified.size} ${filesModified.size === 1 ? "file" : "files"} modified in ${elapsedSecs}s`
         : `Done — ${totalSteps} ${totalSteps === 1 ? "step" : "steps"} in ${elapsedSecs}s`;
     _notifyDesktop(summary);
+  }
+
+  // Show auto-completed tasks (file write matched task description)
+  if (_autoCompletedTasks.size > 0 && _taskRegistry.size > 0) {
+    for (const _tid of _autoCompletedTasks) {
+      const _desc = _taskRegistry.get(_tid);
+      if (_desc)
+        console.log(
+          `${C.dim}  ✔ task #${_tid} auto-matched: ${_desc.slice(0, 60)}${C.reset}`,
+        );
+    }
   }
 
   // Follow-up suggestions based on what happened
@@ -2150,6 +2167,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _rootCauseSummary = _initCause.slice(0, 120);
       debugLog(
         `${C.yellow}  ⚡ Root cause in briefing: ${_rootCauseSummary} — fix phase active from start (read budget: 3)${C.reset}`,
+      );
+    }
+  }
+
+  // ─── Pre-loop creation-task detection ────────────────────────────────────
+  // Build/create tasks have nothing to debug — the agent should start writing
+  // files almost immediately. A tight read cap prevents the re-investigation
+  // loop where context pressure causes the model to restart from scratch.
+  if (!_rootCauseDetected && !_isCreationTask) {
+    const _CREATION_RE =
+      /\b(create|build|generate|implement|write|make|develop|set\s*up|scaffold|add)\b.{0,80}\b(app|component|page|game|api|backend|frontend|server|service|module|class|function|feature|project|system|bot|script|tool)\b/i;
+    if (_CREATION_RE.test(_firstUserText)) {
+      _isCreationTask = true;
+      debugLog(
+        `${C.cyan}  ⚡ Creation task detected — tight investigation cap (4 pre-edit, 2 post-edit)${C.reset}`,
       );
     }
   }
@@ -2753,6 +2785,36 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   .join(", ");
                 _findingParts.push(`Files already investigated: ${_readList}`);
               }
+              // Write structured checkpoint so the agent can read precise state
+              // after the wipe instead of re-investigating from scratch.
+              const _checkpointPath =
+                require("os").tmpdir() + "/nex-session-checkpoint.json";
+              try {
+                require("fs").writeFileSync(
+                  _checkpointPath,
+                  JSON.stringify(
+                    {
+                      filesWritten: [...filesModified].map((f) =>
+                        f.split("/").slice(-2).join("/"),
+                      ),
+                      filesRead: [...filesRead].map((f) =>
+                        f.split("/").slice(-2).join("/"),
+                      ),
+                      isCreationTask: _isCreationTask,
+                      wipeNumber: _superNuclearFires + 1,
+                      timestamp: Date.now(),
+                    },
+                    null,
+                    2,
+                  ),
+                );
+                _findingParts.push(
+                  `Session checkpoint: ${_checkpointPath} — read it for exact file list`,
+                );
+              } catch (_e) {
+                /* non-fatal */
+              }
+
               if (_findingParts.length > 0) {
                 const _findingsMsg = {
                   role: "user",
@@ -3914,6 +3976,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── Creation-task hard block: prevent reads after cap fired + edit made ──
+      // For creation tasks the cap fires fast (4 pre-edit, 2 post-edit). Once it
+      // has fired AND the agent has written at least one file, any further read is
+      // blocked pre-execution — the agent has enough context to keep building.
+      if (_investigationCapFired && _isCreationTask && _editsMadeThisSession >= 1) {
+        const READ_ONLY_PRE_BLOCK = [
+          "read_file",
+          "grep",
+          "search_files",
+          "glob",
+          "list_directory",
+          "find_files",
+        ];
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (!READ_ONLY_PRE_BLOCK.includes(prep.fnName)) continue;
+          debugLog(
+            `${C.red}  ✖ Creation hard-block: ${prep.fnName} denied — cap fired, files already written${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: files already written — continue with write_file or edit_file to finish the remaining tasks. Do not read more files.`,
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
       // ─── Enforce post-wipe tool call budget ─────────────────────────────────
       // After a context wipe the model gets 10 tool calls (extendable to 15 on progress).
       // Count only calls that would actually execute; blocked ones don't spend budget.
@@ -4174,12 +4264,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Before any edit, use the full INVESTIGATION_CAP (12 calls).
           // In fix phase (root cause already found) use a tight cap of 3 reads.
           const POST_EDIT_CAP = _profile.postEditCap;
-          const _effectiveCap = _rootCauseDetected ? 3 : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
+          // Creation tasks: no debugging needed, agent should write almost immediately.
+          // Cap: 4 reads before first edit (just enough to check existing structure),
+          // then 2 reads after any edit (verify once, then keep building).
+          const _effectiveCap = _rootCauseDetected
+            ? 3
+            : _isCreationTask
+              ? (_editsMadeThisSession > 0 ? 2 : 4)
+              : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
           // After the cap has already fired in fix phase (root cause detected), hard-block
           // further reads — one nudge is not enough when SSH output already pinpointed the issue.
           // For post-edit reads: only hard-block in fix phase, not on ordinary edits where the
           // agent may still need to read adjacent sections to complete multi-file changes.
-          if (_investigationCapFired && _rootCauseDetected && READ_ONLY_TOOLS.includes(prep.fnName)) {
+          const _hardBlockActive =
+            _investigationCapFired &&
+            (_rootCauseDetected ||
+              (_isCreationTask && _editsMadeThisSession >= 1));
+          if (_hardBlockActive && READ_ONLY_TOOLS.includes(prep.fnName)) {
             const _blockReason = _rootCauseDetected
               ? `root cause already identified (${_rootCauseSummary})`
               : `${_editsMadeThisSession} file edit(s) already made`;
@@ -4191,7 +4292,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               role: "tool",
               content: _rootCauseDetected
                 ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`
-                : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
+                : _isCreationTask
+                  ? `BLOCKED: files already written — continue with write_file or edit_file to finish the remaining tasks. Do not read more files.`
+                  : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
               tool_call_id: prep.callId,
             };
           } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
@@ -4635,6 +4738,62 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             conversationMessages.push(rcMsg);
             apiMessages.push(rcMsg);
             break;
+          }
+        }
+      }
+
+      // ─── Task registry + auto-completion tracking ────────────────────────────
+      // Intercept create_task results to build an internal registry so we can
+      // log auto-completions when a file write matches a task description.
+      for (let _tri = 0; _tri < toolMessages.length; _tri++) {
+        const _tp = prepared[_tri];
+        if (!_tp) continue;
+        const _tmContent =
+          typeof toolMessages[_tri]?.content === "string"
+            ? toolMessages[_tri].content
+            : "";
+        if (_tp.fnName === "create_task") {
+          // Result format: "Task #N created successfully: <subject>"
+          const _taskIdMatch = _tmContent.match(/Task #(\d+) created/);
+          const _subject =
+            typeof _tp.args?.subject === "string" ? _tp.args.subject : "";
+          if (_taskIdMatch && _subject) {
+            _taskRegistry.set(_taskIdMatch[1], _subject);
+          }
+        } else if (
+          (_tp.fnName === "write_file" || _tp.fnName === "edit_file") &&
+          !_tmContent.startsWith("BLOCKED:") &&
+          _tmContent.trim().length > 0
+        ) {
+          // On any successful file write, check if filename tokens overlap with
+          // a pending task description to log auto-completions.
+          const _filePath =
+            typeof _tp.args?.path === "string"
+              ? _tp.args.path
+              : typeof _tp.args?.file_path === "string"
+                ? _tp.args.file_path
+                : "";
+          const _baseName = _filePath.split("/").pop().toLowerCase();
+          const _fileTokens = _baseName
+            .split(/[._\-/]/)
+            .filter((t) => t.length > 2);
+          for (const [_tid, _tdesc] of _taskRegistry) {
+            if (_autoCompletedTasks.has(_tid)) continue;
+            const _descTokens = _tdesc
+              .toLowerCase()
+              .split(/\W+/)
+              .filter((t) => t.length > 3);
+            const _overlap = _fileTokens.filter((ft) =>
+              _descTokens.some(
+                (dt) => dt.includes(ft) || ft.includes(dt),
+              ),
+            );
+            if (_overlap.length >= 1) {
+              _autoCompletedTasks.add(_tid);
+              debugLog(
+                `${C.green}  ✔ Auto-matched task #${_tid} to ${_baseName}: ${_tdesc.slice(0, 60)}${C.reset}`,
+              );
+            }
           }
         }
       }

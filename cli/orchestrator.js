@@ -299,20 +299,35 @@ async function decompose(prompt, model, opts = {}) {
     throw new Error(`Decompose returned non-array: ${typeof tasks}`);
   }
 
-  // Validate and cap
+  // Validate and cap — max 10 calls per sub-task (was 15).
+  // Keeping estimatedCalls low prevents the decomposer from packaging
+  // too much work into one sub-agent, which causes context overload.
+  const PER_TASK_CALL_CAP = 10;
   const validated = tasks.slice(0, maxSubTasks).map((t, i) => ({
     id: t.id || `t${i + 1}`,
     task: String(t.task || ""),
     scope: Array.isArray(t.scope) ? t.scope : [],
     estimatedCalls:
       typeof t.estimatedCalls === "number"
-        ? Math.min(t.estimatedCalls, 15)
-        : 10,
+        ? Math.min(t.estimatedCalls, PER_TASK_CALL_CAP)
+        : 8,
     priority: typeof t.priority === "number" ? t.priority : i + 1,
   }));
 
-  // Filter out empty tasks
-  return validated.filter((t) => t.task.length > 0);
+  const filtered = validated.filter((t) => t.task.length > 0);
+
+  // Guard: if total estimated calls exceed a reasonable session budget,
+  // warn so the caller can decide to re-decompose with more sub-tasks.
+  const totalEstimated = filtered.reduce((s, t) => s + t.estimatedCalls, 0);
+  const SESSION_BUDGET = 40;
+  if (totalEstimated > SESSION_BUDGET) {
+    const { debugLog: _dl } = require("./debug");
+    _dl(
+      `\x1b[33m  ⚠ Orchestrator: total estimated calls ${totalEstimated} > ${SESSION_BUDGET} — consider raising maxSubTasks\x1b[0m`,
+    );
+  }
+
+  return filtered;
 }
 
 // ─── Synthesize ──────────────────────────────────────────────────────────────
