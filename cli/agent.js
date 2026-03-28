@@ -51,6 +51,8 @@ function isTooShort(text) {
   const terse =
     /^(done|complete|finished|all done|analysis complete|finally done)[.!]*$/i;
   if (terse.test(trimmed)) return true;
+  // Bare question with no prior context — matches session-scorer penalty pattern
+  if (/^[^.!]{0,40}\?$/.test(trimmed)) return true;
   return false;
 }
 
@@ -3748,27 +3750,28 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
         // ─── Post-turn enforcement: session summary ────────────────────────────
         // If the model ran tool calls (totalSteps > 0) but ended with a terse
-        // "Done." message, make one direct LLM call for a proper summary.
-        // Runs in both interactive and auto-confirm mode — devstral-2 consistently
-        // ignores the MANDATORY FINAL RESPONSE system-prompt rule, so we enforce
-        // it mechanically whenever files were modified or tool calls were made.
+        // or bare-question response, make one direct LLM call for a proper
+        // closing diagnosis. Applies even when no files were modified — an
+        // investigation session that ends without diagnosis scores -2.0.
+        // Runs in both interactive and auto-confirm mode; devstral-2 consistently
+        // ignores the MANDATORY FINAL RESPONSE system-prompt rule.
         // Does NOT use processInput() to avoid touching conversationMessages.
         if (
           totalSteps > 0 &&
-          filesModified.size > 0 &&
           !opts._isSummaryTurn &&
           isTooShort(content)
         ) {
           try {
             debugLog(
-              `${C.dim}  [post-turn] terse ending — requesting summary${C.reset}`,
+              `${C.dim}  [post-turn] terse ending — requesting diagnosis/summary${C.reset}`,
             );
+            const summaryPrompt =
+              filesModified.size > 0
+                ? "Write a closing summary (3+ sentences): what files changed and why, what the result is, anything the user should know or do next."
+                : "Write a closing diagnosis (3+ sentences): what you investigated, what you found, and what the user should do next or what the root cause is.";
             const summaryMessages = [
               ...apiMessages,
-              {
-                role: "user",
-                content: "Write a closing summary (3+ sentences): what files changed and why, what the result is, anything the user should know or do next.",
-              },
+              { role: "user", content: summaryPrompt },
             ];
             const summaryRes = await callStream(summaryMessages, [], {});
             const summaryText = (summaryRes?.content || "").trim();
@@ -3776,11 +3779,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(`\n${summaryText}`);
               // Save to conversationMessages so scorer sees the summary
               conversationMessages.push(
-                {
-                  role: "user",
-                  content:
-                    "Write a closing summary (3+ sentences): what files changed and why, what the result is, anything the user should know or do next.",
-                },
+                { role: "user", content: summaryPrompt },
                 { role: "assistant", content: summaryText },
               );
             }
