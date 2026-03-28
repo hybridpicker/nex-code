@@ -396,11 +396,14 @@ const TASKS = [
 ];
 
 const DEFAULT_MODELS = [
+  "glm-5:cloud",
+  "nemotron-3-super:cloud",
   "minimax-m2.7:cloud",
   "qwen3-coder:480b",
   "kimi-k2:1t",
   "devstral-2:123b",
   "devstral-small-2:24b",
+  "qwen3-coder-next",
 ];
 
 const QUICK_MODELS = [
