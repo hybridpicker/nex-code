@@ -1138,6 +1138,7 @@ let _rootCauseDetected = false; // true when SSH output matched a clear error pa
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
 let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
+let _verificationInjected = false; // prevents re-triggering post-creation bootstrap check
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
 const _autoCompletedTasks = new Set(); // taskIds auto-completed by file-write matching
 let _lastCreationSummary = null; // persists across turns: brief note of what the last creation task produced
@@ -1491,10 +1492,10 @@ Write the solution. Do not document the solution unless asked.
 
 # Bootstrap Environments After Creating Dependency Files
 
-When creating a new project that includes dependency files (`requirements.txt`, `package.json`, `Pipfile`, `pyproject.toml`), you MUST actually run the install commands before finishing — not just write the files:
-- Python projects: run `python -m venv venv && pip install -r requirements.txt`
-- Node projects: run `npm install`
-- Do NOT write a `setup.sh` and leave it to the user — they expect a ready-to-run project.
+When creating a new project that includes dependency files (\`requirements.txt\`, \`package.json\`, \`Pipfile\`, \`pyproject.toml\`), you MUST actually run the install commands before finishing — not just write the files:
+- Python projects: run \`python -m venv venv && pip install -r requirements.txt\`
+- Node projects: run \`npm install\`
+- Do NOT write a \`setup.sh\` and leave it to the user — they expect a ready-to-run project.
 - If you cannot run installs (e.g. wrong OS, missing runtime), say so explicitly in your final message and tell the user the exact command to run. Never silently assume they will figure it out.
 
 # No Backup Files / No v2 Copies
@@ -1643,6 +1644,7 @@ function _resetSessionTracking() {
   _rootCauseSummary = "";
   _sshBlockedPreCallNudgeCount = 0;
   _isCreationTask = false;
+  _verificationInjected = false;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _lastCompressionMsg = "";
@@ -3483,6 +3485,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               f.endsWith("yarn.lock") ||
               f.endsWith("pnpm-lock.yaml"),
           );
+          // Note: if npm/pip install wasn't run, _verificationInjected will have
+          // triggered a continuation to bootstrap the env. This summary is stored
+          // for the NEXT user turn (follow-up questions after the session ends).
           const _pendingCmds =
             _hasPkg && !_hasLock
               ? "npm install not yet run"
@@ -3494,6 +3499,79 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             (_pendingCmds ? ` — ${_pendingCmds}` : "") +
             `. Use this context to answer follow-up questions without re-reading files.]`;
         }
+        // ─── Post-creation verification: bootstrap unprepared environments ──────
+        // When a creation task wrote dependency files but never ran the installs,
+        // inject a continuation and loop back — the model must bootstrap before
+        // the session ends. One-shot: _verificationInjected prevents re-triggering.
+        if (_isCreationTask && !_verificationInjected && totalSteps > 0) {
+          const _hasPkgV = [...filesModified].some((f) =>
+            f.endsWith("package.json"),
+          );
+          const _hasReqsV = [...filesModified].some(
+            (f) =>
+              f.endsWith("requirements.txt") ||
+              f.endsWith("Pipfile") ||
+              f.endsWith("pyproject.toml"),
+          );
+          const _hasLockV = [...filesModified].some(
+            (f) =>
+              f.endsWith("package-lock.json") ||
+              f.endsWith("yarn.lock") ||
+              f.endsWith("pnpm-lock.yaml"),
+          );
+          // Extract bash commands from conversation to check what already ran
+          const _allBashCmds = conversationMessages
+            .flatMap((m) => {
+              const tcs = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+              const blocks = Array.isArray(m.content)
+                ? m.content.filter((b) => b?.type === "tool_use")
+                : [];
+              return [...tcs, ...blocks];
+            })
+            .filter((tc) => {
+              const n = tc.function?.name || tc.name || "";
+              return n === "bash" || n === "Bash";
+            })
+            .map((tc) => {
+              try {
+                const args = tc.function?.arguments ?? tc.input ?? {};
+                return (
+                  (typeof args === "string" ? JSON.parse(args) : args)
+                    ?.command || ""
+                );
+              } catch {
+                return "";
+              }
+            });
+          const _ranPipV = _allBashCmds.some((cmd) =>
+            /pip\s+install|python\s+-m\s+venv/.test(cmd),
+          );
+          const _ranNpmV = _allBashCmds.some((cmd) => /npm\s+install/.test(cmd));
+
+          const _needsBootstrap =
+            (_hasReqsV && !_ranPipV) ||
+            (_hasPkgV && !_hasLockV && !_ranNpmV);
+
+          if (_needsBootstrap) {
+            _verificationInjected = true;
+            const steps = [];
+            if (_hasReqsV && !_ranPipV)
+              steps.push(
+                "python -m venv venv && source venv/bin/activate && pip install -r requirements.txt",
+              );
+            if (_hasPkgV && !_hasLockV && !_ranNpmV) steps.push("npm install");
+            const verifyMsg =
+              `[FRAMEWORK — post-creation check] You wrote dependency files but never ran the installer. ` +
+              `Run now: ${steps.join(" && ")}. Verify it succeeds, fix any errors, then write a closing summary.`;
+            debugLog(
+              `${C.dim}  [post-creation] bootstrapping environment (${steps.join(", ")})${C.reset}`,
+            );
+            conversationMessages.push({ role: "user", content: verifyMsg });
+            apiMessages.push({ role: "user", content: verifyMsg });
+            continue; // re-enter the loop with full tool access
+          }
+        }
+
         // ─── Post-turn enforcement: session summary ────────────────────────────
         // If the model ran tool calls (totalSteps > 0) but ended with a terse
         // "Done." message, make one direct LLM call for a proper summary.
@@ -3503,6 +3581,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Does NOT use processInput() to avoid touching conversationMessages.
         if (
           totalSteps > 0 &&
+          filesModified.size > 0 &&
           !opts._isSummaryTurn &&
           isTooShort(content)
         ) {
