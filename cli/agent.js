@@ -1489,6 +1489,14 @@ NEVER create documentation files unless the user explicitly asks for them. This 
 
 Write the solution. Do not document the solution unless asked.
 
+# Bootstrap Environments After Creating Dependency Files
+
+When creating a new project that includes dependency files (`requirements.txt`, `package.json`, `Pipfile`, `pyproject.toml`), you MUST actually run the install commands before finishing — not just write the files:
+- Python projects: run `python -m venv venv && pip install -r requirements.txt`
+- Node projects: run `npm install`
+- Do NOT write a `setup.sh` and leave it to the user — they expect a ready-to-run project.
+- If you cannot run installs (e.g. wrong OS, missing runtime), say so explicitly in your final message and tell the user the exact command to run. Never silently assume they will figure it out.
+
 # No Backup Files / No v2 Copies
 
 NEVER create \`file-backup.js\`, \`file-v2.js\`, \`file-old.js\`, or similar. Git is the backup.
