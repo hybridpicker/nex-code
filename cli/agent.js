@@ -121,6 +121,7 @@ function _scoreAndPrint(messages) {
 }
 const { getMemoryContext } = require("./memory");
 const { getDeploymentContextBlock, probeUrlServer } = require("./server-context");
+const { getFewShotForInput } = require("./few-shot");
 const {
   checkPermission,
   setPermission,
@@ -2405,6 +2406,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       { role: "assistant", content: "Understood — I have the server context. Proceeding with the task." },
       ...apiMessages.slice(1),
     ];
+  }
+
+  // Inject few-shot example: 1 synthetic user/assistant exchange showing correct approach.
+  // Category is detected from the user's prompt (sysadmin, coding, frontend, data).
+  // Private examples from ~/.nex-code/examples/ take priority over bundled generics.
+  if (isFirstMessage) {
+    const fewShot = getFewShotForInput(
+      typeof userInput === "string" ? userInput : "",
+    );
+    if (fewShot) {
+      apiMessages = [
+        apiMessages[0], // system prompt
+        { role: "user", content: fewShot.user },
+        { role: "assistant", content: fewShot.assistant },
+        ...apiMessages.slice(1),
+      ];
+    }
   }
 
   // Pre-flight context check — compress immediately if already over threshold
