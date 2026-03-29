@@ -302,6 +302,8 @@ ${C.bold}${C.cyan}Undo / Redo:${C.reset}
   ${C.cyan}/benchmark${C.reset}        ${C.dim}Rank Ollama Cloud models on nex-code tool-calling tasks${C.reset}
   ${C.cyan}/benchmark --quick${C.reset}${C.dim}  Fast run: 7 tasks, 3 models${C.reset}
   ${C.cyan}/benchmark --models=a,b${C.reset}${C.dim}  Custom model list${C.reset}
+  ${C.cyan}/benchmark --all${C.reset}${C.dim}    Run every model available on Ollama Cloud (parallel)${C.reset}
+  ${C.cyan}/benchmark --all --parallel=N${C.reset}${C.dim}  Override concurrency (default 3)${C.reset}
 
   ${C.cyan}/exit${C.reset}             ${C.dim}Quit${C.reset}
 `);
@@ -2379,6 +2381,24 @@ For each issue, include:
     }
 
     case "/benchmark": {
+      // Stale results check — warn if benchmark-results.json is > 30 days old
+      try {
+        const _rf = require("path").join(
+          require("os").homedir(),
+          ".nex-code",
+          "benchmark-results.json",
+        );
+        if (fs.existsSync(_rf)) {
+          const _age = (Date.now() - fs.statSync(_rf).mtimeMs) / 86400000;
+          if (_age > 30) {
+            console.log(
+              `${C.dim}  ℹ Benchmark results are ${Math.floor(_age)} days old — run /benchmark --all to refresh${C.reset}\n`,
+            );
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
       // --history: show OpenClaw nightly results instead of running live benchmark
       if (rest.includes("--history")) {
         const os = require("os");
@@ -2464,6 +2484,130 @@ For each issue, include:
         }
         console.log();
         break;
+      }
+
+      // --all: fetch every model from Ollama Cloud and run the full benchmark on all of them.
+      // Runs models in parallel (default 3 concurrent) to keep runtime manageable.
+      // Excludes models known to be broken (score < 35 on prior runs).
+      if (rest.includes("--all")) {
+        const {
+          fetchCloudModels,
+          markBenchmarked,
+          updateReadme,
+          updateModelsEnv,
+          updateRoutingConfig,
+        } = require("../model-watcher");
+        const {
+          runBenchmark: _runAll,
+          buildCategoryWinners,
+        } = require("../benchmark");
+
+        // Models confirmed non-functional for tool-calling — skip to save time
+        const ALL_BLACKLIST = new Set(["nemotron-3-super:cloud"]);
+
+        const pFlag = rest.find((r) => r.startsWith("--parallel="));
+        const parallelModels = pFlag
+          ? Math.max(1, parseInt(pFlag.replace("--parallel=", ""), 10) || 3)
+          : 3;
+
+        console.log(
+          `\n${C.bold}Fetching all available Ollama Cloud models...${C.reset}`,
+        );
+        let allCloud;
+        try {
+          allCloud = await fetchCloudModels();
+        } catch (err) {
+          console.log(
+            `${C.red}Failed to fetch model list: ${err.message}${C.reset}`,
+          );
+          break;
+        }
+
+        const modelList = allCloud.filter((m) => !ALL_BLACKLIST.has(m));
+        const skipped = allCloud.filter((m) => ALL_BLACKLIST.has(m));
+
+        const taskCount = 56; // ALL_TASKS length
+        const estimatedMinutes = Math.ceil(
+          (taskCount * modelList.length * 4) / parallelModels / 60,
+        );
+
+        console.log(
+          `${C.cyan}${modelList.length} models found${C.reset}` +
+            (skipped.length > 0
+              ? `  ${C.dim}(${skipped.length} blacklisted: ${skipped.join(", ")})${C.reset}`
+              : ""),
+        );
+        console.log(
+          `${C.dim}Models: ${modelList.join(", ")}${C.reset}`,
+        );
+        console.log(
+          `${C.dim}${taskCount} tasks · ${parallelModels} parallel · ~${estimatedMinutes}min estimated${C.reset}\n`,
+        );
+
+        const modelProgress = new Map(); // model → dots string
+        const summary = await _runAll({
+          models: modelList,
+          quick: false,
+          parallelModels,
+          onProgress: ({ model, task: _t, done, score, error }) => {
+            void _t;
+            if (!done) {
+              if (!modelProgress.has(model)) {
+                modelProgress.set(model, "");
+                process.stdout.write(
+                  `\n${C.cyan}${model.padEnd(30)}${C.reset} `,
+                );
+              }
+              return;
+            }
+            const dot = error
+              ? `${C.red}✗${C.reset}`
+              : score >= 80
+                ? `${C.green}·${C.reset}`
+                : score >= 40
+                  ? `${C.yellow}·${C.reset}`
+                  : `${C.red}·${C.reset}`;
+            process.stdout.write(dot);
+          },
+        });
+        process.stdout.write("\n");
+
+        // Persist results
+        const _os = require("os");
+        const _rf = require("path").join(
+          _os.homedir(),
+          ".nex-code",
+          "benchmark-results.json",
+        );
+        try {
+          require("fs").writeFileSync(_rf, JSON.stringify(summary, null, 2));
+        } catch {
+          /* non-fatal */
+        }
+
+        // Mark all tested models as known
+        markBenchmarked(modelList);
+
+        // Auto-update routing, README, models.env
+        const catWinners = buildCategoryWinners(summary);
+        const routeResult = updateRoutingConfig(catWinners);
+        const readmePath = require("path").join(process.cwd(), "README.md");
+        const readmeUpdated = updateReadme(summary, readmePath);
+        const envResult = updateModelsEnv(summary);
+
+        if (readmeUpdated)
+          console.log(`\n${C.green}README.md benchmark table updated${C.reset}`);
+        if (envResult.updated)
+          console.log(
+            `${C.green}DEFAULT_MODEL: ${envResult.previousModel} → ${envResult.newModel}${C.reset}`,
+          );
+        if (routeResult.changes.length > 0) {
+          console.log(`${C.green}Routing updated:${C.reset}`);
+          for (const ch of routeResult.changes)
+            console.log(`  ${C.dim}${ch}${C.reset}`);
+        }
+        console.log();
+        return true;
       }
 
       // --discover: find new Ollama Cloud models, benchmark them, auto-update README + models.env

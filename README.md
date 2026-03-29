@@ -155,15 +155,33 @@ Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks agai
 ### Flat-Rate / Pay-as-you-go
 
 <!-- nex-benchmark-start -->
-<!-- Updated: 2026-03-26 — run `/benchmark --discover` after new Ollama Cloud releases -->
+<!-- Updated: 2026-03-29 — run `/benchmark --discover` after new Ollama Cloud releases -->
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `devstral-2:123b` | **82.5** | 1.7s | 131K | Default — fastest + most reliable tool selection |
-| 🥈 | `devstral-small-2:24b` | 75 | 3.1s | 131K | Fast sub-agents, simple lookups |
-| 🥉 | `qwen3-coder:480b` | 72.5 | 8.4s | 131K | Coding-heavy sessions, heavy sub-agents |
-| — | `kimi-k2:1t` | 67.5 | 6.6s | 256K | Large repos (>100K tokens) |
-| — | `minimax-m2.7:cloud` | 64.1 | 5.0s | 200K | Complex swarm / multi-agent sessions (Toolathon SOTA) |
+| 🥇 | `qwen3-vl:235b` | **77.1** | 14.4s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
+| 🥈 | `qwen3-vl:235b-instruct` | 76.3 | 6.5s | 131K | Best latency/score balance — recommended default |
+| 🥉 | `rnj-1:8b` | 74 | 3.7s | 131K | — |
+| — | `ministral-3:8b` | 73.1 | 2.3s | 131K | Fastest strong model — 2.2s latency, 70+ score |
+| — | `qwen3-coder-next` | 71.4 | 2.8s | 256K | — |
+| — | `qwen3-next:80b` | 70.6 | 11.6s | 131K | — |
+| — | `qwen3.5:397b` | 68.9 | 3.9s | 256K | — |
+| — | `minimax-m2.7` | 68.7 | 6.8s | 200K | — |
+| — | `glm-5` | 67.6 | 4.5s | 131K | — |
+| — | `devstral-2:123b` | 67.6 | 2.0s | 131K | Sysadmin + SSH tasks, reliable coding |
+| — | `glm-4.7` | 66.5 | 5.1s | 131K | — |
+| — | `kimi-k2-thinking` | 66.3 | 18.4s | 256K | — |
+| — | `ministral-3:14b` | 65.8 | 3.8s | 131K | — |
+| — | `devstral-small-2:24b` | 65.5 | 2.3s | 131K | Fast sub-agents, simple lookups |
+| — | `ministral-3:3b` | 65.4 | 2.2s | 32K | — |
+| — | `kimi-k2.5` | 65.2 | 3.5s | 256K | Large repos — faster than k2:1t |
+| — | `kimi-k2:1t` | 65.2 | 4.2s | 256K | Large repos (>100K tokens) |
+| — | `minimax-m2.1` | 64.2 | 5.4s | 200K | — |
+| — | `glm-4.6` | 63.9 | 4.9s | 131K | — |
+| — | `qwen3-coder:480b` | 63.2 | 14.1s | 131K | Heavy coding sessions, large context |
+| — | `nemotron-3-super` | 61.3 | 2.6s | 256K | — |
+| — | `gpt-oss:20b` | 60.9 | 2.5s | 131K | Fast small model, good overall score |
+| — | `mistral-large-3:675b` | 60.8 | 3.8s | 131K | — |
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
