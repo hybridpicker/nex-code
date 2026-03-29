@@ -62,6 +62,14 @@ npm run benchmark:realworld  # run 20-task benchmark only
 - SSH_STORM_WARN: [6, 12], SSH_STORM_ABORT: [8, 18]
 - INVESTIGATION_CAP: [10, 18], POST_WIPE_BUDGET: [10, 17]
 
+## Phase-Based Routing
+
+Each task runs through plan → implement → verify, each with a different model optimized for that phase. Auto-enabled on Ollama Cloud; see `docs/MODEL-SELECTION.md` for details.
+
+Key files: `cli/task-router.js` (routing config + phase resolution), `cli/agent.js` (phase state machine + transitions), `cli/benchmark.js` (phase-specific scoring tasks).
+
+Disable: `NEX_PHASE_ROUTING=0`. Force-enable on non-Ollama: `NEX_PHASE_ROUTING=1`.
+
 ## Model Profiles
 
 `cli/model-profiles.js` provides per-model guard thresholds. Each model family gets tuned stale timeouts and investigation caps:

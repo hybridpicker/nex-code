@@ -31,6 +31,12 @@ const {
   formatScore,
   appendScoreHistory,
 } = require("./session-scorer");
+const {
+  detectCategory,
+  getModelForPhase,
+  getPhaseBudget,
+  isPhaseRoutingEnabled,
+} = require("./task-router");
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
@@ -741,6 +747,38 @@ async function prepareToolCall(tc) {
     };
   }
 
+  // Phase-based tool enforcement: block write/edit during plan, block write during verify.
+  const _PHASE_PLAN_ALLOWED = new Set([
+    "read_file", "list_directory", "search_files", "glob", "grep",
+    "git_status", "git_diff", "git_log", "git_show", "ssh_exec",
+  ]);
+  const _PHASE_VERIFY_ALLOWED = new Set([
+    "read_file", "list_directory", "glob", "grep", "bash",
+    "git_status", "git_diff", "git_log", "ssh_exec",
+  ]);
+  if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName)) {
+    debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only)${C.reset}`);
+    return {
+      callId, fnName, args: finalArgs, canExecute: false,
+      errorResult: {
+        role: "tool",
+        content: `PLAN PHASE: '${fnName}' is blocked. Analyze the codebase using read-only tools, then present your findings as text. Edits happen in the next phase.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+  if (_phaseEnabled && _currentPhase === "verify" && !_PHASE_VERIFY_ALLOWED.has(fnName)) {
+    debugLog(`${C.yellow}  ✗ ${fnName}: blocked in verify phase (read + bash only)${C.reset}`);
+    return {
+      callId, fnName, args: finalArgs, canExecute: false,
+      errorResult: {
+        role: "tool",
+        content: `VERIFY PHASE: '${fnName}' is blocked. Use read_file and bash (for tests/linters) to verify changes. Report PASS or FAIL.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+
   // Permission check
   const perm = checkPermission(fnName);
   if (perm === "deny") {
@@ -1145,6 +1183,16 @@ const _taskRegistry = new Map(); // taskId → description, populated from creat
 const _autoCompletedTasks = new Set(); // taskIds auto-completed by file-write matching
 let _lastCreationSummary = null; // persists across turns: brief note of what the last creation task produced
 
+// ─── Phase-based routing state ──────────────────────────────────────────────
+let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
+let _phaseIterations = 0; // iterations consumed in current phase
+let _phaseEnabled = false; // true when config has 'phases' key
+let _phaseModelOverride = null; // model ID string for current phase (null = use default)
+let _planSummary = null; // compressed summary from plan phase
+let _implementSummary = null; // summary of changes from implement phase
+let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
+let _detectedCategoryId = null; // task category detected on first user message
+
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
 function _logCompression(msg, color) {
@@ -1182,6 +1230,57 @@ function _drainMidRunBuffer() {
   if (_midRunBuffer.length === 0) return null;
   const notes = _midRunBuffer.splice(0, _midRunBuffer.length);
   return notes.join("\n");
+}
+
+/**
+ * Transition to the next phase in the plan → implement → verify pipeline.
+ * Resets all guards so the new phase starts with a clean slate.
+ */
+function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
+  if (!_phaseEnabled) return null;
+
+  const prevPhase = _currentPhase;
+  _currentPhase = targetPhase;
+  _phaseIterations = 0;
+  _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
+
+  // Reset ALL guards so the new phase starts with a clean slate.
+  _readOnlyCallsSinceEdit = 0;
+  _investigationCapFired = false;
+  _editsMadeThisSession = 0;
+  _sessionFileReadCounts.clear();
+  _sessionFileReadRanges.clear();
+  _sessionReReadBlockShown.clear();
+  _sessionRangeBlockCounts.clear();
+  _sessionGrepPatternCounts.clear();
+  _sessionGrepFileCounts.clear();
+  _sessionBashCmdCounts.clear();
+  _sessionFileEditCounts.clear();
+
+  let content;
+  if (targetPhase === "implement") {
+    _planSummary = summary?.slice(0, 800) || "";
+    content =
+      `[PHASE: IMPLEMENTATION] Analysis complete. Based on the analysis:\n${_planSummary}\n\n` +
+      `Now implement the fix/changes. Do not investigate further — edit files directly.`;
+  } else if (targetPhase === "verify") {
+    _implementSummary = summary?.slice(0, 500) || "";
+    const fileList = filesModified ? [...filesModified].join(", ") : "none";
+    content =
+      `[PHASE: VERIFICATION] Implementation complete. Verify the changes:\n` +
+      `1. Read each modified file and confirm changes are correct\n` +
+      `2. If test command exists (npm test / pytest): run it\n` +
+      `3. If linter exists: run it\n` +
+      `4. Does the implementation address: "${(originalTask || "").slice(0, 200)}"?\n` +
+      `Report PASS (all good) or FAIL (list specific issues).\n\n` +
+      `Files modified: ${fileList}\nSummary: ${_implementSummary}`;
+  }
+
+  debugLog(
+    `${C.cyan}  ↳ Phase transition: ${prevPhase} → ${targetPhase} (model: ${_phaseModelOverride || "default"})${C.reset}`,
+  );
+
+  return content ? { role: "user", content } : null;
 }
 
 /**
@@ -1780,6 +1879,14 @@ function _resetSessionTracking() {
   _sshBlockedPreCallNudgeCount = 0;
   _isCreationTask = false;
   _verificationInjected = false;
+  _currentPhase = "plan";
+  _phaseIterations = 0;
+  _phaseEnabled = false;
+  _phaseModelOverride = null;
+  _planSummary = null;
+  _implementSummary = null;
+  _verifyLoopBack = 0;
+  _detectedCategoryId = null;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _lastCompressionMsg = "";
@@ -2116,6 +2223,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   STALE_ABORT_MS = _profile.staleAbort;
 
   _serverHooks = serverHooks;
+
   // Prepend creation-task context note from the previous turn so the model
   // can answer follow-up questions without re-investigating the codebase.
   let _resolvedInput = userInput;
@@ -2340,6 +2448,27 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     }
   }
 
+  // ─── Phase-based routing initialization ──────────────────────────────────
+  if (conversationMessages.length <= 1) {
+    _phaseEnabled = isPhaseRoutingEnabled();
+    if (_phaseEnabled) {
+      const _cat = detectCategory(_firstUserText);
+      _detectedCategoryId = _cat?.id || "coding";
+      _currentPhase = "plan";
+      _phaseModelOverride = getModelForPhase("plan", _detectedCategoryId);
+      _phaseIterations = 0;
+      _verifyLoopBack = 0;
+      if (process.stdout.isTTY) {
+        console.log(
+          `${C.dim}  ↳ Phase routing: plan(${_phaseModelOverride || "default"}) → implement → verify${C.reset}`,
+        );
+      }
+      debugLog(
+        `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
+      );
+    }
+  }
+
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
   const toolCounts = new Map();
@@ -2357,15 +2486,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_BASH = 5; // warn after 5 similar bash commands
   const LOOP_ABORT_BASH = 8; // abort after 8 similar bash commands
   const grepPatternCounts = _sessionGrepPatternCounts;
-  const LOOP_WARN_GREP = 4; // warn after 4 identical grep patterns
-  const LOOP_ABORT_GREP = 7; // abort after 7 identical grep patterns
+  const LOOP_WARN_GREP = _phaseEnabled ? 6 : 4; // warn after N identical grep patterns
+  const LOOP_ABORT_GREP = _phaseEnabled ? 10 : 7; // abort after N identical grep patterns
   const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
-  const LOOP_WARN_GREP_FILE = 3; // warn after 3 different-pattern greps on same file
-  const LOOP_ABORT_GREP_FILE = 5; // hard-block further greps on same file after 5
+  const LOOP_WARN_GREP_FILE = _phaseEnabled ? 5 : 3; // warn after N different-pattern greps on same file
+  const LOOP_ABORT_GREP_FILE = _phaseEnabled ? 8 : 5; // hard-block further greps on same file after N
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = 2; // warn after 2 reads of the same file (early warning before context floods)
-  const LOOP_ABORT_READS = 3; // abort after 3 reads of the same file (was 4 — tightened with 350-line cap)
-  const TARGETED_READ_HARD_CAP = 6; // absolute max reads of any single file (unbounded + targeted combined)
+  const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
+  const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
+  const TARGETED_READ_HARD_CAP = _phaseEnabled ? 8 : 6; // absolute max reads of any single file
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -2380,7 +2509,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const INVESTIGATION_CAP = _profile.investigationCap; // per-model: read-only calls before forcing edit
 
   let i;
-  let iterLimit = MAX_ITERATIONS;
+  let iterLimit = _phaseEnabled ? getPhaseBudget(_currentPhase) : MAX_ITERATIONS;
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
@@ -2536,11 +2665,30 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       try {
         const baseTools = getCachedFilteredTools(getAllToolDefinitions());
-        const allTools = isPlanMode()
-          ? baseTools.filter((t) =>
-              PLAN_MODE_ALLOWED_TOOLS.has(t.function.name),
-            )
-          : baseTools;
+        const PHASE_PLAN_TOOLS = new Set([
+          "read_file", "list_directory", "search_files", "glob", "grep",
+          "git_status", "git_diff", "git_log", "git_show", "ssh_exec",
+        ]);
+        const PHASE_VERIFY_TOOLS = new Set([
+          "read_file", "list_directory", "glob", "grep", "bash",
+          "git_status", "git_diff", "git_log", "ssh_exec",
+        ]);
+        let allTools;
+        if (isPlanMode()) {
+          allTools = baseTools.filter((t) =>
+            PLAN_MODE_ALLOWED_TOOLS.has(t.function.name),
+          );
+        } else if (_phaseEnabled && _currentPhase === "plan") {
+          allTools = baseTools.filter((t) =>
+            PHASE_PLAN_TOOLS.has(t.function.name),
+          );
+        } else if (_phaseEnabled && _currentPhase === "verify") {
+          allTools = baseTools.filter((t) =>
+            PHASE_VERIFY_TOOLS.has(t.function.name),
+          );
+        } else {
+          allTools = baseTools;
+        }
         const userSignal = _getAbortSignal();
         // Combine user abort (Ctrl+C) and stale abort into one signal
         const combinedAbort = new AbortController();
@@ -2556,6 +2704,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
         result = await callStream(apiMessages, allTools, {
           signal: combinedAbort.signal,
+          ...(_phaseModelOverride ? { model: _phaseModelOverride } : {}),
           onThinkingToken: () => {
             // Thinking-model reasoning tokens: reset stale timer but don't display
             lastTokenTime = Date.now();
@@ -3156,20 +3305,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           continue;
         }
 
-        // Network/TLS errors — retry with backoff (don't burn iterations)
+        // Network/TLS/server errors — retry with backoff (don't burn iterations)
+        // Ollama Cloud has transient 5xx and 401 errors — retry those too.
+        // Gated on provider check + not disabled by NEX_PHASE_ROUTING=0 (unit tests).
+        const _isOllamaProvider = process.env.NEX_PHASE_ROUTING !== "0" && (() => {
+          try { return require("./providers/registry").getActiveProviderName() === "ollama"; } catch { return false; }
+        })();
         const isNetworkError =
           err.message.includes("socket disconnected") ||
           err.message.includes("TLS") ||
           err.message.includes("ECONNRESET") ||
           err.message.includes("ECONNABORTED") ||
           err.message.includes("ETIMEDOUT") ||
+          (_isOllamaProvider && (
+            err.message.includes("500") ||
+            err.message.includes("502") ||
+            err.message.includes("503") ||
+            err.message.includes("504") ||
+            err.message.includes("401") ||
+            err.message.includes("Unauthorized")
+          )) ||
           err.code === "ECONNRESET" ||
           err.code === "ECONNABORTED";
         if (isNetworkError) {
           networkRetries++;
           if (networkRetries > MAX_NETWORK_RETRIES) {
             console.log(
-              `${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.${C.reset}`,
+              `${C.red}  Network error: max retries (${MAX_NETWORK_RETRIES}) exceeded. Check your connection and try again.\n  Use /undo to revert changes made during this session.${C.reset}`,
             );
             if (taskProgress) {
               taskProgress.stop();
@@ -3188,7 +3350,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
           const waitSpinner = new Spinner(
-            `Network error — retrying in ${Math.round(delay / 1000)}s (${networkRetries}/${MAX_NETWORK_RETRIES})`,
+            `API temporarily unavailable — retrying in ${Math.round(delay / 1000)}s (${networkRetries}/${MAX_NETWORK_RETRIES}). Your changes are safe.`,
           );
           waitSpinner.start();
           await new Promise((r) => setTimeout(r, delay));
@@ -3427,6 +3589,61 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             apiMessages.push(toolNudge);
             conversationMessages.push(toolNudge);
             continue; // retry without counting as a step
+          }
+        }
+        // ─── Phase transitions (plan → implement → verify) ────────────────────
+        if (_phaseEnabled && hasText) {
+          const _assistantText = (content || streamedText || "").trim();
+
+          if (_currentPhase === "plan") {
+            const phaseMsg = _transitionPhase("implement", _assistantText);
+            if (phaseMsg) {
+              conversationMessages.push(phaseMsg);
+              apiMessages.push(phaseMsg);
+              i = 0;
+              iterLimit = getPhaseBudget("implement");
+              continue;
+            }
+          } else if (_currentPhase === "implement" && filesModified.size > 0) {
+            const _firstUser = conversationMessages.find((m) => m.role === "user");
+            const _origTask = typeof _firstUser?.content === "string"
+              ? _firstUser.content : "";
+            const phaseMsg = _transitionPhase(
+              "verify", _assistantText, filesModified, _origTask,
+            );
+            if (phaseMsg) {
+              conversationMessages.push(phaseMsg);
+              apiMessages.push(phaseMsg);
+              i = 0;
+              iterLimit = getPhaseBudget("verify");
+              continue;
+            }
+          } else if (_currentPhase === "verify") {
+            const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
+            const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
+
+            if (_hasFailed && _verifyLoopBack < 1) {
+              _verifyLoopBack++;
+              const loopMsg = {
+                role: "user",
+                content:
+                  `[PHASE: RE-IMPLEMENTATION] Verification found issues:\n${_assistantText.slice(0, 400)}\n\n` +
+                  `Fix the identified issues. This is the final attempt.`,
+              };
+              _currentPhase = "implement";
+              _phaseModelOverride = getModelForPhase("implement", _detectedCategoryId);
+              conversationMessages.push(loopMsg);
+              apiMessages.push(loopMsg);
+              i = 0;
+              iterLimit = getPhaseBudget("implement");
+              debugLog(
+                `${C.yellow}  ↳ Verify → implement loop-back #${_verifyLoopBack} (issues found)${C.reset}`,
+              );
+              continue;
+            }
+            debugLog(
+              `${C.green}  ✓ Verification phase complete${_hasFailed ? " (loop-back exhausted)" : " (PASS)"}${C.reset}`,
+            );
           }
         }
         // In plan mode: if the LLM presented a plan without reading ANY files first,
@@ -3794,6 +4011,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       // ─── Update stats ───
       totalSteps++;
+      _phaseIterations++;
       if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
       for (const tc of tool_calls) {
         const name = tc.function.name;
@@ -4046,7 +4264,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
           // else: normal targeted section read of a large file — let through silently
-        } else if (alreadyRead >= 1) {
+        } else if (alreadyRead >= (_phaseEnabled ? 2 : 1)) {
           // Unbounded re-read — block immediately to prevent context flood
           const shortPath = path.split("/").slice(-2).join("/");
           const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
@@ -4325,7 +4543,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // For creation tasks the cap fires fast (4 pre-edit, 2 post-edit). Once it
       // has fired AND the agent has written at least one file, any further read is
       // blocked pre-execution — the agent has enough context to keep building.
-      if (_investigationCapFired && _isCreationTask && _editsMadeThisSession >= 1) {
+      if (!_phaseEnabled && _investigationCapFired && _isCreationTask && _editsMadeThisSession >= 1) {
         const READ_ONLY_PRE_BLOCK = [
           "read_file",
           "grep",
@@ -4621,7 +4839,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // When the model reads files, searches, and SSHes without ever editing, it's
         // stuck in an investigation loop. After INVESTIGATION_CAP calls, inject a hard
         // "stop investigating, implement now" message.
-        if (isOk && prep.canExecute) {
+        if (isOk && prep.canExecute && !(_phaseEnabled && _currentPhase === "plan")) {
           const READ_ONLY_TOOLS = ["read_file", "grep", "search_files", "glob", "list_directory", "ssh_exec", "find_files"];
           const EDIT_TOOLS = ["write_file", "edit_file", "patch_file"];
           if (EDIT_TOOLS.includes(prep.fnName)) {
@@ -4650,6 +4868,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // For post-edit reads: only hard-block in fix phase, not on ordinary edits where the
           // agent may still need to read adjacent sections to complete multi-file changes.
           const _hardBlockActive =
+            !_phaseEnabled &&
             _investigationCapFired &&
             (_rootCauseDetected ||
               (_isCreationTask && _editsMadeThisSession >= 1));
@@ -4675,6 +4894,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
             );
+            // Phase transition: plan → implement (model switch)
+            if (_phaseEnabled && _currentPhase === "plan") {
+              const _lastAssistant = [...apiMessages].reverse().find((m) => m.role === "assistant");
+              const _summary = typeof _lastAssistant?.content === "string"
+                ? _lastAssistant.content : "";
+              const phaseMsg = _transitionPhase("implement", _summary);
+              if (phaseMsg) {
+                conversationMessages.push(phaseMsg);
+                apiMessages.push(phaseMsg);
+                i = 0;
+                iterLimit = getPhaseBudget("implement");
+              }
+            }
             let _capContent;
             if (_rootCauseDetected) {
               _capContent = `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`;
@@ -4994,7 +5226,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
             // are legitimate when navigating a large file beyond the 350-line cap.
             const wasUnbounded = !prep.args?.line_start && !prep.args?.line_end;
-            if (wasUnbounded && readCount === LOOP_WARN_READS) {
+            const _skipReadLoop = _phaseEnabled && _currentPhase === "plan";
+            if (!_skipReadLoop && wasUnbounded && readCount === LOOP_WARN_READS) {
               // Pre-compress before injecting warning — prevents the warning itself from
               // triggering a 400-cascade when context is already near capacity.
               {
@@ -5017,7 +5250,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               };
               conversationMessages.push(readWarning);
               apiMessages.push(readWarning);
-            } else if (wasUnbounded && readCount >= LOOP_ABORT_READS) {
+            } else if (!_skipReadLoop && wasUnbounded && readCount >= LOOP_ABORT_READS) {
               debugLog(
                 `${C.red}  ✖ Loop abort: "${shortPath}" read unbounded ${readCount}× — aborting runaway read loop${C.reset}`,
               );
@@ -5215,6 +5448,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
       saveNow(conversationMessages);
       _scoreAndPrint(conversationMessages);
+
+      // Phase budget exhaustion: auto-transition to next phase instead of stopping
+      if (_phaseEnabled && _currentPhase === "plan") {
+        const _lastAssistant = [...conversationMessages].reverse()
+          .find((m) => m.role === "assistant");
+        const _summary = typeof _lastAssistant?.content === "string"
+          ? _lastAssistant.content : "";
+        const phaseMsg = _transitionPhase("implement", _summary);
+        if (phaseMsg) {
+          conversationMessages.push(phaseMsg);
+          const sysPrompt = await buildSystemPrompt();
+          apiMessages = [
+            { role: "system", content: sysPrompt },
+            ...conversationMessages,
+          ];
+          iterLimit = getPhaseBudget("implement");
+          debugLog(
+            `${C.yellow}  ⚠ Plan budget exhausted — auto-transitioning to implement${C.reset}`,
+          );
+          continue outer;
+        }
+      } else if (_phaseEnabled && _currentPhase === "verify") {
+        debugLog(
+          `${C.yellow}  ⚠ Verify budget exhausted — completing session${C.reset}`,
+        );
+        break outer;
+      }
 
       const {
         getActiveProviderName: _getProviderName,

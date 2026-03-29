@@ -44,6 +44,45 @@ Task classification:
 - **Fast** (`essential` tier): read, summarize, search, find, list, check, count, inspect, scan
 - **Standard**: everything else
 
+## Phase-Based Routing
+
+On Ollama Cloud, nex-code automatically runs each task through plan → implement → verify, each with a different model optimized for that phase:
+
+| Phase         | Budget | Tools           | Default model           | Strength needed            |
+| ------------- | ------ | --------------- | ----------------------- | -------------------------- |
+| **Plan**      | 10     | read-only       | `qwen3-coder:480b`     | Large context, reasoning   |
+| **Implement** | 35     | full            | active model (default)  | Precise tool-calling       |
+| **Verify**    | 8      | read + bash     | `devstral-small-2:24b` | Fast test/lint execution   |
+
+### Phase Transitions
+
+- **Plan → Implement**: Triggers when investigation cap fires or model produces a text-only analysis
+- **Implement → Verify**: Triggers when model finishes with files modified
+- **Verify → Done**: On PASS. On FAIL, loops back to implement once, then completes
+
+### Configuration
+
+Phase routing activates automatically on Ollama Cloud. Override via `~/.nex-code/model-routing.json`:
+
+```json
+{
+  "phases": {
+    "plan": "kimi-k2:1t",
+    "implement": "devstral-2:123b",
+    "verify": "qwen3-coder-next"
+  },
+  "phaseBudgets": {
+    "plan": 10,
+    "implement": 35,
+    "verify": 8
+  }
+}
+```
+
+Or via environment:
+- `NEX_PHASE_ROUTING=0` — disable phase routing entirely
+- `NEX_PHASE_ROUTING=1` — force-enable on non-Ollama providers
+
 ## Environment Variables
 
 ```bash
@@ -52,6 +91,7 @@ NEX_ORCHESTRATOR_MODEL=kimi-k2.5
 NEX_HEAVY_MODEL=qwen3-coder:480b
 NEX_STANDARD_MODEL=devstral-2:123b
 NEX_FAST_MODEL=devstral-small-2:24b
+NEX_PHASE_ROUTING=1    # force-enable (auto on Ollama Cloud)
 ```
 
 ## Adding a New Model
@@ -66,7 +106,7 @@ NEX_FAST_MODEL=devstral-small-2:24b
 
 ### Worker Benchmark (`/benchmark`)
 
-- 15 synthetic tasks across categories (file-ops, search, shell, schema, multi-step, etc.)
+- 56 tasks across 13 categories (file-ops, search, shell, schema, multi-step, frontend, sysadmin, data, agentic, resilience, ssh, git, plus 6 phase-specific tasks)
 - Scoring: tool call produced (20%), correct tool (35%), valid args (30%), schema compliance (15%)
 - Results saved to `~/.nex-code/known-models.json`
 

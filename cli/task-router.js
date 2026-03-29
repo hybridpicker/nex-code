@@ -5,6 +5,7 @@
  *
  * Detects the category of a user's first message and routes to the
  * best model for that task type based on benchmark results.
+ * Includes phase-based routing (plan/implement/verify) for Ollama Cloud.
  *
  * Config: ~/.nex-code/model-routing.json
  * Env vars: NEX_ROUTE_FRONTEND, NEX_ROUTE_SYSADMIN, NEX_ROUTE_DATA, NEX_ROUTE_AGENTIC
@@ -111,14 +112,99 @@ function getModelForCategory(categoryId) {
   return config[categoryId] || null;
 }
 
+// ─── Phase-Based Routing ─────────────────────────────────────────────────────
+
+const DEFAULT_PHASE_BUDGETS = { plan: 10, implement: 35, verify: 8 };
+
+// Built-in phase defaults for Ollama Cloud users who haven't run a benchmark yet.
+// These activate automatically when provider is "ollama". Users can override via
+// config or by running /benchmark which auto-populates the phases section.
+const BUILTIN_PHASE_DEFAULTS = {
+  plan: "qwen3-coder:480b",       // 256K context, strong reasoning
+  implement: null,                  // null = use active model (already best for coding)
+  verify: "devstral-small-2:24b",  // fast, good enough for test/lint checks
+};
+
+/**
+ * Get the effective phase config: explicit config > builtin defaults (ollama only).
+ * Returns null if phase routing should not be active.
+ * @returns {object|null}
+ */
+function _resolvePhaseConfig() {
+  const config = loadRoutingConfig();
+  // Explicit config always wins
+  if (config.phases && Object.keys(config.phases).length > 0) {
+    return config.phases;
+  }
+  // Auto-enable for Ollama Cloud users: check if active provider is ollama
+  try {
+    const { getActiveProviderName } = require("./providers/registry");
+    if (getActiveProviderName() === "ollama") {
+      return BUILTIN_PHASE_DEFAULTS;
+    }
+  } catch {
+    /* registry not initialized yet — skip auto-enable */
+  }
+  // Env var opt-in: NEX_PHASE_ROUTING=1 forces phase routing with builtins
+  if (process.env.NEX_PHASE_ROUTING === "1") {
+    return BUILTIN_PHASE_DEFAULTS;
+  }
+  return null;
+}
+
+/**
+ * Get the configured model for a task phase.
+ * Priority: config.phases[phase] > builtin defaults (ollama) > category routing > null
+ *
+ * @param {'plan'|'implement'|'verify'} phase
+ * @param {string} [categoryId] — fallback category if no phase config
+ */
+function getModelForPhase(phase, categoryId) {
+  const phases = _resolvePhaseConfig();
+  if (phases?.[phase]) return phases[phase];
+  // null in builtin defaults means "use active model" — fall through to category
+  return categoryId ? getModelForCategory(categoryId) : null;
+}
+
+/**
+ * Get the iteration budget for a task phase.
+ * Reads from config.phaseBudgets, falls back to defaults (plan:10, implement:35, verify:8).
+ *
+ * @param {'plan'|'implement'|'verify'} phase
+ * @returns {number}
+ */
+function getPhaseBudget(phase) {
+  const config = loadRoutingConfig();
+  return config.phaseBudgets?.[phase] || DEFAULT_PHASE_BUDGETS[phase] || 20;
+}
+
+/**
+ * Check whether phase-based routing is enabled.
+ * True when: explicit config has phases, OR provider is ollama (auto-enable), OR env var set.
+ * Disable with NEX_PHASE_ROUTING=0.
+ * @returns {boolean}
+ */
+function isPhaseRoutingEnabled() {
+  if (process.env.NEX_PHASE_ROUTING === "0") return false;
+  return _resolvePhaseConfig() !== null;
+}
+
+// ─── Config Persistence ──────────────────────────────────────────────────────
+
 /**
  * Save a complete routing config (all categories → best models).
- * Called by model-watcher after a benchmark run.
+ * Preserves nested keys (phases, phaseBudgets) when merging.
+ * Called by model-watcher / benchmark after a run.
  */
 function saveRoutingConfig(routing) {
   const dir = path.dirname(ROUTING_CONFIG_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(ROUTING_CONFIG_PATH, JSON.stringify(routing, null, 2));
+  // Preserve existing nested keys that the caller didn't provide
+  const existing = loadRoutingConfig();
+  const merged = { ...existing, ...routing };
+  if (!routing.phases && existing.phases) merged.phases = existing.phases;
+  if (!routing.phaseBudgets && existing.phaseBudgets) merged.phaseBudgets = existing.phaseBudgets;
+  fs.writeFileSync(ROUTING_CONFIG_PATH, JSON.stringify(merged, null, 2));
 }
 
 module.exports = {
@@ -126,6 +212,11 @@ module.exports = {
   DETECTION_ORDER,
   detectCategory,
   getModelForCategory,
+  getModelForPhase,
+  getPhaseBudget,
+  isPhaseRoutingEnabled,
+  DEFAULT_PHASE_BUDGETS,
+  BUILTIN_PHASE_DEFAULTS,
   saveRoutingConfig,
   loadRoutingConfig,
   ROUTING_CONFIG_PATH,
