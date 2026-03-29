@@ -120,7 +120,7 @@ function _scoreAndPrint(messages) {
   }
 }
 const { getMemoryContext } = require("./memory");
-const { getDeploymentContextBlock } = require("./server-context");
+const { getDeploymentContextBlock, probeUrlServer } = require("./server-context");
 const {
   checkPermission,
   setPermission,
@@ -2354,13 +2354,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const preScanPromise = isFirstMessage
     ? _runPreScan().catch(() => null)
     : Promise.resolve(null);
+  const urlProbePromise = isFirstMessage
+    ? probeUrlServer(typeof userInput === "string" ? userInput : "").catch(() => null)
+    : Promise.resolve(null);
 
   // Context-aware compression: fit messages into context window
   const allTools = getAllToolDefinitions();
   const [
     { messages: fittedMessages, compressed, compacted, tokensRemoved },
     preScanResult,
-  ] = await Promise.all([fitToContext(fullMessages, allTools), preScanPromise]);
+    urlProbeResult,
+  ] = await Promise.all([fitToContext(fullMessages, allTools), preScanPromise, urlProbePromise]);
 
   // Context budget warning
   const usage = getUsage(fullMessages, allTools);
@@ -2391,6 +2395,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
   // Use fitted messages for the API call, but keep fullMessages reference for appending
   let apiMessages = fittedMessages;
+
+  // Inject URL-probe server context as first user message (before system/human messages)
+  // so the model knows port/service topology before its first response.
+  if (urlProbeResult && isFirstMessage) {
+    apiMessages = [
+      apiMessages[0], // system prompt
+      { role: "user", content: `[Server probe at task start]\n${urlProbeResult}` },
+      { role: "assistant", content: "Understood — I have the server context. Proceeding with the task." },
+      ...apiMessages.slice(1),
+    ];
+  }
 
   // Pre-flight context check — compress immediately if already over threshold
   {

@@ -5,7 +5,7 @@
  * The agent gets context about available servers, OS-specific commands, and platform hints.
  */
 
-const { loadServerProfiles } = require("./ssh");
+const { loadServerProfiles, resolveProfile, sshExec } = require("./ssh");
 
 // OS-specific knowledge injected into the system prompt
 const OS_HINTS = {
@@ -216,10 +216,94 @@ function _getJarvisRules(profiles) {
 - READING REMOTE FILES: NEVER use sed -n (always blocked). To read a specific function in a remote file: ssh_exec 'grep -n "functionName" /path/file -A 50'. To read the whole file: ssh_exec 'cat /path/file'. These are the only two options.`;
 }
 
+/**
+ * Auto-probe a server when the user's prompt contains an HTTPS URL whose
+ * domain matches a configured SSH profile name.
+ *
+ * Matching strategy (in priority order):
+ *  1. Any hostname segment matches a profile name exactly
+ *     e.g. "jarvis.schoensgibl.com" → profile "jarvis"
+ *  2. Profile host matches the URL hostname directly
+ *     e.g. "94.130.37.43" → profile with host "94.130.37.43"
+ *
+ * On a match, runs a fast 4-second SSH probe and returns a context block
+ * that tells the model which ports are listening and what data dirs exist.
+ * Returns null on no match or any failure (probe is purely opportunistic).
+ *
+ * @param {string} userInput
+ * @returns {Promise<string|null>}
+ */
+async function probeUrlServer(userInput) {
+  if (typeof userInput !== "string") return null;
+
+  // Extract all https?:// URLs from the prompt
+  const urlMatches = [...userInput.matchAll(/https?:\/\/([a-zA-Z0-9._-]+)/g)];
+  if (urlMatches.length === 0) return null;
+
+  const profiles = loadServerProfiles();
+  if (Object.keys(profiles).length === 0) return null;
+
+  let matchedProfile = null;
+  let matchedName = null;
+
+  for (const [, hostname] of urlMatches) {
+    const segments = hostname.toLowerCase().split(".");
+    // Priority 1: hostname segment == profile name
+    for (const [name, profile] of Object.entries(profiles)) {
+      if (segments.includes(name.toLowerCase())) {
+        matchedProfile = profile;
+        matchedName = name;
+        break;
+      }
+    }
+    if (matchedProfile) break;
+    // Priority 2: profile.host == hostname
+    for (const [name, profile] of Object.entries(profiles)) {
+      if (profile.host === hostname) {
+        matchedProfile = profile;
+        matchedName = name;
+        break;
+      }
+    }
+    if (matchedProfile) break;
+  }
+
+  if (!matchedProfile || !matchedName) return null;
+
+  // Fast server probe — 4s timeout, failures are silently swallowed
+  const probeCmd = [
+    // Listening ports (node/python/ruby/java)
+    "ss -tlnp 2>/dev/null | awk 'NR>1{print $4}' | grep -oE ':[0-9]+$' | sort -u | head -8",
+    "echo '---services---'",
+    // Running web-service processes
+    "ps aux 2>/dev/null | grep -E '(node |python3 |gunicorn|uvicorn|ruby |java )' | grep -v grep | awk '{print $11, $12, $13}' | head -6",
+    "echo '---data---'",
+    // Likely data directories under /home
+    "find /home -maxdepth 5 -name 'data' -type d 2>/dev/null | head -6",
+  ].join("; ");
+
+  try {
+    const { stdout } = await sshExec(matchedProfile, probeCmd, { timeout: 4000 });
+    if (!stdout || stdout.trim().length < 5) return null;
+
+    const target = matchedProfile.user
+      ? `${matchedProfile.user}@${matchedProfile.host}`
+      : matchedProfile.host;
+
+    return (
+      `[Server context for "${matchedName}" (${target}) — probed at task start]\n` +
+      stdout.trim()
+    );
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   getServerContext,
   getDeploymentContextBlock,
   hasServerOS,
   getProfileNames,
+  probeUrlServer,
   OS_HINTS,
 };
