@@ -123,6 +123,10 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 
 **Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime, no daemon process.
 
+**Server-aware from the first message.** When your prompt contains a URL whose domain matches a configured SSH profile (e.g. `jarvis.example.com` → profile `jarvis`), nex-code probes the server before responding — listing ports, running processes, and data directories. The model receives this topology before its first token, so it goes straight to `ssh_exec` instead of reading local files.
+
+**Few-shot behavior injection.** On each session start, nex-code injects a short example of the correct tool sequence for the detected task type (sysadmin → check remote logs first; coding → read file before editing; data → explain before rewriting). Works across all models without fine-tuning. Customize with your own high-scoring sessions via `npm run extract-examples`.
+
 **Infrastructure tools built in:**
 
 - SSH server management (AlmaLinux, macOS, any Linux)
