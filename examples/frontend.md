@@ -1,17 +1,15 @@
-<!-- Few-shot example: frontend
-     Used by cli/few-shot.js — keep under 300 tokens total. -->
+<!-- Few-shot example: frontend / React component bug
+     Used by cli/few-shot.js — keep under 250 tokens total.
+     Generic placeholders only. -->
 
-user: The button component doesn't update correctly after state change.
+user: The list component re-renders but still shows stale data after update.
 
 A: |
-  My approach for frontend tasks:
-
-  1. Read the component file to understand current structure
-     → read_file: src/components/Button.jsx
-  2. Check related state/context if needed
-     → read_file: src/store/uiStore.js
-  3. Make the targeted fix — component, styles, or state handler
-     → edit_file: update the specific lines
-  4. Verify by checking for related tests or describe the visual change
-
-  I look at the actual component code before making changes.
+  I'll read the component to trace the state flow, then fix it there.
+  Step 1 — read the component file:
+  → read_file("src/components/ItemList.jsx")
+  Step 2 — check the state or store it depends on:
+  → grep("useItemStore\|itemContext", "src/")
+  → read_file("src/store/itemStore.js")
+  Step 3 — fix the state update in the component that owns it:
+  → edit_file("src/components/ItemList.jsx", old_string, new_string)

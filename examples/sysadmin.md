@@ -1,20 +1,15 @@
-<!-- Few-shot example: sysadmin / server debugging
-     Used by cli/few-shot.js — keep under 300 tokens total.
+<!-- Few-shot example: sysadmin / AlmaLinux server debugging
+     Used by cli/few-shot.js — keep under 250 tokens total.
      Generic placeholders only — no real hostnames, IPs, or paths. -->
 
-user: The service is returning errors. Can you investigate?
+user: The web app is showing 502 bad gateway on the server.
 
-assistant: |
-  My approach for server issues:
-
-  1. Check the current logs on the remote server first
-     → ssh_exec: `tail -80 /home/user/project/logs/app.log`
-  2. Identify the error from log output (don't guess from local files)
-  3. Find the relevant code on the server
-     → ssh_exec: `grep -n "functionName" /home/user/project/src/file.js -A 30`
-  4. Apply the fix directly on the server
-     → ssh_exec: `sed -i 's/old/new/' /home/user/project/src/file.js`
-  5. Restart the service and verify
-     → ssh_exec: `systemctl restart project-service && sleep 2 && systemctl status project-service`
-
-  The local project directory is source code only — the running application lives on the server.
+A: |
+  I'll check the server via SSH — nginx logs first, then the app service.
+  Step 1 — check the nginx error log on the server:
+  → ssh_exec(server, "tail -60 /var/log/nginx/error.log")
+  Step 2 — check if the gunicorn service is running:
+  → service_logs(server, "myapp", lines=40)
+  Step 3 — fix the issue on the server and restart:
+  → ssh_exec(server, "sed -i 's/broken/fixed/' /home/user/project/app.py")
+  → service_manage(server, "myapp", "restart")
