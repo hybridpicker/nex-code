@@ -982,6 +982,87 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 17d. Shallow JSON read (-0.75) ────────────────────────────────────────
+  // Detect when read_file returns < 5 non-empty lines for a .json file that
+  // opens a JSON array but never closes it — the model read only the beginning
+  // and drew conclusions from incomplete data (e.g. "the array is empty").
+  {
+    const jsonReadResults = [];
+    messages.forEach((msg, msgIdx) => {
+      // Find read_file tool calls on .json files
+      const calls = [];
+      if (Array.isArray(msg.tool_calls)) {
+        msg.tool_calls.forEach((tc) => {
+          const name = tc.function?.name || tc.name || "";
+          if (name === "read_file") {
+            let input = {};
+            try { input = typeof tc.function?.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function?.arguments || {}; } catch { /* */ }
+            if ((input.path || "").endsWith(".json")) calls.push({ id: tc.id, path: input.path });
+          }
+        });
+      }
+      if (Array.isArray(msg.content)) {
+        msg.content.forEach((b) => {
+          if (b && b.type === "tool_use" && b.name === "read_file" && (b.input?.path || "").endsWith(".json")) {
+            calls.push({ id: b.id, path: b.input.path });
+          }
+        });
+      }
+      calls.forEach((c) => jsonReadResults.push({ ...c, msgIdx }));
+    });
+
+    // For each json read, find its tool result and check if it's shallow
+    let shallowReadCount = 0;
+    for (const jr of jsonReadResults) {
+      // Find matching tool result
+      let resultContent = null;
+      for (const msg of messages) {
+        if (msg.role === "tool" && msg.tool_call_id === jr.id && typeof msg.content === "string") {
+          resultContent = msg.content; break;
+        }
+        if (msg.role === "user" && Array.isArray(msg.content)) {
+          const block = msg.content.find((b) => b && b.type === "tool_result" && b.tool_use_id === jr.id);
+          if (block) { resultContent = typeof block.content === "string" ? block.content : ""; break; }
+        }
+      }
+      if (!resultContent) continue;
+      const nonEmptyLines = resultContent.split("\n").filter((l) => l.trim()).length;
+      // Shallow: < 5 lines, starts with array opener, no closing bracket
+      if (nonEmptyLines < 5 && /^\s*\[/.test(resultContent) && !/\]\s*$/.test(resultContent.trimEnd())) {
+        shallowReadCount++;
+      }
+    }
+    if (shallowReadCount >= 1) {
+      score -= 0.75;
+      issues.push(
+        `Shallow JSON read: ${shallowReadCount} .json file${shallowReadCount > 1 ? "s" : ""} read with < 5 lines — array was incomplete, model drew conclusions from truncated data`,
+      );
+    }
+  }
+
+  // ── 17e. Repeated tool argument errors (-0.75) ────────────────────────────
+  // Detect when a tool returns "argument error" / "argument errors" multiple
+  // times in a row. This indicates the model can't figure out the correct tool
+  // signature and keeps retrying with broken inputs instead of adjusting.
+  {
+    const argErrorResults = toolResults.filter((tr) =>
+      /argument errors?/i.test(tr.content) ||
+      /missing required (argument|parameter)/i.test(tr.content) ||
+      /invalid argument/i.test(tr.content),
+    );
+    if (argErrorResults.length >= 3) {
+      score -= 0.75;
+      issues.push(
+        `Repeated tool argument errors: ${argErrorResults.length} tool calls returned argument errors — model couldn't correct its tool usage`,
+      );
+    } else if (argErrorResults.length >= 2) {
+      score -= 0.25;
+      issues.push(
+        `Tool argument errors: ${argErrorResults.length} tool calls returned argument errors`,
+      );
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
