@@ -150,9 +150,12 @@ function validateToolArgs(toolName, args) {
         delete corrected[key];
         wasCorrected = true;
       } else if (!wasCorrected) {
-        errors.push(
-          `Unknown parameter "${key}".${suggestion ? ` Did you mean "${suggestion}"?` : ""}`,
-        );
+        // Provide targeted hints for common shell-flag hallucinations
+        let hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+        if ((key === "-n" || key === "n") && toolName === "grep_search") {
+          hint = " Line numbers are always included in output_mode:'content' — no flag needed. Remove this parameter.";
+        }
+        errors.push(`Unknown parameter "${key}".${hint}`);
       }
     }
   }
