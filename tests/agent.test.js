@@ -324,6 +324,8 @@ describe("agent.js", () => {
   let logSpy;
 
   beforeEach(() => {
+    // Disable phase routing in unit tests — it changes loop flow and breaks single-response mocks
+    process.env.NEX_PHASE_ROUTING = "0";
     clearConversation();
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(process.stdout, "write").mockImplementation(() => {});
@@ -794,6 +796,9 @@ describe("agent.js", () => {
       ["504 Gateway Timeout", "API server error", {}],
     ];
 
+    // Tests mock provider as "ollama" but 5xx/401 retry is provider-gated.
+    // In tests the mock returns "ollama" so these would retry — disable phase routing
+    // so the retry logic for 5xx/401 (ollama-only) still triggers the immediate error path.
     test.each(cases)('"%s" shows "%s"', async (msg, expected, props) => {
       const err = new Error(msg);
       Object.assign(err, props);
