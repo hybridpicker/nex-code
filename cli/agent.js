@@ -2495,6 +2495,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
   const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
   const TARGETED_READ_HARD_CAP = _phaseEnabled ? 8 : 6; // absolute max reads of any single file
+  const NARROW_READ_PASS_THROUGH = 25; // reads ≤25 lines bypass overlap check — "zoom in" not re-read
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
   const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
@@ -4262,7 +4263,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 const newLen = newEnd - newStart || 1;
                 const oldLen = pe - ps || 1;
                 const superreads = overlapLen / oldLen >= 0.7 && overlapLen / newLen < 0.7;
-                if (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7) {
+                const isNarrowRead = newEnd - newStart <= NARROW_READ_PASS_THROUGH;
+                if (!isNarrowRead && (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7)) {
                   const shortPath = path.split("/").slice(-2).join("/");
                   const rangeKey = `${path}:${newStart}-${newEnd}`;
                   const rangeBlockCount = (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
