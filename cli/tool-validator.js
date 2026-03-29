@@ -141,20 +141,41 @@ function validateToolArgs(toolName, args) {
     }
   }
 
+  // Auto-correct common shell-flag hallucinations for grep-type tools
+  const GREP_TOOLS = new Set(["grep", "grep_search", "search_files"]);
+  if (GREP_TOOLS.has(toolName)) {
+    // -n: line numbers are implicit in output_mode:'content' — just drop the flag
+    if (("-n" in corrected || "n" in corrected) && !expectedKeys.includes("-n")) {
+      delete corrected["-n"];
+      delete corrected["n"];
+      wasCorrected = true;
+    }
+    // -i / --ignore-case: map to ignore_case boolean
+    if (("-i" in corrected || "--ignore-case" in corrected) && "ignore_case" in (schema.properties || {})) {
+      corrected["ignore_case"] = true;
+      delete corrected["-i"];
+      delete corrected["--ignore-case"];
+      wasCorrected = true;
+    }
+    // -r / --recursive: recursive is default behaviour — drop the flag
+    if ("-r" in corrected || "--recursive" in corrected) {
+      delete corrected["-r"];
+      delete corrected["--recursive"];
+      wasCorrected = true;
+    }
+  }
+
   // Check for unknown keys and suggest corrections
-  for (const key of providedKeys) {
+  for (const key of Object.keys(corrected)) {
     if (!expectedKeys.includes(key)) {
       const suggestion = closestMatch(key, expectedKeys);
       if (suggestion && !(suggestion in corrected)) {
-        corrected[suggestion] = args[key];
+        corrected[suggestion] = corrected[key];
         delete corrected[key];
         wasCorrected = true;
       } else if (!wasCorrected) {
         // Provide targeted hints for common shell-flag hallucinations
-        let hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
-        if ((key === "-n" || key === "n") && toolName === "grep_search") {
-          hint = " Line numbers are always included in output_mode:'content' — no flag needed. Remove this parameter.";
-        }
+        const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
         errors.push(`Unknown parameter "${key}".${hint}`);
       }
     }
