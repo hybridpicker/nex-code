@@ -52,12 +52,19 @@ function _parseExampleFile(filePath) {
     if (aIdx === -1) return null;
     const afterA = content.slice(aIdx + 5); // skip "\nA: |"
     const assistantLines = [];
+    let pendingBlanks = 0;
     for (const line of afterA.split("\n")) {
-      // Collect indented lines (2+ spaces) and stop at blank non-indented
+      // Collect indented lines (2+ spaces); allow blank lines within the block
       if (line.startsWith("  ")) {
+        // Flush any buffered blank lines before adding real content
+        while (pendingBlanks > 0) {
+          assistantLines.push("");
+          pendingBlanks--;
+        }
         assistantLines.push(line.slice(2)); // strip leading 2 spaces
       } else if (line.trim() === "") {
-        if (assistantLines.length > 0) break;
+        // Buffer blank lines — only include them if more indented content follows
+        if (assistantLines.length > 0) pendingBlanks++;
       } else {
         break;
       }
