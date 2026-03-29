@@ -99,7 +99,7 @@ npm update -g nex-code
 
 **Open-model first.** Not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
 
-**Smart model routing.** The built-in `/benchmark` system tests all configured models against 33 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
+**Smart model routing.** The built-in `/benchmark` system tests all configured models against 56 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
 
 | Detected task             | Routed model (example)      |
 | ------------------------- | --------------------------- |
@@ -108,6 +108,16 @@ npm update -g nex-code
 | Data / SQL / migrations   | `devstral-2:123b`           |
 | Agentic swarms            | `minimax-m2.7:cloud`        |
 | General coding            | `devstral-2:123b` (default) |
+
+**Phase-based execution.** On Ollama Cloud, each task automatically runs through three phases — each with the optimal model:
+
+| Phase         | Purpose                          | Default model            |
+| ------------- | -------------------------------- | ------------------------ |
+| **Plan**      | Analyze codebase, find root cause | `qwen3-coder:480b`     |
+| **Implement** | Write code, edit files            | active model (default)  |
+| **Verify**    | Run tests, check correctness     | `devstral-small-2:24b` |
+
+The verify phase catches incomplete work before reporting "done" — if tests fail, it loops back to implement automatically. Phase models are auto-updated by `/benchmark`. Disable with `NEX_PHASE_ROUTING=0`.
 
 **Built-in VS Code extension.** A sidebar chat panel with streaming output, collapsible tool cards, and native VS Code theme support — shipped in the same repo, no separate install.
 

@@ -19,6 +19,7 @@ afterAll(() => {
 // Require AFTER spy is set up (module reads homedir at load time)
 let CATEGORIES, DETECTION_ORDER, detectCategory, getModelForCategory;
 let saveRoutingConfig, loadRoutingConfig, ROUTING_CONFIG_PATH;
+let getModelForPhase, getPhaseBudget, isPhaseRoutingEnabled, DEFAULT_PHASE_BUDGETS;
 
 beforeAll(() => {
   const mod = require("../cli/task-router");
@@ -29,6 +30,10 @@ beforeAll(() => {
   saveRoutingConfig = mod.saveRoutingConfig;
   loadRoutingConfig = mod.loadRoutingConfig;
   ROUTING_CONFIG_PATH = mod.ROUTING_CONFIG_PATH;
+  getModelForPhase = mod.getModelForPhase;
+  getPhaseBudget = mod.getPhaseBudget;
+  isPhaseRoutingEnabled = mod.isPhaseRoutingEnabled;
+  DEFAULT_PHASE_BUDGETS = mod.DEFAULT_PHASE_BUDGETS;
 });
 
 describe("task-router.js", () => {
@@ -192,6 +197,208 @@ describe("task-router.js", () => {
 
     it("returns null for unknown category", () => {
       expect(getModelForCategory("unknown")).toBeNull();
+    });
+  });
+
+  // ─── getModelForPhase ─────────────────────────────────────────────
+  describe("getModelForPhase()", () => {
+    let registryMock;
+
+    beforeEach(() => {
+      delete process.env.NEX_PHASE_ROUTING;
+      const dir = path.dirname(ROUTING_CONFIG_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
+      try {
+        registryMock = jest.spyOn(
+          require("../cli/providers/registry"),
+          "getActiveProviderName",
+        );
+        registryMock.mockReturnValue("openai");
+      } catch {
+        registryMock = null;
+      }
+    });
+
+    afterEach(() => {
+      delete process.env.NEX_PHASE_ROUTING;
+      if (registryMock) registryMock.mockRestore();
+    });
+
+    it("returns phase model when phases config exists", () => {
+      saveRoutingConfig({
+        coding: "default-model",
+        phases: { plan: "plan-model", implement: "impl-model", verify: "verify-model" },
+      });
+      expect(getModelForPhase("plan", "coding")).toBe("plan-model");
+      expect(getModelForPhase("implement", "coding")).toBe("impl-model");
+      expect(getModelForPhase("verify", "coding")).toBe("verify-model");
+    });
+
+    it("falls back to category model when phase not configured", () => {
+      saveRoutingConfig({ coding: "category-model" });
+      expect(getModelForPhase("plan", "coding")).toBe("category-model");
+    });
+
+    it("returns null when neither phase nor category configured", () => {
+      expect(getModelForPhase("plan", "coding")).toBeNull();
+    });
+
+    it("returns null when no categoryId and no phase config", () => {
+      expect(getModelForPhase("plan")).toBeNull();
+    });
+
+    it("uses builtin defaults when provider is ollama", () => {
+      if (registryMock) registryMock.mockReturnValue("ollama");
+      expect(getModelForPhase("plan", "coding")).toBe("qwen3-coder:480b");
+      expect(getModelForPhase("verify", "coding")).toBe("devstral-small-2:24b");
+    });
+
+    it("uses builtin defaults when NEX_PHASE_ROUTING=1", () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      expect(getModelForPhase("plan", "coding")).toBe("qwen3-coder:480b");
+      expect(getModelForPhase("verify", "coding")).toBe("devstral-small-2:24b");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("explicit config overrides builtin defaults", () => {
+      if (registryMock) registryMock.mockReturnValue("ollama");
+      saveRoutingConfig({ phases: { plan: "custom-plan-model" } });
+      expect(getModelForPhase("plan", "coding")).toBe("custom-plan-model");
+    });
+  });
+
+  // ─── getPhaseBudget ───────────────────────────────────────────────
+  describe("getPhaseBudget()", () => {
+    beforeEach(() => {
+      const dir = path.dirname(ROUTING_CONFIG_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
+    });
+
+    it("returns default budgets when not configured", () => {
+      expect(getPhaseBudget("plan")).toBe(DEFAULT_PHASE_BUDGETS.plan);
+      expect(getPhaseBudget("implement")).toBe(DEFAULT_PHASE_BUDGETS.implement);
+      expect(getPhaseBudget("verify")).toBe(DEFAULT_PHASE_BUDGETS.verify);
+    });
+
+    it("returns custom budgets from config", () => {
+      saveRoutingConfig({ phaseBudgets: { plan: 5, implement: 50, verify: 12 } });
+      expect(getPhaseBudget("plan")).toBe(5);
+      expect(getPhaseBudget("implement")).toBe(50);
+      expect(getPhaseBudget("verify")).toBe(12);
+    });
+
+    it("returns 20 for unknown phase", () => {
+      expect(getPhaseBudget("unknown")).toBe(20);
+    });
+  });
+
+  // ─── isPhaseRoutingEnabled ────────────────────────────────────────
+  describe("isPhaseRoutingEnabled()", () => {
+    let registryMock;
+
+    beforeEach(() => {
+      delete process.env.NEX_PHASE_ROUTING;
+      const dir = path.dirname(ROUTING_CONFIG_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
+      try {
+        registryMock = jest.spyOn(
+          require("../cli/providers/registry"),
+          "getActiveProviderName",
+        );
+      } catch {
+        registryMock = null;
+      }
+    });
+
+    afterEach(() => {
+      delete process.env.NEX_PHASE_ROUTING;
+      if (registryMock) registryMock.mockRestore();
+    });
+
+    it("returns false when no phases config and provider is not ollama", () => {
+      if (registryMock) registryMock.mockReturnValue("openai");
+      expect(isPhaseRoutingEnabled()).toBe(false);
+    });
+
+    it("returns false when phases is empty object and provider is not ollama", () => {
+      if (registryMock) registryMock.mockReturnValue("openai");
+      saveRoutingConfig({ phases: {} });
+      expect(isPhaseRoutingEnabled()).toBe(false);
+    });
+
+    it("returns true when phases has entries", () => {
+      if (registryMock) registryMock.mockReturnValue("openai");
+      saveRoutingConfig({ phases: { plan: "model-a" } });
+      expect(isPhaseRoutingEnabled()).toBe(true);
+    });
+
+    it("auto-enables when provider is ollama", () => {
+      if (registryMock) registryMock.mockReturnValue("ollama");
+      expect(isPhaseRoutingEnabled()).toBe(true);
+    });
+
+    it("returns true when NEX_PHASE_ROUTING=1", () => {
+      if (registryMock) registryMock.mockReturnValue("openai");
+      process.env.NEX_PHASE_ROUTING = "1";
+      expect(isPhaseRoutingEnabled()).toBe(true);
+    });
+
+    it("returns false when NEX_PHASE_ROUTING=0 even with phases config", () => {
+      process.env.NEX_PHASE_ROUTING = "0";
+      saveRoutingConfig({ phases: { plan: "model-a" } });
+      expect(isPhaseRoutingEnabled()).toBe(false);
+    });
+
+    it("returns false when NEX_PHASE_ROUTING=0 even with ollama provider", () => {
+      if (registryMock) registryMock.mockReturnValue("ollama");
+      process.env.NEX_PHASE_ROUTING = "0";
+      expect(isPhaseRoutingEnabled()).toBe(false);
+    });
+  });
+
+  // ─── saveRoutingConfig preserves nested keys ──────────────────────
+  describe("saveRoutingConfig() nested key preservation", () => {
+    beforeEach(() => {
+      const dir = path.dirname(ROUTING_CONFIG_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
+    });
+
+    it("preserves existing phases when saving category-only update", () => {
+      saveRoutingConfig({
+        coding: "model-a",
+        phases: { plan: "plan-model" },
+      });
+      saveRoutingConfig({ coding: "model-b" });
+      const config = loadRoutingConfig();
+      expect(config.coding).toBe("model-b");
+      expect(config.phases.plan).toBe("plan-model");
+    });
+
+    it("preserves existing phaseBudgets when saving category-only update", () => {
+      saveRoutingConfig({
+        coding: "model-a",
+        phaseBudgets: { plan: 15 },
+      });
+      saveRoutingConfig({ coding: "model-c" });
+      const config = loadRoutingConfig();
+      expect(config.coding).toBe("model-c");
+      expect(config.phaseBudgets.plan).toBe(15);
+    });
+
+    it("overwrites phases when explicitly provided", () => {
+      saveRoutingConfig({
+        phases: { plan: "old-model" },
+      });
+      saveRoutingConfig({
+        phases: { plan: "new-model", verify: "verify-model" },
+      });
+      const config = loadRoutingConfig();
+      expect(config.phases.plan).toBe("new-model");
+      expect(config.phases.verify).toBe("verify-model");
     });
   });
 });

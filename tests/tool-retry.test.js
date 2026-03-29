@@ -141,6 +141,7 @@ describe("Tool Call Retry with Schema Hints", () => {
   let logSpy;
 
   beforeEach(() => {
+    process.env.NEX_PHASE_ROUTING = "0";
     clearConversation();
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     jest.spyOn(process.stdout, "write").mockImplementation(() => {});

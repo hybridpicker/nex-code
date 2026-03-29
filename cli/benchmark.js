@@ -567,6 +567,67 @@ const TASKS = [
   },
 ];
 
+// ─── Phase-specific tasks: measure model suitability for plan/verify phases ──
+const PHASE_TASKS = [
+  {
+    id: "phase-plan-diagnosis",
+    category: "phase-plan",
+    prompt:
+      "The server returns 500 on /api/users. The error log shows: TypeError: Cannot read property 'map' of undefined at routes/users.js:42. Read the relevant file to diagnose the root cause.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /users/i.test(args.path),
+  },
+  {
+    id: "phase-plan-search",
+    category: "phase-plan",
+    prompt:
+      "We're getting CORS errors in production. Search the codebase for where CORS middleware is configured.",
+    expectedTool: "grep",
+    validateArgs: (args) =>
+      typeof args.pattern === "string" && /cors/i.test(args.pattern),
+  },
+  {
+    id: "phase-plan-context",
+    category: "phase-plan",
+    prompt:
+      "The login page shows a blank screen after the last deploy. Check git log for recent changes that might have broken it.",
+    expectedTool: "git_log",
+    validateArgs: () => true,
+  },
+  {
+    id: "phase-verify-test",
+    category: "phase-verify",
+    prompt:
+      "The file src/utils.js was modified to fix a null pointer bug. Run the test suite to verify the fix works correctly.",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      /test|jest|npm\s+test|pytest|mocha/.test(args.command),
+  },
+  {
+    id: "phase-verify-read",
+    category: "phase-verify",
+    prompt:
+      "A patch was applied to config/database.js to fix the connection pool. Read the file to verify the changes look correct.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /database/i.test(args.path),
+  },
+  {
+    id: "phase-verify-lint",
+    category: "phase-verify",
+    prompt:
+      "Code was modified in src/components/Header.tsx. Run the linter to check for any style violations.",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      /lint|eslint|prettier|tsc/.test(args.command),
+  },
+];
+
+const ALL_TASKS = [...TASKS, ...PHASE_TASKS];
+
 const DEFAULT_MODELS = [
   "devstral-2:123b",
   "kimi-k2.5",
@@ -717,6 +778,8 @@ const CATEGORY_ROUTE_KEY = {
   resilience: "coding", // resilience is a core coding-agent skill
   ssh: "sysadmin",      // SSH tasks route to sysadmin model
   git: "coding",        // git workflow is a coding-category skill
+  "phase-plan": "plan",
+  "phase-verify": "verify",
 };
 
 function buildSummary(modelResults) {
@@ -736,6 +799,8 @@ function buildSummary(modelResults) {
         "sysadmin",
         "data",
         "agentic",
+        "plan",
+        "verify",
       ]) {
         const catResults = results.filter(
           (r) => CATEGORY_ROUTE_KEY[r.category] === routeKey,
@@ -783,6 +848,8 @@ function buildCategoryWinners(summary) {
     "sysadmin",
     "data",
     "agentic",
+    "plan",
+    "verify",
   ]) {
     const candidates = summary
       .filter((r) => r.categoryScores[routeKey] !== undefined)
@@ -910,9 +977,13 @@ function autoUpdateRouting(summary) {
     const existing = loadRoutingConfig();
     const updated = { ...existing };
     const changed = [];
+    const PHASE_KEYS = new Set(["plan", "verify"]);
 
     for (const [cat, { model, score }] of Object.entries(winners)) {
-      const currentModel = existing[cat];
+      const isPhase = PHASE_KEYS.has(cat);
+      const currentModel = isPhase
+        ? (existing.phases && existing.phases[cat])
+        : existing[cat];
 
       // If the currently-routed model was also tested in this run, only update
       // if the new winner genuinely beats it (buildCategoryWinners already handles
@@ -927,9 +998,17 @@ function autoUpdateRouting(summary) {
         }
       }
 
-      if (updated[cat] !== model) {
-        updated[cat] = model;
-        changed.push(`${cat}→${model}`);
+      if (isPhase) {
+        if (!updated.phases) updated.phases = {};
+        if (updated.phases[cat] !== model) {
+          updated.phases[cat] = model;
+          changed.push(`phase:${cat}→${model}`);
+        }
+      } else {
+        if (updated[cat] !== model) {
+          updated[cat] = model;
+          changed.push(`${cat}→${model}`);
+        }
       }
     }
 
@@ -947,7 +1026,7 @@ function autoUpdateRouting(summary) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 async function runBenchmark({ models, quick = false, onProgress } = {}) {
-  const tasks = quick ? TASKS.slice(0, QUICK_TASK_COUNT) : TASKS;
+  const tasks = quick ? TASKS.slice(0, QUICK_TASK_COUNT) : ALL_TASKS;
   const modelList =
     models?.length > 0 ? models : quick ? QUICK_MODELS : DEFAULT_MODELS;
 
@@ -994,7 +1073,7 @@ async function runDiscoverBenchmark({
 
   for (const model of newModels) {
     modelResults[model] = [];
-    for (const task of TASKS) {
+    for (const task of ALL_TASKS) {
       onProgress?.({ model, task: task.id, done: false });
       const r = await runTask(task, model);
       modelResults[model].push(r);
@@ -1016,7 +1095,7 @@ async function runDiscoverBenchmark({
   }
   merged.sort((a, b) => b.score - a.score);
 
-  printResults(merged, TASKS.length);
+  printResults(merged, ALL_TASKS.length);
   autoUpdateRouting(merged);
   return merged;
 }
@@ -1449,6 +1528,8 @@ module.exports = {
   buildSummary,
   buildCategoryWinners,
   TASKS,
+  PHASE_TASKS,
+  ALL_TASKS,
   scoreResult,
   DEFAULT_MODELS,
   QUICK_MODELS,
