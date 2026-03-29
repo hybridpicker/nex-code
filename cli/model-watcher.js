@@ -34,13 +34,36 @@ const KNOWN_CONTEXT = {
   "kimi-k2.5": 262144,
   "kimi-k2-thinking": 262144,
   "minimax-m2.7:cloud": 200000,
+  "minimax-m2.7": 200000,
   "minimax-m2.5": 131072,
+  "minimax-m2.1": 200000,
+  "minimax-m2": 200000,
   "qwen3.5:397b": 262144,
   "qwen3.5:35b-a3b": 262144,
   "deepseek-v3.2": 131072,
+  "deepseek-v3.1:671b": 131072,
   "cogito-2.1:671b": 131072,
   "glm-5": 128000,
+  "glm-5:cloud": 128000,
   "glm-4.7": 128000,
+  "glm-4.6": 128000,
+  "qwen3-vl:235b": 131072,
+  "qwen3-vl:235b-instruct": 131072,
+  "qwen3-coder-next": 262144,
+  "qwen3-next:80b": 131072,
+  "mistral-large-3:675b": 131072,
+  "ministral-3:14b": 131072,
+  "ministral-3:8b": 131072,
+  "ministral-3:3b": 32768,
+  "nemotron-3-nano:30b": 131072,
+  "nemotron-3-super": 262144,
+  "rnj-1:8b": 131072,
+  "gpt-oss:120b": 131072,
+  "gpt-oss:20b": 131072,
+  "gemma3:4b": 131072,
+  "gemma3:12b": 131072,
+  "gemma3:27b": 131072,
+  "gemini-3-flash-preview": 131072,
 };
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -107,14 +130,18 @@ const SENTINEL_START = "<!-- nex-benchmark-start -->";
 const SENTINEL_END = "<!-- nex-benchmark-end -->";
 
 const BEST_FOR = {
-  "devstral-2:123b": "Default — fastest + most reliable tool selection",
+  "qwen3-vl:235b": "Overall #1 — frontier tool selection, data + agentic tasks",
+  "qwen3-vl:235b-instruct": "Best latency/score balance — recommended default",
+  "devstral-2:123b": "Sysadmin + SSH tasks, reliable coding",
   "devstral-small-2:24b": "Fast sub-agents, simple lookups",
-  "qwen3-coder:480b": "Coding-heavy sessions, heavy sub-agents",
+  "ministral-3:8b": "Fastest strong model — 2.2s latency, 70+ score",
+  "qwen3-coder:480b": "Heavy coding sessions, large context",
   "kimi-k2:1t": "Large repos (>100K tokens)",
   "kimi-k2.5": "Large repos — faster than k2:1t",
-  "minimax-m2.7:cloud": "Complex swarm / multi-agent sessions (Toolathon SOTA)",
+  "minimax-m2.7:cloud": "Complex swarm / multi-agent sessions",
   "minimax-m2.5": "Multi-agent, large context",
   "qwen3.5:35b-a3b": "Fast MoE with 256K context",
+  "gpt-oss:20b": "Fast small model, good overall score",
 };
 
 function ctxLabel(ctx) {

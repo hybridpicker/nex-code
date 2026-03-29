@@ -361,6 +361,33 @@ const TASKS = [
       return hay.includes("migrat");
     },
   },
+  {
+    id: "data-find-schema",
+    category: "data",
+    prompt: "Find where the database schema or models are defined in this project.",
+    expectedTool: ["grep", "glob"],
+    validateArgs: (args) => {
+      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
+      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
+      return false;
+    },
+  },
+  {
+    id: "data-write-query",
+    category: "data",
+    prompt: "Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
+    expectedTool: "write_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && args.path.includes(".sql"),
+  },
+  {
+    id: "data-read-env",
+    category: "data",
+    prompt: "Read the .env file to find the database connection string.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /\.env|env\./i.test(args.path),
+  },
 
   // ── Resilience — error recovery & robustness ──────────────────────────────
   // These tasks simulate real failure scenarios that nex-code encounters in
@@ -624,11 +651,63 @@ const PHASE_TASKS = [
       typeof args.command === "string" &&
       /lint|eslint|prettier|tsc/.test(args.command),
   },
+  {
+    id: "phase-plan-git-blame",
+    category: "phase-plan",
+    prompt: "A production bug was introduced 2 days ago. Use git log to find commits from the last 2 days to identify what changed.",
+    expectedTool: "git_log",
+    validateArgs: () => true,
+  },
+  {
+    id: "phase-plan-error-trace",
+    category: "phase-plan",
+    prompt: "The error stack trace mentions src/middleware/auth.js line 87. Read the file around that line to understand the bug.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /auth/i.test(args.path),
+  },
+  {
+    id: "phase-plan-grep-config",
+    category: "phase-plan",
+    prompt: "Users report the app is using wrong API keys in staging. Search for where API_KEY is loaded from environment.",
+    expectedTool: "grep",
+    validateArgs: (args) =>
+      typeof args.pattern === "string" && /api.?key|env/i.test(args.pattern),
+  },
+  {
+    id: "phase-verify-build",
+    category: "phase-verify",
+    prompt: "The TypeScript source was modified. Run the build command to verify there are no compilation errors.",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      /build|tsc|compile/.test(args.command),
+  },
+  {
+    id: "phase-verify-git-diff",
+    category: "phase-verify",
+    prompt: "Changes were just committed. Show the git diff of the last commit to verify only the intended files were modified.",
+    expectedTool: ["git_diff", "bash"],
+    validateArgs: (args) => {
+      if (args.command && /git.*diff|diff.*HEAD/.test(args.command)) return true;
+      return true; // git_diff tool is always valid here
+    },
+  },
+  {
+    id: "phase-verify-read-config",
+    category: "phase-verify",
+    prompt: "The deployment config was updated. Read config/production.json to verify the changes are correct before deploying.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /config|production|deploy/i.test(args.path),
+  },
 ];
 
 const ALL_TASKS = [...TASKS, ...PHASE_TASKS];
 
-const DEFAULT_MODELS = [
+// Hardcoded seed list — used only when no benchmark-results.json exists yet.
+// After the first /benchmark --all run this list is superseded by saved results.
+const _DEFAULT_MODELS_SEED = [
   "devstral-2:123b",
   "kimi-k2.5",
   "glm-5:cloud",
@@ -639,11 +718,43 @@ const DEFAULT_MODELS = [
   "kimi-k2:1t",
 ];
 
-const QUICK_MODELS = [
-  "minimax-m2.7:cloud",
-  "qwen3-coder:480b",
-  "devstral-2:123b",
-];
+/**
+ * Build DEFAULT_MODELS dynamically from saved benchmark results.
+ * Returns models that scored ≥ MIN_SCORE, capped at MAX_MODELS, sorted by score.
+ * Falls back to the hardcoded seed list if no results file exists.
+ */
+function _loadDefaultModels() {
+  const MIN_SCORE = 60;
+  const MAX_MODELS = 12;
+  try {
+    const p = require("path").join(
+      require("os").homedir(),
+      ".nex-code",
+      "benchmark-results.json",
+    );
+    if (!require("fs").existsSync(p)) return _DEFAULT_MODELS_SEED;
+    const saved = JSON.parse(require("fs").readFileSync(p, "utf-8"));
+    if (!Array.isArray(saved) || saved.length === 0) return _DEFAULT_MODELS_SEED;
+    return saved
+      .filter((r) => typeof r.score === "number" && r.score >= MIN_SCORE)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MAX_MODELS)
+      .map((r) => r.model);
+  } catch {
+    return _DEFAULT_MODELS_SEED;
+  }
+}
+
+const DEFAULT_MODELS = _loadDefaultModels();
+
+// QUICK_MODELS: top 3 from DEFAULT_MODELS (fastest well-known models first)
+const _QUICK_SEED = ["minimax-m2.7:cloud", "qwen3-coder:480b", "devstral-2:123b"];
+const QUICK_MODELS = (() => {
+  // Pick top 3 from DEFAULT_MODELS that overlap with seed, else use full top-3
+  const top3 = DEFAULT_MODELS.slice(0, 3);
+  return top3.length >= 3 ? top3 : _QUICK_SEED;
+})();
+
 const QUICK_TASK_COUNT = 7;
 
 // Score weights — tool name accuracy matters most for nex-code reliability
@@ -838,9 +949,15 @@ function buildSummary(modelResults) {
  */
 function buildCategoryWinners(summary) {
   const winners = {};
-  // Within this score band, prefer the faster model over the marginally better one.
-  // Avoids routing to a slow model for only a trivial quality gain.
   const LATENCY_TIEBREAK_BAND = 5;
+  // Scores this high on a small sample are likely flukes — require a clear gap
+  const SUSPICIOUS_SCORE = 95;
+  const SUSPICIOUS_MIN_GAP = 15; // 2nd place must be ≥15 pts behind to trust a near-100 score
+  // Minimum number of tasks in a category before trusting routing updates
+  const MIN_TASKS_FOR_ROUTING = 4;
+  // Minimum overall score — prevents weak models that got lucky on one category
+  // from hijacking routing (e.g. nemotron rank #21 overall winning coding routing)
+  const MIN_OVERALL_SCORE = 65;
 
   for (const routeKey of [
     "coding",
@@ -852,14 +969,55 @@ function buildCategoryWinners(summary) {
     "verify",
   ]) {
     const candidates = summary
-      .filter((r) => r.categoryScores[routeKey] !== undefined)
+      .filter(
+        (r) =>
+          r.categoryScores[routeKey] !== undefined &&
+          r.score >= MIN_OVERALL_SCORE,
+      )
       .sort((a, b) => b.categoryScores[routeKey] - a.categoryScores[routeKey]);
     if (candidates.length === 0) continue;
 
+    // Count how many tasks belong to this route category (use first model's results)
+    const refResults = candidates[0]?.results || [];
+    const catTaskCount = refResults.filter(
+      (r) => CATEGORY_ROUTE_KEY[r.category] === routeKey,
+    ).length;
+
+    if (catTaskCount < MIN_TASKS_FOR_ROUTING) continue; // too few tasks — skip
+
     const best = candidates[0];
-    // Within the tiebreak band, pick the lowest-latency model
+    const second = candidates[1];
+
+    // Suspicion check: near-100 score on a small sample requires a large gap
+    if (
+      best.categoryScores[routeKey] >= SUSPICIOUS_SCORE &&
+      catTaskCount < 8 &&
+      second
+    ) {
+      const gap =
+        best.categoryScores[routeKey] - second.categoryScores[routeKey];
+      if (gap < SUSPICIOUS_MIN_GAP) {
+        // Fluke — fall back to the highest overall-scoring model that has category data
+        const reliable = summary
+          .filter((r) => r.categoryScores[routeKey] !== undefined)
+          .find((r) => r.categoryScores[routeKey] < SUSPICIOUS_SCORE);
+        if (reliable) {
+          winners[routeKey] = {
+            model: reliable.model,
+            score: reliable.categoryScores[routeKey],
+            avgLatency: reliable.avgLatency,
+            _flukePrevented: true,
+          };
+        }
+        continue;
+      }
+    }
+
+    // Standard: within tiebreak band, prefer lowest latency
     const inBand = candidates.filter(
-      (r) => best.categoryScores[routeKey] - r.categoryScores[routeKey] <= LATENCY_TIEBREAK_BAND
+      (r) =>
+        best.categoryScores[routeKey] - r.categoryScores[routeKey] <=
+        LATENCY_TIEBREAK_BAND,
     );
     const winner = inBand.sort((a, b) => a.avgLatency - b.avgLatency)[0];
 
@@ -1025,27 +1183,59 @@ function autoUpdateRouting(summary) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-async function runBenchmark({ models, quick = false, onProgress } = {}) {
+async function runBenchmark({
+  models,
+  quick = false,
+  onProgress,
+  parallelModels = 1,
+} = {}) {
   const tasks = quick ? TASKS.slice(0, QUICK_TASK_COUNT) : ALL_TASKS;
   const modelList =
     models?.length > 0 ? models : quick ? QUICK_MODELS : DEFAULT_MODELS;
 
   const modelResults = {};
+  for (const m of modelList) modelResults[m] = [];
 
-  for (const model of modelList) {
-    modelResults[model] = [];
-    for (const task of tasks) {
-      onProgress?.({ model, task: task.id, done: false });
-      const r = await runTask(task, model);
-      modelResults[model].push(r);
-      onProgress?.({
-        model,
-        task: task.id,
-        done: true,
-        score: scoreResult(r),
-        error: r.error,
-      });
+  if (parallelModels <= 1) {
+    // Sequential: original behaviour
+    for (const model of modelList) {
+      for (const task of tasks) {
+        onProgress?.({ model, task: task.id, done: false });
+        const r = await runTask(task, model);
+        modelResults[model].push(r);
+        onProgress?.({
+          model,
+          task: task.id,
+          done: true,
+          score: scoreResult(r),
+          error: r.error,
+        });
+      }
     }
+  } else {
+    // Parallel: run up to parallelModels models concurrently.
+    // Tasks within each model still run sequentially (avoids hammering one endpoint).
+    const concurrency = Math.min(parallelModels, modelList.length);
+    const queue = [...modelList];
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (queue.length > 0) {
+        const model = queue.shift();
+        if (!model) break;
+        for (const task of tasks) {
+          onProgress?.({ model, task: task.id, done: false });
+          const r = await runTask(task, model);
+          modelResults[model].push(r);
+          onProgress?.({
+            model,
+            task: task.id,
+            done: true,
+            score: scoreResult(r),
+            error: r.error,
+          });
+        }
+      }
+    });
+    await Promise.all(workers);
   }
 
   const summary = buildSummary(modelResults);

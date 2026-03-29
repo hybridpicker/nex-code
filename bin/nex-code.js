@@ -272,6 +272,28 @@ if (promptFileIdx !== -1) {
       preventSleep();
       const { startREPL } = require("../cli/index");
       startREPL();
+      // Background: check for new Ollama Cloud models once per week (non-blocking)
+      setTimeout(async () => {
+        try {
+          const { loadKnownModels, findNewModels } = require("../cli/model-watcher");
+          const store = loadKnownModels();
+          const lastChecked = store.lastChecked ? new Date(store.lastChecked) : null;
+          const daysSince = lastChecked
+            ? (Date.now() - lastChecked.getTime()) / 86400000
+            : 999;
+          if (daysSince < 7) return; // checked recently
+          if (!process.env.OLLAMA_API_KEY) return; // no key — skip silently
+          const { newModels } = await findNewModels();
+          if (newModels.length > 0) {
+            const { C } = require("../cli/ui");
+            process.stdout.write(
+              `\n${C.dim}💡 ${newModels.length} new Ollama Cloud model(s) available — /benchmark --discover to test them${C.reset}\n`,
+            );
+          }
+        } catch {
+          /* silent — never break startup */
+        }
+      }, 3000); // 3s delay so REPL output settles first
     });
   }
 }

@@ -492,6 +492,17 @@ async function runOrchestrated(prompt, opts = {}) {
   }
   console.log("");
 
+  // Build file ownership map: assign each file path to the first sub-task whose
+  // scope mentions it. Later agents get a read-only constraint on owned files.
+  const _fileOwnership = new Map(); // filePath → agentIndex
+  for (let _oi = 0; _oi < subTasks.length; _oi++) {
+    for (const _path of subTasks[_oi].scope) {
+      if (_path && !_fileOwnership.has(_path)) {
+        _fileOwnership.set(_path, _oi);
+      }
+    }
+  }
+
   // ── Phase 2: Execute sub-agents ────────────────────────────
   onProgress("executing");
   console.log(
@@ -552,9 +563,23 @@ RULES:
         .map((f) => `Agent ${f.agentId} found: ${f.summary}`)
         .join("\n");
 
+      // Compute file ownership constraints for this agent
+      const _ownedFiles = [..._fileOwnership.entries()]
+        .filter(([, owner]) => owner === idx)
+        .map(([p]) => p);
+      const _readOnlyFiles = [..._fileOwnership.entries()]
+        .filter(([, owner]) => owner !== idx)
+        .map(([p]) => p);
+
       const contextParts = [
         priorFindings ? `Prior agent findings:\n${priorFindings}\n` : "",
         st.scope.length > 0 ? `Focus on files: ${st.scope.join(", ")}` : "",
+        _ownedFiles.length > 0
+          ? `You OWN these files (may read+write): ${_ownedFiles.join(", ")}`
+          : "",
+        _readOnlyFiles.length > 0
+          ? `READ ONLY (owned by other agents, do NOT write): ${_readOnlyFiles.join(", ")}`
+          : "",
       ].filter(Boolean);
 
       // Model for this specific sub-task (routed by category)

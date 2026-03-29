@@ -3135,6 +3135,69 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 /* non-fatal */
               }
 
+              // Build structured pending-work manifest: what's done vs. what's left.
+              // Extract file paths mentioned in the original task that haven't been
+              // modified yet — gives the post-wipe model an unambiguous "next file" list.
+              let _pendingFileCount = 0;
+              {
+                const _originalTaskText =
+                  typeof _firstTask?.content === "string"
+                    ? _firstTask.content
+                    : Array.isArray(_firstTask?.content)
+                      ? _firstTask.content
+                          .filter((b) => b.type === "text")
+                          .map((b) => b.text)
+                          .join(" ")
+                      : "";
+                const _mentionedPaths = (
+                  _originalTaskText.match(
+                    /(?:^|\s)([\w./\-]+\.(?:js|ts|jsx|tsx|py|json|yml|yaml|sh|css|scss|html|md|go|rs|java|rb|php))/gm,
+                  ) || []
+                )
+                  .map((m) => m.trim())
+                  .filter(Boolean);
+                const _completedPaths = [...filesModified];
+                const _pendingPaths = _mentionedPaths.filter(
+                  (p) =>
+                    !_completedPaths.some(
+                      (c) => c.endsWith(p) || p.endsWith(c.split("/").pop()),
+                    ),
+                );
+                _pendingFileCount = _pendingPaths.length;
+                // Find the last edit/write/patch tool result for lastEdit field
+                const _lastEditResult = [...conversationMessages]
+                  .reverse()
+                  .find(
+                    (m) =>
+                      m.role === "tool" &&
+                      typeof m.content === "string" &&
+                      !m.content.startsWith("BLOCKED:") &&
+                      m.content.length > 5,
+                  );
+                const _manifest = {
+                  completed: _completedPaths.map((f) =>
+                    f.split("/").slice(-2).join("/"),
+                  ),
+                  pending:
+                    _pendingPaths.length > 0
+                      ? _pendingPaths
+                      : _completedPaths.length === 0
+                        ? ["(task files not yet identified)"]
+                        : [],
+                  lastEdit: _lastEditResult
+                    ? _lastEditResult.content.trim().slice(0, 120)
+                    : null,
+                };
+                if (
+                  _manifest.completed.length > 0 ||
+                  _manifest.pending.length > 0
+                ) {
+                  _findingParts.unshift(
+                    `Work manifest:\n${JSON.stringify(_manifest, null, 2)}`,
+                  );
+                }
+              }
+
               if (_findingParts.length > 0) {
                 const _findingsMsg = {
                   role: "user",
@@ -3174,7 +3237,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
               apiMessages = _superNuclear;
               _superNuclearFires++;
-              _postWipeToolBudget = 12; // enforce: model gets at most 12 more tool calls (extendable to 17 on progress)
+              // Scale budget with pending work: 3 extra calls per pending file, capped at +15.
+              // Ensures a 5-file task has enough budget to read + edit remaining files post-wipe.
+              _postWipeToolBudget = 12 + Math.min(_pendingFileCount * 3, 15); // extendable +5 on progress
               _postWipeEverFired = true; // track that a wipe occurred (distinguishes exhausted from initial -1)
               _filesModifiedAtWipe = filesModified.size; // track progress baseline for budget extension
               _postWipeBudgetExtended = false; // one-time extension flag
@@ -3615,7 +3680,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               conversationMessages.push(phaseMsg);
               apiMessages.push(phaseMsg);
               i = 0;
-              iterLimit = getPhaseBudget("verify");
+              iterLimit = Math.min(
+                getPhaseBudget("verify") + Math.max(0, (filesModified.size - 2) * 2),
+                20,
+              );
               continue;
             }
           } else if (_currentPhase === "verify") {
@@ -4858,11 +4926,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Creation tasks: no debugging needed, agent should write almost immediately.
           // Cap: 4 reads before first edit (just enough to check existing structure),
           // then 2 reads after any edit (verify once, then keep building).
+          // In implement phase the model already has a plan — cap pre-edit reads
+          // to 6 (instead of 12) to prevent broad re-investigation.
+          const _phaseAwareCap =
+            _phaseEnabled && _currentPhase === "implement"
+              ? Math.min(INVESTIGATION_CAP, 6)
+              : INVESTIGATION_CAP;
           const _effectiveCap = _rootCauseDetected
             ? 3
             : _isCreationTask
               ? (_editsMadeThisSession > 0 ? 2 : 4)
-              : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : INVESTIGATION_CAP);
+              : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : _phaseAwareCap);
           // After the cap has already fired in fix phase (root cause detected), hard-block
           // further reads — one nudge is not enough when SSH output already pinpointed the issue.
           // For post-edit reads: only hard-block in fix phase, not on ordinary edits where the
