@@ -192,6 +192,15 @@ let lastHash = "";
 function onSessionChange() {
   const hash = sessionHash();
   if (hash === lastHash) return; // no actual change
+
+  // File was deleted — update tracking hash so next creation is detected,
+  // but don't trigger an improvement pass on deletion events.
+  if (!hash) {
+    log("Session file deleted — tracking reset, waiting for new session.");
+    lastHash = "";
+    return;
+  }
+
   lastHash = hash;
 
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -201,6 +210,13 @@ function onSessionChange() {
 
   debounceTimer = setTimeout(async () => {
     debounceTimer = null;
+
+    // Re-check: file may have been deleted during the debounce window
+    if (!fs.existsSync(SESSION_FILE)) {
+      log("Session file gone after debounce — skipping improvement pass.");
+      return;
+    }
+
     const state = readState();
 
     // Don't re-process same session
@@ -275,8 +291,9 @@ function onSessionChange() {
 
 // ── Watch ────────────────────────────────────────────────────────────────────
 if (!fs.existsSync(SESSION_FILE)) {
-  log(`ERROR: Session file not found: ${SESSION_FILE}`);
-  process.exit(1);
+  log(`Session file not found: ${SESSION_FILE} — will start watching and wait for first session.`);
+  // Ensure sessions directory exists so watchFile has a stable parent
+  fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
 }
 
 log(`nex-code improve-daemon started.`);
