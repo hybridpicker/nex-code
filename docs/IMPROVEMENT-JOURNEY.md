@@ -489,3 +489,86 @@ gecrasht"` did not activate the guard.
   compact summary instead of one `⚠` line per issue
 
 **Outcome:** Session score on Jarvis server investigation task: 3.5 → **9.5/10**.
+
+---
+
+### 2026-03-29 — v0.4.21: Scorer Hardening, Guard Fixes, Server Auto-Probe, Few-Shot Examples
+
+#### Session scorer: 5 new quality rules (17a–17e)
+
+Real sessions were scoring 10/10 despite visible failures — the scorer had no
+rules for three common open-model failure modes.
+
+- **Rule 17a (−1.5):** Arithmetic non-sequitur at start of first response
+  (e.g. `"2 + 2 = 4."` leaking from model thinking chain)
+- **Rule 17b (−1.0):** SSH invocations or absolute server paths in first text
+  response before any tool call has been made — model revealing it planned to
+  act on a remote server without actually doing it
+- **Rule 17c (−0.75):** Truncated last assistant message (unclosed code fence,
+  trailing `"key":`, or unmatched bracket) indicating the model hit a token
+  limit mid-response
+- **Rule 17d (−0.75):** `read_file` returning fewer than 5 lines on a `.json`
+  that starts with `[` but has no closing `]` — classic partial-read anti-pattern
+- **Rule 17e (−0.75 / −0.25):** Three or more tool calls returning argument
+  validation errors — model failed to learn from the schema error feedback
+
+#### Agent guards: arg-error escalation, bash same-error detection
+
+- **Tool arg error escalation:** New `_sessionToolArgErrorCounts` map (module
+  level). From the 2nd repeated argument error on the same tool, the error
+  message is prefixed with `[SYSTEM: This is argument error #N for "tool". Study
+  the Expected parameters schema above and correct your call.]`
+- **Bash same-error detection:** New `_bashConsecutiveSameErrors` counter. When
+  the same bash error fingerprint fires 3× in a row, a `[SYSTEM WARNING]` is
+  injected prompting the model to switch approach instead of retrying.
+- **Tool validator auto-corrections:** `read_file` offset/start_line/end_line
+  param aliases auto-corrected; grep shell-flag hallucinations (`-n`, `-i`, `-r`)
+  silently normalized before execution.
+- **`ssh_exec` permission:** Changed default from `ask` → `allow` in
+  `DEFAULT_PERMISSIONS`. The `ask` gate was blocking SSH investigation at step
+  7–8 in fresh sessions, defeating the remote-first strategy.
+- **`TARGETED_READ_HARD_CAP`:** Lowered from 8/6 → 6/4 turns.
+- **`SSH_EXEC_REPEAT_BLOCK`:** Raised from 3 → 5 calls before dedup block.
+  The old threshold was too aggressive for legitimate investigation sequences.
+
+#### Server auto-probe on URL match (`probeUrlServer`)
+
+When the user's first message contains an `https://` URL whose domain segments
+match a configured SSH profile name (e.g. `jarvis` in `jarvis.schoensgibl.com`),
+nex-code runs a 4-second SSH probe concurrently with context fitting:
+
+- Listening ports (`ss -tlnp`)
+- Running web-service processes (`ps aux | grep node/python/...`)
+- Data directories under `/home`
+
+The result is injected as a synthetic `user`/`assistant` exchange before the
+first real turn. The model knows the server's running topology before it types
+its first character — mirroring how Claude Code auto-detects server context.
+
+This is the primary fix for the "model looks at local files when URL points to
+remote server" failure mode.
+
+#### Few-shot example injection (`cli/few-shot.js`)
+
+On the first message of each session, nex-code detects the task category
+(`sysadmin`, `coding`, `frontend`, `data`) and injects a short synthetic
+conversation turn showing the correct tool sequence for that category.
+
+**Why this works across all models:** Open-weight models imitate patterns
+reliably. A 3-step concrete example (`ssh_exec → logs → fix → restart`) is
+more effective than a 10-line rule list, especially for devstral/ministral which
+over-react to negative/constraint language.
+
+**Privacy design:**
+- `examples/` (repo, public): generic examples with `user@your-server`
+  placeholders, shipped in the npm package
+- `~/.nex-code/examples/` (private, never committed): user-specific examples
+  extracted from high-scoring real sessions via `npm run extract-examples`
+
+The extraction script sanitizes IPs, hostnames, `/home/<user>/` paths, and
+API keys/JWTs before saving — nothing private reaches the repo.
+
+Disable with `NEX_FEW_SHOT=0`.
+
+**Impact:** Model-agnostic improvement that works immediately on all Ollama
+Cloud models without fine-tuning or system-prompt changes.
