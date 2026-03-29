@@ -1186,6 +1186,8 @@ let _editsMadeThisSession = 0; // count of successful file edits this session (u
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
+let _sshLastErrorFingerprint = ""; // first error line of the most recent failed SSH result
+let _sshConsecutiveSameErrors = 0; // count of consecutive SSH results with the same error (reset on success or different error)
 let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
 let _verificationInjected = false; // prevents re-triggering post-creation bootstrap check
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
@@ -1886,6 +1888,8 @@ function _resetSessionTracking() {
   _rootCauseDetected = false;
   _rootCauseSummary = "";
   _sshBlockedPreCallNudgeCount = 0;
+  _sshLastErrorFingerprint = "";
+  _sshConsecutiveSameErrors = 0;
   _isCreationTask = false;
   _verificationInjected = false;
   _currentPhase = "plan";
@@ -5063,6 +5067,56 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // cap by running greps that return no matches (EXIT 1 → not counted).
         if (prep.fnName === "ssh_exec") {
           _sessionConsecutiveSshCalls++;
+          // Repeated-error early warning — fires before the 10-call storm threshold.
+          // When the model retries variations of a failing command (e.g. grep regex
+          // not supported by the remote shell), every result carries the same error
+          // message. Detect this by fingerprinting the first non-empty, non-warning
+          // line of the SSH result that looks like an error. After 3 consecutive SSH
+          // calls returning the same error, inject a warning to change approach.
+          {
+            const SSH_SAME_ERROR_WARN = 3; // warn after 3 calls with identical error
+            const _sshResultContent = toolMessages[j]?.content ?? "";
+            // Extract the first line that looks like an error (skip SSH banner lines
+            // starting with "**" which are connection warnings, not command errors).
+            const _errorLine = _sshResultContent
+              .split("\n")
+              .map((l) => l.trim())
+              .find(
+                (l) =>
+                  l.length > 0 &&
+                  !l.startsWith("**") &&
+                  (l.startsWith("EXIT") ||
+                    /^[\w./-]+:\s/.test(l) || // tool error: "grep: ..." / "sed: ..."
+                    l.startsWith("bash:") ||
+                    l.startsWith("sh:")),
+              ) ?? "";
+            if (_errorLine) {
+              if (_errorLine === _sshLastErrorFingerprint) {
+                _sshConsecutiveSameErrors++;
+              } else {
+                _sshLastErrorFingerprint = _errorLine;
+                _sshConsecutiveSameErrors = 1;
+              }
+              if (
+                _sshConsecutiveSameErrors === SSH_SAME_ERROR_WARN &&
+                !_sshBlockedAfterStorm
+              ) {
+                debugLog(
+                  `${C.yellow}  ⚠ SSH repeated-error: "${_errorLine.slice(0, 60)}" returned ${_sshConsecutiveSameErrors}× — nudging to change approach${C.reset}`,
+                );
+                const _repeatErrMsg = {
+                  role: "user",
+                  content: `[SYSTEM WARNING] The last ${_sshConsecutiveSameErrors} SSH commands all failed with the same error: "${_errorLine}". Retrying variants of the same command will not help. Switch to a different approach to accomplish the task (e.g. use a different tool, read a local file, or change the command syntax entirely).`,
+                };
+                conversationMessages.push(_repeatErrMsg);
+                apiMessages.push(_repeatErrMsg);
+              }
+            } else {
+              // Successful result (no error line) — reset the same-error streak
+              _sshLastErrorFingerprint = "";
+              _sshConsecutiveSameErrors = 0;
+            }
+          }
           if (_sessionConsecutiveSshCalls >= SSH_STORM_ABORT) {
             debugLog(
               `${C.red}  ✖ SSH storm abort: ${_sessionConsecutiveSshCalls} consecutive ssh_exec calls — aborting${C.reset}`,
