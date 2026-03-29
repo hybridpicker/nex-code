@@ -876,6 +876,112 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 17a. Thinking-chain leak (-1.5) ──────────────────────────────────────
+  // Reasoning models (qwen3-vl, deepseek-r1, etc.) sometimes leak internal
+  // chain-of-thought fragments into the visible response. The clearest signal
+  // is a standalone arithmetic expression ("2 + 2 = 4.") or a short non-sequitur
+  // sentence that appears before the actual answer.
+  // Detection: check the first 300 chars of the first assistant text for a line
+  // that is *only* a math expression (no surrounding context).
+  if (hasAnyAssistantMsg) {
+    const firstAssistantMsg = messages.find((m) => m.role === "assistant");
+    let firstText = "";
+    if (firstAssistantMsg) {
+      if (typeof firstAssistantMsg.content === "string") {
+        firstText = firstAssistantMsg.content;
+      } else if (Array.isArray(firstAssistantMsg.content)) {
+        firstText = firstAssistantMsg.content
+          .filter((b) => b && (b.type === "text" || typeof b === "string"))
+          .map((b) => (typeof b === "string" ? b : b.text || ""))
+          .join("");
+      }
+    }
+    const firstChunk = firstText.slice(0, 400);
+    // Match lines that consist solely of an arithmetic expression like "2 + 2 = 4." or "X * Y = Z"
+    const arithmeticOnlyLine = /^[\d\s\+\-\*\/×÷\(\)\.]+\s*=\s*[\d\s\+\-\*\/×÷\(\)\.]+[.\n]/m;
+    // Also match lines that are just a short isolated equation statement (<=30 chars, no letters)
+    const shortMathLine = firstChunk.split("\n").find((line) => {
+      const t = line.trim();
+      return (
+        t.length > 0 &&
+        t.length <= 30 &&
+        /^\d/.test(t) &&
+        /=/.test(t) &&
+        !/[a-zA-Z]/.test(t)
+      );
+    });
+    if (arithmeticOnlyLine.test(firstChunk) || shortMathLine) {
+      score -= 1.5;
+      const leak = (shortMathLine || firstChunk.split("\n")[0]).trim().slice(0, 40);
+      issues.push(
+        `Thinking-chain leak: non-sequitur artifact at response start: "${leak}"`,
+      );
+    }
+  }
+
+  // ── 17b. Answer-before-verify (-1.0) ─────────────────────────────────────
+  // Detect when the first assistant text message contains concrete SSH commands
+  // or absolute file paths before any tool calls were made. This means the model
+  // guessed paths from training knowledge rather than verifying them first.
+  // Only fires when tool calls DO exist later (otherwise it's just a text-only
+  // response which is penalised separately by the "no diagnosis" check).
+  if (hasAnyAssistantMsg && totalToolCalls > 0) {
+    // Find index of first assistant text message (by message order)
+    const firstAssistantIdx = messages.findIndex((m) => m.role === "assistant");
+    // Find index of first tool call message
+    const firstToolCallIdx = messages.findIndex((m) => {
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
+      if (Array.isArray(m.content) && m.content.some((b) => b && b.type === "tool_use")) return true;
+      return false;
+    });
+
+    if (firstAssistantIdx !== -1 && firstToolCallIdx !== -1 && firstAssistantIdx < firstToolCallIdx) {
+      // Extract text of first assistant message
+      const firstMsg = messages[firstAssistantIdx];
+      let firstMsgText = "";
+      if (typeof firstMsg.content === "string") {
+        firstMsgText = firstMsg.content;
+      } else if (Array.isArray(firstMsg.content)) {
+        firstMsgText = firstMsg.content
+          .filter((b) => b && (b.type === "text" || typeof b === "string"))
+          .map((b) => (typeof b === "string" ? b : b.text || ""))
+          .join("");
+      }
+      // Check for SSH commands with concrete paths or absolute file paths
+      const hasSSHWithPath = /ssh\s+\S+@\S+\s+"[^"]*\/[^"]*\./.test(firstMsgText);
+      const hasAbsFilePath = /\/(?:home|var|etc|usr|opt|root|srv|data)\/[a-zA-Z0-9_.\-\/]+\.[a-zA-Z]{2,5}/.test(firstMsgText);
+      if (hasSSHWithPath || hasAbsFilePath) {
+        score -= 1.0;
+        issues.push(
+          "Answer-before-verify: model gave concrete file paths/SSH commands before making any tool calls (paths guessed, not verified)",
+        );
+      }
+    }
+  }
+
+  // ── 17c. Truncated response (-0.75) ──────────────────────────────────────
+  // Detect when the last assistant text ends inside an unclosed code block,
+  // or ends with a dangling JSON key (e.g. `"key":` without a value).
+  // This indicates the model hit its output token limit mid-generation.
+  if (hasAnyAssistantMsg) {
+    const fullText = lastAssistantText;
+    if (fullText.length > 100) {
+      const fenceCount = (fullText.match(/^```/gm) || []).length;
+      // Odd number of fences → unclosed code block
+      const unclosedFence = fenceCount % 2 !== 0;
+      // Ends with a dangling JSON key/value pattern: `"key":` or `"key": `
+      const trailingJsonKey = /"\s*:\s*$/.test(fullText.trimEnd());
+      // Ends with incomplete JSON value types: starts a string/array/object but doesn't close
+      const trailingOpenBracket = /[,\[{]\s*$/.test(fullText.trimEnd());
+      if (unclosedFence || trailingJsonKey || trailingOpenBracket) {
+        score -= 0.75;
+        issues.push(
+          "Truncated response: last assistant message ends mid-code-block or mid-JSON (model hit token limit)",
+        );
+      }
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
