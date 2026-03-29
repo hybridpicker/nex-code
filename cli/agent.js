@@ -1188,6 +1188,8 @@ let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "Ty
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
 let _sshLastErrorFingerprint = ""; // first error line of the most recent failed SSH result
 let _sshConsecutiveSameErrors = 0; // count of consecutive SSH results with the same error (reset on success or different error)
+let _bashConsecutiveSameErrors = 0; // same, but for local bash commands
+let _bashLastErrorFingerprint = ""; // fingerprint of the last bash error line
 let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
 let _verificationInjected = false; // prevents re-triggering post-creation bootstrap check
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
@@ -1890,6 +1892,8 @@ function _resetSessionTracking() {
   _sshBlockedPreCallNudgeCount = 0;
   _sshLastErrorFingerprint = "";
   _sshConsecutiveSameErrors = 0;
+  _bashLastErrorFingerprint = "";
+  _bashConsecutiveSameErrors = 0;
   _isCreationTask = false;
   _verificationInjected = false;
   _currentPhase = "plan";
@@ -5165,6 +5169,47 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Without this, a blocked bash/read_file lets the agent bypass the storm cap
           // by doing nothing and then immediately issuing another 7 SSH calls.
           _sessionConsecutiveSshCalls = 0;
+        }
+        // Consecutive same-error detection for local bash — mirrors the ssh_exec block above.
+        // Fires when the model retries variants of a failing pipe (e.g. curl | grep -oP with
+        // a regex the local shell rejects) and every attempt returns the same error line.
+        if (prep.fnName === "bash" && prep.canExecute) {
+          const BASH_SAME_ERROR_WARN = 3;
+          const _bashResult = toolMessages[j]?.content ?? "";
+          const _bashErrorLine = _bashResult
+            .split("\n")
+            .map((l) => l.trim())
+            .find(
+              (l) =>
+                l.length > 0 &&
+                (l.startsWith("EXIT") ||
+                  /^[\w./-]+:\s/.test(l) || // tool error: "grep: ..." / "sed: ..."
+                  l.startsWith("bash:") ||
+                  l.startsWith("sh:")),
+            ) ?? "";
+          if (_bashErrorLine) {
+            if (_bashErrorLine === _bashLastErrorFingerprint) {
+              _bashConsecutiveSameErrors++;
+            } else {
+              _bashLastErrorFingerprint = _bashErrorLine;
+              _bashConsecutiveSameErrors = 1;
+            }
+            if (_bashConsecutiveSameErrors === BASH_SAME_ERROR_WARN) {
+              debugLog(
+                `${C.yellow}  ⚠ Bash repeated-error: "${_bashErrorLine.slice(0, 60)}" returned ${_bashConsecutiveSameErrors}× — nudging to change approach${C.reset}`,
+              );
+              const _bashRepeatMsg = {
+                role: "user",
+                content: `[SYSTEM WARNING] The last ${_bashConsecutiveSameErrors} bash commands all failed with the same error: "${_bashErrorLine}". Retrying variants of the same command will not help. Switch to a completely different approach (e.g. use a different tool, change the command syntax, or use ssh_exec to run the command on the remote server instead).`,
+              };
+              conversationMessages.push(_bashRepeatMsg);
+              apiMessages.push(_bashRepeatMsg);
+            }
+          } else {
+            // Success — reset streak
+            _bashLastErrorFingerprint = "";
+            _bashConsecutiveSameErrors = 0;
+          }
         }
         // Grep pattern loop detection — repeated identical patterns waste context
         if (isOk && prep.fnName === "grep" && prep.args && prep.args.pattern) {
