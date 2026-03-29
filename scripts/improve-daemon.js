@@ -318,11 +318,18 @@ fs.watchFile(
   },
 );
 
-// Also keep fs.watch as a fast-path for editors that modify in-place
-const watcher = fs.watch(SESSION_FILE, { persistent: true }, (event) => {
-  if (event === "change") onSessionChange();
-});
-watcher.on("error", () => {}); // silently ignore — watchFile is the reliable fallback
+// Also keep fs.watch as a fast-path for editors that modify in-place.
+// On macOS, fs.watch uses open() internally and throws ENOENT synchronously
+// when the target file does not exist yet — before .on("error") can be attached.
+// Wrap in try-catch: fs.watchFile (polling above) is the reliable fallback.
+try {
+  const watcher = fs.watch(SESSION_FILE, { persistent: true }, (event) => {
+    if (event === "change") onSessionChange();
+  });
+  watcher.on("error", () => {}); // silently ignore post-creation errors
+} catch {
+  log("fs.watch unavailable (file not yet created) — relying on watchFile polling.");
+}
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
