@@ -25,6 +25,9 @@ const DEFAULT_PERMISSIONS = {
   ask_user: "allow",
   task_list: "allow",
   spawn_agents: "ask",
+  ssh_exec: "allow",
+  ssh_upload: "ask",
+  ssh_download: "ask",
 };
 
 let permissions = { ...DEFAULT_PERMISSIONS };

@@ -4519,7 +4519,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // output is already in context — running it again wastes tokens and locks the
       // agent into an investigation loop. Block before execution so the model is
       // forced to reason from existing results.
-      const SSH_EXEC_REPEAT_BLOCK = 3;
+      const SSH_EXEC_REPEAT_BLOCK = 5;
       const _pendingSshCmdCounts = new Map();
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
@@ -4540,7 +4540,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
-            content: `BLOCKED: ssh_exec denied — this command has already run ${alreadyRanSsh} times and the output is in your context. Use existing results to proceed or try a different command.`,
+            content: `BLOCKED: ssh_exec denied — this command has already run ${alreadyRanSsh} times and the output is in your context. Use existing results, try a different command, or run it as a local bash call: bash("ssh user@host 'your command'").`,
             tool_call_id: prep.callId,
           };
         }
@@ -4587,8 +4587,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.errorResult = {
               role: "tool",
               content: _rootCauseDetected
-                ? `BLOCKED: ssh_exec denied — SSH paused (${SSH_STORM_WARN}+ calls). Root cause is known (${_rootCauseSummary}). Edit the file now.`
-                : `BLOCKED: ssh_exec denied — SSH temporarily paused (${SSH_STORM_WARN}+ calls). Provide a text summary of your findings first. Do NOT ask the user to run commands. SSH re-enables after your summary.`,
+                ? `BLOCKED: ssh_exec denied — SSH paused (${SSH_STORM_WARN}+ calls). Root cause is known (${_rootCauseSummary}). Edit the file now. You can still use bash("ssh user@host 'cmd'") for a single targeted lookup if essential.`
+                : `BLOCKED: ssh_exec denied — SSH temporarily paused (${SSH_STORM_WARN}+ calls). Provide a text summary of your findings first. Do NOT ask the user to run commands. SSH re-enables after your summary. For one-off lookups use bash("ssh user@host 'cmd'") instead.`,
               tool_call_id: prep.callId,
             };
           }
