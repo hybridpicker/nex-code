@@ -704,6 +704,14 @@ async function prepareToolCall(tc) {
     debugLog(
       `${C.yellow}  ⚠ ${fnName}: ${validation.error.split("\n")[0]}${C.reset}`,
     );
+    // Track repeated arg errors per tool. After 2+ errors on the same tool,
+    // append an escalating nudge so the model knows it's repeating the mistake.
+    const argErrCount = (_sessionToolArgErrorCounts.get(fnName) || 0) + 1;
+    _sessionToolArgErrorCounts.set(fnName, argErrCount);
+    const errorContent =
+      argErrCount >= 2
+        ? `${validation.error}\n\n[SYSTEM: This is argument error #${argErrCount} for "${fnName}". Study the "Expected parameters" schema above and correct your call — do not repeat the same mistake.]`
+        : validation.error;
     return {
       callId,
       fnName,
@@ -711,7 +719,7 @@ async function prepareToolCall(tc) {
       canExecute: false,
       errorResult: {
         role: "tool",
-        content: validation.error,
+        content: errorContent,
         tool_call_id: callId,
       },
     };
@@ -1158,6 +1166,7 @@ const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of tar
 const _sessionFileEditCounts = new Map();
 const _sessionLastEditFailed = new Map(); // path → number of consecutive edit failures (old_text not found) for that file
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
+const _sessionToolArgErrorCounts = new Map(); // tool name → cumulative arg-validation error count this session
 const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
@@ -2494,7 +2503,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
   const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
-  const TARGETED_READ_HARD_CAP = _phaseEnabled ? 8 : 6; // absolute max reads of any single file
+  const TARGETED_READ_HARD_CAP = _phaseEnabled ? 6 : 4; // absolute max reads of any single file
   const NARROW_READ_PASS_THROUGH = 25; // reads ≤25 lines bypass overlap check — "zoom in" not re-read
   let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
   const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
