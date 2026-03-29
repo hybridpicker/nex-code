@@ -165,6 +165,28 @@ function validateToolArgs(toolName, args) {
     }
   }
 
+  // Auto-correct common parameter name confusions for read_file
+  // Models frequently use "offset" or "start_line" instead of "line_start",
+  // and "end_line" instead of "line_end". These are too far from their targets
+  // for Levenshtein to catch, so we handle them explicitly.
+  if (toolName === "read_file") {
+    if ("offset" in corrected && !("line_start" in corrected)) {
+      corrected["line_start"] = corrected["offset"];
+      delete corrected["offset"];
+      wasCorrected = true;
+    }
+    if ("start_line" in corrected && !("line_start" in corrected)) {
+      corrected["line_start"] = corrected["start_line"];
+      delete corrected["start_line"];
+      wasCorrected = true;
+    }
+    if ("end_line" in corrected && !("line_end" in corrected)) {
+      corrected["line_end"] = corrected["end_line"];
+      delete corrected["end_line"];
+      wasCorrected = true;
+    }
+  }
+
   // Check for unknown keys and suggest corrections
   for (const key of Object.keys(corrected)) {
     if (!expectedKeys.includes(key)) {
