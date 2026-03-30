@@ -6,6 +6,7 @@
 
 const axios = require("axios");
 const { BaseProvider, readStreamErrorBody } = require("./base");
+const { ollamaProtocol } = require("./wire-protocols");
 
 const DEFAULT_LOCAL_URL = "http://localhost:11434";
 
@@ -125,20 +126,20 @@ class LocalProvider extends BaseProvider {
     const model = options.model || this.defaultModel;
     if (!model) throw new Error("No local model available. Is Ollama running?");
 
+    const body = ollamaProtocol.buildRequestBody({
+      model,
+      messages: this._formatMessages(messages),
+      tools,
+      maxTokens: options.maxTokens || 8192,
+      temperature: options.temperature ?? this.temperature,
+      stream: false,
+    });
+
     let response;
     try {
       response = await axios.post(
-        `${this.baseUrl}/api/chat`,
-        {
-          model,
-          messages: this._formatMessages(messages),
-          tools: tools && tools.length > 0 ? tools : undefined,
-          stream: false,
-          options: {
-            temperature: options.temperature ?? this.temperature,
-            num_predict: options.maxTokens || 8192,
-          },
-        },
+        `${this.baseUrl}${ollamaProtocol.getEndpoint()}`,
+        body,
         { timeout: options.timeout || this.timeout },
       );
     } catch (err) {
@@ -155,7 +156,7 @@ class LocalProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return this.normalizeResponse(response.data);
+    return ollamaProtocol.normalizeResponse(response.data);
   }
 
   async stream(messages, tools, options = {}) {
@@ -165,20 +166,20 @@ class LocalProvider extends BaseProvider {
     if (!model) throw new Error("No local model available. Is Ollama running?");
     const onToken = options.onToken || (() => {});
 
+    const body = ollamaProtocol.buildRequestBody({
+      model,
+      messages: this._formatMessages(messages),
+      tools,
+      maxTokens: options.maxTokens || 8192,
+      temperature: options.temperature ?? this.temperature,
+      stream: true,
+    });
+
     let response;
     try {
       response = await axios.post(
-        `${this.baseUrl}/api/chat`,
-        {
-          model,
-          messages: this._formatMessages(messages),
-          tools: tools && tools.length > 0 ? tools : undefined,
-          stream: true,
-          options: {
-            temperature: options.temperature ?? this.temperature,
-            num_predict: options.maxTokens || 8192,
-          },
-        },
+        `${this.baseUrl}${ollamaProtocol.getEndpoint()}`,
+        body,
         {
           timeout: options.timeout || this.timeout,
           responseType: "stream",
@@ -199,12 +200,9 @@ class LocalProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return new Promise((resolve, reject) => {
-      let content = "";
-      let toolCalls = [];
-      let buffer = "";
+    const parser = ollamaProtocol.createStreamParser(onToken);
 
-      // Abort listener: destroy stream on signal
+    return new Promise((resolve, reject) => {
       if (options.signal) {
         options.signal.addEventListener(
           "abort",
@@ -217,69 +215,23 @@ class LocalProvider extends BaseProvider {
       }
 
       response.data.on("data", (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let parsed;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          if (parsed.message?.content) {
-            onToken(parsed.message.content);
-            content += parsed.message.content;
-          }
-
-          if (parsed.message?.tool_calls) {
-            toolCalls = toolCalls.concat(parsed.message.tool_calls);
-          }
-
-          if (parsed.done) {
-            resolve({
-              content,
-              tool_calls: this._normalizeToolCalls(toolCalls),
-            });
-            return;
-          }
-        }
+        const { done, result } = parser.feed(chunk.toString());
+        if (done) resolve(result);
       });
 
       response.data.on("error", (err) => {
-        if (options.signal?.aborted) return; // Ignore errors after abort
+        if (options.signal?.aborted) return;
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on("end", () => {
-        if (buffer.trim()) {
-          try {
-            const parsed = JSON.parse(buffer);
-            if (parsed.message?.content) {
-              onToken(parsed.message.content);
-              content += parsed.message.content;
-            }
-            if (parsed.message?.tool_calls) {
-              toolCalls = toolCalls.concat(parsed.message.tool_calls);
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-        resolve({ content, tool_calls: this._normalizeToolCalls(toolCalls) });
+        resolve(parser.flush());
       });
     });
   }
 
   normalizeResponse(data) {
-    const msg = data.message || {};
-    return {
-      content: msg.content || "",
-      tool_calls: this._normalizeToolCalls(msg.tool_calls || []),
-    };
+    return ollamaProtocol.normalizeResponse(data);
   }
 
   /**
@@ -292,15 +244,6 @@ class LocalProvider extends BaseProvider {
     return match ? parseInt(match[1], 10) : null;
   }
 
-  _normalizeToolCalls(toolCalls) {
-    return toolCalls.map((tc, i) => ({
-      id: tc.id || `local-${Date.now()}-${i}`,
-      function: {
-        name: tc.function?.name || tc.name || "unknown",
-        arguments: tc.function?.arguments || tc.arguments || {},
-      },
-    }));
-  }
 }
 
 module.exports = { LocalProvider, DEFAULT_LOCAL_URL };

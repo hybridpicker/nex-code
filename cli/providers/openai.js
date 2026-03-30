@@ -1,11 +1,12 @@
 /**
  * cli/providers/openai.js — OpenAI-compatible Provider
  * Supports GPT-4o, o1, o3, GPT-4o-mini via OpenAI API with SSE streaming.
+ * Uses OpenAI-compatible wire protocol for request/response handling.
  */
 
 const axios = require("axios");
 const { BaseProvider, readStreamErrorBody } = require("./base");
-const { serializeMessage } = require("../context-engine");
+const { openaiProtocol } = require("./wire-protocols");
 
 const OPENAI_MODELS = {
   "gpt-4o": {
@@ -186,23 +187,25 @@ class OpenAIProvider extends BaseProvider {
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
     const { messages: formatted } = this.formatMessages(messages);
 
-    const body = {
+    const body = openaiProtocol.buildRequestBody({
       model,
       messages: formatted,
-      max_tokens: maxTokens,
+      tools,
+      maxTokens,
       temperature: options.temperature ?? this.temperature,
-    };
-
-    if (tools && tools.length > 0) {
-      body.tools = tools;
-    }
+      stream: false,
+    });
 
     let response;
     try {
-      response = await axios.post(`${this.baseUrl}/chat/completions`, body, {
-        timeout: options.timeout || this.timeout,
-        headers: this._getHeaders(),
-      });
+      response = await axios.post(
+        `${this.baseUrl}${openaiProtocol.getEndpoint()}`,
+        body,
+        {
+          timeout: options.timeout || this.timeout,
+          headers: this._getHeaders(),
+        },
+      );
     } catch (err) {
       if (
         err.name === "CanceledError" ||
@@ -220,7 +223,7 @@ class OpenAIProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return this.normalizeResponse(response.data);
+    return openaiProtocol.normalizeResponse(response.data);
   }
 
   async stream(messages, tools, options = {}) {
@@ -230,26 +233,27 @@ class OpenAIProvider extends BaseProvider {
     const onToken = options.onToken || (() => {});
     const { messages: formatted } = this.formatMessages(messages);
 
-    const body = {
+    const body = openaiProtocol.buildRequestBody({
       model,
       messages: formatted,
-      max_tokens: maxTokens,
+      tools,
+      maxTokens,
       temperature: options.temperature ?? this.temperature,
       stream: true,
-    };
-
-    if (tools && tools.length > 0) {
-      body.tools = tools;
-    }
+    });
 
     let response;
     try {
-      response = await axios.post(`${this.baseUrl}/chat/completions`, body, {
-        timeout: options.timeout || this.timeout,
-        headers: this._getHeaders(),
-        responseType: "stream",
-        signal: options.signal,
-      });
+      response = await axios.post(
+        `${this.baseUrl}${openaiProtocol.getEndpoint()}`,
+        body,
+        {
+          timeout: options.timeout || this.timeout,
+          headers: this._getHeaders(),
+          responseType: "stream",
+          signal: options.signal,
+        },
+      );
     } catch (err) {
       if (
         err.name === "CanceledError" ||
@@ -267,12 +271,9 @@ class OpenAIProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return new Promise((resolve, reject) => {
-      let content = "";
-      const toolCallsMap = {}; // index -> { id, name, arguments }
-      let buffer = "";
+    const parser = openaiProtocol.createStreamParser(onToken);
 
-      // Abort listener: destroy stream on signal
+    return new Promise((resolve, reject) => {
       if (options.signal) {
         options.signal.addEventListener(
           "abort",
@@ -285,93 +286,23 @@ class OpenAIProvider extends BaseProvider {
       }
 
       response.data.on("data", (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") {
-            resolve({
-              content,
-              tool_calls: this._buildToolCalls(toolCallsMap),
-            });
-            return;
-          }
-
-          let parsed;
-          try {
-            parsed = JSON.parse(data);
-          } catch {
-            continue;
-          }
-
-          const delta = parsed.choices?.[0]?.delta;
-          if (!delta) continue;
-
-          if (delta.content) {
-            onToken(delta.content);
-            content += delta.content;
-          }
-
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              if (!toolCallsMap[idx]) {
-                toolCallsMap[idx] = {
-                  id: tc.id || "",
-                  name: "",
-                  arguments: "",
-                };
-              }
-              if (tc.id) toolCallsMap[idx].id = tc.id;
-              if (tc.function?.name) toolCallsMap[idx].name += tc.function.name;
-              if (tc.function?.arguments)
-                toolCallsMap[idx].arguments += tc.function.arguments;
-            }
-          }
-        }
+        const { done, result } = parser.feed(chunk.toString());
+        if (done) resolve(result);
       });
 
       response.data.on("error", (err) => {
-        if (options.signal?.aborted) return; // Ignore errors after abort
+        if (options.signal?.aborted) return;
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on("end", () => {
-        resolve({ content, tool_calls: this._buildToolCalls(toolCallsMap) });
+        resolve(parser.flush());
       });
     });
   }
 
   normalizeResponse(data) {
-    const choice = data.choices?.[0]?.message || {};
-    const toolCalls = (choice.tool_calls || []).map((tc) => ({
-      id: tc.id,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      },
-    }));
-
-    return {
-      content: choice.content || "",
-      tool_calls: toolCalls,
-    };
-  }
-
-  _buildToolCalls(toolCallsMap) {
-    return Object.values(toolCallsMap)
-      .filter((tc) => tc.name)
-      .map((tc) => ({
-        id: tc.id || `openai-${Date.now()}`,
-        function: {
-          name: tc.name,
-          arguments: tc.arguments,
-        },
-      }));
+    return openaiProtocol.normalizeResponse(data);
   }
 }
 
