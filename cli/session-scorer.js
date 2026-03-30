@@ -512,7 +512,7 @@ function scoreMessages(messages) {
     // reads are non-overlapping sections, this is legitimate large-file navigation —
     // exempt from the loop penalty.
     const unboundedCount = d.count - d.ranges.length;
-    if (unboundedCount <= 1 && d.ranges.length >= 1) {
+    if (unboundedCount <= 2 && d.ranges.length >= 1) {
       let hasOverlap = false;
       const seen = [];
       for (const [rs, re] of d.ranges) {

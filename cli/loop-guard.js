@@ -46,6 +46,7 @@ const grepPatternCounts = new Map();
 const grepFileCounts = new Map();
 const fileReadCounts = new Map();
 const fileReadRanges = new Map(); // path → Array<[start, end]>
+const globSearchCounts = new Map();
 const fileEditCounts = new Map();
 const lastEditFailed = new Map(); // path → true
 const reReadBlockShown = new Map(); // path → count of block messages shown
@@ -62,6 +63,7 @@ function clearAll() {
   grepFileCounts.clear();
   fileReadCounts.clear();
   fileReadRanges.clear();
+  globSearchCounts.clear();
   fileEditCounts.clear();
   lastEditFailed.clear();
   reReadBlockShown.clear();
@@ -128,6 +130,7 @@ module.exports = {
   grepFileCounts,
   fileReadCounts,
   fileReadRanges,
+  globSearchCounts,
   fileEditCounts,
   lastEditFailed,
   reReadBlockShown,
