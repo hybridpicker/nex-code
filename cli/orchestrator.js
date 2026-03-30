@@ -538,6 +538,9 @@ async function runOrchestrated(prompt, opts = {}) {
 You are a focused coding agent executing ONE specific sub-task.
 Your scope is limited to the files listed in your task definition.
 
+WORKING DIRECTORY: ${process.cwd()}
+Use paths relative to this directory (e.g. "cli/agent.js", not "nex-code/cli/agent.js").
+
 CRITICAL RULE: Do not search for whether something exists before acting.
 - If your task says "ensure X is in file Y" → read Y, add X if missing, done.
 - If your task says "document X" → write the documentation now.
