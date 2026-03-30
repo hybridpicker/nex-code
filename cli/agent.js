@@ -766,7 +766,8 @@ async function prepareToolCall(tc) {
     "git_status", "git_diff", "git_log", "ssh_exec",
   ]);
   if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName)) {
-    debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only)${C.reset}`);
+    _planPhaseBlockedCount++;
+    debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only, block #${_planPhaseBlockedCount})${C.reset}`);
     return {
       callId, fnName, args: finalArgs, canExecute: false,
       errorResult: {
@@ -1209,6 +1210,7 @@ let _toolBudgetWarningInjected = false; // true after the 30-call budget warning
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
 let _phaseIterations = 0; // iterations consumed in current phase
 let _phaseEnabled = false; // true when config has 'phases' key
+let _planPhaseBlockedCount = 0; // consecutive non-allowed tool calls blocked in plan phase
 let _phaseModelOverride = null; // model ID string for current phase (null = use default)
 let _planSummary = null; // compressed summary from plan phase
 let _implementSummary = null; // summary of changes from implement phase
@@ -1930,6 +1932,7 @@ function _resetSessionTracking() {
   _planSummary = null;
   _implementSummary = null;
   _verifyLoopBack = 0;
+  _planPhaseBlockedCount = 0;
   _detectedCategoryId = null;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
@@ -2534,6 +2537,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _phaseModelOverride = getModelForPhase("plan", _detectedCategoryId);
       _phaseIterations = 0;
       _verifyLoopBack = 0;
+      _planPhaseBlockedCount = 0;
       if (process.stdout.isTTY) {
         console.log(
           `${C.dim}  ↳ Phase routing: plan(${_phaseModelOverride || "default"}) → implement → verify${C.reset}`,
@@ -3740,6 +3744,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
         }
         // ─── Phase transitions (plan → implement → verify) ────────────────────
+        // Auto-advance if model keeps hitting the plan-phase bash block without
+        // producing text. This happens for simple tasks (e.g. "compress a video")
+        // where bash is the only sensible action — model never produces a text turn.
+        if (_phaseEnabled && _currentPhase === "plan" && _planPhaseBlockedCount >= 2) {
+          debugLog(`${C.cyan}  ↳ Plan phase: ${_planPhaseBlockedCount} consecutive blocks — auto-advancing to implement${C.reset}`);
+          _planPhaseBlockedCount = 0;
+          const phaseMsg = _transitionPhase("implement", "[auto-advance: task only requires direct action]");
+          if (phaseMsg) {
+            conversationMessages.push(phaseMsg);
+            apiMessages.push(phaseMsg);
+            i = 0;
+            iterLimit = getPhaseBudget("implement");
+            continue;
+          }
+        }
         if (_phaseEnabled && hasText) {
           const _assistantText = (content || streamedText || "").trim();
 
@@ -5099,6 +5118,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // When the model reads files, searches, and SSHes without ever editing, it's
         // stuck in an investigation loop. After INVESTIGATION_CAP calls, inject a hard
         // "stop investigating, implement now" message.
+        // Reset plan-phase block counter when a tool actually executes
+        if (isOk && prep.canExecute && _phaseEnabled) {
+          _planPhaseBlockedCount = 0;
+        }
         if (isOk && prep.canExecute && !(_phaseEnabled && _currentPhase === "plan")) {
           const READ_ONLY_TOOLS = ["read_file", "grep", "search_files", "glob", "list_directory", "ssh_exec", "find_files"];
           const EDIT_TOOLS = ["write_file", "edit_file", "patch_file"];
