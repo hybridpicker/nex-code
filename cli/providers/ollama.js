@@ -7,6 +7,7 @@ const axios = require("axios");
 const http = require("http");
 const https = require("https");
 const { BaseProvider, readStreamErrorBody } = require("./base");
+const { ollamaProtocol } = require("./wire-protocols");
 
 // Persistent keep-alive agents — reuse TCP connections across all Ollama Cloud requests.
 // Eliminates 50-100ms TLS handshake overhead on every API call.
@@ -352,21 +353,21 @@ class OllamaProvider extends BaseProvider {
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
 
+    const body = ollamaProtocol.buildRequestBody({
+      model,
+      messages: this._formatMessages(messages),
+      tools,
+      maxTokens,
+      temperature: options.temperature ?? this.temperature,
+      stream: false,
+      extra: { repeat_penalty: options.repeat_penalty },
+    });
+
     let response;
     try {
       response = await axios.post(
-        `${this.baseUrl}/api/chat`,
-        {
-          model,
-          messages: this._formatMessages(messages),
-          tools: tools && tools.length > 0 ? tools : undefined,
-          stream: false,
-          options: {
-            temperature: options.temperature ?? this.temperature,
-            num_predict: maxTokens,
-            repeat_penalty: options.repeat_penalty ?? 1.05,
-          },
-        },
+        `${this.baseUrl}${ollamaProtocol.getEndpoint()}`,
+        body,
         {
           timeout: options.timeout || this.timeout,
           headers: this._getHeaders(),
@@ -388,7 +389,7 @@ class OllamaProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return this.normalizeResponse(response.data);
+    return ollamaProtocol.normalizeResponse(response.data);
   }
 
   async stream(messages, tools, options = {}) {
@@ -397,24 +398,23 @@ class OllamaProvider extends BaseProvider {
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
     const onToken = options.onToken || (() => {});
-    // onThinkingToken: called for thinking-model reasoning tokens (not displayed, but resets stale timer)
     const onThinkingToken = options.onThinkingToken || (() => {});
+
+    const body = ollamaProtocol.buildRequestBody({
+      model,
+      messages: this._formatMessages(messages),
+      tools,
+      maxTokens,
+      temperature: options.temperature ?? this.temperature,
+      stream: true,
+      extra: { repeat_penalty: options.repeat_penalty },
+    });
 
     let response;
     try {
       response = await axios.post(
-        `${this.baseUrl}/api/chat`,
-        {
-          model,
-          messages: this._formatMessages(messages),
-          tools: tools && tools.length > 0 ? tools : undefined,
-          stream: true,
-          options: {
-            temperature: options.temperature ?? this.temperature,
-            num_predict: maxTokens,
-            repeat_penalty: options.repeat_penalty ?? 1.05,
-          },
-        },
+        `${this.baseUrl}${ollamaProtocol.getEndpoint()}`,
+        body,
         {
           timeout: options.timeout || this.timeout,
           headers: this._getHeaders(),
@@ -438,12 +438,11 @@ class OllamaProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return new Promise((resolve, reject) => {
-      let content = "";
-      let toolCalls = [];
-      let buffer = "";
+    const parser = ollamaProtocol.createStreamParser(onToken, {
+      onThinkingToken,
+    });
 
-      // Abort listener: destroy stream on signal
+    return new Promise((resolve, reject) => {
       if (options.signal) {
         options.signal.addEventListener(
           "abort",
@@ -456,88 +455,23 @@ class OllamaProvider extends BaseProvider {
       }
 
       response.data.on("data", (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let parsed;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          // Thinking-model reasoning tokens (e.g. qwen3-coder, kimi-k2-thinking)
-          // Not displayed, but caller uses onThinkingToken to reset the stale timer
-          if (parsed.message?.thinking) {
-            onThinkingToken(parsed.message.thinking);
-          }
-
-          if (parsed.message?.content) {
-            onToken(parsed.message.content);
-            content += parsed.message.content;
-          }
-
-          if (parsed.message?.tool_calls) {
-            toolCalls = toolCalls.concat(parsed.message.tool_calls);
-          }
-
-          if (parsed.done) {
-            resolve({
-              content,
-              tool_calls: this._normalizeToolCalls(toolCalls),
-            });
-            return;
-          }
-        }
+        const { done, result } = parser.feed(chunk.toString());
+        if (done) resolve(result);
       });
 
       response.data.on("error", (err) => {
-        if (options.signal?.aborted) return; // Ignore errors after abort
+        if (options.signal?.aborted) return;
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on("end", () => {
-        if (buffer.trim()) {
-          try {
-            const parsed = JSON.parse(buffer);
-            if (parsed.message?.thinking) {
-              onThinkingToken(parsed.message.thinking);
-            }
-            if (parsed.message?.content) {
-              onToken(parsed.message.content);
-              content += parsed.message.content;
-            }
-            if (parsed.message?.tool_calls) {
-              toolCalls = toolCalls.concat(parsed.message.tool_calls);
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-        resolve({ content, tool_calls: this._normalizeToolCalls(toolCalls) });
+        resolve(parser.flush());
       });
     });
   }
 
   normalizeResponse(data) {
-    const msg = data.message || {};
-    return {
-      content: msg.content || "",
-      tool_calls: this._normalizeToolCalls(msg.tool_calls || []),
-    };
-  }
-
-  _normalizeToolCalls(toolCalls) {
-    return toolCalls.map((tc, i) => ({
-      id: tc.id || `ollama-${Date.now()}-${i}`,
-      function: {
-        name: tc.function?.name || tc.name || "unknown",
-        arguments: tc.function?.arguments || tc.arguments || {},
-      },
-    }));
+    return ollamaProtocol.normalizeResponse(data);
   }
 }
 
