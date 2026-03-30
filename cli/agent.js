@@ -1163,6 +1163,7 @@ const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
 const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
+const _sessionGlobCoreTerms = new Map(); // coreToken → Set<pattern> — detect varied patterns targeting the same term
 const _sessionFileReadCounts = new Map();
 const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
@@ -1278,6 +1279,7 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
   _sessionGlobSearchCounts.clear();
+  _sessionGlobCoreTerms.clear();
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
 
@@ -1891,6 +1893,7 @@ function _resetSessionTracking() {
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
   _sessionGlobSearchCounts.clear();
+  _sessionGlobCoreTerms.clear();
   _sessionFileReadCounts.clear();
   _sessionFileReadRanges.clear();
   _sessionFileEditCounts.clear();
@@ -2567,6 +2570,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const globSearchCounts = _sessionGlobSearchCounts;
   const LOOP_WARN_GLOB = _phaseEnabled ? 4 : 3; // warn after N identical glob/search_files patterns
   const LOOP_ABORT_GLOB = _phaseEnabled ? 6 : 4; // abort after N identical glob/search_files patterns
+  const GLOB_CORE_WARN = 3; // warn when 3 different glob patterns share the same core term
+  const GLOB_CORE_BLOCK = 4; // block when 4+ different glob patterns share the same core term
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
   const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
@@ -5540,6 +5545,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             saveNow(conversationMessages);
             return;
+          }
+          // Core-term similarity detection — catch varied glob patterns targeting the same thing
+          // e.g. "**/guitar-mentor-skill.js", "**/guitar-mentor-skill*", "skills/guitar-mentor/**/*"
+          // all share "guitar-mentor" as core term. 3+ different patterns → warn, 4+ → block.
+          const coreTokens = patKey
+            .replace(/\*+/g, " ")
+            .replace(/[{}()\[\],.\/\\]/g, " ")
+            .split(/\s+/)
+            .filter((t) => t.length >= 4 && !/^\.(js|ts|py|json|md|yaml|yml|txt|css|html|sh)$/.test(t));
+          for (const token of coreTokens) {
+            const lc = token.toLowerCase();
+            if (!_sessionGlobCoreTerms.has(lc)) _sessionGlobCoreTerms.set(lc, new Set());
+            const patternSet = _sessionGlobCoreTerms.get(lc);
+            patternSet.add(patKey);
+            if (patternSet.size === GLOB_CORE_BLOCK) {
+              debugLog(
+                `${C.red}  ✖ Glob core-term block: ${patternSet.size} different patterns all searching for "${lc}" — search loop${C.reset}`,
+              );
+              const coreBlockMsg = {
+                role: "user",
+                content: `[SYSTEM WARNING] You have searched for "${lc}" using ${patternSet.size} different glob patterns. This is a search loop — the file you are looking for likely does not exist. Stop searching and work with the files you have already found, or ask the user for clarification.`,
+              };
+              conversationMessages.push(coreBlockMsg);
+              apiMessages.push(coreBlockMsg);
+            } else if (patternSet.size === GLOB_CORE_WARN) {
+              debugLog(
+                `${C.yellow}  ⚠ Glob core-term warning: ${patternSet.size} different patterns searching for "${lc}"${C.reset}`,
+              );
+              const coreWarnMsg = {
+                role: "user",
+                content: `[SYSTEM WARNING] ${patternSet.size} different glob patterns all target "${lc}". If previous searches returned no results, the file probably does not exist — stop searching and proceed with available information.`,
+              };
+              conversationMessages.push(coreWarnMsg);
+              apiMessages.push(coreWarnMsg);
+            }
           }
         }
         // Health-check stop signal — inject strong stop instruction when a dedicated
