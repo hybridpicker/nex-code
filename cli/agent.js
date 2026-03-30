@@ -4415,8 +4415,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
               const sectionCount = prevRanges.length; // sections already committed
-              const SCROLL_WARN_SECTIONS = 3; // after 3 prior sections (4th read) — warn
-              const SCROLL_BLOCK_SECTIONS = 5; // after 5 prior sections (6th read) — hard block
+              const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
+              const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
               if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
                 const shortPath = path.split("/").slice(-2).join("/");
                 debugLog(
