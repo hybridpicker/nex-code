@@ -1183,6 +1183,7 @@ let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
+let _readsSinceCapFired = 0; // read-only calls after the investigation cap warning was injected
 let _editsMadeThisSession = 0; // count of successful file edits this session (used to tighten post-edit caps)
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
@@ -1261,6 +1262,7 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   // Reset ALL guards so the new phase starts with a clean slate.
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
+  _readsSinceCapFired = 0;
   _editsMadeThisSession = 0;
   _sessionFileReadCounts.clear();
   _sessionFileReadRanges.clear();
@@ -1887,6 +1889,7 @@ function _resetSessionTracking() {
   _postWipeBudgetExtended = false;
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
+  _readsSinceCapFired = 0;
   _editsMadeThisSession = 0;
   _rootCauseDetected = false;
   _rootCauseSummary = "";
@@ -3598,6 +3601,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _rootCauseSummary = _textCause.slice(0, 120);
           _readOnlyCallsSinceEdit = 0;
           _investigationCapFired = false;
+          _readsSinceCapFired = 0;
           debugLog(
             `${C.yellow}  ⚡ Root cause in model analysis: ${_rootCauseSummary} — fix phase (read budget: 3)${C.reset}`,
           );
@@ -4965,9 +4969,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (EDIT_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit = 0; // reset on successful edit
             _investigationCapFired = false; // allow re-investigation after an edit
+            _readsSinceCapFired = 0;
             _editsMadeThisSession++; // track how many edits have been made
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
+            if (_investigationCapFired) _readsSinceCapFired++;
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
@@ -4989,19 +4995,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             : _isCreationTask
               ? (_editsMadeThisSession > 0 ? 2 : 4)
               : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : _phaseAwareCap);
-          // After the cap has already fired in fix phase (root cause detected), hard-block
-          // further reads — one nudge is not enough when SSH output already pinpointed the issue.
-          // For post-edit reads: only hard-block in fix phase, not on ordinary edits where the
-          // agent may still need to read adjacent sections to complete multi-file changes.
+          // After the cap has already fired, hard-block further reads when:
+          // 1. Root cause detected — one nudge is not enough when the issue is already pinpointed
+          // 2. Creation task with edits already made — agent should be building, not reading
+          // 3. Grace period exhausted (3 reads after cap) — prevents infinite investigation spirals
+          //    where the model ignores the soft cap warning and reads until context/timeout
+          const INVESTIGATION_GRACE = 3; // reads allowed after cap fires before hard-block
           const _hardBlockActive =
             !_phaseEnabled &&
             _investigationCapFired &&
             (_rootCauseDetected ||
-              (_isCreationTask && _editsMadeThisSession >= 1));
+              (_isCreationTask && _editsMadeThisSession >= 1) ||
+              _readsSinceCapFired >= INVESTIGATION_GRACE);
           if (_hardBlockActive && READ_ONLY_TOOLS.includes(prep.fnName)) {
             const _blockReason = _rootCauseDetected
               ? `root cause already identified (${_rootCauseSummary})`
-              : `${_editsMadeThisSession} file edit(s) already made`;
+              : _readsSinceCapFired >= INVESTIGATION_GRACE
+                ? `${_readOnlyCallsSinceEdit} consecutive reads without an edit`
+                : `${_editsMadeThisSession} file edit(s) already made`;
             debugLog(
               `${C.red}  ✖ Blocked read-only tool: cap fired, ${_blockReason}${C.reset}`,
             );
@@ -5012,7 +5023,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`
                 : _isCreationTask
                   ? `BLOCKED: files already written — continue with write_file or edit_file to finish the remaining tasks. Do not read more files.`
-                  : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
+                  : _readsSinceCapFired >= INVESTIGATION_GRACE
+                    ? `BLOCKED: You have read ${_readOnlyCallsSinceEdit} files without making any edits. Stop investigating and either implement a fix with edit_file/write_file, or write your diagnosis as text output. Do not read more files.`
+                    : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
               tool_call_id: prep.callId,
             };
           } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
@@ -5551,6 +5564,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _rootCauseSummary = _cause.slice(0, 120);
             _readOnlyCallsSinceEdit = 0; // start fix-phase budget fresh
             _investigationCapFired = false;
+            _readsSinceCapFired = 0;
             debugLog(
               `${C.yellow}  ⚡ Root cause detected: ${_rootCauseSummary} — fix phase (read budget: 3)${C.reset}`,
             );
