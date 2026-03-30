@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    // Incremental migration: allow JS files alongside TS
+    "allowJs": true,
+    "checkJs": false,
+
+    // Output settings (esbuild handles actual bundling)
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    // Type checking (relaxed for migration, tighten incrementally)
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Type roots
+    "typeRoots": ["./types", "./node_modules/@types"],
+
+    // Source maps for debugging
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "cli/**/*.js",
+    "cli/**/*.ts",
+    "bin/**/*.js",
+    "bin/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "tests",
+    "vscode"
+  ]
+}
