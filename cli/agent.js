@@ -1188,6 +1188,7 @@ let _editsMadeThisSession = 0; // count of successful file edits this session (u
 let _rootCauseDetected = false; // true when SSH output matched a clear error pattern
 let _rootCauseSummary = ""; // brief label for the detected root cause (e.g. "TypeError: x is not a function")
 let _sshBlockedPreCallNudgeCount = 0; // how many times the pre-call SSH-blocked nudge has fired this storm block
+let _consecutiveFileNotFound = 0; // consecutive read_file/edit_file calls that returned "File not found"
 let _sshLastErrorFingerprint = ""; // first error line of the most recent failed SSH result
 let _sshConsecutiveSameErrors = 0; // count of consecutive SSH results with the same error (reset on success or different error)
 let _bashConsecutiveSameErrors = 0; // same, but for local bash commands
@@ -1197,6 +1198,9 @@ let _verificationInjected = false; // prevents re-triggering post-creation boots
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
 const _autoCompletedTasks = new Set(); // taskIds auto-completed by file-write matching
 let _lastCreationSummary = null; // persists across turns: brief note of what the last creation task produced
+let _commitDetected = false; // true once a successful git commit is detected in bash output
+let _postCommitGitCalls = 0; // count of git status/diff/log calls after commit detected
+let _toolBudgetWarningInjected = false; // true after the 30-call budget warning has been injected
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1668,6 +1672,15 @@ Examples of parallelizable calls:
 Do NOT parallelize when one call's output determines another's input (e.g., glob to find a file path, then read_file on the result — these must be sequential).
 
 Sequencing independent calls wastes iterations. Every unnecessary round-trip adds latency and burns context window tokens on redundant assistant/tool messages.
+
+# Tool Call Budget (Critical)
+
+You have a soft budget of ~30 tool calls per task. Sessions with >40 tool calls are scored as low quality. Plan your approach:
+- Read → Edit → Test → Commit → Done (typical 15-25 calls)
+- Do NOT re-verify with git status/diff/log after a successful commit
+- Do NOT re-read files you just edited (the edit response confirms the change)
+- Do NOT repeat searches with slight variations — refine your approach instead
+
 - NEVER write temporary test/demo scripts (test_*.js, demo_*.js, scratch_*.js) just to run once and delete.
   - Instead: use bash with inline node -e '...' for quick one-off checks.
   - If the test is worth keeping, write it to tests/ with a proper name.
@@ -1744,6 +1757,7 @@ Before every action, evaluate:
 - Dangerous commands (git push, npm publish, sudo, rm -rf) require user confirmation.
 - Prefer creating new git commits over amending. Never force-push without explicit permission.
 - If you encounter unexpected state (unfamiliar files, branches), investigate before modifying.
+- **After committing**: Once a git commit succeeds, STOP. Do NOT run git status, git diff, git log, or git show to "verify" — the commit output already confirms success. Write your final summary and end. Excessive post-commit verification wastes tool calls.
 
 # Brain Knowledge Base
 
@@ -4141,6 +4155,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
       }
 
+      // ─── Proactive tool-call budget warning ──────────────────────────────────
+      // At 30 tool calls, inject a warning to wrap up. This prevents runaway
+      // verification loops that tank session scores.
+      if (totalSteps >= 30 && !_toolBudgetWarningInjected) {
+        _toolBudgetWarningInjected = true;
+        debugLog(
+          `${C.yellow}  ⚠ Tool budget warning: ${totalSteps} tool calls used — nudging model to wrap up${C.reset}`,
+        );
+        const budgetWarn = {
+          role: "user",
+          content:
+            "[SYSTEM] ⚠ You have used " + totalSteps + " tool calls. This is approaching the quality threshold (40). " +
+            "Wrap up NOW: write your final summary and stop. Do NOT run additional verification commands (git status, git diff, git log) — " +
+            "your changes are already committed and verified. Further tool calls will hurt session quality.",
+        };
+        conversationMessages.push(budgetWarn);
+        apiMessages.push(budgetWarn);
+      }
+
       // ─── Prepare all tool calls (parse, validate, permissions) ───
       // Run all preparations concurrently. Each call is independent: permission
       // checks and validation are synchronous; only user-confirmation prompts
@@ -4421,6 +4454,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // through the hard-cap check simultaneously.
         if (prep.canExecute) {
           _pendingReadCounts.set(path, (_pendingReadCounts.get(path) || 0) + 1);
+        }
+      }
+
+      // ─── file-not-found streak: block guessed reads, force search ───────────
+      // After 3+ consecutive file-not-found errors, block read_file/edit_file
+      // unless the path was returned by a recent search_files/glob_files call.
+      if (_consecutiveFileNotFound >= 3) {
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (prep.fnName !== "read_file" && prep.fnName !== "edit_file")
+            continue;
+          debugLog(
+            `${C.red}  ✖ Blocked ${prep.fnName} — ${_consecutiveFileNotFound} consecutive file-not-found errors, must search first${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content:
+              `BLOCKED: ${_consecutiveFileNotFound} consecutive "File not found" errors. ` +
+              `You must call search_files or glob_files to locate the correct path before reading or editing. ` +
+              `Do not guess file paths.`,
+            tool_call_id: prep.callId,
+          };
         }
       }
 
@@ -4895,6 +4951,36 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _sessionLastEditFailed.set(prep.args.path, prevCount + 1);
           }
         }
+        // Track consecutive file-not-found errors — after 2+ misses, force search instead of guessing
+        if (
+          !isOk &&
+          (prep.fnName === "read_file" || prep.fnName === "edit_file") &&
+          /file not found|does not exist|ENOENT/i.test(firstLine)
+        ) {
+          _consecutiveFileNotFound++;
+          if (_consecutiveFileNotFound >= 2) {
+            debugLog(
+              `${C.yellow}  ⚠ File-not-found streak: ${_consecutiveFileNotFound} consecutive misses — forcing search${C.reset}`,
+            );
+            const fnfHint = {
+              role: "user",
+              content:
+                `[SYSTEM] ${_consecutiveFileNotFound} consecutive "File not found" errors. ` +
+                `STOP guessing paths. Use search_files or glob_files to locate the correct file first, ` +
+                `then read/edit the path returned by the search.`,
+            };
+            conversationMessages.push(fnfHint);
+            apiMessages.push(fnfHint);
+          }
+        } else if (
+          isOk &&
+          (prep.fnName === "read_file" ||
+            prep.fnName === "edit_file" ||
+            prep.fnName === "search_files" ||
+            prep.fnName === "glob_files")
+        ) {
+          _consecutiveFileNotFound = 0; // reset on successful file access or search
+        }
         if (isOk && prep.fnName === "write_file" && prep.args?.path) {
           // Warn when a temp/test/demo file is created outside the tests/ directory.
           // These files are typically written, run once, then deleted — wasting tool calls
@@ -5255,6 +5341,66 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // Success — reset streak
             _bashLastErrorFingerprint = "";
             _bashConsecutiveSameErrors = 0;
+          }
+        }
+        // ─── Post-commit detection ──────────────────────────────────────────────
+        // When a bash command successfully runs `git commit`, set a flag so we can
+        // block redundant post-commit verification (git status/diff/log).
+        if (
+          prep.fnName === "bash" &&
+          prep.canExecute &&
+          !_commitDetected &&
+          prep.args?.command
+        ) {
+          const _bashOut = toolMessages[j]?.content ?? "";
+          const isCommitCmd = /git\s+commit\b/.test(prep.args.command);
+          const commitSucceeded =
+            isCommitCmd &&
+            !_bashOut.startsWith("EXIT") &&
+            !_bashOut.startsWith("ERROR") &&
+            (/\[\S+\s+[a-f0-9]+\]/.test(_bashOut) ||
+              _bashOut.includes("files changed") ||
+              _bashOut.includes("file changed") ||
+              _bashOut.includes("insertions(+)") ||
+              _bashOut.includes("create mode"));
+          if (commitSucceeded) {
+            _commitDetected = true;
+            _postCommitGitCalls = 0;
+            debugLog(
+              `${C.green}  ✓ Git commit detected — post-commit verification cap active (max 2 git status/diff/log)${C.reset}`,
+            );
+            const commitMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] ✓ Git commit succeeded. Your changes are committed. " +
+                "Do NOT run further git status / git diff / git log calls — the commit is done. " +
+                "Write your final summary and stop. Running extra verification commands wastes tool calls and hurts session quality.",
+            };
+            conversationMessages.push(commitMsg);
+            apiMessages.push(commitMsg);
+          }
+        }
+        // ─── Post-commit git verification blocking ──────────────────────────────
+        // After a commit is detected, block git status/diff/log after 2 calls.
+        if (_commitDetected && prep.fnName === "bash" && prep.args?.command) {
+          const gitVerifyPattern = /git\s+(status|diff|log|show)\b/;
+          if (gitVerifyPattern.test(prep.args.command)) {
+            _postCommitGitCalls++;
+            if (_postCommitGitCalls > 2) {
+              debugLog(
+                `${C.yellow}  ⚠ Post-commit git verification blocked (call ${_postCommitGitCalls})${C.reset}`,
+              );
+              const gitBlockMsg = {
+                role: "user",
+                content:
+                  "[SYSTEM] ⚠ STOP: You already ran " +
+                  (_postCommitGitCalls - 1) +
+                  " git verification commands after committing. " +
+                  "The commit is confirmed. Write your final summary NOW and do not make any more tool calls.",
+              };
+              conversationMessages.push(gitBlockMsg);
+              apiMessages.push(gitBlockMsg);
+            }
           }
         }
         // Grep pattern loop detection — repeated identical patterns waste context
