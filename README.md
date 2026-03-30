@@ -38,8 +38,8 @@
 
 ## Demo
 
-https://github.com/user-attachments/assets/6a70525c-a1a4-4c6f-9784-176cb1becc15
 
+https://github.com/user-attachments/assets/314af16e-a962-45a7-b9ad-bf01650dfdf6
 ---
 
 ## Quickstart
