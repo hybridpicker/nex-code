@@ -1162,6 +1162,7 @@ function _setLoopCount(map, key, count) {
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
+const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
 const _sessionFileReadCounts = new Map();
 const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
@@ -1169,6 +1170,7 @@ const _sessionLastEditFailed = new Map(); // path → number of consecutive edit
 const _sessionReReadBlockShown = new Map(); // track how many times block message was shown per file
 const _sessionToolArgErrorCounts = new Map(); // tool name → cumulative arg-validation error count this session
 const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
+const _sessionDupeToolCounts = new Map(); // "toolName|argsJSON" → { count, ts } — dedup identical tool calls
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
 let _planRejectionCount = 0; // times plan-without-reads was rejected this session (cap: 2)
@@ -1272,8 +1274,10 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   _sessionFileReadRanges.clear();
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
+  _sessionDupeToolCounts.clear();
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
+  _sessionGlobSearchCounts.clear();
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
 
@@ -1886,12 +1890,14 @@ function _resetSessionTracking() {
   _sessionBashCmdCounts.clear();
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
+  _sessionGlobSearchCounts.clear();
   _sessionFileReadCounts.clear();
   _sessionFileReadRanges.clear();
   _sessionFileEditCounts.clear();
   _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
+  _sessionDupeToolCounts.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _planRejectionCount = 0;
@@ -2558,6 +2564,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
   const LOOP_WARN_GREP_FILE = _phaseEnabled ? 5 : 3; // warn after N different-pattern greps on same file
   const LOOP_ABORT_GREP_FILE = _phaseEnabled ? 8 : 5; // hard-block further greps on same file after N
+  const globSearchCounts = _sessionGlobSearchCounts;
+  const LOOP_WARN_GLOB = _phaseEnabled ? 4 : 3; // warn after N identical glob/search_files patterns
+  const LOOP_ABORT_GLOB = _phaseEnabled ? 6 : 4; // abort after N identical glob/search_files patterns
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
   const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
@@ -4421,7 +4430,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
           // else: normal targeted section read of a large file — let through silently
-        } else if (alreadyRead >= (_phaseEnabled ? 2 : 1)) {
+        } else if (alreadyRead >= 1) {
           // Unbounded re-read — block immediately to prevent context flood
           const shortPath = path.split("/").slice(-2).join("/");
           const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
@@ -4794,6 +4803,42 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
         }
+      }
+
+      // ─── Block identical duplicate tool calls ──────────────────────────────────
+      // If the exact same tool+args combination has been called before this session,
+      // warn on 2nd occurrence and hard-block on 3rd+. Only applies to read-only/query
+      // tools where repeating identical args is never useful (result is already in context).
+      // Mutating tools (edit, write, bash, ssh) are exempt — repeated calls can be intentional.
+      const DUPE_TOOL_EXEMPT = new Set([
+        "edit_file", "write_file", "bash", "ssh_exec", "ask_user",
+        "spawn_agents", "browser_click", "browser_fill", "browser_open",
+      ]);
+      for (const prep of prepared) {
+        if (!prep.canExecute) continue;
+        if (DUPE_TOOL_EXEMPT.has(prep.fnName)) continue;
+        const argsKey = JSON.stringify(prep.args || {});
+        const fingerprint = `${prep.fnName}|${argsKey}`;
+        const count = _getLoopCount(_sessionDupeToolCounts, fingerprint);
+        if (count >= 2) {
+          // 3rd+ identical call — hard block
+          debugLog(
+            `${C.red}  ✖ Blocked duplicate: ${prep.fnName}(${argsKey.substring(0, 80)}) — called ${count + 1}× with identical args${C.reset}`,
+          );
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: `BLOCKED: ${prep.fnName}() with these exact arguments has already been called ${count}× — the result is already in your context. Use the existing output instead of repeating the same call.`,
+            tool_call_id: prep.callId,
+          };
+        } else if (count === 1) {
+          // 2nd identical call — warn but allow (some legitimate cases exist)
+          debugLog(
+            `${C.yellow}  ⚠ Duplicate tool call: ${prep.fnName}(${argsKey.substring(0, 80)}) — 2nd call with identical args${C.reset}`,
+          );
+        }
+        // Increment after check so batch-mates don't all see count=0
+        _incLoopCount(_sessionDupeToolCounts, fingerprint);
       }
 
       // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
@@ -5460,6 +5505,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               conversationMessages.push(fileGrepWarning);
               apiMessages.push(fileGrepWarning);
             }
+          }
+        }
+        // Glob/search_files loop detection — repeated identical patterns waste context
+        if (isOk && (prep.fnName === "glob" || prep.fnName === "glob_files" || prep.fnName === "search_files") && prep.args) {
+          const patKey = prep.args.pattern || prep.args.query || prep.args.path || "";
+          const globCount = _incLoopCount(globSearchCounts, patKey);
+          if (globCount === LOOP_WARN_GLOB) {
+            debugLog(
+              `${C.yellow}  ⚠ Loop warning: glob pattern "${patKey.slice(0, 40)}" run ${globCount}× — possible search loop${C.reset}`,
+            );
+            const globWarning = {
+              role: "user",
+              content: `[SYSTEM WARNING] Same glob/search pattern ${globCount}×. Results unchanged — use existing data or try different pattern.`,
+            };
+            conversationMessages.push(globWarning);
+            apiMessages.push(globWarning);
+          } else if (globCount >= LOOP_ABORT_GLOB) {
+            debugLog(
+              `${C.red}  ✖ Loop abort: glob pattern run ${globCount}× — aborting runaway search loop${C.reset}`,
+            );
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+              { suppressHint: true },
+            );
+            saveNow(conversationMessages);
+            return;
           }
         }
         // Health-check stop signal — inject strong stop instruction when a dedicated
