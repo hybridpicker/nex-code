@@ -1160,30 +1160,35 @@ function scoreSession(name) {
  * @returns {string}
  */
 function formatScore(result, C = null) {
-  const { score, grade, issues, summary } = result;
+  const { score, issues } = result;
   const dim = C?.dim || "";
   const reset = C?.reset || "";
-  const green = C?.green || "";
   const yellow = C?.yellow || "";
-  const red = C?.red || "";
-  const cyan = C?.cyan || "";
-  const bold = C?.bold || "";
 
-  const color = score >= 8 ? green : score >= 6 ? yellow : red;
-  let out = `\n${dim}  Session score: ${reset}${bold}${color}${score}/10 (${grade})${reset}`;
-  if (summary) out += `  ${dim}${summary}${reset}`;
-  if (issues.length > 0) {
-    // High-scoring sessions: show issues inline as a compact dim note, no ⚠ per line.
-    // Low-scoring sessions: show each issue on its own line with ⚠ so they're easy to scan.
-    if (score >= 7) {
-      const compact = issues.map((s) => s.replace(/:\s+\d+.*$/, "").replace(/\s*\(.*?\)/, "")).join(" · ");
-      out += `\n  ${dim}${compact}${reset}`;
-    } else {
-      for (const issue of issues) {
-        out += `\n  ${yellow}⚠${reset} ${dim}${issue}${reset}`;
-      }
-    }
+  // Good sessions (>= 8): no score noise at all
+  if (score >= 8 || issues.length === 0) return "";
+
+  // Shorten each issue to just the label (drop details after ":")
+  const short = issues.map((s) =>
+    s.replace(/:\s+\d+.*$/, "").replace(/\s*\(.*?\)/, "").replace(/\s*—.*$/, ""),
+  );
+
+  // Mediocre sessions (6-7): max 3 issues as a subtle one-liner
+  if (score >= 6) {
+    const shown = short.slice(0, 3);
+    const more = short.length - shown.length;
+    let line = shown.join(" · ");
+    if (more > 0) line += ` (+${more})`;
+    return `\n  ${dim}${line}${reset}`;
   }
+
+  // Poor sessions (< 6): max 4 issues on separate lines
+  let out = "";
+  for (const issue of short.slice(0, 4)) {
+    out += `\n  ${yellow}⚠${reset} ${dim}${issue}${reset}`;
+  }
+  const more = short.length - 4;
+  if (more > 0) out += `\n  ${dim}(+${more} more)${reset}`;
   return out;
 }
 

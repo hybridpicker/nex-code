@@ -834,7 +834,7 @@ describe("formatMilestone()", () => {
     expect(out).toContain("Exploration");
   });
 
-  it("contains step count", () => {
+  it("does not expose step or tool counts", () => {
     const out = formatMilestone(
       "Research",
       3,
@@ -843,19 +843,8 @@ describe("formatMilestone()", () => {
       new Set(),
       new Set(),
     );
-    expect(out).toContain("3 steps");
-  });
-
-  it("contains tool count", () => {
-    const out = formatMilestone(
-      "Phase 1",
-      2,
-      counts({ bash: 4, read_file: 2 }),
-      1000,
-      new Set(),
-      new Set(),
-    );
-    expect(out).toContain("6 tools");
+    expect(out).not.toContain("3 steps");
+    expect(out).not.toContain("3 tools");
   });
 
   it("contains elapsed time in seconds", () => {
@@ -905,32 +894,6 @@ describe("formatMilestone()", () => {
       new Set(["a.js", "b.js"]),
     );
     expect(out).toContain("2 files modified");
-  });
-
-  it('uses singular "step" for stepCount=1', () => {
-    const out = formatMilestone(
-      "Phase 1",
-      1,
-      counts({ bash: 1 }),
-      1000,
-      new Set(),
-      new Set(),
-    );
-    expect(out).toContain("1 step");
-    expect(out).not.toContain("1 steps");
-  });
-
-  it('uses singular "tool" for toolCount=1', () => {
-    const out = formatMilestone(
-      "Phase 1",
-      1,
-      counts({ bash: 1 }),
-      1000,
-      new Set(),
-      new Set(),
-    );
-    expect(out).toContain("1 tool");
-    expect(out).not.toContain("1 tools");
   });
 
   it('uses singular "file modified" for one modification', () => {
