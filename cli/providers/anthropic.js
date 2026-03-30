@@ -5,7 +5,7 @@
 
 const axios = require("axios");
 const { BaseProvider, readStreamErrorBody } = require("./base");
-const { serializeMessage } = require("../context-engine");
+const { anthropicProtocol } = require("./wire-protocols");
 
 const ANTHROPIC_MODELS = {
   "claude-sonnet": {
@@ -218,15 +218,11 @@ class AnthropicProvider extends BaseProvider {
   }
 
   /**
-   * Convert OpenAI/Ollama tool format to Anthropic tool format
+   * Convert OpenAI/Ollama tool format to Anthropic tool format.
+   * Delegates to wire protocol for format conversion.
    */
   formatTools(tools) {
-    if (!tools || tools.length === 0) return [];
-    return tools.map((t) => ({
-      name: t.function.name,
-      description: t.function.description || "",
-      input_schema: t.function.parameters || { type: "object", properties: {} },
-    }));
+    return anthropicProtocol.formatTools(tools);
   }
 
   _resolveModelId(model) {
@@ -241,23 +237,27 @@ class AnthropicProvider extends BaseProvider {
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 8192;
     const { messages: formatted, system } = this.formatMessages(messages);
 
-    const body = {
+    const formattedTools = this.formatTools(tools);
+    const body = anthropicProtocol.buildRequestBody({
       model: modelId,
       messages: formatted,
-      max_tokens: maxTokens,
+      tools: formattedTools,
+      maxTokens,
       temperature: options.temperature ?? this.temperature,
-    };
-
-    if (system) body.system = system;
-    const formattedTools = this.formatTools(tools);
-    if (formattedTools.length > 0) body.tools = formattedTools;
+      stream: false,
+      extra: { system },
+    });
 
     let response;
     try {
-      response = await axios.post(`${this.baseUrl}/messages`, body, {
-        timeout: options.timeout || this.timeout,
-        headers: this._getHeaders(),
-      });
+      response = await axios.post(
+        `${this.baseUrl}${anthropicProtocol.getEndpoint()}`,
+        body,
+        {
+          timeout: options.timeout || this.timeout,
+          headers: this._getHeaders(),
+        },
+      );
     } catch (err) {
       if (
         err.name === "CanceledError" ||
@@ -275,7 +275,7 @@ class AnthropicProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return this.normalizeResponse(response.data);
+    return anthropicProtocol.normalizeResponse(response.data);
   }
 
   async stream(messages, tools, options = {}) {
@@ -286,26 +286,29 @@ class AnthropicProvider extends BaseProvider {
     const onToken = options.onToken || (() => {});
     const { messages: formatted, system } = this.formatMessages(messages);
 
-    const body = {
+    const formattedTools = this.formatTools(tools);
+    const body = anthropicProtocol.buildRequestBody({
       model: modelId,
       messages: formatted,
-      max_tokens: maxTokens,
+      tools: formattedTools,
+      maxTokens,
       temperature: options.temperature ?? this.temperature,
       stream: true,
-    };
-
-    if (system) body.system = system;
-    const formattedTools = this.formatTools(tools);
-    if (formattedTools.length > 0) body.tools = formattedTools;
+      extra: { system },
+    });
 
     let response;
     try {
-      response = await axios.post(`${this.baseUrl}/messages`, body, {
-        timeout: options.timeout || this.timeout,
-        headers: this._getHeaders(),
-        responseType: "stream",
-        signal: options.signal,
-      });
+      response = await axios.post(
+        `${this.baseUrl}${anthropicProtocol.getEndpoint()}`,
+        body,
+        {
+          timeout: options.timeout || this.timeout,
+          headers: this._getHeaders(),
+          responseType: "stream",
+          signal: options.signal,
+        },
+      );
     } catch (err) {
       if (
         err.name === "CanceledError" ||
@@ -323,13 +326,9 @@ class AnthropicProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    return new Promise((resolve, reject) => {
-      let content = "";
-      const toolUses = []; // { id, name, inputJson }
-      let currentToolIndex = -1;
-      let buffer = "";
+    const parser = anthropicProtocol.createStreamParser(onToken);
 
-      // Abort listener: destroy stream on signal
+    return new Promise((resolve, reject) => {
       if (options.signal) {
         options.signal.addEventListener(
           "abort",
@@ -342,117 +341,23 @@ class AnthropicProvider extends BaseProvider {
       }
 
       response.data.on("data", (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-
-          if (trimmed.startsWith("data: ")) {
-            const data = trimmed.slice(6);
-            let parsed;
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              continue;
-            }
-
-            switch (parsed.type) {
-              case "content_block_start": {
-                const block = parsed.content_block;
-                if (block?.type === "tool_use") {
-                  currentToolIndex = toolUses.length;
-                  toolUses.push({
-                    id: block.id,
-                    name: block.name,
-                    inputJson: "",
-                  });
-                }
-                break;
-              }
-
-              case "content_block_delta": {
-                const delta = parsed.delta;
-                if (delta?.type === "text_delta" && delta.text) {
-                  onToken(delta.text);
-                  content += delta.text;
-                }
-                if (
-                  delta?.type === "input_json_delta" &&
-                  delta.partial_json !== undefined
-                ) {
-                  if (currentToolIndex >= 0) {
-                    toolUses[currentToolIndex].inputJson += delta.partial_json;
-                  }
-                }
-                break;
-              }
-
-              case "content_block_stop":
-                currentToolIndex = -1;
-                break;
-
-              case "message_stop":
-                resolve({
-                  content,
-                  tool_calls: this._buildToolCalls(toolUses),
-                });
-                return;
-            }
-          }
-        }
+        const { done, result } = parser.feed(chunk.toString());
+        if (done) resolve(result);
       });
 
       response.data.on("error", (err) => {
-        if (options.signal?.aborted) return; // Ignore errors after abort
+        if (options.signal?.aborted) return;
         reject(new Error(`Stream error: ${err.message}`));
       });
 
       response.data.on("end", () => {
-        resolve({ content, tool_calls: this._buildToolCalls(toolUses) });
+        resolve(parser.flush());
       });
     });
   }
 
   normalizeResponse(data) {
-    let content = "";
-    const toolCalls = [];
-
-    for (const block of data.content || []) {
-      if (block.type === "text") {
-        content += block.text;
-      } else if (block.type === "tool_use") {
-        toolCalls.push({
-          id: block.id,
-          function: {
-            name: block.name,
-            arguments: block.input,
-          },
-        });
-      }
-    }
-
-    return { content, tool_calls: toolCalls };
-  }
-
-  _buildToolCalls(toolUses) {
-    return toolUses
-      .filter((tu) => tu.name)
-      .map((tu) => {
-        let args = {};
-        if (tu.inputJson) {
-          try {
-            args = JSON.parse(tu.inputJson);
-          } catch {
-            args = tu.inputJson;
-          }
-        }
-        return {
-          id: tu.id || `anthropic-${Date.now()}`,
-          function: { name: tu.name, arguments: args },
-        };
-      });
+    return anthropicProtocol.normalizeResponse(data);
   }
 }
 
