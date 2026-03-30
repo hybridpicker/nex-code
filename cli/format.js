@@ -748,7 +748,6 @@ function formatMilestone(
   filesRead,
   filesModified,
 ) {
-  const totalTools = [...toolCounts.values()].reduce((a, b) => a + b, 0);
   const elapsedSecs = Math.round(elapsedMs / 1000);
   const timeStr =
     elapsedSecs >= 60
@@ -756,9 +755,7 @@ function formatMilestone(
       : `${elapsedSecs}s`;
 
   let line = `\n${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
-  line += `${C.dim} · ${stepCount} step${stepCount !== 1 ? "s" : ""}`;
-  line += ` · ${totalTools} tool${totalTools !== 1 ? "s" : ""}`;
-  line += ` · ${timeStr}`;
+  line += `${C.dim} · ${timeStr}`;
   if (filesModified.size > 0)
     line += ` · ${filesModified.size} file${filesModified.size !== 1 ? "s" : ""} modified`;
   line += C.reset;

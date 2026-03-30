@@ -548,15 +548,14 @@ describe("session-scorer.js", () => {
 
   // ─── formatScore ──────────────────────────────────────────────────
   describe("formatScore()", () => {
-    it("formats with color codes", () => {
+    it("returns empty string for high-scoring sessions", () => {
       const result = { score: 9.5, grade: "A", issues: [], summary: "Clean" };
       const C = { dim: "", reset: "", green: "G", yellow: "Y", red: "R", cyan: "", bold: "B" };
       const out = formatScore(result, C);
-      expect(out).toContain("9.5/10");
-      expect(out).toContain("(A)");
+      expect(out).toBe("");
     });
 
-    it("lists issues with warning symbols", () => {
+    it("shows issues subtly for mediocre sessions", () => {
       const result = {
         score: 7,
         grade: "C",
@@ -565,6 +564,12 @@ describe("session-scorer.js", () => {
       };
       const out = formatScore(result);
       expect(out).toContain("test issue");
+    });
+
+    it("shows warning symbols for poor sessions", () => {
+      const result = { score: 4, grade: "F", issues: ["big problem"], summary: "Bad" };
+      const out = formatScore(result);
+      expect(out).toContain("big problem");
     });
 
     it("works without color object", () => {
