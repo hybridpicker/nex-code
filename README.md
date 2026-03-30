@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-3453-blue.svg" alt="Tests: 3453">
+  <img src="https://img.shields.io/badge/tests-3719-blue.svg" alt="Tests: 3719">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -147,7 +147,7 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 
 **Extensible.** Plugin API (`registerTool` + lifecycle hooks), skill system (install from any git URL), MCP server support.
 
-**Tested.** 3453 tests, 79% coverage, CI on every push.
+**Tested.** 3719 tests, 83% coverage, CI on every push.
 
 ---
 
@@ -473,6 +473,8 @@ Fallback chains let you auto-switch when a provider fails:
 /fallback anthropic,openai,local
 ```
 
+**Wire Protocol Layer:** All 5 providers share 3 wire protocol implementations (OpenAI-compatible SSE, Anthropic Messages SSE, Ollama NDJSON). Stream parsing, tool call accumulation, and response normalization are handled by reusable `StreamParser` classes — eliminating duplicated protocol code across providers.
+
 ---
 
 ## Commands
@@ -495,6 +497,12 @@ Type `/` to see inline suggestions as you type. Tab completion is supported for 
 | `/load <name>`                                | Load a saved session                                                                                                                               |
 | `/sessions`                                   | List saved sessions                                                                                                                                |
 | `/resume`                                     | Resume last session                                                                                                                                |
+| `/branches`                                   | Show session tree (all conversation branches)                                                                                                      |
+| `/timeline [n]`                               | Show message timeline of current branch                                                                                                            |
+| `/goto <index>`                               | Jump to a message index (truncates later messages)                                                                                                 |
+| `/fork [index] [name]`                        | Create a new branch at the given message index                                                                                                     |
+| `/switch-branch <name>`                       | Switch to a different conversation branch                                                                                                          |
+| `/delete-branch <name>`                       | Delete a conversation branch                                                                                                                       |
 | `/remember <text>`                            | Save a memory (persists across sessions)                                                                                                           |
 | `/forget <key>`                               | Delete a memory                                                                                                                                    |
 | `/memory`                                     | Show all memories                                                                                                                                  |
@@ -881,6 +889,37 @@ Only sessions from the last 24 hours are offered for auto-resume. Older autosave
 ```
 
 Sessions are stored in `.nex/sessions/` as JSON files. Auto-saves always write to `_autosave` (overwritten each turn). Writes are atomic — a temp file is written and renamed, so a crash mid-write never corrupts the saved state.
+
+### Session Trees
+
+Navigate your conversation history like git branches. Fork at any point, explore alternative approaches, and switch between branches:
+
+```
+/timeline            # see message indices
+/fork 5 experiment   # branch from message 5
+/branches            # see all branches
+/switch-branch main  # go back to main
+/goto 3              # jump to message 3 (truncates later messages)
+/delete-branch experiment
+```
+
+This enables non-linear conversations: try an approach, and if it doesn't work, fork from an earlier point and try something different — without losing the original attempt.
+
+### Autoresearch
+
+Autonomous optimization loops inspired by Karpathy's autoresearch pattern. The agent edits code, runs experiments, logs results, and automatically keeps improvements or reverts failures:
+
+```
+/autoresearch reduce test runtime while maintaining correctness
+/autoresearch optimize bundle size under 500kb
+```
+
+The agent follows a repeating cycle: **checkpoint** (git) -> **edit** -> **run experiment** -> **log result** -> **keep or revert**. All experiments are logged to `.nex/autoresearch/experiments.json` with metrics and trend tracking.
+
+```
+/ar-status    # show experiment history with trends
+/ar-clear     # reset experiment history
+```
 
 ### Memory
 
@@ -1611,9 +1650,11 @@ npm test              # Run all tests with coverage
 npm run test:watch    # Watch mode
 ```
 
-83 test suites, 3453 tests, 79% statement / 71% branch coverage.
+91 test suites, 3719 tests, 83% statement / 74% branch coverage.
 
 CI runs on GitHub Actions (Node 20 LTS).
+
+**Type checking:** `npm run typecheck` runs TypeScript in `noEmit` mode with `allowJs`. Core type definitions live in `types/index.d.ts` (Message, ToolCall, IProvider, IWireProtocol, Session, Skill, etc.). The codebase uses incremental TypeScript adoption — new modules can be written in `.ts` while existing `.js` files are gradually migrated.
 
 ---
 
