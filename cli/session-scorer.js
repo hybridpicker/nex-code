@@ -1063,6 +1063,48 @@ function scoreMessages(messages) {
     }
   }
 
+  // ── 23. Post-commit verification waste (-0.75) ────────────────────────────
+  // Detect when agent runs git status/diff/log/show AFTER a git commit command.
+  // Pattern: bash("git commit ...") → then 3+ git status/diff/log calls.
+  // Track the worst (max) post-commit count across all commits in the session.
+  {
+    let commitSeen = false;
+    let postCommitGitCalls = 0;
+    let maxPostCommitGitCalls = 0;
+    for (const tc of nonBlockedToolCalls) {
+      if (
+        (tc.name === "bash" || tc.name === "Bash") &&
+        tc.input?.command &&
+        /git\s+commit\b/.test(tc.input.command)
+      ) {
+        if (commitSeen) {
+          maxPostCommitGitCalls = Math.max(
+            maxPostCommitGitCalls,
+            postCommitGitCalls,
+          );
+        }
+        commitSeen = true;
+        postCommitGitCalls = 0;
+        continue;
+      }
+      if (
+        commitSeen &&
+        (tc.name === "bash" || tc.name === "Bash") &&
+        tc.input?.command &&
+        /git\s+(status|diff|log|show)\b/.test(tc.input.command)
+      ) {
+        postCommitGitCalls++;
+      }
+    }
+    maxPostCommitGitCalls = Math.max(maxPostCommitGitCalls, postCommitGitCalls);
+    if (maxPostCommitGitCalls >= 3) {
+      score -= 0.75;
+      issues.push(
+        `Post-commit verification waste: ${maxPostCommitGitCalls} git status/diff/log calls after commit`,
+      );
+    }
+  }
+
   // ── Clamp to [0, 10] ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(10, score));
   score = Math.round(score * 10) / 10; // 1 decimal place
