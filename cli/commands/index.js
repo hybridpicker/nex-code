@@ -35,6 +35,9 @@ const { StickyFooter } = require("../footer");
 
 const CWD = process.cwd();
 
+// ─── Session Tree State ─────────────────────────────────────
+let _sessionTree = null;
+
 // ─── Abort Controller (for Ctrl+C cancellation) ─────────────
 let _abortController = null;
 
@@ -59,6 +62,18 @@ const SLASH_COMMANDS = [
   { cmd: "/load", desc: "Load a saved session" },
   { cmd: "/sessions", desc: "List saved sessions" },
   { cmd: "/resume", desc: "Resume last session" },
+  { cmd: "/branches", desc: "Show session tree (all branches)" },
+  { cmd: "/timeline", desc: "Show message timeline of current branch" },
+  { cmd: "/goto <index>", desc: "Jump to a message index (truncates after)" },
+  { cmd: "/fork [index]", desc: "Create branch at index (default: current)" },
+  {
+    cmd: "/switch-branch <name>",
+    desc: "Switch to a different conversation branch",
+  },
+  {
+    cmd: "/delete-branch <name>",
+    desc: "Delete a conversation branch",
+  },
   { cmd: "/remember", desc: "Save a memory" },
   { cmd: "/forget", desc: "Delete a memory" },
   { cmd: "/memory", desc: "Show all memories" },
@@ -587,6 +602,7 @@ async function handleSlashCommand(input, rl) {
       }
       clearConversation();
       clearHistory();
+      _sessionTree = null; // Reset session tree
       const { deleteSession: _delAutosave } = require("../session");
       _delAutosave("_autosave");
       console.log(`${C.green}Conversation cleared${C.reset}`);
@@ -763,6 +779,190 @@ async function handleSlashCommand(input, rl) {
       console.log(
         `${C.green}Resumed: ${last.name} (${last.messageCount} messages)${C.reset}`,
       );
+      return true;
+    }
+
+    case "/branches": {
+      const {
+        initTree,
+        renderTree,
+      } = require("../session-tree");
+      const { getConversationMessages } = require("../agent");
+      const messages = getConversationMessages();
+      if (messages.length === 0) {
+        console.log(`${C.yellow}No conversation yet${C.reset}`);
+        return true;
+      }
+      // Initialize or retrieve tree from session metadata
+      if (!_sessionTree) {
+        _sessionTree = initTree({ messages });
+      }
+      console.log(renderTree(_sessionTree));
+      console.log();
+      return true;
+    }
+
+    case "/timeline": {
+      const {
+        initTree,
+        renderTimeline,
+      } = require("../session-tree");
+      const { getConversationMessages } = require("../agent");
+      const messages = getConversationMessages();
+      if (messages.length === 0) {
+        console.log(`${C.yellow}No conversation yet${C.reset}`);
+        return true;
+      }
+      if (!_sessionTree) {
+        _sessionTree = initTree({ messages });
+      }
+      // Sync current messages into tree
+      const stree = require("../session-tree");
+      stree.setActiveMessages(_sessionTree, messages);
+      const maxItems = parseInt(rest[0], 10) || 20;
+      console.log(renderTimeline(_sessionTree, maxItems));
+      console.log();
+      return true;
+    }
+
+    case "/goto": {
+      const streeGoto = require("../session-tree");
+      const { getConversationMessages, setConversationMessages: setMsgsGoto } =
+        require("../agent");
+      const messages = getConversationMessages();
+      if (messages.length === 0) {
+        console.log(`${C.yellow}No conversation yet${C.reset}`);
+        return true;
+      }
+      const gotoIdx = parseInt(rest[0], 10);
+      if (isNaN(gotoIdx)) {
+        console.log(`${C.red}Usage: /goto <message-index>${C.reset}`);
+        console.log(
+          `${C.dim}Use /timeline to see message indices${C.reset}`,
+        );
+        return true;
+      }
+      if (!_sessionTree) {
+        _sessionTree = streeGoto.initTree({ messages });
+      }
+      streeGoto.setActiveMessages(_sessionTree, messages);
+      try {
+        const { truncated } = streeGoto.gotoMessage(_sessionTree, gotoIdx);
+        const newMessages = streeGoto.getActiveMessages(_sessionTree);
+        setMsgsGoto(newMessages);
+        console.log(
+          `${C.green}Jumped to message ${gotoIdx}. Removed ${truncated} later messages.${C.reset}`,
+        );
+        console.log(
+          `${C.dim}Conversation now has ${newMessages.length} messages. Continue chatting from here.${C.reset}`,
+        );
+      } catch (err) {
+        console.log(`${C.red}${err.message}${C.reset}`);
+      }
+      return true;
+    }
+
+    case "/fork": {
+      const streeFork = require("../session-tree");
+      const { getConversationMessages, setConversationMessages: setMsgsFork } =
+        require("../agent");
+      const messages = getConversationMessages();
+      if (messages.length === 0) {
+        console.log(`${C.yellow}No conversation yet${C.reset}`);
+        return true;
+      }
+      if (!_sessionTree) {
+        _sessionTree = streeFork.initTree({ messages });
+      }
+      streeFork.setActiveMessages(_sessionTree, messages);
+      const forkIdx = rest[0]
+        ? parseInt(rest[0], 10)
+        : messages.length - 1;
+      const forkName = rest[1] || undefined;
+      if (isNaN(forkIdx)) {
+        console.log(
+          `${C.red}Usage: /fork [message-index] [branch-name]${C.reset}`,
+        );
+        return true;
+      }
+      try {
+        const { branchName } = streeFork.createBranch(
+          _sessionTree,
+          forkIdx,
+          forkName,
+        );
+        const newMessages = streeFork.getActiveMessages(_sessionTree);
+        setMsgsFork(newMessages);
+        console.log(
+          `${C.green}Created branch "${branchName}" forking at message ${forkIdx}${C.reset}`,
+        );
+        console.log(
+          `${C.dim}Now on branch "${branchName}" with ${newMessages.length} messages. Continue chatting.${C.reset}`,
+        );
+      } catch (err) {
+        console.log(`${C.red}${err.message}${C.reset}`);
+      }
+      return true;
+    }
+
+    case "/switch-branch": {
+      const streeSw = require("../session-tree");
+      const {
+        getConversationMessages,
+        setConversationMessages: setMsgsSw,
+      } = require("../agent");
+      if (!_sessionTree) {
+        const messages = getConversationMessages();
+        _sessionTree = streeSw.initTree({ messages });
+      }
+      // Save current messages before switching
+      streeSw.setActiveMessages(_sessionTree, getConversationMessages());
+      const swName = rest.join(" ").trim();
+      if (!swName) {
+        console.log(
+          `${C.red}Usage: /switch-branch <name>${C.reset}`,
+        );
+        console.log(
+          `${C.dim}Available: ${Object.keys(_sessionTree.branches).join(", ")}${C.reset}`,
+        );
+        return true;
+      }
+      try {
+        streeSw.switchBranch(_sessionTree, swName);
+        const newMessages = streeSw.getActiveMessages(_sessionTree);
+        setMsgsSw(newMessages);
+        console.log(
+          `${C.green}Switched to branch "${swName}" (${newMessages.length} messages)${C.reset}`,
+        );
+      } catch (err) {
+        console.log(`${C.red}${err.message}${C.reset}`);
+      }
+      return true;
+    }
+
+    case "/delete-branch": {
+      const streeDel = require("../session-tree");
+      if (!_sessionTree) {
+        const { getConversationMessages } = require("../agent");
+        _sessionTree = streeDel.initTree({
+          messages: getConversationMessages(),
+        });
+      }
+      const delName = rest.join(" ").trim();
+      if (!delName) {
+        console.log(
+          `${C.red}Usage: /delete-branch <name>${C.reset}`,
+        );
+        return true;
+      }
+      try {
+        streeDel.deleteBranch(_sessionTree, delName);
+        console.log(
+          `${C.green}Deleted branch "${delName}"${C.reset}`,
+        );
+      } catch (err) {
+        console.log(`${C.red}${err.message}${C.reset}`);
+      }
       return true;
     }
 
