@@ -45,7 +45,10 @@ export class NexCodePanel implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => {
       switch (msg.type) {
         case "chat":
-          this.agent.send(msg.text);
+          // Validate input to prevent crash on empty input
+          if (msg.text && msg.text.trim().length > 0) {
+            this.agent.send(msg.text);
+          }
           break;
         case "confirm":
           this.agent.confirm(msg.id, msg.answer);

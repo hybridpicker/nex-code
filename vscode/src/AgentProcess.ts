@@ -84,6 +84,10 @@ export class AgentProcess extends EventEmitter {
     if (!this.child?.stdin) {
       return;
     }
+    // Validate input to prevent crash on empty input
+    if (!text || text.trim().length === 0) {
+      return;
+    }
     const msgId = "msg-" + Date.now();
     this.child.stdin.write(
       JSON.stringify({ type: "chat", id: msgId, text }) + "\n",
