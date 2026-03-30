@@ -39,7 +39,9 @@
 ## Demo
 
 
-https://github.com/user-attachments/assets/314af16e-a962-45a7-b9ad-bf01650dfdf6
+
+https://github.com/user-attachments/assets/68a6c134-2d13-4d66-bc5e-befea3acb794
+
 ---
 
 ## Quickstart
