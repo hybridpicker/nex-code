@@ -618,6 +618,7 @@ RULES:
               model: activeModel,
               _skipLog: true,
               _systemPrompt: WORKER_SYSTEM_PROMPT,
+              _readOnlyFiles: _readOnlyFiles,
             },
             {
               onUpdate: (event) => {
