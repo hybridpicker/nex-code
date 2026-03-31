@@ -279,6 +279,8 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           "- If you are blocked from reading a file, SKIP IT and make your edit based on what you already know",
           "- If 3 consecutive experiments fail to improve, change category focus",
           "- Simplicity criterion: prefer removing code over adding it — complexity cost must be justified by metric gain",
+          "- cli/tools/index.js uses single-quoted JS strings — when editing descriptions, use ONLY single quotes inside the text, or escape double quotes as \\\\\" — NEVER put a raw double quote inside a JS string literal or tests will fail with SyntaxError",
+          "- Before every Edit call, grep the EXACT old_text from the file first so it matches byte-for-byte",
           "",
           "### How the benchmark score works — READ THIS FIRST",
           "The benchmark sends nex-code's TOOL_DEFINITIONS (schemas) to external models and checks:",
@@ -381,10 +383,14 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           watchEnabled = feature("WATCH_MODE");
         } catch {
           // feature-flags not available — check env
-          watchEnabled = process.env.NEX_FEATURE_WATCH_MODE === "1" || process.env.NEX_FEATURE_WATCH_MODE === "true";
+          watchEnabled =
+            process.env.NEX_FEATURE_WATCH_MODE === "1" ||
+            process.env.NEX_FEATURE_WATCH_MODE === "true";
         }
         if (!watchEnabled) {
-          console.log("Watch mode is disabled. Enable with NEX_FEATURE_WATCH_MODE=1");
+          console.log(
+            "Watch mode is disabled. Enable with NEX_FEATURE_WATCH_MODE=1",
+          );
           return;
         }
 
@@ -395,7 +401,9 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           return;
         }
         if (_watchProcess) {
-          console.log("Watch mode is already running. Use /ar-watch stop to stop it.");
+          console.log(
+            "Watch mode is already running. Use /ar-watch stop to stop it.",
+          );
           return;
         }
 
@@ -438,11 +446,12 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
       execute: async (args) => {
         // Strip any date-like suffix the model may have hallucinated, then
         // append today's real date so the branch name is always accurate.
-        const baseTag = (args.tag || "self-improve")
-          .replace(/[^a-zA-Z0-9_-]/g, "-")
-          .replace(/-?\d{4,8}$/, "") // strip trailing YYYYMMDD / YYYYMM / etc.
-          .replace(/-[a-z]{3}\d{1,2}$/i, "") // strip trailing mon## (e.g. apr15)
-          .replace(/-+$/, "") || "self-improve";
+        const baseTag =
+          (args.tag || "self-improve")
+            .replace(/[^a-zA-Z0-9_-]/g, "-")
+            .replace(/-?\d{4,8}$/, "") // strip trailing YYYYMMDD / YYYYMM / etc.
+            .replace(/-[a-z]{3}\d{1,2}$/i, "") // strip trailing mon## (e.g. apr15)
+            .replace(/-+$/, "") || "self-improve";
         const now = new Date();
         const dateStr =
           now.toLocaleString("en", { month: "short" }).toLowerCase() +
@@ -711,13 +720,12 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           properties: {
             file: {
               type: "string",
-              description:
-                'Path to the log file (e.g. "run.log")',
+              description: 'Path to the log file (e.g. "run.log")',
             },
             patterns: {
               type: "object",
               description:
-                'Map of metric name to regex pattern with one capture group. ' +
+                "Map of metric name to regex pattern with one capture group. " +
                 'Example: {"val_bpb": "val_bpb:\\\\s*([\\\\d.]+)", "memory": "peak_vram_mb:\\\\s*([\\\\d.]+)"}',
               additionalProperties: { type: "string" },
             },
@@ -797,7 +805,8 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         if (!benchmark) {
           return JSON.stringify({
             status: "unavailable",
-            error: "Benchmark module not found. Make sure cli/benchmark.js exists.",
+            error:
+              "Benchmark module not found. Make sure cli/benchmark.js exists.",
           });
         }
 
@@ -854,8 +863,9 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           }
 
           // Sort categories by score to find weakest
-          const sortedCategories = Object.entries(categoryAvgs)
-            .sort((a, b) => a[1] - b[1]);
+          const sortedCategories = Object.entries(categoryAvgs).sort(
+            (a, b) => a[1] - b[1],
+          );
 
           const weakestCategory =
             sortedCategories.length > 0 ? sortedCategories[0] : null;
@@ -876,8 +886,9 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           return JSON.stringify({
             status: "benchmark_failed",
             error: err.message,
-            elapsed_seconds:
-              parseFloat(((Date.now() - start) / 1000).toFixed(1)),
+            elapsed_seconds: parseFloat(
+              ((Date.now() - start) / 1000).toFixed(1),
+            ),
           });
         }
       },
@@ -983,7 +994,9 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
 
         const keptCount = experiments.filter((e) => e.kept).length;
         const revertedCount = experiments.filter((e) => !e.kept).length;
-        const statusIcon = args.kept ? "\x1b[32m✔ KEPT\x1b[0m" : "\x1b[31m✘ REVERTED\x1b[0m";
+        const statusIcon = args.kept
+          ? "\x1b[32m✔ KEPT\x1b[0m"
+          : "\x1b[31m✘ REVERTED\x1b[0m";
         const delta =
           prev != null && typeof args.metric === "number"
             ? ` (${args.metric > prev ? "+" : ""}${(args.metric - prev).toFixed(1)} pts)`
@@ -1194,19 +1207,28 @@ function startWatch(watchPath, testCommand) {
   ];
 
   try {
-    const watcher = fs.watch(watchPath, { recursive: true }, (eventType, filename) => {
-      if (!filename) return;
-      // Skip ignored paths
-      if (ignorePatterns.some((p) => p.test(filename))) return;
-      // Skip non-source files
-      if (!/\.(js|ts|jsx|tsx|py|rb|go|rs|json|yaml|yml|toml|cfg|ini|sh|css|html)$/.test(filename)) return;
+    const watcher = fs.watch(
+      watchPath,
+      { recursive: true },
+      (eventType, filename) => {
+        if (!filename) return;
+        // Skip ignored paths
+        if (ignorePatterns.some((p) => p.test(filename))) return;
+        // Skip non-source files
+        if (
+          !/\.(js|ts|jsx|tsx|py|rb|go|rs|json|yaml|yml|toml|cfg|ini|sh|css|html)$/.test(
+            filename,
+          )
+        )
+          return;
 
-      // Debounce: wait for changes to settle
-      if (_watchDebounceTimer) clearTimeout(_watchDebounceTimer);
-      _watchDebounceTimer = setTimeout(() => {
-        _runWatchTest(testCommand, filename);
-      }, WATCH_DEBOUNCE_MS);
-    });
+        // Debounce: wait for changes to settle
+        if (_watchDebounceTimer) clearTimeout(_watchDebounceTimer);
+        _watchDebounceTimer = setTimeout(() => {
+          _runWatchTest(testCommand, filename);
+        }, WATCH_DEBOUNCE_MS);
+      },
+    );
 
     _watchProcess = watcher;
 
@@ -1225,7 +1247,11 @@ function startWatch(watchPath, testCommand) {
  */
 function stopWatch() {
   if (_watchProcess) {
-    try { _watchProcess.close(); } catch { /* already closed */ }
+    try {
+      _watchProcess.close();
+    } catch {
+      /* already closed */
+    }
     _watchProcess = null;
   }
   if (_watchDebounceTimer) {
