@@ -77,7 +77,7 @@ describe("sub-agent utilities", () => {
       ["500 server", { message: "Server error 500" }, "server"],
       ["502 gateway", { message: "502 Bad Gateway" }, "server"],
       ["ECONNRESET", { message: "conn", code: "ECONNRESET" }, "network"],
-      ["ETIMEDOUT", { message: "timed out", code: "ETIMEDOUT" }, "network"],
+      ["ETIMEDOUT", { message: "timed out", code: "ETIMEDOUT" }, "timeout"],
       ["fetch failed", { message: "fetch failed" }, "network"],
       ["context overflow", { message: "400 context too long" }, "context_overflow"],
       ["content length", { message: "400 maximum content length" }, "context_overflow"],
