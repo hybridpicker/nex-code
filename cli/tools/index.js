@@ -538,7 +538,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "search_files",
       description:
-        "Search for a text pattern across files (regex). Returns matching lines with file paths. For simple content search, grep is equivalent. For finding files by name, use glob instead.",
+        "Search for a text pattern across files (regex). Returns matching lines with file paths. Example: use search_files for finding all occurrences of 'error' in .js files, but NOT for finding all .js files (use glob instead). For simple content search, grep is equivalent. For finding files by name, use glob instead.",
       parameters: {
         type: "object",
         properties: {
