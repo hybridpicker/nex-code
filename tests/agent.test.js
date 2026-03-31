@@ -2096,6 +2096,51 @@ describe("agent.js", () => {
     });
   });
 
+  // ─── splitSystemPrompt (cache-split) ───────────────────────
+  describe("splitSystemPrompt", () => {
+    it("splits prompt at boundary marker", () => {
+      const agent = require("../cli/agent");
+      const marker = agent.SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
+      const prompt = `Dynamic part\n${marker}\nStatic part`;
+      const { dynamic, static: staticPart } = agent.splitSystemPrompt(prompt);
+      expect(dynamic).toBe("Dynamic part");
+      expect(staticPart).toBe("Static part");
+    });
+
+    it("returns full prompt as dynamic when no boundary marker", () => {
+      const agent = require("../cli/agent");
+      const { dynamic, static: staticPart } = agent.splitSystemPrompt("No boundary here");
+      expect(dynamic).toBe("No boundary here");
+      expect(staticPart).toBe("");
+    });
+
+    it("buildSystemPrompt contains the boundary marker", async () => {
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      const prompt = await agent.buildSystemPrompt();
+      expect(prompt).toContain(agent.SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+    });
+
+    it("static part contains behavioral rules", async () => {
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      const prompt = await agent.buildSystemPrompt();
+      const { static: staticPart } = agent.splitSystemPrompt(prompt);
+      expect(staticPart).toContain("# Core Behavior");
+      expect(staticPart).toContain("# Tool Strategy");
+      expect(staticPart).toContain("# Edit Protocol");
+    });
+
+    it("dynamic part contains session-specific content", async () => {
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      const prompt = await agent.buildSystemPrompt();
+      const { dynamic } = agent.splitSystemPrompt(prompt);
+      expect(dynamic).toContain("WORKING DIRECTORY");
+      expect(dynamic).toContain("Nex Code");
+    });
+  });
+
   // ─── _argPreview coverage ──────────────────────────────────
   describe("_argPreview edge cases", () => {
     it("web_fetch tool executes successfully", async () => {

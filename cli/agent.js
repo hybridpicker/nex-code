@@ -1455,6 +1455,24 @@ function _buildModelRoutingGuide() {
   }
 }
 
+/** Boundary marker separating dynamic (per-session) from static (behavioral rules) prompt sections.
+ *  Providers supporting cache control can split on this marker to cache the static half. */
+const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->";
+
+/**
+ * Split a system prompt into dynamic (per-session) and static (behavioral rules) parts.
+ * @param {string} prompt — full system prompt from buildSystemPrompt()
+ * @returns {{ dynamic: string, static: string }} — two halves split at the boundary
+ */
+function splitSystemPrompt(prompt) {
+  const idx = prompt.indexOf(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+  if (idx === -1) return { dynamic: prompt, static: "" };
+  return {
+    dynamic: prompt.slice(0, idx).trimEnd(),
+    static: prompt.slice(idx + SYSTEM_PROMPT_DYNAMIC_BOUNDARY.length).trimStart(),
+  };
+}
+
 async function buildSystemPrompt() {
   // Check if context has changed (includes model routing guide cache + active model)
   const currentHash = await getProjectContextHash() + ":" + getActiveModelId();
@@ -1462,7 +1480,7 @@ async function buildSystemPrompt() {
     return cachedSystemPrompt;
   }
 
-  // Rebuild system prompt
+  // Rebuild system prompt — dynamic section (changes per session/context)
   // Note: gatherProjectContext is now cached internally (30s TTL + mtime validation)
   const projectContext = await gatherProjectContext(process.cwd());
   const memoryContext = getMemoryContext();
@@ -1482,6 +1500,7 @@ ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
 ${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone
 - **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}
+<!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
 # Plan Mode
 
@@ -6085,6 +6104,8 @@ module.exports = {
   // Export for benchmarking
   getCachedFilteredTools,
   buildSystemPrompt,
+  splitSystemPrompt,
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   getProjectContextHash,
   // Export for testing
   buildUserContent,
