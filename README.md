@@ -909,14 +909,14 @@ This enables non-linear conversations: try an approach, and if it doesn't work, 
 
 ### Autoresearch
 
-Autonomous optimization loops inspired by Karpathy's autoresearch pattern. The agent edits code, runs experiments, logs results, and automatically keeps improvements or reverts failures:
+Autonomous optimization loops inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch). The agent creates a dedicated experiment branch, edits code, runs experiments, and automatically keeps improvements or reverts failures:
 
 ```
 /autoresearch reduce test runtime while maintaining correctness
 /autoresearch optimize bundle size under 500kb
 ```
 
-The agent follows a repeating cycle: **checkpoint** (git) -> **edit** -> **run experiment** -> **log result** -> **keep or revert**. All experiments are logged to `.nex/autoresearch/experiments.json` with metrics and trend tracking.
+The agent follows a repeating cycle on a dedicated `autoresearch/<tag>` branch: **setup branch** -> **checkpoint** -> **edit** -> **run experiment** -> **log result** -> **keep or revert (git reset)**. Runs indefinitely until you interrupt. Experiments are logged to `.nex/autoresearch/experiments.json` with metrics, resource usage, and complexity tracking. Output can be redirected to log files with metric extraction via grep patterns to protect context.
 
 ```
 /ar-status    # show experiment history with trends

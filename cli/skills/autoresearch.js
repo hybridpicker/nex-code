@@ -1,7 +1,17 @@
 /**
  * cli/skills/autoresearch.js — Autoresearch Skill
  * Autonomous optimization loops: edit -> test -> log -> keep/revert
- * Inspired by Karpathy's autoresearch pattern and Pi's pi-autoresearch extension.
+ * Inspired by Karpathy's autoresearch pattern.
+ *
+ * Key design choices (aligned with Karpathy's autoresearch):
+ * - Dedicated branch per run (autoresearch/<tag>) for isolation
+ * - Git reset (not checkout) for discards — only successes in history
+ * - Fixed time budget per experiment for comparable results
+ * - Output redirection + metric grep to protect context window
+ * - Simplicity criterion: complexity cost weighed against metric gain
+ * - Crash triage: trivial bugs retried, broken ideas skipped
+ * - Resource tracking (memory/CPU alongside primary metric)
+ * - No iteration cap by default — runs until stopped
  */
 
 const { execSync } = require("child_process");
@@ -35,11 +45,63 @@ function saveExperiments() {
   fs.writeFileSync(logPath, JSON.stringify(experiments, null, 2));
 }
 
+/** Get short git hash for current HEAD */
+function gitHash() {
+  try {
+    return execSync("git rev-parse --short HEAD", {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Get current git branch name */
+function gitBranch() {
+  try {
+    return execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Extract metric values from output using grep patterns */
+function extractMetrics(output, patterns) {
+  const results = {};
+  for (const [name, pattern] of Object.entries(patterns)) {
+    const re = new RegExp(pattern);
+    const match = output.match(re);
+    if (match && match[1]) {
+      results[name] = parseFloat(match[1]);
+    }
+  }
+  return results;
+}
+
+/** Parse peak memory from process output (platform-aware) */
+function parseResourceUsage(output) {
+  const resources = {};
+  // Common patterns: "peak_vram_mb: 1234", "MaxRSS: 1234", "memory: 1234MB"
+  const vram = output.match(/peak_vram_mb:\s*([\d.]+)/);
+  if (vram) resources.peak_memory_mb = parseFloat(vram[1]);
+  const rss = output.match(/MaxRSS:\s*([\d.]+)/);
+  if (rss) resources.peak_memory_mb = parseFloat(rss[1]) / 1024; // KB to MB
+  const mem = output.match(/memory:\s*([\d.]+)\s*MB/i);
+  if (mem) resources.peak_memory_mb = parseFloat(mem[1]);
+  return resources;
+}
+
 module.exports = {
   name: "autoresearch",
   description:
     "Autonomous optimization loops: edit -> test -> log -> keep/revert. " +
-    "Run experiments, track results, and automatically keep improvements or revert failures.",
+    "Run experiments on a dedicated branch, track results, and automatically keep improvements or revert failures.",
 
   instructions: `You have access to autoresearch tools for running autonomous optimization loops.
 
@@ -47,22 +109,45 @@ module.exports = {
 
 When the user starts an autoresearch loop with /autoresearch <goal>, follow this cycle:
 
-1. **Analyze** the current state (read code, run baseline test)
-2. **Hypothesize** a specific change that could improve the target metric
-3. **Commit checkpoint** using skill_ar_checkpoint before making changes
-4. **Edit** the code to implement your hypothesis
-5. **Run experiment** using skill_ar_run_experiment with the test command
-6. **Log result** using skill_ar_log_experiment with the outcome
-7. **Decide**: If improved, keep changes. If worse, revert using skill_ar_revert
-8. **Repeat** from step 2 until the goal is met or no more improvements found
+1. **Setup branch** using skill_ar_setup_branch to create a dedicated autoresearch/<tag> branch
+2. **Analyze** the current state (read code, run baseline test)
+3. **Hypothesize** a specific change that could improve the target metric
+4. **Commit checkpoint** using skill_ar_checkpoint before making changes
+5. **Edit** the code to implement your hypothesis
+6. **Run experiment** using skill_ar_run_experiment with the test command
+7. **Log result** using skill_ar_log_experiment with the outcome
+8. **Decide**: If improved, keep changes. If worse, revert using skill_ar_revert
+9. **Repeat** from step 3 — do NOT stop unless the user interrupts
+
+## Simplicity Criterion
+
+Not every metric improvement is worth keeping. Weigh complexity cost against improvement:
+- A tiny improvement that adds 20 lines of hacky code? Probably not worth it.
+- Deleting code and getting equal or better results? Definitely keep — that's a simplification win.
+- An improvement of ~0 but much simpler code? Keep.
+When logging experiments, note the complexity impact in the notes field.
+
+## Crash Triage
+
+When an experiment crashes:
+- **Trivial bug** (typo, missing import, off-by-one): fix it and re-run the same experiment
+- **Fundamentally broken idea** (OOM, architectural incompatibility): log as crash, revert, move on
+- Use your judgment — if you can't fix a crash in 2 attempts, skip the idea
+
+## Output Efficiency
+
+When running experiments, redirect output to a log file and only grep for the target metric.
+This protects the context window from being flooded with training output.
+Use ar_run_experiment with output_file to redirect, then ar_extract_metric to read just the result.
 
 ## Rules
 - Always create a checkpoint before making changes
 - Always run the experiment after editing
-- Always log the result (even failures)
+- Always log the result (even failures and crashes)
 - Revert immediately if the metric worsens
-- Stop after 10 iterations or when the user interrupts
-- Show a summary table after each iteration`,
+- NEVER STOP: keep running experiments until the user interrupts — they may be away
+- If you run out of ideas, re-read the code for new angles, try combining previous near-misses, or try more radical changes
+- Show a summary table after every 5 iterations`,
 
   commands: [
     {
@@ -84,11 +169,10 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
         loadExperiments();
         console.log(`Autoresearch started: ${goal}`);
         console.log(
-          "The agent will now run autonomous optimization loops for this goal.",
+          "The agent will run autonomous optimization loops until you interrupt (Ctrl+C).",
         );
-        console.log("Press Ctrl+C to stop the loop at any time.\n");
-        // Return the goal as context for the agent to pick up
-        return `AUTORESEARCH_GOAL: ${goal}\n\nStart the autoresearch loop. First, analyze the current state and establish a baseline metric. Then begin the edit->test->log->keep/revert cycle.`;
+        console.log("Experiments run on a dedicated branch for isolation.\n");
+        return `AUTORESEARCH_GOAL: ${goal}\n\nStart the autoresearch loop. First, set up a dedicated branch using ar_setup_branch. Then analyze the current state and establish a baseline metric. Then begin the edit->test->log->keep/revert cycle. Do NOT stop — keep running experiments indefinitely until I interrupt.`;
       },
     },
     {
@@ -102,19 +186,29 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
         }
         console.log(`\nExperiment History (${exps.length} total):\n`);
         console.log(
-          "  #  | Status  | Metric        | Description",
+          "  #  | Status   | Metric        | Memory MB | Commit  | Description",
         );
         console.log(
-          "  ---|---------|---------------|----------------------------------",
+          "  ---|----------|---------------|-----------|---------|----------------------------------",
         );
         for (let i = 0; i < exps.length; i++) {
           const e = exps[i];
-          const status = e.kept ? "KEPT   " : "REVERTED";
+          const status =
+            e.status === "crash"
+              ? "CRASH   "
+              : e.kept
+                ? "KEPT    "
+                : "REVERTED";
           const metric =
             e.metric != null ? String(e.metric).padEnd(13) : "N/A          ";
+          const memory =
+            e.peak_memory_mb != null
+              ? String(e.peak_memory_mb.toFixed(1)).padEnd(9)
+              : "N/A      ";
+          const commit = (e.commit || "N/A").padEnd(7);
           const desc = (e.description || "").substring(0, 34);
           console.log(
-            `  ${String(i + 1).padStart(2)} | ${status} | ${metric} | ${desc}`,
+            `  ${String(i + 1).padStart(2)} | ${status} | ${metric} | ${memory} | ${commit} | ${desc}`,
           );
         }
         // Show trend
@@ -129,6 +223,10 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
               `\n  Trend: ${first} -> ${last} (${arrow}${diff.toFixed(2)})`,
             );
           }
+        }
+        const crashes = exps.filter((e) => e.status === "crash");
+        if (crashes.length > 0) {
+          console.log(`  Crashes: ${crashes.length}`);
         }
         console.log();
       },
@@ -149,10 +247,77 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
     {
       type: "function",
       function: {
+        name: "ar_setup_branch",
+        description:
+          "Create a dedicated autoresearch branch for this experiment run. " +
+          "Creates 'autoresearch/<tag>' from the current branch. " +
+          "Call this ONCE at the start of each autoresearch session.",
+        parameters: {
+          type: "object",
+          properties: {
+            tag: {
+              type: "string",
+              description:
+                "Short tag for this run (e.g. 'mar31', 'perf-opt'). " +
+                "Used as branch name: autoresearch/<tag>",
+            },
+          },
+          required: ["tag"],
+        },
+      },
+      execute: async (args) => {
+        const tag = (args.tag || "").replace(/[^a-zA-Z0-9_-]/g, "-");
+        const branchName = `autoresearch/${tag}`;
+
+        try {
+          // Check if branch already exists
+          try {
+            execSync(`git rev-parse --verify ${branchName}`, {
+              cwd: process.cwd(),
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+            // Branch exists — check it out
+            execSync(`git checkout ${branchName}`, {
+              cwd: process.cwd(),
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+            return JSON.stringify({
+              status: "resumed",
+              branch: branchName,
+              note: "Branch already existed — resuming experiments on it.",
+            });
+          } catch {
+            // Branch doesn't exist — create it
+          }
+
+          const sourceBranch = gitBranch() || "unknown";
+          execSync(`git checkout -b ${branchName}`, {
+            cwd: process.cwd(),
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+
+          return JSON.stringify({
+            status: "created",
+            branch: branchName,
+            source_branch: sourceBranch,
+            note: `Experiment branch created. All experiments will be isolated here. Merge back to '${sourceBranch}' when done.`,
+          });
+        } catch (err) {
+          return JSON.stringify({
+            status: "branch_failed",
+            error: err.message,
+            note: "Could not create branch. Continuing on current branch.",
+          });
+        }
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "ar_checkpoint",
         description:
           "Create a git checkpoint before making experimental changes. " +
-          "This allows reverting if the experiment fails. " +
+          "This allows reverting via git reset if the experiment fails. " +
           "Call this BEFORE editing any files in an autoresearch loop.",
         parameters: {
           type: "object",
@@ -182,10 +347,7 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
             );
           }
 
-          const hash = execSync("git rev-parse --short HEAD", {
-            cwd: process.cwd(),
-            encoding: "utf-8",
-          }).trim();
+          const hash = gitHash();
 
           return JSON.stringify({
             status: "checkpoint_created",
@@ -207,7 +369,8 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
         name: "ar_run_experiment",
         description:
           "Run a test/benchmark command to measure the effect of changes. " +
-          "Returns stdout, stderr, exit code, and execution time. " +
+          "Returns stdout, stderr, exit code, execution time, and resource usage. " +
+          "Supports output redirection to a log file to protect context window. " +
           "Call this AFTER making changes to measure their impact.",
         parameters: {
           type: "object",
@@ -220,41 +383,178 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
             timeout_seconds: {
               type: "number",
               description:
-                "Max seconds to wait (default: 120). Kill the process if exceeded.",
+                "Max seconds to wait (default: 300). Kill the process if exceeded.",
+            },
+            output_file: {
+              type: "string",
+              description:
+                "Optional: redirect all output to this file instead of capturing in context. " +
+                'Use with ar_extract_metric to read only the metric. (e.g. "run.log")',
+            },
+            metric_pattern: {
+              type: "string",
+              description:
+                "Optional: regex pattern to extract the primary metric from output. " +
+                "Must have one capture group for the numeric value. " +
+                '(e.g. "val_bpb:\\\\s*([\\\\d.]+)")',
             },
           },
           required: ["command"],
         },
       },
       execute: async (args) => {
-        const timeout = (args.timeout_seconds || 120) * 1000;
+        const timeout = (args.timeout_seconds || 300) * 1000;
         const start = Date.now();
+        const outputFile = args.output_file;
+
+        // Build the actual command — redirect if output_file specified
+        const cmd = outputFile
+          ? `${args.command} > ${outputFile} 2>&1`
+          : args.command;
 
         try {
-          const output = execSync(args.command, {
+          const output = execSync(cmd, {
             cwd: process.cwd(),
             encoding: "utf-8",
             timeout,
-            maxBuffer: 1024 * 1024, // 1MB
+            maxBuffer: 2 * 1024 * 1024, // 2MB
             stdio: ["pipe", "pipe", "pipe"],
           });
 
           const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+          const rawOutput = outputFile
+            ? fs.existsSync(path.resolve(process.cwd(), outputFile))
+              ? fs.readFileSync(
+                  path.resolve(process.cwd(), outputFile),
+                  "utf-8",
+                )
+              : ""
+            : output;
+
+          // Extract resource usage from output
+          const resources = parseResourceUsage(rawOutput);
+
+          // Extract metric if pattern provided
+          let extractedMetric = null;
+          if (args.metric_pattern) {
+            const metrics = extractMetrics(rawOutput, {
+              primary: args.metric_pattern,
+            });
+            extractedMetric = metrics.primary ?? null;
+          }
+
+          // For redirected output, only return summary + metric
+          const stdout = outputFile
+            ? `[Output redirected to ${outputFile}]`
+            : output.substring(0, 4000);
+
           return JSON.stringify({
             status: "success",
             exit_code: 0,
             elapsed_seconds: parseFloat(elapsed),
-            stdout: output.substring(0, 4000),
+            stdout,
             stderr: "",
+            extracted_metric: extractedMetric,
+            resources,
           });
         } catch (err) {
           const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+
+          // Try to read output file even on failure
+          let resources = {};
+          let extractedMetric = null;
+          if (outputFile) {
+            const outPath = path.resolve(process.cwd(), outputFile);
+            if (fs.existsSync(outPath)) {
+              const rawOutput = fs.readFileSync(outPath, "utf-8");
+              resources = parseResourceUsage(rawOutput);
+              if (args.metric_pattern) {
+                const metrics = extractMetrics(rawOutput, {
+                  primary: args.metric_pattern,
+                });
+                extractedMetric = metrics.primary ?? null;
+              }
+            }
+          }
+
           return JSON.stringify({
             status: err.killed ? "timeout" : "failure",
             exit_code: err.status || 1,
             elapsed_seconds: parseFloat(elapsed),
-            stdout: (err.stdout || "").substring(0, 4000),
+            stdout: outputFile
+              ? `[Output redirected to ${outputFile}]`
+              : (err.stdout || "").substring(0, 4000),
             stderr: (err.stderr || "").substring(0, 2000),
+            extracted_metric: extractedMetric,
+            resources,
+          });
+        }
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "ar_extract_metric",
+        description:
+          "Extract specific metrics from an experiment log file using grep patterns. " +
+          "Use this after ar_run_experiment with output_file to read only the metrics " +
+          "without loading the entire output into context.",
+        parameters: {
+          type: "object",
+          properties: {
+            file: {
+              type: "string",
+              description:
+                'Path to the log file (e.g. "run.log")',
+            },
+            patterns: {
+              type: "object",
+              description:
+                'Map of metric name to regex pattern with one capture group. ' +
+                'Example: {"val_bpb": "val_bpb:\\\\s*([\\\\d.]+)", "memory": "peak_vram_mb:\\\\s*([\\\\d.]+)"}',
+              additionalProperties: { type: "string" },
+            },
+            tail_lines: {
+              type: "number",
+              description:
+                "If the file is large, only read the last N lines (default: 100). " +
+                "Set to 0 to read the entire file.",
+            },
+          },
+          required: ["file", "patterns"],
+        },
+      },
+      execute: async (args) => {
+        try {
+          const filePath = path.resolve(process.cwd(), args.file);
+          if (!fs.existsSync(filePath)) {
+            return JSON.stringify({
+              status: "file_not_found",
+              file: args.file,
+            });
+          }
+
+          let content = fs.readFileSync(filePath, "utf-8");
+          const tailLines =
+            args.tail_lines !== undefined ? args.tail_lines : 100;
+          if (tailLines > 0) {
+            const lines = content.split("\n");
+            content = lines.slice(-tailLines).join("\n");
+          }
+
+          const metrics = extractMetrics(content, args.patterns);
+          const resources = parseResourceUsage(content);
+
+          return JSON.stringify({
+            status: "extracted",
+            metrics,
+            resources,
+            lines_read: tailLines > 0 ? tailLines : content.split("\n").length,
+          });
+        } catch (err) {
+          return JSON.stringify({
+            status: "extract_failed",
+            error: err.message,
           });
         }
       },
@@ -277,21 +577,39 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
             metric: {
               type: "number",
               description:
-                "The measured metric value (e.g. test runtime in seconds, bundle size in KB, score)",
+                "The measured metric value (e.g. test runtime in seconds, bundle size in KB, score). Use 0 for crashes.",
             },
             metric_name: {
               type: "string",
               description:
-                'Name of the metric (e.g. "runtime_seconds", "bundle_size_kb", "test_pass_rate")',
+                'Name of the metric (e.g. "runtime_seconds", "bundle_size_kb", "val_bpb")',
             },
             kept: {
               type: "boolean",
               description:
                 "Whether you decided to keep (true) or revert (false) this change",
             },
+            status: {
+              type: "string",
+              enum: ["keep", "discard", "crash"],
+              description:
+                "Experiment outcome: 'keep' if metric improved, 'discard' if worse, 'crash' if it failed to run",
+            },
+            peak_memory_mb: {
+              type: "number",
+              description:
+                "Peak memory usage in MB during the experiment (if available)",
+            },
+            complexity_impact: {
+              type: "string",
+              enum: ["simpler", "neutral", "complex"],
+              description:
+                "How this change affects code complexity: 'simpler' (removed code), 'neutral', or 'complex' (added code)",
+            },
             notes: {
               type: "string",
-              description: "Any additional observations about this experiment",
+              description:
+                "Additional observations — include complexity assessment and crash triage info",
             },
           },
           required: ["description", "metric", "kept"],
@@ -299,13 +617,18 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
       },
       execute: async (args) => {
         loadExperiments();
+        const commit = gitHash();
         const entry = {
           id: experiments.length + 1,
           timestamp: new Date().toISOString(),
+          commit,
           description: args.description,
           metric: args.metric,
           metric_name: args.metric_name || "metric",
           kept: args.kept,
+          status: args.status || (args.kept ? "keep" : "discard"),
+          peak_memory_mb: args.peak_memory_mb ?? null,
+          complexity_impact: args.complexity_impact || "neutral",
           notes: args.notes || "",
         };
         experiments.push(entry);
@@ -322,6 +645,7 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
           total_experiments: experiments.length,
           kept_count: experiments.filter((e) => e.kept).length,
           reverted_count: experiments.filter((e) => !e.kept).length,
+          crash_count: experiments.filter((e) => e.status === "crash").length,
           trend,
         });
       },
@@ -331,9 +655,10 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
       function: {
         name: "ar_revert",
         description:
-          "Revert all changes since the last checkpoint. " +
-          "Use this when an experiment made things worse. " +
-          "Restores the working tree to the last git commit state.",
+          "Revert to the last checkpoint using git reset. " +
+          "Unlike git checkout, this moves the branch pointer back so only " +
+          "successful experiments remain in git history. " +
+          "Use this when an experiment made things worse or crashed.",
         parameters: {
           type: "object",
           properties: {
@@ -348,33 +673,79 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
       },
       execute: async (args) => {
         try {
-          // Reset to last commit (the checkpoint)
-          execSync("git checkout -- .", {
+          // Use git reset --hard HEAD~1 to remove the failed experiment commit
+          // and move the branch pointer back (clean history, only successes)
+          const currentHash = gitHash();
+
+          // Check if there's a commit to reset to
+          try {
+            execSync("git log --oneline -2", {
+              cwd: process.cwd(),
+              encoding: "utf-8",
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+          } catch {
+            // Fallback: just clean working tree
+            execSync("git checkout -- .", {
+              cwd: process.cwd(),
+              stdio: "pipe",
+            });
+            execSync("git clean -fd", {
+              cwd: process.cwd(),
+              stdio: "pipe",
+            });
+            return JSON.stringify({
+              status: "reverted",
+              method: "checkout",
+              reason: args.reason,
+            });
+          }
+
+          // Reset to before the experiment commit
+          execSync("git reset --hard HEAD~1", {
             cwd: process.cwd(),
             stdio: "pipe",
           });
-          // Clean untracked files created during the experiment
+          // Also clean any untracked files
           execSync("git clean -fd", {
             cwd: process.cwd(),
             stdio: "pipe",
           });
 
-          const hash = execSync("git rev-parse --short HEAD", {
-            cwd: process.cwd(),
-            encoding: "utf-8",
-          }).trim();
+          const newHash = gitHash();
 
           return JSON.stringify({
             status: "reverted",
-            reverted_to: hash,
+            method: "reset",
+            reverted_from: currentHash,
+            reverted_to: newHash,
             reason: args.reason,
+            note: "Branch pointer moved back — failed experiment removed from history.",
           });
         } catch (err) {
-          return JSON.stringify({
-            status: "revert_failed",
-            error: err.message,
-            note: "Manual cleanup may be needed. Check git status.",
-          });
+          // Fallback to checkout if reset fails
+          try {
+            execSync("git checkout -- .", {
+              cwd: process.cwd(),
+              stdio: "pipe",
+            });
+            execSync("git clean -fd", {
+              cwd: process.cwd(),
+              stdio: "pipe",
+            });
+            return JSON.stringify({
+              status: "reverted",
+              method: "checkout_fallback",
+              reason: args.reason,
+              note: "git reset failed, fell back to checkout. Commit may remain in history.",
+            });
+          } catch (fallbackErr) {
+            return JSON.stringify({
+              status: "revert_failed",
+              error: fallbackErr.message,
+              note: "Manual cleanup may be needed. Check git status.",
+            });
+          }
         }
       },
     },
@@ -394,11 +765,12 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
         loadExperiments();
         const kept = experiments.filter((e) => e.kept);
         const reverted = experiments.filter((e) => !e.kept);
+        const crashes = experiments.filter((e) => e.status === "crash");
 
         let bestMetric = null;
         let worstMetric = null;
         for (const e of experiments) {
-          if (e.metric != null) {
+          if (e.metric != null && e.status !== "crash") {
             if (bestMetric === null || e.metric < bestMetric)
               bestMetric = e.metric;
             if (worstMetric === null || e.metric > worstMetric)
@@ -410,8 +782,10 @@ When the user starts an autoresearch loop with /autoresearch <goal>, follow this
           total: experiments.length,
           kept: kept.length,
           reverted: reverted.length,
+          crashes: crashes.length,
           best_metric: bestMetric,
           worst_metric: worstMetric,
+          branch: gitBranch(),
           experiments: experiments.slice(-20), // Last 20
         });
       },

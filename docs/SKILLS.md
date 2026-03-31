@@ -6,7 +6,18 @@ nex-code includes a skill system that extends the agent's capabilities with reus
 
 ### autoresearch
 
-Autonomous optimization loops: edit → test → log → keep/revert. Start with `/autoresearch <goal>`.
+Autonomous optimization loops inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) pattern. The agent creates a dedicated experiment branch, edits code, runs experiments, logs results with resource tracking, and automatically keeps improvements or reverts failures using git reset for a clean history.
+
+Key features:
+- **Dedicated branch** — each run creates `autoresearch/<tag>` for isolation
+- **Git reset reverts** — only successful experiments stay in git history
+- **Output redirection** — experiments can redirect to log files, with metric extraction via grep patterns to protect the context window
+- **Simplicity criterion** — complexity cost is weighed against metric improvement
+- **Crash triage** — trivial bugs are retried, broken ideas are skipped
+- **Resource tracking** — peak memory usage logged alongside primary metric
+- **No iteration cap** — runs indefinitely until the user interrupts
+
+Start with `/autoresearch <goal>`.
 
 ### skill-learning
 
