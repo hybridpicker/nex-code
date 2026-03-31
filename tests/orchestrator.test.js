@@ -1007,3 +1007,33 @@ describe("decompose — per-task call budget", () => {
     expect(total).toBe(40);
   });
 });
+
+// ─── Worker Type Classification ───────────────────────────────────────
+describe("_classifyWorkerType", () => {
+  const { _classifyWorkerType } = require("../cli/orchestrator");
+
+  test("classifies research tasks as explore", () => {
+    expect(_classifyWorkerType("Research the current auth flow")).toBe("explore");
+    expect(_classifyWorkerType("Analyze the performance bottleneck")).toBe("explore");
+    expect(_classifyWorkerType("Check if nginx is configured correctly")).toBe("explore");
+    expect(_classifyWorkerType("Review the error logs")).toBe("explore");
+  });
+
+  test("classifies implementation tasks as implement", () => {
+    expect(_classifyWorkerType("Fix the login bug in auth.js")).toBe("implement");
+    expect(_classifyWorkerType("Add rate limiting to the API")).toBe("implement");
+    expect(_classifyWorkerType("Refactor the database module")).toBe("implement");
+    expect(_classifyWorkerType("Deploy the new version")).toBe("implement");
+  });
+
+  test("prefers implement when task mentions both explore and implement verbs", () => {
+    expect(_classifyWorkerType("Investigate and fix the memory leak")).toBe("implement");
+    expect(_classifyWorkerType("Review then update the config")).toBe("implement");
+  });
+
+  test("defaults to implement for ambiguous tasks", () => {
+    expect(_classifyWorkerType("Handle the edge case")).toBe("implement");
+    expect(_classifyWorkerType("")).toBe("implement");
+    expect(_classifyWorkerType(null)).toBe("implement");
+  });
+});
