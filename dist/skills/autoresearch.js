@@ -269,16 +269,27 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           "- If 3 consecutive experiments fail to improve, change category focus",
           "- Simplicity criterion: prefer removing code over adding it — complexity cost must be justified by metric gain",
           "",
-          "### Files that affect benchmark score",
-          "- cli/agent.js — guard thresholds, system prompts, tool handling",
-          "- cli/context-engine.js — compression, token estimation",
-          "- cli/sub-agent.js — retry logic, error classification",
-          "- cli/orchestrator.js — sub-agent behavior",
-          "- cli/task-router.js — routing logic",
+          "### How the benchmark score works — READ THIS FIRST",
+          "The benchmark sends nex-code's TOOL_DEFINITIONS (schemas) to external models and checks:",
+          "  - Did the model call a tool? (tool call rate)",
+          "  - Did it call the RIGHT tool? (name accuracy)",
+          "  - Did it provide valid arguments? (args validity)",
+          "  - Did it match the JSON schema? (schema compliance)",
+          "The score reflects how CLEAR and DESCRIPTIVE nex-code's tool schemas are.",
+          "Changes to agent.js, context-engine.js, sub-agent.js have NO EFFECT on this score.",
+          "",
+          "### What actually moves the score",
+          "- cli/tools/index.js — tool `description` fields, parameter descriptions, examples",
+          "  → Clearer descriptions = models pick the right tool more often",
+          "  → Better parameter descriptions = models pass valid args more often",
+          "  → Adding usage examples to descriptions = fewer wrong tool selections",
+          "- The `name` field of tools (must be clear and unambiguous)",
+          "- The `required` array in tool schemas (must match what models need to call it)",
           "",
           "### CANNOT modify",
           "- cli/benchmark.js — eval harness, hands off",
           "- tests/ — not the optimization target",
+          "- Tool names (renaming breaks existing sessions)",
         ].join("\n");
       },
     },
@@ -866,17 +877,33 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         experiments.push(entry);
         saveExperiments();
 
-        const trend =
+        const prev =
           experiments.length >= 2
-            ? `Previous: ${experiments[experiments.length - 2].metric}, Current: ${args.metric}`
+            ? experiments[experiments.length - 2].metric
+            : null;
+        const trend =
+          prev != null
+            ? `Previous: ${prev}, Current: ${args.metric}`
             : "First experiment — baseline established";
+
+        const keptCount = experiments.filter((e) => e.kept).length;
+        const revertedCount = experiments.filter((e) => !e.kept).length;
+        const statusIcon = args.kept ? "\x1b[32m✔ KEPT\x1b[0m" : "\x1b[31m✘ REVERTED\x1b[0m";
+        const delta =
+          prev != null && typeof args.metric === "number"
+            ? ` (${args.metric > prev ? "+" : ""}${(args.metric - prev).toFixed(1)} pts)`
+            : "";
+        console.log(
+          `\n\x1b[1m── Experiment #${entry.id} ${statusIcon}\x1b[0m  score: ${args.metric}${delta}  │  total: ${experiments.length}  kept: ${keptCount}  reverted: ${revertedCount}`,
+        );
+        if (args.description) console.log(`   ${args.description}`);
 
         return JSON.stringify({
           status: "logged",
           experiment_number: entry.id,
           total_experiments: experiments.length,
-          kept_count: experiments.filter((e) => e.kept).length,
-          reverted_count: experiments.filter((e) => !e.kept).length,
+          kept_count: keptCount,
+          reverted_count: revertedCount,
           crash_count: experiments.filter((e) => e.status === "crash").length,
           trend,
         });
