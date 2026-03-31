@@ -455,7 +455,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a file's contents with line numbers. You MUST use this tool at least once on a file BEFORE calling edit_file or patch_file on it — this ensures you have the exact current content and edits will match. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding.",
+        "Read a file's contents with line numbers. You MUST use this tool at least once on a file BEFORE calling edit_file or patch_file on it — this ensures you have the exact current content and edits will match. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Example: to read lines 100-150 of a large file, call read_file with line_start=100, line_end=150. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding.",
       parameters: {
         type: "object",
         properties: {
