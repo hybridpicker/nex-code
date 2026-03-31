@@ -403,13 +403,38 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         const branchName = `autoresearch/${tag}`;
 
         try {
+          const currentBranch = gitBranch();
+          // If we're already on the target branch, nothing to do
+          if (currentBranch === branchName) {
+            return JSON.stringify({
+              status: "resumed",
+              branch: branchName,
+              note: "Already on autoresearch branch — continuing experiments.",
+            });
+          }
+
           // Check if branch already exists
+          let branchExists = false;
           try {
             execSync(`git rev-parse --verify ${branchName}`, {
               cwd: process.cwd(),
               stdio: ["pipe", "pipe", "pipe"],
             });
-            // Branch exists — check it out
+            branchExists = true;
+          } catch {
+            // Branch doesn't exist
+          }
+
+          if (branchExists) {
+            // Stash any uncommitted changes before switching
+            try {
+              execSync(`git stash`, {
+                cwd: process.cwd(),
+                stdio: ["pipe", "pipe", "pipe"],
+              });
+            } catch {
+              // Ignore stash errors (nothing to stash)
+            }
             execSync(`git checkout ${branchName}`, {
               cwd: process.cwd(),
               stdio: ["pipe", "pipe", "pipe"],
@@ -419,8 +444,6 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
               branch: branchName,
               note: "Branch already existed — resuming experiments on it.",
             });
-          } catch {
-            // Branch doesn't exist — create it
           }
 
           const sourceBranch = gitBranch() || "unknown";
