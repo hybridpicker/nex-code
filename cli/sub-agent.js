@@ -14,6 +14,7 @@ const {
 } = require("./providers/registry");
 const { parseToolArgs } = require("./ollama");
 const { filterToolsForModel, getModelTier } = require("./tool-tiers");
+const { getModelBriefing } = require("./model-profiles");
 const { trackUsage, estimateTokens: _estimateTokens } = require("./costs");
 const { MultiProgress, C } = require("./ui");
 
@@ -305,14 +306,18 @@ ERROR RECOVERY:
   const typeDef = agentDef.type && SUB_AGENT_TYPES[agentDef.type];
   const typeSuffix = typeDef && typeDef.systemSuffix ? `\n\n${typeDef.systemSuffix}` : '';
 
-  const messages = [{ role: "system", content: systemPrompt + typeSuffix }];
-  messages.push({ role: "user", content: agentDef.task });
-
-  // Resolve model routing
+  // Resolve model routing first so we can inject model-specific briefing
   const routing = resolveSubAgentModel(agentDef);
   const agentProvider = routing.provider;
   const agentModel = routing.model;
   const agentTier = routing.tier;
+
+  // Prepend model-specific briefing if available
+  const briefing = getModelBriefing(agentModel || getActiveModelId());
+  const briefingBlock = briefing ? `## Model Briefing\n${briefing}\n\n---\n\n` : "";
+
+  const messages = [{ role: "system", content: briefingBlock + systemPrompt + typeSuffix }];
+  messages.push({ role: "user", content: agentDef.task });
 
   // Lazy require to avoid circular dependency (tools.js ↔ sub-agent.js)
   const { TOOL_DEFINITIONS, executeTool } = require("./tools");
