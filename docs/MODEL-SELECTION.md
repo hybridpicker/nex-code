@@ -94,6 +94,18 @@ NEX_FAST_MODEL=devstral-small-2:24b
 NEX_PHASE_ROUTING=1    # force-enable (auto on Ollama Cloud)
 ```
 
+## Per-Model Briefings
+
+Each model profile in `cli/model-profiles.js` includes an optional `briefing` field — a short (3-5 sentence) behavioral guide that is prepended to the system prompt. This gives each model targeted guidance before it reads any project context or tool rules.
+
+Briefings are injected at three levels:
+
+1. **Main agent** (`cli/agent.js`): Prepended to `buildSystemPrompt()` output. Cache key includes the active model ID so model switches trigger a prompt rebuild.
+2. **Sub-agents** (`cli/sub-agent.js`): Prepended after model resolution, so each sub-agent gets guidance matched to its resolved model.
+3. **Orchestrator workers**: Inherit briefing injection from sub-agent.js (orchestrator passes `_systemPrompt` which gets the briefing prepended).
+
+Models without a profile entry receive no briefing (graceful fallback). Token overhead is ~50-80 tokens per call.
+
 ## Adding a New Model
 
 1. The model must be available on your configured provider (Ollama, OpenAI, etc.)

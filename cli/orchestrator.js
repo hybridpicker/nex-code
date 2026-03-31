@@ -17,6 +17,7 @@ const {
 } = require("./providers/registry");
 const { detectCategory, getModelForCategory } = require("./task-router");
 const { MultiProgress, C } = require("./ui");
+const { getModelBriefing } = require("./model-profiles");
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
