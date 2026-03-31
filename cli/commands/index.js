@@ -3717,14 +3717,27 @@ async function startREPL() {
           return;
         }
 
-        if (key.name === "up" && _sugIdx >= 0) {
-          _sugIdx--;
-          _inSugNav = true;
-          rl.write(null, { ctrl: true, name: "u" }); // clear current line
-          rl.write(_sugIdx >= 0 ? _sugHits[_sugIdx].cmd : _sugQuery);
-          _inSugNav = false;
-          _eraseSugDisplay();
-          _showSug(_sugQuery, _sugIdx);
+        if (key.name === "up") {
+          if (_sugIdx > 0) {
+            // Move selection up
+            _sugIdx--;
+            _inSugNav = true;
+            rl.write(null, { ctrl: true, name: "u" });
+            rl.write(_sugHits[_sugIdx].cmd);
+            _inSugNav = false;
+            _eraseSugDisplay();
+            _showSug(_sugQuery, _sugIdx);
+          } else if (_sugIdx === 0) {
+            // Back to unselected — restore original query
+            _sugIdx = -1;
+            _inSugNav = true;
+            rl.write(null, { ctrl: true, name: "u" });
+            rl.write(_sugQuery);
+            _inSugNav = false;
+            _eraseSugDisplay();
+            _showSug(_sugQuery, -1);
+          }
+          // _sugIdx === -1: no-op — don't let readline navigate history
           return;
         }
       }
@@ -3737,7 +3750,7 @@ async function startREPL() {
       // skip _clearSug so the freshly redrawn suggestions are not wiped.
       if (_sugN > 0 && key) {
         if (key.name === "down") return;
-        if (key.name === "up" && _sugIdx >= 0) return;
+        if (key.name === "up") return; // always handled in _ttyWrite when suggestions visible
       }
       _clearSug();
       if (key && (key.name === "tab" || key.name === "return")) return;
