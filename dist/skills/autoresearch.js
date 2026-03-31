@@ -133,14 +133,18 @@ module.exports = {
 When the user starts an autoresearch loop with /autoresearch <goal>, follow this cycle:
 
 1. **Setup branch** using skill_ar_setup_branch to create a dedicated autoresearch/<tag> branch
-2. **Baseline**: run ONE measurement command (e.g. wc -c, npm run build, a benchmark script) to get the starting metric — do NOT read every file first
+2. **Baseline**: run the measurement command with skill_ar_run_experiment, then use skill_ar_extract_metric with the metric_pattern that matches the output (e.g. {"runtime_ms": "runtime_ms:\\\\s*([\\\\d.]+)"})
 3. **Hypothesize** a specific, small change to ONE file
 4. **Commit checkpoint** using skill_ar_checkpoint before making changes
 5. **Edit** the code — make the change immediately, do not investigate further
-6. **Run experiment** using skill_ar_run_experiment with the same measurement command
-7. **Log result** using skill_ar_log_experiment with the outcome
-8. **Decide**: If improved, keep. If worse, skill_ar_revert immediately
-9. **Repeat** from step 3 — do NOT stop unless the user interrupts
+6. **Run experiment** using skill_ar_run_experiment with the SAME measurement command and output_file
+7. **Extract metric** using skill_ar_extract_metric with the SAME pattern as baseline
+8. **Log result** using skill_ar_log_experiment with the measured metric value
+9. **Decide**:
+   - If metric IMPROVED: keep the change, move to next experiment
+   - If metric SAME or WORSE: call skill_ar_revert IMMEDIATELY, then move to next experiment
+   - You MUST call skill_ar_revert for every failed experiment — never skip the revert
+10. **Repeat** from step 3 — do NOT stop unless the user interrupts
 
 ## CRITICAL: Move Fast, Investigate Less
 
@@ -179,10 +183,10 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
 - Always create a checkpoint before making changes
 - Always run the experiment after editing
 - Always log the result (even failures and crashes)
-- Revert immediately if the metric worsens
-- NEVER STOP: keep running experiments until the user interrupts — they may be away
+- **ALWAYS call skill_ar_revert when metric does not improve** — this is mandatory, not optional. A "discard" without revert leaves broken code in the working tree
+- NEVER STOP: keep running experiments until the user interrupts — they may be away. Do not print summary tables mid-loop. Do not say "I'll stop now". Just keep experimenting.
 - If you run out of ideas, re-read the code for new angles, try combining previous near-misses, or try more radical changes
-- Show a summary table after every 5 iterations`,
+- Do NOT print summary tables during the loop — the user can check /ar-status anytime. Focus on running experiments, not reporting.`,
 
   commands: [
     {
