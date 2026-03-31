@@ -3933,7 +3933,11 @@ async function startREPL() {
         }
         _abortController = new AbortController();
         try {
-          await processInput(agentPrompt, null, { autoOrchestrate: false });
+          await processInput(agentPrompt, null, {
+            autoOrchestrate: false,
+            skipPhaseRouting: true,
+            maxIterations: 200, // skill loops like autoresearch run until user interrupts
+          });
         } catch (err) {
           if (!_abortController?.signal?.aborted) {
             const userMessage =
