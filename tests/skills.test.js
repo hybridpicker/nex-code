@@ -510,7 +510,8 @@ describe("skills.js", () => {
       const skills = getSkills();
       skills.loadAllSkills();
       const result = skills.handleSkillCommand("/testcmd hello world");
-      expect(result).toBe(true);
+      expect(result).toBeTruthy();
+      expect(result.handled).toBe(true);
       expect(logSpy).toHaveBeenCalledWith("SKILL_CMD:hello world");
       logSpy.mockRestore();
     });
@@ -534,9 +535,58 @@ describe("skills.js", () => {
       const skills = getSkills();
       skills.loadAllSkills();
       const result = skills.handleSkillCommand("/errcmd");
-      expect(result).toBe(true);
+      expect(result).toBeTruthy();
+      expect(result.handled).toBe(true);
       expect(errSpy).toHaveBeenCalled();
       errSpy.mockRestore();
+    });
+
+    it("returns agentPrompt when handler returns a string", () => {
+      const dir = mkSkillsDir();
+      fs.writeFileSync(
+        path.join(dir, "prompt-cmd.js"),
+        `
+        module.exports = {
+          name: 'prompt-cmd',
+          commands: [{
+            cmd: '/promptcmd',
+            desc: 'Returns prompt',
+            handler: (args) => 'GOAL: ' + args
+          }]
+        };
+      `,
+      );
+      const skills = getSkills();
+      skills.loadAllSkills();
+      const result = skills.handleSkillCommand("/promptcmd optimize");
+      expect(result).toBeTruthy();
+      expect(result.handled).toBe(true);
+      expect(result.agentPrompt).toBe("GOAL: optimize");
+    });
+
+    it("does not set agentPrompt when handler returns nothing", () => {
+      const dir = mkSkillsDir();
+      fs.writeFileSync(
+        path.join(dir, "void-cmd.js"),
+        `
+        module.exports = {
+          name: 'void-cmd',
+          commands: [{
+            cmd: '/voidcmd',
+            desc: 'No return',
+            handler: () => { console.log('side effect'); }
+          }]
+        };
+      `,
+      );
+      const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+      const skills = getSkills();
+      skills.loadAllSkills();
+      const result = skills.handleSkillCommand("/voidcmd");
+      expect(result).toBeTruthy();
+      expect(result.handled).toBe(true);
+      expect(result.agentPrompt).toBeUndefined();
+      logSpy.mockRestore();
     });
 
     it("skips disabled skill commands", () => {

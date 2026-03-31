@@ -3106,9 +3106,16 @@ For each issue, include:
       process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
       process.exit(0);
 
-    default:
+    default: {
       // Check if it's a skill command before reporting unknown
-      if (handleSkillCommand(input)) return true;
+      const skillResult = handleSkillCommand(input);
+      if (skillResult) {
+        // If the handler returned an agent prompt, store it for the REPL to process
+        if (skillResult.agentPrompt) {
+          handleSlashCommand._pendingAgentPrompt = skillResult.agentPrompt;
+        }
+        return true;
+      }
       // Fuzzy-match against known commands — suggest the closest if within edit distance 2
       {
         const allKnown = [...SLASH_COMMANDS, ...getSkillCommands()].map(
@@ -3148,6 +3155,7 @@ For each issue, include:
         }
       }
       return true;
+    }
   }
 }
 
@@ -3901,6 +3909,31 @@ async function startREPL() {
     }
     if (input.startsWith("/")) {
       await handleSlashCommand(input, rl);
+      // Skill commands can return an agent prompt to kick off an autonomous loop
+      const agentPrompt = handleSlashCommand._pendingAgentPrompt;
+      if (agentPrompt) {
+        handleSlashCommand._pendingAgentPrompt = null;
+        // Feed the prompt to the agent as if the user typed it
+        _processing = true;
+        rl.prompt();
+        _sigintCount = 0;
+        _exitPrompt = false;
+        if (_exitPromptTimer) {
+          clearTimeout(_exitPromptTimer);
+          _exitPromptTimer = null;
+        }
+        _abortController = new AbortController();
+        try {
+          await processInput(agentPrompt);
+        } catch (err) {
+          if (!_abortController?.signal?.aborted) {
+            const userMessage =
+              err.message?.split("\n")[0] || "An unexpected error occurred";
+            console.log(`${C.red}Error: ${userMessage}${C.reset}`);
+          }
+        }
+        _processing = false;
+      }
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;
