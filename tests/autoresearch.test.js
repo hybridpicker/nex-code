@@ -38,10 +38,12 @@ describe("autoresearch skill", () => {
     });
 
     it("exports tools", () => {
-      expect(skill.tools).toHaveLength(5);
+      expect(skill.tools.length).toBeGreaterThanOrEqual(7);
       const toolNames = skill.tools.map((t) => t.function.name);
+      expect(toolNames).toContain("ar_setup_branch");
       expect(toolNames).toContain("ar_checkpoint");
       expect(toolNames).toContain("ar_run_experiment");
+      expect(toolNames).toContain("ar_extract_metric");
       expect(toolNames).toContain("ar_log_experiment");
       expect(toolNames).toContain("ar_revert");
       expect(toolNames).toContain("ar_history");
@@ -61,6 +63,32 @@ describe("autoresearch skill", () => {
     });
   });
 
+  describe("instructions", () => {
+    it("includes simplicity criterion", () => {
+      expect(skill.instructions).toContain("Simplicity Criterion");
+      expect(skill.instructions).toContain("complexity cost");
+    });
+
+    it("includes crash triage guidance", () => {
+      expect(skill.instructions).toContain("Crash Triage");
+      expect(skill.instructions).toContain("Trivial bug");
+      expect(skill.instructions).toContain("Fundamentally broken");
+    });
+
+    it("includes never-stop directive", () => {
+      expect(skill.instructions).toContain("NEVER STOP");
+    });
+
+    it("includes output efficiency guidance", () => {
+      expect(skill.instructions).toContain("Output Efficiency");
+      expect(skill.instructions).toContain("output_file");
+    });
+
+    it("includes dedicated branch setup step", () => {
+      expect(skill.instructions).toContain("ar_setup_branch");
+    });
+  });
+
   describe("/autoresearch command", () => {
     it("shows usage when called without args", () => {
       const spy = jest.spyOn(console, "log").mockImplementation();
@@ -76,6 +104,18 @@ describe("autoresearch skill", () => {
       expect(result).toContain("AUTORESEARCH_GOAL");
       expect(result).toContain("reduce test runtime");
     });
+
+    it("mentions indefinite running in the prompt", () => {
+      const handler = skill.commands.find((c) => c.cmd === "/autoresearch").handler;
+      const result = handler("optimize perf");
+      expect(result).toContain("indefinitely");
+    });
+
+    it("mentions branch setup in the prompt", () => {
+      const handler = skill.commands.find((c) => c.cmd === "/autoresearch").handler;
+      const result = handler("optimize perf");
+      expect(result).toContain("ar_setup_branch");
+    });
   });
 
   describe("/ar-status command", () => {
@@ -86,6 +126,26 @@ describe("autoresearch skill", () => {
       expect(spy).toHaveBeenCalledWith(
         expect.stringContaining("No experiments"),
       );
+      spy.mockRestore();
+    });
+
+    it("shows crash count in status", async () => {
+      const logTool = skill.tools.find(
+        (t) => t.function.name === "ar_log_experiment",
+      );
+      await logTool.execute({
+        description: "OOM experiment",
+        metric: 0,
+        kept: false,
+        status: "crash",
+      });
+
+      const spy = jest.spyOn(console, "log").mockImplementation();
+      const handler = skill.commands.find((c) => c.cmd === "/ar-status").handler;
+      handler();
+      const output = spy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(output).toContain("CRASH");
+      expect(output).toContain("Crashes: 1");
       spy.mockRestore();
     });
   });
@@ -99,6 +159,27 @@ describe("autoresearch skill", () => {
         expect.stringContaining("cleared"),
       );
       spy.mockRestore();
+    });
+  });
+
+  describe("ar_setup_branch tool", () => {
+    it("handles non-git directory gracefully", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_setup_branch",
+      );
+      const result = JSON.parse(await tool.execute({ tag: "test-run" }));
+      expect(result.status).toBe("branch_failed");
+      expect(result.note).toContain("Continuing on current branch");
+    });
+
+    it("sanitizes branch tag", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_setup_branch",
+      );
+      // Should not throw even with special characters
+      const result = JSON.parse(await tool.execute({ tag: "foo bar!@#" }));
+      // Will fail because no git, but the tag should be sanitized
+      expect(result.status).toBe("branch_failed");
     });
   });
 
@@ -161,6 +242,162 @@ describe("autoresearch skill", () => {
       expect(result.trend).toContain("3");
       expect(result.trend).toContain("2.5");
     });
+
+    it("tracks crash status", async () => {
+      const logTool = skill.tools.find(
+        (t) => t.function.name === "ar_log_experiment",
+      );
+
+      const result = JSON.parse(
+        await logTool.execute({
+          description: "OOM on large batch",
+          metric: 0,
+          kept: false,
+          status: "crash",
+          notes: "Out of memory — idea fundamentally broken",
+        }),
+      );
+
+      expect(result.crash_count).toBe(1);
+    });
+
+    it("records memory and complexity fields", async () => {
+      const logTool = skill.tools.find(
+        (t) => t.function.name === "ar_log_experiment",
+      );
+
+      await logTool.execute({
+        description: "Simplify parser",
+        metric: 2.0,
+        kept: true,
+        peak_memory_mb: 512.5,
+        complexity_impact: "simpler",
+      });
+
+      const logPath = path.join(
+        tmpDir,
+        ".nex",
+        "autoresearch",
+        "experiments.json",
+      );
+      const data = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+      expect(data[0].peak_memory_mb).toBe(512.5);
+      expect(data[0].complexity_impact).toBe("simpler");
+    });
+
+    it("records git commit hash", async () => {
+      const logTool = skill.tools.find(
+        (t) => t.function.name === "ar_log_experiment",
+      );
+
+      await logTool.execute({
+        description: "Test commit tracking",
+        metric: 1.0,
+        kept: true,
+      });
+
+      const logPath = path.join(
+        tmpDir,
+        ".nex",
+        "autoresearch",
+        "experiments.json",
+      );
+      const data = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+      // commit will be null in tmpDir (not a git repo), but field must exist
+      expect(data[0]).toHaveProperty("commit");
+    });
+  });
+
+  describe("ar_extract_metric tool", () => {
+    it("extracts metrics from a log file", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_extract_metric",
+      );
+
+      // Create a fake log file
+      const logContent = [
+        "Training started...",
+        "epoch 1: loss=2.345",
+        "epoch 2: loss=1.890",
+        "---",
+        "val_bpb:          0.997900",
+        "peak_vram_mb:     45060.2",
+        "training_seconds: 300.1",
+      ].join("\n");
+      fs.writeFileSync(path.join(tmpDir, "run.log"), logContent);
+
+      const result = JSON.parse(
+        await tool.execute({
+          file: "run.log",
+          patterns: {
+            val_bpb: "val_bpb:\\s*([\\d.]+)",
+            training_time: "training_seconds:\\s*([\\d.]+)",
+          },
+        }),
+      );
+
+      expect(result.status).toBe("extracted");
+      expect(result.metrics.val_bpb).toBeCloseTo(0.9979);
+      expect(result.metrics.training_time).toBeCloseTo(300.1);
+      expect(result.resources.peak_memory_mb).toBeCloseTo(45060.2);
+    });
+
+    it("handles missing file", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_extract_metric",
+      );
+
+      const result = JSON.parse(
+        await tool.execute({
+          file: "nonexistent.log",
+          patterns: { metric: "value:\\s*([\\d.]+)" },
+        }),
+      );
+
+      expect(result.status).toBe("file_not_found");
+    });
+
+    it("respects tail_lines parameter", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_extract_metric",
+      );
+
+      const lines = [];
+      for (let i = 0; i < 200; i++) lines.push(`line ${i}`);
+      lines.push("val_bpb: 0.5");
+      fs.writeFileSync(path.join(tmpDir, "big.log"), lines.join("\n"));
+
+      const result = JSON.parse(
+        await tool.execute({
+          file: "big.log",
+          patterns: { val_bpb: "val_bpb:\\s*([\\d.]+)" },
+          tail_lines: 10,
+        }),
+      );
+
+      expect(result.status).toBe("extracted");
+      expect(result.metrics.val_bpb).toBeCloseTo(0.5);
+      expect(result.lines_read).toBe(10);
+    });
+
+    it("reads full file when tail_lines is 0", async () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_extract_metric",
+      );
+
+      fs.writeFileSync(path.join(tmpDir, "small.log"), "val_bpb: 1.23\n");
+
+      const result = JSON.parse(
+        await tool.execute({
+          file: "small.log",
+          patterns: { val_bpb: "val_bpb:\\s*([\\d.]+)" },
+          tail_lines: 0,
+        }),
+      );
+
+      expect(result.status).toBe("extracted");
+      expect(result.metrics.val_bpb).toBeCloseTo(1.23);
+    });
   });
 
   describe("ar_history tool", () => {
@@ -173,7 +410,7 @@ describe("autoresearch skill", () => {
       expect(result.experiments).toEqual([]);
     });
 
-    it("returns experiment summary", async () => {
+    it("returns experiment summary with crash count", async () => {
       const logTool = skill.tools.find(
         (t) => t.function.name === "ar_log_experiment",
       );
@@ -183,12 +420,20 @@ describe("autoresearch skill", () => {
 
       await logTool.execute({ description: "test1", metric: 5.0, kept: true });
       await logTool.execute({ description: "test2", metric: 3.0, kept: false });
-      await logTool.execute({ description: "test3", metric: 2.0, kept: true });
+      await logTool.execute({
+        description: "test3",
+        metric: 0,
+        kept: false,
+        status: "crash",
+      });
+      await logTool.execute({ description: "test4", metric: 2.0, kept: true });
 
       const result = JSON.parse(await historyTool.execute({}));
-      expect(result.total).toBe(3);
+      expect(result.total).toBe(4);
       expect(result.kept).toBe(2);
-      expect(result.reverted).toBe(1);
+      expect(result.reverted).toBe(2);
+      expect(result.crashes).toBe(1);
+      // best/worst should exclude crashes
       expect(result.best_metric).toBe(2.0);
       expect(result.worst_metric).toBe(5.0);
     });
@@ -206,6 +451,8 @@ describe("autoresearch skill", () => {
       expect(result.exit_code).toBe(0);
       expect(result.stdout).toContain("hello");
       expect(result.elapsed_seconds).toBeDefined();
+      expect(result).toHaveProperty("resources");
+      expect(result).toHaveProperty("extracted_metric");
     });
 
     it("handles command failure", async () => {
@@ -229,9 +476,62 @@ describe("autoresearch skill", () => {
           timeout_seconds: 1,
         }),
       );
-      // execSync may report killed or failure depending on platform
       expect(["timeout", "failure"]).toContain(result.status);
       expect(result.exit_code).not.toBe(0);
+    });
+
+    it("supports output_file redirection", async () => {
+      const runTool = skill.tools.find(
+        (t) => t.function.name === "ar_run_experiment",
+      );
+      const result = JSON.parse(
+        await runTool.execute({
+          command: 'echo "val_bpb: 0.995"',
+          output_file: "test-run.log",
+        }),
+      );
+      expect(result.status).toBe("success");
+      expect(result.stdout).toContain("redirected");
+      // Verify the file was created
+      expect(
+        fs.existsSync(path.join(tmpDir, "test-run.log")),
+      ).toBe(true);
+    });
+
+    it("extracts metric when pattern provided", async () => {
+      const runTool = skill.tools.find(
+        (t) => t.function.name === "ar_run_experiment",
+      );
+      const result = JSON.parse(
+        await runTool.execute({
+          command: 'echo "val_bpb: 0.995"',
+          output_file: "test-metric.log",
+          metric_pattern: "val_bpb:\\s*([\\d.]+)",
+        }),
+      );
+      expect(result.status).toBe("success");
+      expect(result.extracted_metric).toBeCloseTo(0.995);
+    });
+
+    it("defaults to 300s timeout", async () => {
+      const runTool = skill.tools.find(
+        (t) => t.function.name === "ar_run_experiment",
+      );
+      const params = runTool.function.parameters;
+      expect(params.properties.timeout_seconds.description).toContain("300");
+    });
+
+    it("parses resource usage from output", async () => {
+      const runTool = skill.tools.find(
+        (t) => t.function.name === "ar_run_experiment",
+      );
+      const result = JSON.parse(
+        await runTool.execute({
+          command: 'echo "peak_vram_mb: 1234.5"',
+          output_file: "res-test.log",
+        }),
+      );
+      expect(result.resources.peak_memory_mb).toBeCloseTo(1234.5);
     });
   });
 
@@ -259,6 +559,13 @@ describe("autoresearch skill", () => {
       );
       expect(result.status).toBe("revert_failed");
       expect(result.error).toBeDefined();
+    });
+
+    it("mentions git reset in description", () => {
+      const revertTool = skill.tools.find(
+        (t) => t.function.name === "ar_revert",
+      );
+      expect(revertTool.function.description).toContain("git reset");
     });
   });
 });
