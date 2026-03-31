@@ -44,6 +44,7 @@ function getBenchmark() {
 // Track experiment history within the session
 let experiments = [];
 let loopActive = false;
+let sessionBaselineScore = null; // set on first ar_run_benchmark call
 
 function getLogPath() {
   const dir = path.join(process.cwd(), ".nex", "autoresearch");
