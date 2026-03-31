@@ -60,8 +60,14 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
   git checkout devel
   git merge main --no-edit
   git push origin devel
+
+  # Rebuild dist on devel so the local nex-code binary is always up to date
+  echo "[post-merge] Rebuilding dist/nex-code.js on devel..."
+  npm run build 2>&1 | tail -1
+  echo "[post-merge] Local binary updated."
+
   git checkout main
-  echo "[post-merge] Done. v${NEW_VERSION} — devel synced, GitHub Actions publishing to npm."
+  echo "[post-merge] Done. v${NEW_VERSION} — devel synced, local rebuilt, GitHub Actions publishing to npm."
 fi
 
 # Run npm install if package.json changed in the merge
