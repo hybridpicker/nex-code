@@ -85,7 +85,7 @@ function classifyError(err) {
 
 function isRetryableError(err) {
   const category = classifyError(err);
-  // Auth and context_overflow errors are NOT retryable — retrying won't help
+  // Only retry on rate_limit, network, server, or timeout errors
   return category === "rate_limit" || category === "server" || category === "network" || category === "timeout";
 }
 
