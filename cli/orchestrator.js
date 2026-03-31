@@ -621,15 +621,16 @@ RULES:
             },
             {
               onUpdate: (event) => {
-                // Stream live tool-call activity to stderr when running in a TTY.
-                // Skipped in piped/non-TTY contexts to keep output clean.
+                // Update the progress label with the current tool call
+                // instead of writing separate lines that interfere with MultiProgress
                 if (
                   event &&
                   event.type === "tool_call" &&
                   process.stderr.isTTY
                 ) {
-                  const label = `  ${C.dim}[Agent ${idx + 1}] ${event.tool}${C.reset}`;
-                  process.stderr.write(label + "\n");
+                  const prefix = `Agent ${idx + 1} [${activeModel}]`;
+                  const toolName = event.tool || "...";
+                  progress.labels[idx] = `${prefix}: ${toolName}`;
                 }
               },
             },
@@ -650,12 +651,15 @@ RULES:
         files: Array.isArray(st.scope) ? st.scope : [],
       });
 
+      // Restore original task label for the final render
+      progress.labels[idx] = labels[idx];
       progress.update(idx, result.status === "failed" ? "error" : "done");
       totalTokens.input += result.tokensUsed?.input || 0;
       totalTokens.output += result.tokensUsed?.output || 0;
       if (result.tokensUsed?._estimated) totalTokens._estimated = true;
       return { ...result, _scope: st.scope, _idx: idx };
     } catch (err) {
+      progress.labels[idx] = labels[idx];
       progress.update(idx, "error");
       return {
         task: st.task,

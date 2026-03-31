@@ -20,7 +20,8 @@ jest.mock("../cli/tool-tiers", () => ({
 }));
 jest.mock("../cli/costs", () => ({ trackUsage: jest.fn() }));
 jest.mock("../cli/ui", () => ({
-  MultiProgress: jest.fn().mockImplementation(() => ({
+  MultiProgress: jest.fn().mockImplementation((labels) => ({
+    labels: [...labels],
     start: jest.fn(),
     update: jest.fn(),
     stop: jest.fn(),
