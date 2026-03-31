@@ -560,8 +560,37 @@ RULES:
 - When done: stop calling tools and write a one-line summary of what you changed.
 `;
 
-  const agentPromises = subTasks.map(async (st, idx) => {
-    const release = await acquire();
+  // Group sub-tasks by priority level — execute each wave before starting the next.
+  // Within a wave, tasks run in parallel up to maxParallel concurrency.
+  const priorityWaves = new Map(); // priority → [{ st, idx }]
+  for (let idx = 0; idx < subTasks.length; idx++) {
+    const prio = subTasks[idx].priority || 1;
+    if (!priorityWaves.has(prio)) priorityWaves.set(prio, []);
+    priorityWaves.get(prio).push({ st: subTasks[idx], idx });
+  }
+  const sortedPriorities = [...priorityWaves.keys()].sort((a, b) => a - b);
+  const allResults = new Array(subTasks.length);
+
+  for (const prio of sortedPriorities) {
+    const wave = priorityWaves.get(prio);
+    const wavePromises = wave.map(async ({ st, idx }) => {
+      const release = await acquire();
+      try {
+        const result = await _executeSubAgent(st, idx, {
+          acquire, subTaskModels, labels, progress, sharedContext,
+          _fileOwnership, workerModel, WORKER_SYSTEM_PROMPT,
+        });
+        allResults[idx] = result;
+        return result;
+      } finally {
+        release();
+      }
+    });
+    await Promise.all(wavePromises);
+  }
+
+  // Agent execution extracted into helper to avoid deep nesting
+  async function _executeSubAgent(st, idx, ctx) {
     try {
       // Inject any findings from agents that have already completed
       const priorFindings = sharedContext.findings
@@ -588,6 +617,10 @@ RULES:
           : "",
       ].filter(Boolean);
 
+      // Determine sub-agent type from task description.
+      // Research/analysis tasks get read-only tool access; implementation gets full access.
+      const agentType = _classifyWorkerType(st.task);
+
       // Model for this specific sub-task (routed by category)
       const taskModel = subTaskModels[idx];
       // Fallback model used on server/timeout errors — prefer a fast model
@@ -612,6 +645,7 @@ RULES:
           return runSubAgent(
             {
               task: st.task,
+              type: agentType,
               context:
                 contextParts.length > 0 ? contextParts.join("\n") : undefined,
               max_iterations: Math.min(st.estimatedCalls || 10, 15),
@@ -669,14 +703,12 @@ RULES:
         toolsUsed: [],
         tokensUsed: { input: 0, output: 0 },
       };
-    } finally {
-      release();
     }
-  });
+  }
 
   let results;
   try {
-    results = await Promise.all(agentPromises);
+    results = allResults;
   } finally {
     progress.stop({ silent: true });
     clearAllLocks();
@@ -768,6 +800,27 @@ RULES:
   return { results, synthesis, totalTokens };
 }
 
+// ─── Worker Type Classification ─────────────────────────────────────────────
+
+const EXPLORE_PATTERNS = /\b(research|analyze|investigate|check|verify|review|audit|read|find|search|discover|look|examine|inspect|scan|list)\b/i;
+const IMPLEMENT_PATTERNS = /\b(fix|implement|create|add|update|modify|change|write|refactor|remove|delete|install|configure|setup|deploy|build|migrate)\b/i;
+
+/**
+ * Classify a sub-task as explore (read-only) or implement (full access).
+ * Tasks that only need investigation get restricted tool access.
+ * @param {string} taskDescription
+ * @returns {string} — "explore" or "implement"
+ */
+function _classifyWorkerType(taskDescription) {
+  if (!taskDescription) return "implement";
+  const hasExplore = EXPLORE_PATTERNS.test(taskDescription);
+  const hasImplement = IMPLEMENT_PATTERNS.test(taskDescription);
+  // If task mentions both, prefer implement (it needs write access)
+  if (hasImplement) return "implement";
+  if (hasExplore) return "explore";
+  return "implement"; // default: full access
+}
+
 module.exports = {
   runOrchestrated,
   decompose,
@@ -782,4 +835,5 @@ module.exports = {
   DEFAULT_MAX_PARALLEL,
   DEFAULT_MAX_SUBTASKS,
   withRetry,
+  _classifyWorkerType,
 };
