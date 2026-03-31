@@ -3936,7 +3936,8 @@ async function startREPL() {
           await processInput(agentPrompt, null, {
             autoOrchestrate: false,
             skipPhaseRouting: true,
-            maxIterations: 200, // skill loops like autoresearch run until user interrupts
+            skillLoop: true, // enables continuation nudge when model tries to stop
+            maxIterations: 200, // skill loops run until user interrupts
           });
         } catch (err) {
           if (!_abortController?.signal?.aborted) {

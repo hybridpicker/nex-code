@@ -2602,6 +2602,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
+  let _skillLoopNudges = 0; // cap continuation nudges to prevent infinite nudge loops
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
     progressMadeThisPass = false;
@@ -3743,6 +3744,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             };
             apiMessages.push(toolNudge);
             conversationMessages.push(toolNudge);
+            continue; // retry without counting as a step
+          }
+        }
+        // ─── Autoresearch continuation nudge ───────────────────────────────────
+        // When running a skill-initiated loop (e.g. /autoresearch), the model
+        // sometimes decides to stop ("I will now stop", "summary of findings")
+        // even though the instructions say NEVER STOP. Detect this and nudge
+        // the model to continue the experiment loop.
+        if (opts.skillLoop && hasText && totalSteps > 3 && (_skillLoopNudges || 0) < 5) {
+          const text = (content || streamedText || "").toLowerCase();
+          const stoppingPattern = /\b(stop|done|complet|summar|conclud|no more|finish|end of|that.s all|final)\b/;
+          if (stoppingPattern.test(text.slice(-500))) {
+            _skillLoopNudges = (_skillLoopNudges || 0) + 1;
+            debugLog(
+              `${C.yellow}  ⚠ Skill loop: model tried to stop — continuation nudge #${_skillLoopNudges}${C.reset}`,
+            );
+            const continueNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] Do NOT stop. You are in an autonomous experiment loop. The user is away and expects you to keep running experiments indefinitely until they interrupt with Ctrl+C. Start the next experiment NOW: hypothesize a new change, checkpoint, edit, run, measure, keep or revert. Think harder — try a completely different optimization approach.",
+            };
+            apiMessages.push(continueNudge);
+            conversationMessages.push(continueNudge);
             continue; // retry without counting as a step
           }
         }
