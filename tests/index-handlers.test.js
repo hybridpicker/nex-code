@@ -741,7 +741,7 @@ describe("index-handlers.test.js — additional handler coverage", () => {
       planner.isPlanMode.mockReturnValue(false);
       planner.getAutonomyLevel.mockReturnValue("interactive");
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("plan");
       expect(prompt).not.toContain("semi-auto");
       expect(prompt).not.toContain("autonomous");
@@ -752,7 +752,7 @@ describe("index-handlers.test.js — additional handler coverage", () => {
       planner.isPlanMode.mockReturnValueOnce(true);
       planner.getAutonomyLevel.mockReturnValueOnce("interactive");
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("plan");
     });
 
@@ -761,7 +761,7 @@ describe("index-handlers.test.js — additional handler coverage", () => {
       planner.isPlanMode.mockReturnValueOnce(false);
       planner.getAutonomyLevel.mockReturnValueOnce("autonomous");
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("autonomous");
     });
 

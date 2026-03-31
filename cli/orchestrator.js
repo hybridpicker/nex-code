@@ -528,10 +528,12 @@ async function runOrchestrated(prompt, opts = {}) {
     return routed || workerModel;
   });
 
-  const labels = subTasks.map(
-    (st, i) =>
-      `Agent ${i + 1} [${subTaskModels[i]}]: ${st.task.substring(0, 40)}${st.task.length > 40 ? "..." : ""}`,
-  );
+  const labels = subTasks.map((st, i) => {
+    const prefix = `Agent ${i + 1} [${subTaskModels[i]}]: `;
+    const maxTask = Math.max(20, 60 - prefix.length);
+    const task = st.task.substring(0, maxTask) + (st.task.length > maxTask ? "..." : "");
+    return prefix + task;
+  });
   const progress = new MultiProgress(labels);
   progress.start();
 

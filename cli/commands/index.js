@@ -3188,7 +3188,7 @@ function appendHistory(line) {
 // ─── Smart Prompt ────────────────────────────────────────────
 function getPrompt() {
   // Mode indicators (plan/autonomy/always) are shown in the footer — keep prompt clean.
-  return `${C.bold}${C.cyan}>${C.reset} `;
+  return `${C.bold}${C.cyan}›${C.reset} `;
 }
 
 /** Recompute mode badge and push it to the footer status bar. */
@@ -3920,6 +3920,8 @@ async function startREPL() {
         const pad = " ".repeat(Math.max(0, cols - visibleLen));
         console.log(`${BG}${marker} ${l}${pad}\x1b[0m`);
       });
+      // Blank line between input echo and agent output for visual separation
+      console.log();
     }
 
     // Auto-activate plan mode for implementation tasks (interactive only, opt-out: NEX_AUTO_PLAN=0).
