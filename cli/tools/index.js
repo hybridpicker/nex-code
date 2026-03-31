@@ -558,7 +558,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "glob",
       description:
-        "Find files matching a glob pattern. Fast file search by name/extension. Returns paths sorted by modification time. Use this to FIND files before reading them — never guess file paths, always glob first. Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to find the path, then read_file to read it.",
+        "Find files matching a glob pattern. Fast file search by name/extension. Returns paths sorted by modification time. Use this to FIND files before reading them — never guess file paths, always glob first. Example: use glob for '**/*.test.js' to find all test files, but NOT for searching content like 'error' in files (use grep tool instead). Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to find the path, then read_file to read it.",
       parameters: {
         type: "object",
         properties: {
