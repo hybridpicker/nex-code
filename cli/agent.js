@@ -4838,6 +4838,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const DUPE_TOOL_EXEMPT = new Set([
         "edit_file", "write_file", "bash", "ssh_exec", "ask_user",
         "spawn_agents", "browser_click", "browser_fill", "browser_open",
+        // Autoresearch tools are designed to be called repeatedly with the same args
+        // (e.g. running the same benchmark command after each code edit)
+        "skill_ar_run_experiment", "skill_ar_run_benchmark",
+        "skill_ar_checkpoint", "skill_ar_revert", "skill_ar_log_experiment",
+        "skill_ar_extract_metric",
       ]);
       for (const prep of prepared) {
         if (!prep.canExecute) continue;
