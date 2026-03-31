@@ -803,7 +803,7 @@ RULES:
 // ─── Worker Type Classification ─────────────────────────────────────────────
 
 const EXPLORE_PATTERNS = /\b(research|analyze|investigate|check|verify|review|audit|read|find|search|discover|look|examine|inspect|scan|list)\b/i;
-const IMPLEMENT_PATTERNS = /\b(fix|implement|create|add|update|modify|change|write|refactor|remove|delete|install|configure|setup|deploy|build|migrate)\b/i;
+const IMPLEMENT_PATTERNS = /\b(fix|implement|create|add|update|modify|change|write|refactor|remove|delete|install|configure|setup|deploy|build|migrate|optimize|improve|patch|rewrite|replace)\b/i;
 
 /**
  * Classify a sub-task as explore (read-only) or implement (full access).

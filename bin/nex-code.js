@@ -173,6 +173,11 @@ function runHeadlessTask(task) {
   const { processInput, getConversationMessages } = require("../cli/agent");
   processInput(task, null, { autoOrchestrate, orchestratorModel })
     .then(() => {
+      // Write dream log for session consolidation
+      try {
+        const { writeDreamLog } = require("../cli/dream");
+        writeDreamLog(getConversationMessages());
+      } catch { /* non-critical */ }
       if (args.includes("--json")) {
         const msgs = getConversationMessages();
         const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
