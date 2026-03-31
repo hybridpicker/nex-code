@@ -18,6 +18,16 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// Lazy-load agent to reset read guards between experiments
+function resetReadGuards() {
+  try {
+    const { resetSessionTracking } = require("../agent");
+    resetSessionTracking();
+  } catch {
+    // agent not available (e.g. in tests) — no-op
+  }
+}
+
 // Lazy-load benchmark to avoid circular deps and keep startup fast
 let _benchmark = null;
 function getBenchmark() {
@@ -123,14 +133,24 @@ module.exports = {
 When the user starts an autoresearch loop with /autoresearch <goal>, follow this cycle:
 
 1. **Setup branch** using skill_ar_setup_branch to create a dedicated autoresearch/<tag> branch
-2. **Analyze** the current state (read code, run baseline test)
-3. **Hypothesize** a specific change that could improve the target metric
+2. **Baseline**: run ONE measurement command (e.g. wc -c, npm run build, a benchmark script) to get the starting metric — do NOT read every file first
+3. **Hypothesize** a specific, small change to ONE file
 4. **Commit checkpoint** using skill_ar_checkpoint before making changes
-5. **Edit** the code to implement your hypothesis
-6. **Run experiment** using skill_ar_run_experiment with the test command
+5. **Edit** the code — make the change immediately, do not investigate further
+6. **Run experiment** using skill_ar_run_experiment with the same measurement command
 7. **Log result** using skill_ar_log_experiment with the outcome
-8. **Decide**: If improved, keep changes. If worse, revert using skill_ar_revert
+8. **Decide**: If improved, keep. If worse, skill_ar_revert immediately
 9. **Repeat** from step 3 — do NOT stop unless the user interrupts
+
+## CRITICAL: Move Fast, Investigate Less
+
+You are a researcher running rapid experiments, NOT a code reviewer.
+- **Baseline first**: measure the metric BEFORE reading any code
+- **One file per experiment**: pick the most promising file, read it ONCE, make ONE targeted change
+- **Never read all files** before making your first change — that wastes the entire context window
+- **Max 3 reads before editing**: if you have read 3 files/ranges without making an edit, STOP reading and make a change based on what you know
+- **Each experiment should take under 2 minutes**: read one file, edit it, measure, log, move on
+- **Prefer bash for metrics**: use bash commands (wc -c, time, du) for measurements — they are fast and don't consume context
 
 ## Simplicity Criterion
 
@@ -418,6 +438,9 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           }
 
           const hash = gitHash();
+
+          // Reset read guards so the agent can re-read files in the next experiment
+          resetReadGuards();
 
           return JSON.stringify({
             status: "checkpoint_created",
@@ -895,13 +918,16 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
 
           const newHash = gitHash();
 
+          // Reset read guards — files changed after revert, agent needs fresh access
+          resetReadGuards();
+
           return JSON.stringify({
             status: "reverted",
             method: "reset",
             reverted_from: currentHash,
             reverted_to: newHash,
             reason: args.reason,
-            note: "Branch pointer moved back — failed experiment removed from history.",
+            note: "Branch pointer moved back — failed experiment removed from history. Read guards reset — you can re-read files.",
           });
         } catch (err) {
           // Fallback to checkout if reset fails
