@@ -362,7 +362,18 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         },
       },
       execute: async (args) => {
-        const tag = (args.tag || "").replace(/[^a-zA-Z0-9_-]/g, "-");
+        // Strip any date-like suffix the model may have hallucinated, then
+        // append today's real date so the branch name is always accurate.
+        const baseTag = (args.tag || "self-improve")
+          .replace(/[^a-zA-Z0-9_-]/g, "-")
+          .replace(/-?\d{4,8}$/, "") // strip trailing YYYYMMDD / YYYYMM / etc.
+          .replace(/-[a-z]{3}\d{1,2}$/i, "") // strip trailing mon## (e.g. apr15)
+          .replace(/-+$/, "") || "self-improve";
+        const now = new Date();
+        const dateStr =
+          now.toLocaleString("en", { month: "short" }).toLowerCase() +
+          now.getDate();
+        const tag = `${baseTag}-${dateStr}`;
         const branchName = `autoresearch/${tag}`;
 
         try {
