@@ -481,7 +481,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "write_file",
       description:
-        "Create a new file or completely overwrite an existing file. For targeted changes to existing files, prefer edit_file or patch_file instead — they only send the diff and are safer. Only use write_file when creating new files or when the entire content needs to be replaced.",
+        "Create a new file or completely overwrite an existing file. Example: use write_file for creating a new config file like .env.example, but NOT for changing one line in an existing file (use edit_file instead). For targeted changes to existing files, prefer edit_file or patch_file instead — they only send the diff and are safer. Only use write_file when creating new files or when the entire content needs to be replaced.",
       parameters: {
         type: "object",
         properties: {
