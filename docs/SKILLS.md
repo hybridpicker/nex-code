@@ -19,6 +19,8 @@ Key features:
 
 Start with `/autoresearch <goal>`.
 
+**Self-improvement mode:** `/ar-self-improve [focus area]` starts a closed-loop cycle where nex-code optimizes its own benchmark score. The agent runs the benchmark, identifies the weakest category, makes targeted code changes, re-benchmarks, and keeps or reverts — autonomously. The benchmark suite itself (`cli/benchmark.js`) is off-limits to prevent eval gaming.
+
 ### skill-learning
 
 Lets the agent create and update reusable skills from experience. After complex tasks (5+ tool calls), the agent is nudged to save its approach as a skill for future reuse.
