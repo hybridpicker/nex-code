@@ -497,7 +497,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message to re-read that specific region with line_start/line_end, then retry with the exact text. For multiple changes to the same file, prefer patch_file (single atomic operation).",
+        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message (e.g., 'Most similar text (line 42)') to re-read that specific region with line_start=37, line_end=47, then retry with the exact text from that read. For multiple changes to the same file, prefer patch_file (single atomic operation).",
       parameters: {
         type: "object",
         properties: {
