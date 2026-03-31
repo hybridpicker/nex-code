@@ -106,9 +106,10 @@ class MultiProgress {
     if (this._stopped) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
     const ball = `${C.cyan}●${C.reset}`;
-    const empty = `${C.dim}○${C.reset}`;
     const elapsed = this._formatElapsed();
     const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : "";
+    // Truncate labels to terminal width to prevent line wrapping (which breaks cursor math)
+    const cols = process.stderr.columns || 80;
     let buf = "";
 
     for (let i = 0; i < this.labels.length; i++) {
@@ -132,7 +133,12 @@ class MultiProgress {
       }
       // Show elapsed on last line only
       const suffix = i === this.labels.length - 1 ? elapsedStr : "";
-      buf += `\x1b[2K  ${icon} ${color}${this.labels[i]}${C.reset}${suffix}\n`;
+      // Truncate label to fit terminal width (prefix "  X " = 4 chars)
+      const maxLabelLen = cols - 4 - (suffix ? elapsed.length + 1 : 0);
+      const label = this.labels[i].length > maxLabelLen
+        ? this.labels[i].substring(0, Math.max(10, maxLabelLen - 3)) + "..."
+        : this.labels[i];
+      buf += `\x1b[2K  ${icon} ${color}${label}${C.reset}${suffix}\n`;
     }
 
     // Move cursor back up to start of our block
@@ -188,6 +194,7 @@ class MultiProgress {
   _renderFinal() {
     const elapsed = this._formatElapsed();
     const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : "";
+    const cols = process.stderr.columns || 80;
     let buf = "";
     for (let i = 0; i < this.labels.length; i++) {
       let icon;
@@ -205,7 +212,11 @@ class MultiProgress {
           icon = `${C.yellow}○${C.reset}`;
       }
       const suffix = i === this.labels.length - 1 ? elapsedStr : "";
-      buf += `\x1b[2K  ${icon} ${C.dim}${this.labels[i]}${C.reset}${suffix}\n`;
+      const maxLabelLen = cols - 4 - (suffix ? elapsed.length + 1 : 0);
+      const label = this.labels[i].length > maxLabelLen
+        ? this.labels[i].substring(0, Math.max(10, maxLabelLen - 3)) + "..."
+        : this.labels[i];
+      buf += `\x1b[2K  ${icon} ${C.dim}${label}${C.reset}${suffix}\n`;
     }
     process.stderr.write(buf);
   }

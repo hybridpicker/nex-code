@@ -1841,7 +1841,7 @@ describe("index.js (REPL commands)", () => {
       const { getPrompt } = require("../cli/index");
       const prompt = getPrompt();
       // Model is now shown in footer status bar, not in prompt
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
     });
   });
 
@@ -2904,7 +2904,7 @@ describe("index.js (REPL commands)", () => {
       const planner = require("../cli/planner");
       planner.isPlanMode.mockReturnValueOnce(true);
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("plan");
     });
 
@@ -2912,7 +2912,7 @@ describe("index.js (REPL commands)", () => {
       const planner = require("../cli/planner");
       planner.getAutonomyLevel.mockReturnValueOnce("semi-auto");
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("semi-auto");
     });
 
@@ -2921,7 +2921,7 @@ describe("index.js (REPL commands)", () => {
       planner.isPlanMode.mockReturnValueOnce(true);
       planner.getAutonomyLevel.mockReturnValueOnce("autonomous");
       const prompt = getPrompt();
-      expect(prompt).toContain(">");
+      expect(prompt).toContain("›");
       expect(prompt).not.toContain("plan");
       expect(prompt).not.toContain("autonomous");
     });
