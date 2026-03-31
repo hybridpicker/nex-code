@@ -1,4 +1,4 @@
-const { getModelProfile, PROFILES, DEFAULTS } = require("../cli/model-profiles");
+const { getModelProfile, getModelBriefing, PROFILES, DEFAULTS } = require("../cli/model-profiles");
 
 describe("model-profiles.js", () => {
   const origEnv = { ...process.env };
@@ -87,6 +87,61 @@ describe("model-profiles.js", () => {
     it("is case-insensitive", () => {
       const p = getModelProfile("Devstral-2:123B");
       expect(p.staleWarn).toBe(30000);
+    });
+  });
+
+  describe("getModelBriefing()", () => {
+    it("returns briefing for devstral-2", () => {
+      const b = getModelBriefing("devstral-2:123b");
+      expect(b).toContain("devstral-2");
+      expect(b).toContain("tool");
+      expect(b.length).toBeGreaterThan(0);
+    });
+
+    it("returns briefing for devstral-small", () => {
+      const b = getModelBriefing("devstral-small-2:24b");
+      expect(b).toContain("devstral-small");
+    });
+
+    it("returns briefing for qwen3-coder", () => {
+      const b = getModelBriefing("qwen3-coder:480b");
+      expect(b).toContain("qwen3-coder");
+    });
+
+    it("returns briefing for kimi-k2", () => {
+      const b = getModelBriefing("kimi-k2:1t");
+      expect(b).toContain("kimi-k2");
+    });
+
+    it("returns briefing for ministral-3", () => {
+      const b = getModelBriefing("ministral-3:8b");
+      expect(b).toContain("ministral-3");
+    });
+
+    it("returns briefing for qwen3-vl", () => {
+      const b = getModelBriefing("qwen3-vl:235b");
+      expect(b).toContain("qwen3-vl");
+    });
+
+    it("returns empty string for unknown model", () => {
+      expect(getModelBriefing("llama-3:70b")).toBe("");
+    });
+
+    it("returns empty string for null/undefined", () => {
+      expect(getModelBriefing(null)).toBe("");
+      expect(getModelBriefing(undefined)).toBe("");
+      expect(getModelBriefing("")).toBe("");
+    });
+
+    it("is case-insensitive", () => {
+      const b = getModelBriefing("Devstral-2:123B");
+      expect(b).toContain("devstral-2");
+    });
+
+    it("prefers longest prefix match", () => {
+      const b = getModelBriefing("devstral-small-2:24b");
+      expect(b).toContain("devstral-small");
+      expect(b).not.toContain("devstral-2,");
     });
   });
 });

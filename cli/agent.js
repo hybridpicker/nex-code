@@ -169,7 +169,7 @@ const {
   setActiveModel,
   MODEL_EQUIVALENTS,
 } = require("./providers/registry");
-const { getModelProfile } = require("./model-profiles");
+const { getModelProfile, getModelBriefing } = require("./model-profiles");
 const fsSync = require("fs");
 const path = require("path");
 
@@ -1456,8 +1456,8 @@ function _buildModelRoutingGuide() {
 }
 
 async function buildSystemPrompt() {
-  // Check if context has changed (includes model routing guide cache)
-  const currentHash = await getProjectContextHash();
+  // Check if context has changed (includes model routing guide cache + active model)
+  const currentHash = await getProjectContextHash() + ":" + getActiveModelId();
   if (cachedSystemPrompt !== null && currentHash === cachedContextHash) {
     return cachedSystemPrompt;
   }
@@ -1472,7 +1472,8 @@ async function buildSystemPrompt() {
 
   const languagePrompt = _buildLanguagePrompt();
   const deploymentContext = getDeploymentContextBlock();
-  cachedSystemPrompt = `You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
+  const modelBriefing = getModelBriefing(getActiveModelId());
+  cachedSystemPrompt = `${modelBriefing ? `## Model Briefing\n${modelBriefing}\n\n---\n\n` : ""}You are Nex Code, an expert coding assistant. You help with programming tasks by reading, writing, and editing files, running commands, and answering questions.
 
 WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
