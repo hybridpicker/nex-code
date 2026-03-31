@@ -919,8 +919,10 @@ Autonomous optimization loops inspired by [Karpathy's autoresearch](https://gith
 The agent follows a repeating cycle on a dedicated `autoresearch/<tag>` branch: **setup branch** -> **checkpoint** -> **edit** -> **run experiment** -> **log result** -> **keep or revert (git reset)**. Runs indefinitely until you interrupt. Experiments are logged to `.nex/autoresearch/experiments.json` with metrics, resource usage, and complexity tracking. Output can be redirected to log files with metric extraction via grep patterns to protect context.
 
 ```
-/ar-status    # show experiment history with trends
-/ar-clear     # reset experiment history
+/ar-self-improve          # self-improvement loop using nex-code's benchmark as metric
+/ar-self-improve sysadmin # focus on a specific weak category
+/ar-status                # show experiment history with trends
+/ar-clear                 # reset experiment history
 ```
 
 ### Memory

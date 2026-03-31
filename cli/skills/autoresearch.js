@@ -18,6 +18,19 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// Lazy-load benchmark to avoid circular deps and keep startup fast
+let _benchmark = null;
+function getBenchmark() {
+  if (!_benchmark) {
+    try {
+      _benchmark = require("../benchmark");
+    } catch {
+      _benchmark = null;
+    }
+  }
+  return _benchmark;
+}
+
 // Track experiment history within the session
 let experiments = [];
 let loopActive = false;
@@ -173,6 +186,63 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         );
         console.log("Experiments run on a dedicated branch for isolation.\n");
         return `AUTORESEARCH_GOAL: ${goal}\n\nStart the autoresearch loop. First, set up a dedicated branch using ar_setup_branch. Then analyze the current state and establish a baseline metric. Then begin the edit->test->log->keep/revert cycle. Do NOT stop — keep running experiments indefinitely until I interrupt.`;
+      },
+    },
+    {
+      cmd: "/ar-self-improve",
+      desc: "Self-improvement loop: optimize nex-code's own benchmark score",
+      handler: (args) => {
+        const focus = args.trim() || "overall benchmark score";
+        loopActive = true;
+        loadExperiments();
+        console.log(`Self-improvement loop started.`);
+        console.log(`Focus: ${focus}`);
+        console.log(
+          "The agent will optimize nex-code's benchmark score autonomously.",
+        );
+        console.log("Ctrl+C to stop.\n");
+        return [
+          `AUTORESEARCH_GOAL: Improve nex-code's ${focus}`,
+          "",
+          "## Self-Improvement Protocol",
+          "",
+          "You are optimizing nex-code itself. The benchmark suite is your eval harness — DO NOT modify it.",
+          "",
+          "### Setup",
+          "1. Call ar_setup_branch with a tag like 'self-improve-<date>'",
+          "2. Call ar_run_benchmark with quick=true to establish baseline score",
+          "3. Read the category breakdown — identify the weakest category",
+          "",
+          "### Loop",
+          "1. Pick ONE targeted improvement to address the weakest benchmark area",
+          "2. ar_checkpoint before making changes",
+          "3. Edit nex-code source files (agent.js, orchestrator.js, context-engine.js, etc.)",
+          "4. Run npm test to verify nothing breaks — if tests fail, fix or revert immediately",
+          "5. npm run build to update dist/",
+          "6. ar_run_benchmark with quick=true to measure the new score",
+          "7. ar_log_experiment with the benchmark score as metric",
+          "8. If score improved: keep. If score same or worse: ar_revert",
+          "9. Repeat — do NOT stop",
+          "",
+          "### What you CAN modify",
+          "- cli/agent.js — guard thresholds, system prompts, tool handling",
+          "- cli/orchestrator.js — sub-agent behavior, decomposition logic",
+          "- cli/context-engine.js — compression, token estimation",
+          "- cli/sub-agent.js — retry logic, error classification",
+          "- cli/task-router.js — routing logic",
+          "- Any other cli/ source file that affects agent quality",
+          "",
+          "### What you CANNOT modify",
+          "- cli/benchmark.js — this is the eval harness, modifying it is cheating",
+          "- tests/ — test files are not the optimization target",
+          "- Do not modify the scoring weights or task definitions",
+          "",
+          "### Quality rules",
+          "- Simplicity criterion: prefer removing code over adding it",
+          "- Each change must pass npm test before benchmarking",
+          "- Track which category you targeted and whether it improved",
+          "- If 3 consecutive experiments fail to improve, shift focus to a different category",
+        ].join("\n");
       },
     },
     {
@@ -555,6 +625,117 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           return JSON.stringify({
             status: "extract_failed",
             error: err.message,
+          });
+        }
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "ar_run_benchmark",
+        description:
+          "Run nex-code's built-in benchmark suite and return scores. " +
+          "This is the primary metric for self-improvement loops. " +
+          "Returns overall score (0-100), per-category scores, and model details. " +
+          "Use quick=true for fast iteration (~1-2 min), full for comprehensive evaluation.",
+        parameters: {
+          type: "object",
+          properties: {
+            quick: {
+              type: "boolean",
+              description:
+                "If true, run 7 tasks on 3 models (fast). If false, run all 59 tasks (thorough). Default: true.",
+            },
+            models: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Optional: specific models to benchmark. Default: top models from previous results.",
+            },
+          },
+        },
+      },
+      execute: async (args) => {
+        const benchmark = getBenchmark();
+        if (!benchmark) {
+          return JSON.stringify({
+            status: "unavailable",
+            error: "Benchmark module not found. Make sure cli/benchmark.js exists.",
+          });
+        }
+
+        const quick = args.quick !== false; // default true
+        const start = Date.now();
+
+        try {
+          const summary = await benchmark.runBenchmark({
+            quick,
+            models: args.models || undefined,
+            onProgress: () => {}, // silent
+          });
+
+          const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+          // Extract the key metrics for autoresearch
+          const results = summary.map((s) => ({
+            model: s.model,
+            score: s.score,
+            categoryScores: s.categoryScores || {},
+            toolCallRate: s.toolCallRate,
+            correctRate: s.correctRate,
+            validArgsRate: s.validArgsRate,
+            avgLatency: s.avgLatency,
+          }));
+
+          // Compute aggregate score across all models
+          const avgScore =
+            results.length > 0
+              ? Math.round(
+                  (results.reduce((a, r) => a + r.score, 0) / results.length) *
+                    10,
+                ) / 10
+              : 0;
+
+          // Find weakest category across all models
+          const categoryTotals = {};
+          const categoryCounts = {};
+          for (const r of results) {
+            for (const [cat, score] of Object.entries(r.categoryScores)) {
+              categoryTotals[cat] = (categoryTotals[cat] || 0) + score;
+              categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+            }
+          }
+          const categoryAvgs = {};
+          for (const cat of Object.keys(categoryTotals)) {
+            categoryAvgs[cat] =
+              Math.round((categoryTotals[cat] / categoryCounts[cat]) * 10) / 10;
+          }
+
+          // Sort categories by score to find weakest
+          const sortedCategories = Object.entries(categoryAvgs)
+            .sort((a, b) => a[1] - b[1]);
+
+          const weakestCategory =
+            sortedCategories.length > 0 ? sortedCategories[0] : null;
+
+          return JSON.stringify({
+            status: "success",
+            quick,
+            elapsed_seconds: parseFloat(elapsed),
+            models_tested: results.length,
+            average_score: avgScore,
+            category_averages: categoryAvgs,
+            weakest_category: weakestCategory
+              ? { name: weakestCategory[0], score: weakestCategory[1] }
+              : null,
+            per_model: results,
+          });
+        } catch (err) {
+          return JSON.stringify({
+            status: "benchmark_failed",
+            error: err.message,
+            elapsed_seconds:
+              parseFloat(((Date.now() - start) / 1000).toFixed(1)),
           });
         }
       },

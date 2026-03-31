@@ -30,20 +30,22 @@ describe("autoresearch skill", () => {
     });
 
     it("exports commands", () => {
-      expect(skill.commands).toHaveLength(3);
+      expect(skill.commands).toHaveLength(4);
       const cmds = skill.commands.map((c) => c.cmd);
       expect(cmds).toContain("/autoresearch");
+      expect(cmds).toContain("/ar-self-improve");
       expect(cmds).toContain("/ar-status");
       expect(cmds).toContain("/ar-clear");
     });
 
     it("exports tools", () => {
-      expect(skill.tools.length).toBeGreaterThanOrEqual(7);
+      expect(skill.tools.length).toBeGreaterThanOrEqual(8);
       const toolNames = skill.tools.map((t) => t.function.name);
       expect(toolNames).toContain("ar_setup_branch");
       expect(toolNames).toContain("ar_checkpoint");
       expect(toolNames).toContain("ar_run_experiment");
       expect(toolNames).toContain("ar_extract_metric");
+      expect(toolNames).toContain("ar_run_benchmark");
       expect(toolNames).toContain("ar_log_experiment");
       expect(toolNames).toContain("ar_revert");
       expect(toolNames).toContain("ar_history");
@@ -115,6 +117,44 @@ describe("autoresearch skill", () => {
       const handler = skill.commands.find((c) => c.cmd === "/autoresearch").handler;
       const result = handler("optimize perf");
       expect(result).toContain("ar_setup_branch");
+    });
+  });
+
+  describe("/ar-self-improve command", () => {
+    it("returns self-improvement protocol", () => {
+      const handler = skill.commands.find(
+        (c) => c.cmd === "/ar-self-improve",
+      ).handler;
+      const result = handler("");
+      expect(result).toContain("AUTORESEARCH_GOAL");
+      expect(result).toContain("Self-Improvement Protocol");
+      expect(result).toContain("ar_run_benchmark");
+      expect(result).toContain("benchmark score");
+    });
+
+    it("includes guard rails against modifying benchmark", () => {
+      const handler = skill.commands.find(
+        (c) => c.cmd === "/ar-self-improve",
+      ).handler;
+      const result = handler("");
+      expect(result).toContain("CANNOT modify");
+      expect(result).toContain("cli/benchmark.js");
+    });
+
+    it("includes simplicity criterion", () => {
+      const handler = skill.commands.find(
+        (c) => c.cmd === "/ar-self-improve",
+      ).handler;
+      const result = handler("");
+      expect(result).toContain("Simplicity criterion");
+    });
+
+    it("accepts optional focus area", () => {
+      const handler = skill.commands.find(
+        (c) => c.cmd === "/ar-self-improve",
+      ).handler;
+      const result = handler("sysadmin category");
+      expect(result).toContain("sysadmin category");
     });
   });
 
@@ -397,6 +437,41 @@ describe("autoresearch skill", () => {
 
       expect(result.status).toBe("extracted");
       expect(result.metrics.val_bpb).toBeCloseTo(1.23);
+    });
+  });
+
+  describe("ar_run_benchmark tool", () => {
+    it("has correct tool schema", () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_run_benchmark",
+      );
+      expect(tool).toBeDefined();
+      expect(tool.function.description).toContain("benchmark");
+      expect(tool.function.parameters.properties.quick).toBeDefined();
+      expect(tool.function.parameters.properties.models).toBeDefined();
+    });
+
+    it("defaults to quick mode", () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_run_benchmark",
+      );
+      expect(tool.function.parameters.properties.quick.description).toContain(
+        "Default: true",
+      );
+    });
+
+    it("has an execute function", () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_run_benchmark",
+      );
+      expect(typeof tool.execute).toBe("function");
+    });
+
+    it("describes per-category scores and weakest category", () => {
+      const tool = skill.tools.find(
+        (t) => t.function.name === "ar_run_benchmark",
+      );
+      expect(tool.function.description).toContain("category");
     });
   });
 
