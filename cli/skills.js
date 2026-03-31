@@ -396,6 +396,13 @@ async function routeSkillCall(fnName, args) {
  * @param {string} input - full user input (e.g. "/deploy staging")
  * @returns {boolean} true if handled
  */
+/**
+ * Check if input matches a skill command and run its handler.
+ * If the handler returns a string, that string is an agent prompt
+ * that should be fed into processInput() by the caller.
+ * @param {string} input - full user input (e.g. "/autoresearch optimize X")
+ * @returns {false|{handled: true, agentPrompt?: string}}
+ */
 function handleSkillCommand(input) {
   const [cmd, ...rest] = input.split(/\s+/);
   const args = rest.join(" ").trim();
@@ -405,11 +412,15 @@ function handleSkillCommand(input) {
     for (const c of skill.commands) {
       if (c.cmd === cmd && c.handler) {
         try {
-          c.handler(args);
+          const result = c.handler(args);
+          // If handler returns a string, pass it to the agent as a prompt
+          if (typeof result === "string" && result.length > 0) {
+            return { handled: true, agentPrompt: result };
+          }
         } catch (err) {
           console.error(`Skill command error (${cmd}): ${err.message}`);
         }
-        return true;
+        return { handled: true };
       }
     }
   }
