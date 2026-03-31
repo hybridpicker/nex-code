@@ -3752,10 +3752,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // sometimes decides to stop ("I will now stop", "summary of findings")
         // even though the instructions say NEVER STOP. Detect this and nudge
         // the model to continue the experiment loop.
-        if (opts.skillLoop && hasText && totalSteps > 3 && (_skillLoopNudges || 0) < 5) {
+        if (opts.skillLoop && hasText && totalSteps > 3 && _skillLoopNudges < 5) {
           const text = (content || streamedText || "").toLowerCase();
-          const stoppingPattern = /\b(stop|done|complet|summar|conclud|no more|finish|end of|that.s all|final)\b/;
-          if (stoppingPattern.test(text.slice(-500))) {
+          // No trailing \b — these are prefixes (e.g. "completed", "summary", "finaliz")
+          const stoppingPattern = /\b(i.ll stop|stop the|stopped|done with|complet|summar|conclud|no more|finish|end of|that.s all|final|wrapped up|no further|mindful of)/;
+          if (stoppingPattern.test(text.slice(-600))) {
             _skillLoopNudges = (_skillLoopNudges || 0) + 1;
             debugLog(
               `${C.yellow}  ⚠ Skill loop: model tried to stop — continuation nudge #${_skillLoopNudges}${C.reset}`,

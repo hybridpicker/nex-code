@@ -151,6 +151,8 @@ You are a researcher running rapid experiments, NOT a code reviewer.
 - **Max 3 reads before editing**: if you have read 3 files/ranges without making an edit, STOP reading and make a change based on what you know
 - **Each experiment should take under 2 minutes**: read one file, edit it, measure, log, move on
 - **Prefer bash for metrics**: use bash commands (wc -c, time, du) for measurements — they are fast and don't consume context
+- **Use write_file for small files**: if a file is under 50 lines, use write_file to rewrite it entirely instead of struggling with edit_file old_text matching. This is faster and avoids repeated edit failures on minified/single-line code
+- **If edit_file fails once, switch to write_file immediately** — do not retry edit_file more than once on the same file
 
 ## Simplicity Criterion
 
