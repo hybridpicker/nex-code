@@ -3913,12 +3913,17 @@ async function startREPL() {
         : "\x1b[48;2;220;225;235m"; // light blue-grey on light terminal
       const cols = process.stdout.columns || 80;
       const echoLines = input.split("\n");
+      // Move cursor up to overwrite readline's plain prompt line(s)
+      // so we don't get a duplicate › character
+      if (process.stdout.isTTY) {
+        process.stdout.write(`\x1b[${echoLines.length}A`);
+      }
       echoLines.forEach((l, i) => {
         // \x1b[22;39m resets bold+fg only — keeps background active
         const marker = i === 0 ? `\x1b[1;36m›\x1b[22;39m` : " ";
         const visibleLen = 2 + l.length; // '› ' or '  ' prefix
         const pad = " ".repeat(Math.max(0, cols - visibleLen));
-        console.log(`${BG}${marker} ${l}${pad}\x1b[0m`);
+        console.log(`\x1b[2K${BG}${marker} ${l}${pad}\x1b[0m`);
       });
       // Blank line between input echo and agent output for visual separation
       console.log();
