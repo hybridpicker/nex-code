@@ -444,6 +444,22 @@ ERROR RECOVERY:
           const fp = pathModule.isAbsolute(args.path)
             ? args.path
             : pathModule.resolve(process.cwd(), args.path);
+
+          // Hard enforcement: block writes to files owned by other agents
+          if (agentDef._readOnlyFiles && agentDef._readOnlyFiles.length > 0) {
+            const rel = pathModule.relative(process.cwd(), fp);
+            const isBlocked = agentDef._readOnlyFiles.some(
+              (ro) => rel === ro || rel.startsWith(ro + "/") || fp === ro || fp.startsWith(ro + "/"),
+            );
+            if (isBlocked) {
+              return Promise.resolve({
+                role: "tool",
+                content: `ERROR: File '${args.path}' is owned by another agent and is READ ONLY. Write to your own scope files instead.`,
+                tool_call_id: callId,
+              });
+            }
+          }
+
           if (locksHeld.has(fp) || !acquireLock(fp, agentId)) {
             return Promise.resolve({
               role: "tool",
