@@ -80,6 +80,81 @@ const TASKS = [
       typeof args.pattern === "string" && args.pattern.includes(".js"),
   },
 
+  // ── Targeted file-ops (arg accuracy) ────────────────────────────────────
+  {
+    id: "read-partial",
+    category: "file-ops",
+    prompt:
+      "Read only lines 20 to 40 of src/index.js — I need to see that specific range.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" &&
+      args.path.includes("index") &&
+      (typeof args.line_start === "number" || typeof args.start_line === "number"),
+  },
+  {
+    id: "glob-ts-defs",
+    category: "file-ops",
+    prompt:
+      "Find all TypeScript type definition files (*.d.ts) anywhere in the project.",
+    expectedTool: "glob",
+    validateArgs: (args) =>
+      typeof args.pattern === "string" && args.pattern.includes(".d.ts"),
+  },
+  {
+    id: "write-gitignore",
+    category: "file-ops",
+    prompt:
+      "Create a .gitignore file at the project root that ignores node_modules/ and dist/.",
+    expectedTool: "write_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" &&
+      args.path.includes(".gitignore") &&
+      typeof args.content === "string" &&
+      args.content.includes("node_modules"),
+  },
+  {
+    id: "edit-version-bump",
+    category: "file-ops",
+    prompt:
+      "In package.json, change the version field from \"1.0.0\" to \"1.1.0\".",
+    expectedTool: ["edit_file", "patch_file"],
+    validateArgs: (args) => {
+      if (args.path && args.path.includes("package")) return true;
+      return false;
+    },
+  },
+
+  // ── Search ───────────────────────────────────────────────────────────────
+  {
+    id: "grep-with-filter",
+    category: "search",
+    prompt:
+      "Search for all calls to require() but only inside .js files in the cli/ directory.",
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = args.pattern || args.query || args.regex || "";
+      return pat.includes("require");
+    },
+  },
+  {
+    id: "no-tool-http-port",
+    category: "reasoning",
+    prompt: "What is the default port used by the HTTP protocol?",
+    expectedTool: null,
+    validateArgs: () => true,
+  },
+  {
+    id: "bash-node-version",
+    category: "shell",
+    prompt: "Check which version of Node.js is currently installed on this system.",
+    expectedTool: "bash",
+    validateArgs: (args) =>
+      typeof args.command === "string" &&
+      args.command.includes("node") &&
+      (args.command.includes("--version") || args.command.includes("-v")),
+  },
+
   // ── Search ───────────────────────────────────────────────────────────────
   {
     id: "search-constant",
@@ -755,7 +830,7 @@ const QUICK_MODELS = (() => {
   return top3.length >= 3 ? top3 : _QUICK_SEED;
 })();
 
-const QUICK_TASK_COUNT = 7;
+const QUICK_TASK_COUNT = 14;
 
 // Score weights — tool name accuracy matters most for nex-code reliability
 const WEIGHTS = {
