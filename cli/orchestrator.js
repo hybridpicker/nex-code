@@ -32,14 +32,14 @@ const DECOMPOSE_PROMPT = `You are a task decomposition engine. Given a complex u
 
 RULES:
 - Output ONLY a JSON array, no markdown fences, no explanation.
-- Each sub-task must be independently solvable by a coding agent.
+- Each sub-task must be independently solvable by a specialized agent (coding, sysadmin, etc.).
 - Maximum {maxSubTasks} sub-tasks. Merge closely related items.
 - Each sub-task object must have these fields:
-  { "id": "t1", "task": "description", "scope": ["file1.js", "dir/"], "estimatedCalls": 5, "priority": 1 }
-- "scope" lists files/directories the agent should focus on.
+  { "id": "t1", "task": "description", "scope": ["resource1", "resource2"], "estimatedCalls": 5, "priority": 1 }
+- "scope" lists resources the agent should focus on (e.g., files, services, servers, commands).
 - "estimatedCalls" is a rough count of tool invocations needed (max 15).
-- "priority" is 1 (highest) to N (lowest) — controls execution order if sequential.
-- No overlapping scopes: each file should appear in at most one sub-task.
+- "priority" is 1 (highest) to N (lowest) — controls execution order; set higher priority for prerequisite steps (e.g., stop service before config change).
+- For system administration workflows, ensure sequential dependencies are captured via priority; overlapping resource scopes are allowed if ordered by priority.
 - If the request is simple (single goal), return an array with exactly 1 item.
 
 USER REQUEST:
@@ -49,10 +49,10 @@ const SYNTHESIZE_PROMPT = `You are a result synthesis engine. Given the results 
 
 RULES:
 - Output ONLY a JSON object with these fields:
-  { "summary": "what was done", "conflicts": ["file.js: agent 1 and 2 both modified line 42"], "commitMessage": "fix: ...", "filesChanged": ["file1.js", "file2.js"] }
-- "conflicts" is an array of file conflicts where multiple agents modified the same file. Empty array if none.
+  { "summary": "what was done", "conflicts": ["file.js: agent 1 and 2 both modified line 42"], "commitMessage": "fix: ...", "resourcesChanged": ["resource1", "resource2"] }
+- "conflicts" is an array of resource conflicts where multiple agents modified the same resource (e.g., services, servers, config files). Empty array if none.
 - "commitMessage" follows conventional commits (fix:, feat:, refactor:, etc.).
-- "filesChanged" is a deduplicated list of all files modified across all agents.
+- "resourcesChanged" is a deduplicated list of all resources (files, services, servers, etc.) modified across all agents.
 - "summary" is a concise paragraph describing the overall result.
 
 ORIGINAL REQUEST:
@@ -347,7 +347,7 @@ async function synthesize(subTaskResults, originalPrompt, model) {
       summary: "No sub-tasks were executed.",
       conflicts: [],
       commitMessage: "",
-      filesChanged: [],
+      resourcesChanged: [],
     };
   }
 
@@ -460,7 +460,7 @@ async function runOrchestrated(prompt, opts = {}) {
         summary: `Decompose failed: ${err.message}`,
         conflicts: [],
         commitMessage: "",
-        filesChanged: [],
+        resourcesChanged: [],
       },
       totalTokens,
     };
@@ -476,7 +476,7 @@ async function runOrchestrated(prompt, opts = {}) {
         summary: "No sub-tasks generated.",
         conflicts: [],
         commitMessage: "",
-        filesChanged: [],
+        resourcesChanged: [],
       },
       totalTokens,
     };
@@ -729,7 +729,7 @@ RULES:
       summary: results.map((r) => r.result).join("\n"),
       conflicts: [],
       commitMessage: "",
-      filesChanged: [],
+      resourcesChanged: [],
     };
   }
 
