@@ -44,6 +44,7 @@ function getBenchmark() {
 // Track experiment history within the session
 let experiments = [];
 let loopActive = false;
+let sessionBaselineScore = null; // set on first ar_run_benchmark call
 
 function getLogPath() {
   const dir = path.join(process.cwd(), ".nex", "autoresearch");
@@ -761,6 +762,11 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
                 ) / 10
               : 0;
 
+          // Record baseline on first run
+          if (sessionBaselineScore === null) {
+            sessionBaselineScore = avgScore;
+          }
+
           // Find weakest category across all models
           const categoryTotals = {};
           const categoryCounts = {};
@@ -863,6 +869,21 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
       },
       execute: async (args) => {
         loadExperiments();
+
+        // Enforce keep/revert decision against session baseline
+        if (
+          sessionBaselineScore !== null &&
+          typeof args.metric === "number" &&
+          args.kept === true &&
+          args.metric < sessionBaselineScore
+        ) {
+          console.log(
+            `\x1b[31m   ⚠ Score ${args.metric} < baseline ${sessionBaselineScore} — overriding kept=true to kept=false\x1b[0m`,
+          );
+          args.kept = false;
+          args.status = "discard";
+        }
+
         const commit = gitHash();
         const entry = {
           id: experiments.length + 1,
