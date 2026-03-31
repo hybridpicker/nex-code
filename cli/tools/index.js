@@ -647,7 +647,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "patch_file",
       description:
-        "Apply multiple text replacements to a file atomically. All patches are validated before any are applied — if one fails, none are written. Prefer this over multiple edit_file calls when making several changes to the same file. Like edit_file, all old_text values must match exactly.",
+        "Apply multiple text replacements to a file atomically. All patches are validated before any are applied — if one fails, none are written. Example: when changing 3 different variables in the same function, use patch_file with an array of 3 { old_text, new_text } objects instead of 3 separate edit_file calls. This ensures either all changes are applied or none are, preventing partial edits. Like edit_file, all old_text values must match exactly.",
       parameters: {
         type: "object",
         properties: {
