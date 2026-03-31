@@ -3913,6 +3913,15 @@ async function startREPL() {
       const agentPrompt = handleSlashCommand._pendingAgentPrompt;
       if (agentPrompt) {
         handleSlashCommand._pendingAgentPrompt = null;
+        // Skill prompts need full tool access — disable plan mode if active
+        try {
+          const { isPlanMode: _isPM, setPlanMode: _setPM } = require("../planner");
+          const { invalidateSystemPromptCache: _inv } = require("../agent");
+          if (_isPM()) {
+            _setPM(false);
+            _inv();
+          }
+        } catch { /* planner not available — no-op */ }
         // Feed the prompt to the agent as if the user typed it
         _processing = true;
         rl.prompt();
