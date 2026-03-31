@@ -3718,17 +3718,13 @@ async function startREPL() {
         }
 
         if (key.name === "up") {
-          if (_sugIdx > 0) {
-            // Move selection up
+          if (_sugIdx === -1) {
+            // Start from the bottom of the list
+            _sugIdx = Math.min(_sugHits.length, 10) - 1;
+          } else if (_sugIdx > 0) {
             _sugIdx--;
-            _inSugNav = true;
-            rl.write(null, { ctrl: true, name: "u" });
-            rl.write(_sugHits[_sugIdx].cmd);
-            _inSugNav = false;
-            _eraseSugDisplay();
-            _showSug(_sugQuery, _sugIdx);
-          } else if (_sugIdx === 0) {
-            // Back to unselected — restore original query
+          } else {
+            // _sugIdx === 0 — deselect, restore original query
             _sugIdx = -1;
             _inSugNav = true;
             rl.write(null, { ctrl: true, name: "u" });
@@ -3736,8 +3732,14 @@ async function startREPL() {
             _inSugNav = false;
             _eraseSugDisplay();
             _showSug(_sugQuery, -1);
+            return;
           }
-          // _sugIdx === -1: no-op — don't let readline navigate history
+          _inSugNav = true;
+          rl.write(null, { ctrl: true, name: "u" });
+          rl.write(_sugHits[_sugIdx].cmd);
+          _inSugNav = false;
+          _eraseSugDisplay();
+          _showSug(_sugQuery, _sugIdx);
           return;
         }
       }
