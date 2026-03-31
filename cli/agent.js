@@ -2563,39 +2563,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
   const fileEditCounts = _sessionFileEditCounts;
-  const LOOP_WARN_EDITS = 3; // warn agent after 3 edits to same file (early warning)
-  const LOOP_ABORT_EDITS = 5; // abort loop after 5 edits to same file
+  // Skill loops (autoresearch) intentionally repeat tools — relax all thresholds 10x
+  const _sk = opts.skillLoop ? 10 : 1;
+  const LOOP_WARN_EDITS = 3 * _sk;
+  const LOOP_ABORT_EDITS = 5 * _sk;
   const bashCmdCounts = _sessionBashCmdCounts;
-  const LOOP_WARN_BASH = 5; // warn after 5 similar bash commands
-  const LOOP_ABORT_BASH = 8; // abort after 8 similar bash commands
+  const LOOP_WARN_BASH = 5 * _sk;
+  const LOOP_ABORT_BASH = 8 * _sk;
   const grepPatternCounts = _sessionGrepPatternCounts;
-  const LOOP_WARN_GREP = _phaseEnabled ? 6 : 4; // warn after N identical grep patterns
-  const LOOP_ABORT_GREP = _phaseEnabled ? 10 : 7; // abort after N identical grep patterns
-  const grepFileCounts = _sessionGrepFileCounts; // per-file grep count (different patterns)
-  const LOOP_WARN_GREP_FILE = _phaseEnabled ? 5 : 3; // warn after N different-pattern greps on same file
-  const LOOP_ABORT_GREP_FILE = _phaseEnabled ? 8 : 5; // hard-block further greps on same file after N
+  const LOOP_WARN_GREP = (_phaseEnabled ? 6 : 4) * _sk;
+  const LOOP_ABORT_GREP = (_phaseEnabled ? 10 : 7) * _sk;
+  const grepFileCounts = _sessionGrepFileCounts;
+  const LOOP_WARN_GREP_FILE = (_phaseEnabled ? 5 : 3) * _sk;
+  const LOOP_ABORT_GREP_FILE = (_phaseEnabled ? 8 : 5) * _sk;
   const globSearchCounts = _sessionGlobSearchCounts;
-  const LOOP_WARN_GLOB = _phaseEnabled ? 4 : 3; // warn after N identical glob/search_files patterns
-  const LOOP_ABORT_GLOB = _phaseEnabled ? 6 : 4; // abort after N identical glob/search_files patterns
-  const GLOB_CORE_WARN = 3; // warn when 3 different glob patterns share the same core term
-  const GLOB_CORE_BLOCK = 4; // block when 4+ different glob patterns share the same core term
+  const LOOP_WARN_GLOB = (_phaseEnabled ? 4 : 3) * _sk;
+  const LOOP_ABORT_GLOB = (_phaseEnabled ? 6 : 4) * _sk;
+  const GLOB_CORE_WARN = 3 * _sk;
+  const GLOB_CORE_BLOCK = 4 * _sk;
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = _phaseEnabled ? 3 : 2; // warn after N reads of the same file
-  const LOOP_ABORT_READS = _phaseEnabled ? 5 : 3; // abort after N reads of the same file
-  const TARGETED_READ_HARD_CAP = _phaseEnabled ? 6 : 4; // absolute max reads of any single file
-  const NARROW_READ_PASS_THROUGH = 25; // reads ≤25 lines bypass overlap check — "zoom in" not re-read
-  let consecutiveErrors = 0; // loop detection: consecutive tool failures (per-turn: resets on success)
-  const LOOP_WARN_ERRORS = 6; // warn after 6 consecutive errors
-  const LOOP_ABORT_ERRORS = 10; // abort after 10 consecutive errors
-  let consecutiveBlocks = 0; // consecutive BLOCKED tool results — model ignoring block messages
-  const LOOP_ABORT_BLOCKS = 5; // abort after 5 consecutive blocked tool calls (model stuck)
-  let truncatedSwarmCount = 0; // loop detection: consecutive all-truncated swarm calls
-  const LOOP_WARN_SWARM = 2; // warn after 2 all-truncated swarm calls in a row
+  const LOOP_WARN_READS = (_phaseEnabled ? 3 : 2) * _sk;
+  const LOOP_ABORT_READS = (_phaseEnabled ? 5 : 3) * _sk;
+  const TARGETED_READ_HARD_CAP = (_phaseEnabled ? 6 : 4) * _sk;
+  const NARROW_READ_PASS_THROUGH = 25;
+  let consecutiveErrors = 0;
+  const LOOP_WARN_ERRORS = 6 * _sk;
+  const LOOP_ABORT_ERRORS = 10 * _sk;
+  let consecutiveBlocks = 0;
+  const LOOP_ABORT_BLOCKS = 5 * _sk;
+  let truncatedSwarmCount = 0;
+  const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
-  const INVESTIGATION_CAP = _profile.investigationCap; // per-model: read-only calls before forcing edit
+  const INVESTIGATION_CAP = opts.skillLoop ? 999 : _profile.investigationCap;
 
   let i;
   let iterLimit = opts.maxIterations || (_phaseEnabled ? getPhaseBudget(_currentPhase) : MAX_ITERATIONS);
@@ -3755,7 +3757,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (opts.skillLoop && hasText && totalSteps > 3 && _skillLoopNudges < 5) {
           const text = (content || streamedText || "").toLowerCase();
           // No trailing \b — these are prefixes (e.g. "completed", "summary", "finaliz")
-          const stoppingPattern = /\b(i.ll stop|stop the|stopped|done with|complet|summar|conclud|no more|finish|end of|that.s all|final|wrapped up|no further|mindful of)/;
+          const stoppingPattern = /\b(i.ll stop|stop the|stopped|done with|complet|summar|conclud|no more|finish|end of|that.s all|final|wrapped up|no further|mindful of|reached.*limit|tool call limit|at this point|recommend keep)/;
           if (stoppingPattern.test(text.slice(-600))) {
             _skillLoopNudges = (_skillLoopNudges || 0) + 1;
             debugLog(
