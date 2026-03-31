@@ -17,6 +17,7 @@ const {
   getProvider,
 } = require("../providers/registry");
 const { flushAutoSave } = require("../session");
+const { writeDreamLog, shouldConsolidate, consolidate } = require("../dream");
 const { getActiveModel, setActiveModel } = require("../ollama");
 const { printContext } = require("../context");
 const {
@@ -3438,6 +3439,20 @@ async function startREPL() {
 
   await printContext(CWD);
 
+  // ─── Dream consolidation (non-blocking) ─────────────────────
+  setTimeout(() => {
+    try {
+      if (shouldConsolidate()) {
+        const { insights } = consolidate();
+        if (insights.length > 0) {
+          process.stdout.write(
+            `${C.dim}💭 Dream consolidated ${insights.length} insight(s) from recent sessions${C.reset}\n`,
+          );
+        }
+      }
+    } catch { /* never break startup */ }
+  }, 2000);
+
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
   let _sigintCount = 0;
@@ -3448,6 +3463,11 @@ async function startREPL() {
   function gracefulShutdown() {
     // Flush any pending auto-save
     flushAutoSave();
+    // Write dream log for session consolidation on next startup
+    try {
+      const { getConversationMessages } = require("../agent");
+      writeDreamLog(getConversationMessages());
+    } catch { /* non-critical — never block exit */ }
     footer.deactivate();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l");
