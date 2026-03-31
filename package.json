@@ -16,8 +16,8 @@
   },
   "scripts": {
     "start": "node dist/nex-code.js",
-    "build": "esbuild bin/nex-code.js --bundle --platform=node --target=node18 --outfile=dist/nex-code.js --minify --external:axios --external:dotenv --external:playwright && esbuild cli/benchmark.js --bundle --platform=node --target=node18 --outfile=dist/benchmark.js --minify --external:axios --external:dotenv --external:playwright && rm -rf dist/skills && cp -r cli/skills dist/skills",
-    "dev": "esbuild bin/nex-code.js --bundle --platform=node --target=node18 --outfile=dist/nex-code.js --external:axios --external:dotenv --external:playwright --watch",
+    "build": "node scripts/build.js",
+    "dev": "node scripts/build.js --dev",
     "test": "jest --forceExit",
     "test:orchestrator": "jest tests/orchestrator.test.js --forceExit",
     "coverage": "jest --coverage --forceExit",
