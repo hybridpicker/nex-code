@@ -2529,7 +2529,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   }
 
   // ─── Phase-based routing initialization ──────────────────────────────────
-  if (conversationMessages.length <= 1) {
+  // Skip phase routing when opts.skipPhaseRouting is set (skill command prompts
+  // like /autoresearch need immediate tool access, not a plan phase)
+  if (conversationMessages.length <= 1 && !opts.skipPhaseRouting) {
     _phaseEnabled = isPhaseRoutingEnabled();
     if (_phaseEnabled) {
       const _cat = detectCategory(_firstUserText);
@@ -2596,7 +2598,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const INVESTIGATION_CAP = _profile.investigationCap; // per-model: read-only calls before forcing edit
 
   let i;
-  let iterLimit = _phaseEnabled ? getPhaseBudget(_currentPhase) : MAX_ITERATIONS;
+  let iterLimit = opts.maxIterations || (_phaseEnabled ? getPhaseBudget(_currentPhase) : MAX_ITERATIONS);
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
