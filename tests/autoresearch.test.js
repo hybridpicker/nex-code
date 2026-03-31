@@ -30,7 +30,7 @@ describe("autoresearch skill", () => {
     });
 
     it("exports commands", () => {
-      expect(skill.commands).toHaveLength(4);
+      expect(skill.commands).toHaveLength(5);
       const cmds = skill.commands.map((c) => c.cmd);
       expect(cmds).toContain("/autoresearch");
       expect(cmds).toContain("/ar-self-improve");
@@ -641,6 +641,67 @@ describe("autoresearch skill", () => {
         (t) => t.function.name === "ar_revert",
       );
       expect(revertTool.function.description).toContain("git reset");
+    });
+  });
+
+  // ─── Watch Mode ─────────────────────────────────────────────
+  describe("ar-watch command", () => {
+    it("registers ar-watch command", () => {
+      const watchCmd = skill.commands.find((c) => c.cmd === "/ar-watch");
+      expect(watchCmd).toBeDefined();
+      expect(watchCmd.desc).toContain("watcher");
+    });
+
+    it("rejects when feature flag is disabled", () => {
+      // Default: WATCH_MODE is disabled
+      const watchCmd = skill.commands.find((c) => c.cmd === "/ar-watch");
+      const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+      watchCmd.handler("npm test");
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("disabled"),
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it("starts when feature flag is enabled via env", () => {
+      process.env.NEX_FEATURE_WATCH_MODE = "1";
+      jest.resetModules();
+      const skill2 = require("../cli/skills/autoresearch");
+      const watchCmd = skill2.commands.find((c) => c.cmd === "/ar-watch");
+      const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+      watchCmd.handler("echo test");
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Watch mode started"),
+      );
+      consoleSpy.mockRestore();
+      // Clean up
+      watchCmd.handler("stop");
+      delete process.env.NEX_FEATURE_WATCH_MODE;
+    });
+
+    it("stops cleanly", () => {
+      process.env.NEX_FEATURE_WATCH_MODE = "1";
+      jest.resetModules();
+      const skill2 = require("../cli/skills/autoresearch");
+      const watchCmd = skill2.commands.find((c) => c.cmd === "/ar-watch");
+      const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+      watchCmd.handler("echo test");
+      watchCmd.handler("stop");
+      expect(consoleSpy).toHaveBeenCalledWith("Watch mode stopped.");
+      consoleSpy.mockRestore();
+      delete process.env.NEX_FEATURE_WATCH_MODE;
+    });
+  });
+
+  describe("ar_watch_status tool", () => {
+    it("reports inactive when not watching", async () => {
+      const statusTool = skill.tools.find(
+        (t) => t.function.name === "ar_watch_status",
+      );
+      expect(statusTool).toBeDefined();
+      const result = JSON.parse(await statusTool.execute());
+      expect(result.active).toBe(false);
+      expect(result.testCommand).toBeNull();
     });
   });
 });
