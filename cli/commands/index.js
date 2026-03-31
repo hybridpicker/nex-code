@@ -3933,7 +3933,7 @@ async function startREPL() {
         }
         _abortController = new AbortController();
         try {
-          await processInput(agentPrompt);
+          await processInput(agentPrompt, null, { autoOrchestrate: false });
         } catch (err) {
           if (!_abortController?.signal?.aborted) {
             const userMessage =

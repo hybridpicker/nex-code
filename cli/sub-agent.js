@@ -71,6 +71,7 @@ function classifyError(err) {
   if (msg.includes("context") && (msg.includes("too long") || msg.includes("overflow") || msg.includes("maximum"))) return "context_overflow";
   if (msg.includes("400") && (msg.includes("content") || msg.includes("length"))) return "context_overflow";
   if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504")) return "server";
+  if (msg.includes("timed out") || msg.includes("timeout")) return "timeout";
   if (
     code === "ECONNRESET" || code === "ECONNABORTED" || code === "ETIMEDOUT" ||
     code === "ECONNREFUSED" || code === "ENOTFOUND" ||
@@ -85,7 +86,7 @@ function classifyError(err) {
 function isRetryableError(err) {
   const category = classifyError(err);
   // Auth and context_overflow errors are NOT retryable — retrying won't help
-  return category === "rate_limit" || category === "server" || category === "network";
+  return category === "rate_limit" || category === "server" || category === "network" || category === "timeout";
 }
 
 async function callWithRetry(messages, tools, options) {
