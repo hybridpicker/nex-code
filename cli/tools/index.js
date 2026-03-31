@@ -580,7 +580,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "grep",
       description:
-        "Search file contents with regex. Returns matching lines with file paths and line numbers. Prefer this over bash grep/rg — this tool returns structured, formatted output. Use output_mode='files_with_matches' when you only need file paths (faster, less output). Use output_mode='content' (default) for matching lines with context. Use head_limit to cap results and avoid overwhelming output on broad searches. Use include to filter by file type (e.g. '*.js'). Supports context lines (context, before_context, after_context), offset for pagination, type filter, and multiline for cross-line patterns.",
+        "Search file contents with regex. Returns matching lines with file paths and line numbers. Prefer this over bash grep/rg — this tool returns structured, formatted output. Example: use grep for searching 'error' in all .js files with grep -r 'error' src/, but NOT for finding all .js files (use glob instead). Use output_mode='files_with_matches' when you only need file paths (faster, less output). Use output_mode='content' (default) for matching lines with context. Use head_limit to cap results and avoid overwhelming output on broad searches. Use include to filter by file type (e.g. '*.js'). Supports context lines (context, before_context, after_context), offset for pagination, type filter, and multiline for cross-line patterns.",
       parameters: {
         type: "object",
         properties: {
