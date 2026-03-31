@@ -866,17 +866,33 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         experiments.push(entry);
         saveExperiments();
 
-        const trend =
+        const prev =
           experiments.length >= 2
-            ? `Previous: ${experiments[experiments.length - 2].metric}, Current: ${args.metric}`
+            ? experiments[experiments.length - 2].metric
+            : null;
+        const trend =
+          prev != null
+            ? `Previous: ${prev}, Current: ${args.metric}`
             : "First experiment — baseline established";
+
+        const keptCount = experiments.filter((e) => e.kept).length;
+        const revertedCount = experiments.filter((e) => !e.kept).length;
+        const statusIcon = args.kept ? "\x1b[32m✔ KEPT\x1b[0m" : "\x1b[31m✘ REVERTED\x1b[0m";
+        const delta =
+          prev != null && typeof args.metric === "number"
+            ? ` (${args.metric > prev ? "+" : ""}${(args.metric - prev).toFixed(1)} pts)`
+            : "";
+        console.log(
+          `\n\x1b[1m── Experiment #${entry.id} ${statusIcon}\x1b[0m  score: ${args.metric}${delta}  │  total: ${experiments.length}  kept: ${keptCount}  reverted: ${revertedCount}`,
+        );
+        if (args.description) console.log(`   ${args.description}`);
 
         return JSON.stringify({
           status: "logged",
           experiment_number: entry.id,
           total_experiments: experiments.length,
-          kept_count: experiments.filter((e) => e.kept).length,
-          reverted_count: experiments.filter((e) => !e.kept).length,
+          kept_count: keptCount,
+          reverted_count: revertedCount,
           crash_count: experiments.filter((e) => e.status === "crash").length,
           trend,
         });
@@ -948,6 +964,11 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
 
           // Reset read guards — files changed after revert, agent needs fresh access
           resetReadGuards();
+
+          const expNum = experiments.length + 1;
+          console.log(
+            `\x1b[33m   ↩ Reverted\x1b[0m  ${currentHash.slice(0, 7)} → ${newHash.slice(0, 7)}${args.reason ? `  (${args.reason})` : ""}`,
+          );
 
           return JSON.stringify({
             status: "reverted",

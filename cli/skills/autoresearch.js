@@ -949,6 +949,11 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           // Reset read guards — files changed after revert, agent needs fresh access
           resetReadGuards();
 
+          const expNum = experiments.length + 1;
+          console.log(
+            `\x1b[33m   ↩ Reverted\x1b[0m  ${currentHash.slice(0, 7)} → ${newHash.slice(0, 7)}${args.reason ? `  (${args.reason})` : ""}`,
+          );
+
           return JSON.stringify({
             status: "reverted",
             method: "reset",
