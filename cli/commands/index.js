@@ -3630,8 +3630,11 @@ async function startREPL() {
 
   // ─── Inline slash-command suggestions (live while typing) ───
   let _sugN = 0;
+  let _sugIdx = -1;   // currently highlighted row (-1 = none)
+  let _sugHits = [];  // full hit list for the current query
+  let _sugQuery = ""; // what the user had typed before navigating
 
-  function _clearSug() {
+  function _eraseSugDisplay() {
     if (_sugN > 0) {
       // Erase suggestion rows at bottom of scroll region using absolute positioning.
       const scrollEnd = footer._scrollEnd;
@@ -3645,17 +3648,26 @@ async function startREPL() {
     }
   }
 
-  function _showSug(line) {
+  function _clearSug() {
+    _eraseSugDisplay();
+    _sugIdx = -1;
+    _sugHits = [];
+    _sugQuery = "";
+  }
+
+  function _showSug(line, selectedIdx = -1) {
     const hits = [...SLASH_COMMANDS, ...getSkillCommands()].filter((c) =>
       c.cmd.startsWith(line),
     );
-    if (!hits.length || (hits.length === 1 && hits[0].cmd === line)) return;
+    if (!hits.length || (hits.length === 1 && hits[0].cmd === line && selectedIdx < 0)) return;
     const scrollEnd = footer._scrollEnd;
     const maxShow = Math.min(10, scrollEnd - 2);
     if (maxShow < 1) return;
     const show = hits.slice(0, maxShow);
     const padLen = Math.max(...show.map((c) => c.cmd.length));
     _sugN = show.length;
+    _sugHits = hits;
+    _sugQuery = line;
     if (hits.length > maxShow) _sugN++;
 
     // Draw ABOVE the status bar, at bottom of scroll region.
@@ -3663,10 +3675,15 @@ async function startREPL() {
     let buf = "\x1b7"; // DECSC: save cursor
     for (let i = 0; i < show.length; i++) {
       const { cmd, desc } = show[i];
-      const typed = cmd.substring(0, line.length);
-      const rest = cmd.substring(line.length);
       const gap = " ".repeat(Math.max(0, padLen - cmd.length + 2));
-      buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+      if (i === selectedIdx) {
+        // Highlighted row — reverse video so it stands out as the active selection
+        buf += `\x1b[${startRow + i};1H\x1b[2K \x1b[7m ${C.bold}${cmd}${C.reset}\x1b[7m${gap}${desc}\x1b[27m${C.reset}`;
+      } else {
+        const typed = cmd.substring(0, line.length);
+        const rest = cmd.substring(line.length);
+        buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+      }
     }
     if (hits.length > maxShow) {
       buf += `\x1b[${startRow + show.length};1H\x1b[2K  ${C.dim}… +${hits.length - maxShow} more${C.reset}`;
@@ -3676,12 +3693,57 @@ async function startREPL() {
   }
 
   if (process.stdin.isTTY) {
+    // Monkey-patch rl._ttyWrite so we can intercept arrow keys when suggestions
+    // are visible. readline's own keypress listener calls _ttyWrite before our
+    // keypress listener fires, so this runs first.
+    const _origTtyWrite = rl._ttyWrite.bind(rl);
+    let _inSugNav = false;
+
+    rl._ttyWrite = function (s, key) {
+      // Guard against re-entry when we write to rl during navigation.
+      if (_inSugNav) return _origTtyWrite(s, key);
+
+      if (_sugN > 0 && key && !key.ctrl && !key.meta) {
+        const maxIdx = Math.min(_sugHits.length, 10) - 1;
+
+        if (key.name === "down") {
+          _sugIdx = Math.min(_sugIdx + 1, maxIdx);
+          _inSugNav = true;
+          rl.write(null, { ctrl: true, name: "u" }); // clear current line
+          rl.write(_sugIdx >= 0 ? _sugHits[_sugIdx].cmd : _sugQuery);
+          _inSugNav = false;
+          _eraseSugDisplay();
+          _showSug(_sugQuery, _sugIdx);
+          return;
+        }
+
+        if (key.name === "up" && _sugIdx >= 0) {
+          _sugIdx--;
+          _inSugNav = true;
+          rl.write(null, { ctrl: true, name: "u" }); // clear current line
+          rl.write(_sugIdx >= 0 ? _sugHits[_sugIdx].cmd : _sugQuery);
+          _inSugNav = false;
+          _eraseSugDisplay();
+          _showSug(_sugQuery, _sugIdx);
+          return;
+        }
+      }
+
+      return _origTtyWrite(s, key);
+    };
+
     process.stdin.on("keypress", (str, key) => {
+      // Arrow-key suggestion navigation is handled entirely in _ttyWrite above;
+      // skip _clearSug so the freshly redrawn suggestions are not wiped.
+      if (_sugN > 0 && key) {
+        if (key.name === "down") return;
+        if (key.name === "up" && _sugIdx >= 0) return;
+      }
       _clearSug();
       if (key && (key.name === "tab" || key.name === "return")) return;
       setImmediate(() => {
         if (rl.line && rl.line.startsWith("/")) {
-          _showSug(rl.line);
+          _showSug(rl.line, -1);
         }
       });
     });
