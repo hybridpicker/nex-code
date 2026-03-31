@@ -518,7 +518,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "list_directory",
       description:
-        "List files and directories in a tree view. Use this to understand project structure. For finding specific files by pattern, prefer glob instead.",
+        "List files and directories in a tree view. Use this to understand project structure. Example: use list_directory to see the overall layout of the src/ directory, but NOT for finding all .js files (use glob instead). For finding specific files by pattern, prefer glob instead.",
       parameters: {
         type: "object",
         properties: {
