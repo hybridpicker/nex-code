@@ -14,7 +14,7 @@
  * - No iteration cap by default — runs until stopped
  */
 
-const { execSync } = require("child_process");
+const { execSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -45,6 +45,13 @@ function getBenchmark() {
 let experiments = [];
 let loopActive = false;
 let sessionBaselineScore = null; // set on first ar_run_benchmark call
+
+// ─── Watch Mode state ───────────────────────────────────────────
+let _watchProcess = null;
+let _watchCallbacks = { onFailure: null };
+let _watchTestCommand = null;
+let _watchDebounceTimer = null;
+const WATCH_DEBOUNCE_MS = 2000;
 
 function getLogPath() {
   const dir = path.join(process.cwd(), ".nex", "autoresearch");
@@ -361,6 +368,47 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         saveExperiments();
         loopActive = false;
         console.log("Autoresearch history cleared.");
+      },
+    },
+    {
+      cmd: "/ar-watch",
+      desc: "Start/stop background file watcher that auto-runs tests on changes",
+      handler: (args) => {
+        // Check feature flag
+        let watchEnabled = false;
+        try {
+          const { feature } = require("../feature-flags");
+          watchEnabled = feature("WATCH_MODE");
+        } catch {
+          // feature-flags not available — check env
+          watchEnabled = process.env.NEX_FEATURE_WATCH_MODE === "1" || process.env.NEX_FEATURE_WATCH_MODE === "true";
+        }
+        if (!watchEnabled) {
+          console.log("Watch mode is disabled. Enable with NEX_FEATURE_WATCH_MODE=1");
+          return;
+        }
+
+        const cmd = args.trim();
+        if (cmd === "stop" || cmd === "off") {
+          stopWatch();
+          console.log("Watch mode stopped.");
+          return;
+        }
+        if (_watchProcess) {
+          console.log("Watch mode is already running. Use /ar-watch stop to stop it.");
+          return;
+        }
+
+        // Parse: /ar-watch <test command> [--watch-path <glob>]
+        const testCommand = cmd || "npm test";
+        const watchPath = process.cwd();
+        _watchTestCommand = testCommand;
+
+        startWatch(watchPath, testCommand);
+        console.log(`Watch mode started. Monitoring ${watchPath} for changes.`);
+        console.log(`Test command: ${testCommand}`);
+        console.log("On test failure, the agent will auto-investigate.");
+        console.log("Use /ar-watch stop to stop.\n");
       },
     },
   ],
@@ -1066,6 +1114,23 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
     {
       type: "function",
       function: {
+        name: "ar_watch_status",
+        description:
+          "Get the current status of the background file watcher (watch mode). " +
+          "Returns whether watch mode is active, the test command, and recent failure count.",
+        parameters: { type: "object", properties: {} },
+      },
+      execute: async () => {
+        return JSON.stringify({
+          active: !!_watchProcess,
+          testCommand: _watchTestCommand,
+          pid: _watchProcess ? _watchProcess.pid : null,
+        });
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "ar_history",
         description:
           "Get the full experiment history as JSON for analysis. " +
@@ -1106,3 +1171,99 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
     },
   ],
 };
+
+// ─── Watch Mode Implementation ──────────────────────────────────
+
+/**
+ * Start a background file watcher using fs.watch (recursive).
+ * On file changes, debounces and runs the test command.
+ * If tests fail, injects a mid-run note into the agent conversation.
+ * @param {string} watchPath — directory to watch
+ * @param {string} testCommand — shell command to run on changes
+ */
+function startWatch(watchPath, testCommand) {
+  if (_watchProcess) stopWatch();
+
+  const ignorePatterns = [
+    /node_modules/,
+    /\.git\//,
+    /\.nex\//,
+    /dist\//,
+    /\.log$/,
+    /\.tmp$/,
+  ];
+
+  try {
+    const watcher = fs.watch(watchPath, { recursive: true }, (eventType, filename) => {
+      if (!filename) return;
+      // Skip ignored paths
+      if (ignorePatterns.some((p) => p.test(filename))) return;
+      // Skip non-source files
+      if (!/\.(js|ts|jsx|tsx|py|rb|go|rs|json|yaml|yml|toml|cfg|ini|sh|css|html)$/.test(filename)) return;
+
+      // Debounce: wait for changes to settle
+      if (_watchDebounceTimer) clearTimeout(_watchDebounceTimer);
+      _watchDebounceTimer = setTimeout(() => {
+        _runWatchTest(testCommand, filename);
+      }, WATCH_DEBOUNCE_MS);
+    });
+
+    _watchProcess = watcher;
+
+    // Clean up on process exit
+    const cleanup = () => stopWatch();
+    process.on("exit", cleanup);
+    process.on("SIGINT", cleanup);
+  } catch (err) {
+    console.error(`Watch mode failed to start: ${err.message}`);
+    _watchProcess = null;
+  }
+}
+
+/**
+ * Stop the background file watcher.
+ */
+function stopWatch() {
+  if (_watchProcess) {
+    try { _watchProcess.close(); } catch { /* already closed */ }
+    _watchProcess = null;
+  }
+  if (_watchDebounceTimer) {
+    clearTimeout(_watchDebounceTimer);
+    _watchDebounceTimer = null;
+  }
+  _watchTestCommand = null;
+}
+
+/**
+ * Run the test command and handle failures.
+ * @param {string} testCommand
+ * @param {string} changedFile — file that triggered the watch
+ */
+function _runWatchTest(testCommand, changedFile) {
+  try {
+    execSync(testCommand, {
+      cwd: process.cwd(),
+      stdio: "pipe",
+      timeout: 120000, // 2 minute timeout
+      encoding: "utf-8",
+    });
+    // Tests passed — no action needed
+  } catch (err) {
+    // Tests failed — notify the agent
+    const output = (err.stdout || "") + (err.stderr || "");
+    const truncatedOutput = output.slice(-500); // Last 500 chars of error
+    const failureNote = `[WATCH MODE] Test failure detected after change to ${changedFile}:\n${truncatedOutput}`;
+
+    // Try to inject a note into the agent conversation
+    try {
+      const { injectMidRunNote } = require("../agent");
+      injectMidRunNote(failureNote);
+    } catch {
+      // Agent not in active conversation — just log
+      process.stderr.write(
+        `\n\x1b[33m⚠ Watch: tests failed after ${changedFile} changed\x1b[0m\n`,
+      );
+    }
+  }
+}
