@@ -205,6 +205,7 @@ NEX_FAST_MODEL=devstral-small-2:24b   # quick lookups, fast sub-agents
 ```
 
 Switch anytime: `/model devstral-2:123b` or update `DEFAULT_MODEL` in `.env`.
+The best models discovered are automatically saved to `~/.nex-code/.env` to persist globally across all your projects.
 Auto-discovery runs weekly via the scheduled improvement task and updates this table automatically.
 
 ---
