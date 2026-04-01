@@ -205,6 +205,41 @@ function saveRoutingConfig(routing) {
   if (!routing.phases && existing.phases) merged.phases = existing.phases;
   if (!routing.phaseBudgets && existing.phaseBudgets) merged.phaseBudgets = existing.phaseBudgets;
   fs.writeFileSync(ROUTING_CONFIG_PATH, JSON.stringify(merged, null, 2));
+
+  // Sync to global .env for persistence and visibility
+  try {
+    const envPath = path.join(dir, ".env");
+    let envContent = "";
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, "utf-8");
+    }
+
+    const lines = envContent.split(/\r?\n/);
+    const updateEnv = (key, val) => {
+      const idx = lines.findIndex(l => l.startsWith(key + "="));
+      if (idx >= 0) {
+        lines[idx] = `${key}=${val}`;
+      } else {
+        lines.push(`${key}=${val}`);
+      }
+    };
+
+    if (merged.coding) updateEnv("NEX_ROUTE_CODING", merged.coding);
+    if (merged.frontend) updateEnv("NEX_ROUTE_FRONTEND", merged.frontend);
+    if (merged.sysadmin) updateEnv("NEX_ROUTE_SYSADMIN", merged.sysadmin);
+    if (merged.data) updateEnv("NEX_ROUTE_DATA", merged.data);
+    if (merged.agentic) updateEnv("NEX_ROUTE_AGENTIC", merged.agentic);
+
+    if (merged.phases) {
+      if (merged.phases.plan) updateEnv("NEX_PHASE_PLAN_MODEL", merged.phases.plan);
+      if (merged.phases.implement) updateEnv("NEX_PHASE_IMPLEMENT_MODEL", merged.phases.implement);
+      if (merged.phases.verify) updateEnv("NEX_PHASE_VERIFY_MODEL", merged.phases.verify);
+    }
+
+    fs.writeFileSync(envPath, lines.filter(l => l.trim() !== "").join("\n") + "\n");
+  } catch (err) {
+    /* ignore env sync errors */
+  }
 }
 
 module.exports = {

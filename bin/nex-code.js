@@ -5,9 +5,12 @@
  */
 
 const path = require("path");
+const os = require("os");
 
 // Load .env from CLI install dir (fallback) and project dir
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+// Load from global ~/.nex-code/.env (benchmark routing etc)
+require("dotenv").config({ path: path.join(os.homedir(), ".nex-code", ".env") });
 require("dotenv").config(); // Also check CWD
 
 const args = process.argv.slice(2);
