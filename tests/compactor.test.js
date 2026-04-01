@@ -11,6 +11,7 @@ jest.mock("../cli/providers/registry", () => ({
 const {
   compactMessages,
   formatMessagesForSummary,
+  resetCompactionFailures,
   COMPACTION_ENABLED,
   COMPACTION_MIN_MESSAGES,
   COMPACTION_SUMMARY_BUDGET,
@@ -20,6 +21,7 @@ const { callChat } = require("../cli/providers/registry");
 describe("compactor.js", () => {
   beforeEach(() => {
     callChat.mockReset();
+    resetCompactionFailures();
   });
 
   // ─── formatMessagesForSummary ────────────────────────────
@@ -222,8 +224,8 @@ describe("compactor.js", () => {
       expect(COMPACTION_MIN_MESSAGES).toBe(6);
     });
 
-    it("exports COMPACTION_SUMMARY_BUDGET as 500", () => {
-      expect(COMPACTION_SUMMARY_BUDGET).toBe(500);
+    it("exports COMPACTION_SUMMARY_BUDGET as 2000", () => {
+      expect(COMPACTION_SUMMARY_BUDGET).toBe(2000);
     });
   });
 });

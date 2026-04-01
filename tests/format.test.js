@@ -197,40 +197,40 @@ describe("getToolSpinnerText()", () => {
 
   it("returns reading text for read_file", () => {
     expect(getToolSpinnerText("read_file", { path: "src/index.js" })).toBe(
-      "Reading: src/index.js",
+      "Reading src/index.js",
     );
   });
 
   it("returns listing text for list_directory", () => {
     expect(getToolSpinnerText("list_directory", { path: "src/" })).toBe(
-      "Listing: src/",
+      "Listing src/",
     );
   });
 
   it("returns listing text with default path", () => {
-    expect(getToolSpinnerText("list_directory", {})).toBe("Listing: .");
+    expect(getToolSpinnerText("list_directory", {})).toBe("Listing .");
   });
 
   it("returns search text for search_files", () => {
     expect(getToolSpinnerText("search_files", { pattern: "TODO" })).toBe(
-      "Searching: TODO",
+      "Searching TODO",
     );
   });
 
   it("returns glob text", () => {
-    expect(getToolSpinnerText("glob", { pattern: "*.ts" })).toBe("Glob: *.ts");
+    expect(getToolSpinnerText("glob", { pattern: "*.ts" })).toBe("Searching *.ts");
   });
 
   it("returns grep text", () => {
     expect(getToolSpinnerText("grep", { pattern: "error" })).toBe(
-      "Grep: error",
+      "Searching error",
     );
   });
 
   it("returns web_fetch text", () => {
     expect(
       getToolSpinnerText("web_fetch", { url: "https://api.example.com" }),
-    ).toContain("Fetching:");
+    ).toContain("Fetching");
   });
 
   it("returns web_search text", () => {
@@ -240,21 +240,21 @@ describe("getToolSpinnerText()", () => {
   });
 
   it("returns git_status text", () => {
-    expect(getToolSpinnerText("git_status", {})).toBe("Git status...");
+    expect(getToolSpinnerText("git_status", {})).toBe("Checking git status");
   });
 
   it("returns git_diff text with file", () => {
     expect(getToolSpinnerText("git_diff", { file: "main.js" })).toBe(
-      "Git diff: main.js...",
+      "Diffing main.js",
     );
   });
 
   it("returns git_diff text without file", () => {
-    expect(getToolSpinnerText("git_diff", {})).toBe("Git diff...");
+    expect(getToolSpinnerText("git_diff", {})).toBe("Diffing");
   });
 
   it("returns git_log text", () => {
-    expect(getToolSpinnerText("git_log", {})).toBe("Git log...");
+    expect(getToolSpinnerText("git_log", {})).toBe("Reading git log");
   });
 
   it("returns gh_run_list text", () => {

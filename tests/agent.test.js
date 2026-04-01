@@ -1426,8 +1426,9 @@ describe("agent.js", () => {
     it("starts a pre-spinner before fitToContext and stops it after", async () => {
       mockStream("Hello");
       await processInput("test");
-      // Pre-spinner should be the first Spinner created with 'Thinking...'
-      expect(Spinner.mock.calls[0][0]).toBe("Thinking...");
+      // Pre-spinner should be the first Spinner created with a thinking verb
+      expect(typeof Spinner.mock.calls[0][0]).toBe("string");
+      expect(Spinner.mock.calls[0][0].length).toBeGreaterThan(0);
       // Pre-spinner should be started and stopped
       const preSpinner = Spinner.mock.results[0].value;
       expect(preSpinner.start).toHaveBeenCalled();
