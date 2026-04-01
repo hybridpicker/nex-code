@@ -4546,10 +4546,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 debugLog(
                   `${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`,
                 );
+                const grepAlsoExhausted = _getLoopCount(grepFileCounts, path) >= LOOP_ABORT_GREP_FILE;
                 prep.canExecute = false;
                 prep.errorResult = {
                   role: "tool",
-                  content: `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
+                  content: grepAlsoExhausted
+                    ? `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). Grep is also exhausted. The content you need is already in your context — work with what you have.`
+                    : `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
                   tool_call_id: prep.callId,
                 };
               } else if (sectionCount >= SCROLL_WARN_SECTIONS) {
@@ -4733,10 +4736,27 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           debugLog(
             `${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`,
           );
+          // Check if reads are also exhausted for this file — if so, inject a deadlock-break
+          // message so the model doesn't bounce between "use grep" and "read the file" forever.
+          const readsForFile = _getLoopCount(fileReadCounts, grepPath);
+          const readsAlsoBlocked = readsForFile >= TARGETED_READ_HARD_CAP;
+          if (readsAlsoBlocked) {
+            const deadlockMsg = {
+              role: "user",
+              content: `[SYSTEM] Both read_file and grep are now blocked for "${grepPath}". You have already read ${readsForFile} sections and tried ${alreadyGrepped} grep patterns. Do NOT attempt to read or grep this file again. The content you need is already in your conversation context — scroll back to find it, or proceed with what you know.`,
+            };
+            conversationMessages.push(deadlockMsg);
+            apiMessages.push(deadlockMsg);
+            debugLog(
+              `${C.red}  ✖ Deadlock detected: "${shortPath}" — both read and grep blocked, injecting deadlock-break${C.reset}`,
+            );
+          }
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
-            content: `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Use existing results or read the file instead.`,
+            content: readsAlsoBlocked
+              ? `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried AND reads are also exhausted. The content is already in your context. Do not attempt to read or grep this file again.`
+              : `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Work with the grep results already in your context.`,
             tool_call_id: prep.callId,
           };
         }
