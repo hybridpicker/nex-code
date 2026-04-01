@@ -12,6 +12,7 @@ const {
   formatSectionHeader,
   formatMilestone,
   setActiveTaskProgress,
+  getThinkingVerb,
 } = require("./ui");
 const { debugLog, warnLog } = require("./debug");
 const { MilestoneTracker } = require("./milestone");
@@ -1964,6 +1965,11 @@ function clearConversation() {
   conversationMessages = [];
   _lastCreationSummary = null;
   _resetSessionTracking();
+  // Reset compaction circuit breaker so a fresh conversation can compact again
+  try {
+    const { resetCompactionFailures } = require("./compactor");
+    resetCompactionFailures();
+  } catch { /* ignore */ }
 }
 
 function trimConversationHistory() {
@@ -2395,7 +2401,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   ];
 
   // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
-  const preSpinner = new Spinner("Thinking...");
+  const preSpinner = new Spinner(getThinkingVerb());
   preSpinner.start();
 
   // Start pre-scan concurrently on the FIRST message of a new conversation.
@@ -2722,8 +2728,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         } else {
           spinnerText =
             totalSteps > 0
-              ? `Thinking... (step ${totalSteps + 1})`
-              : "Thinking...";
+              ? `${getThinkingVerb()} (step ${totalSteps + 1})`
+              : getThinkingVerb();
         }
         spinner = new Spinner(spinnerText);
         spinner.start();

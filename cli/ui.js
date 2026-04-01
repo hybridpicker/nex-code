@@ -101,6 +101,7 @@ const {
   formatToolSummary,
   formatSectionHeader,
   formatMilestone,
+  getThinkingVerb,
 } = require("./format");
 
 module.exports = {
@@ -121,4 +122,5 @@ module.exports = {
   formatToolSummary,
   formatSectionHeader,
   formatMilestone,
+  getThinkingVerb,
 };
