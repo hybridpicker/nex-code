@@ -175,6 +175,55 @@ describe("context.js", () => {
     });
   });
 
+  // ─── CLAUDE.md / .nex/CLAUDE.md loading ─────────────────
+  describe("CLAUDE.md loading", () => {
+    beforeEach(() => {
+      const context = require("../cli/context");
+      if (context._clearContextCache) context._clearContextCache();
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        cb(new Error("no git"));
+      });
+    });
+
+    it("includes CLAUDE.md content when present at project root", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "CLAUDE.md"),
+        "# Project Rules\n\nAlways write tests.",
+      );
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("PROJECT INSTRUCTIONS (CLAUDE.md)");
+      expect(ctx).toContain("Always write tests.");
+    });
+
+    it("includes .nex/CLAUDE.md content when present", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".nex"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, ".nex", "CLAUDE.md"),
+        "Private: deploy to staging first.",
+      );
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("PRIVATE PROJECT INSTRUCTIONS (.nex/CLAUDE.md)");
+      expect(ctx).toContain("deploy to staging first");
+    });
+
+    it("includes both CLAUDE.md files when both are present", async () => {
+      fs.writeFileSync(path.join(tmpDir, "CLAUDE.md"), "Public rule.");
+      fs.mkdirSync(path.join(tmpDir, ".nex"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, ".nex", "CLAUDE.md"), "Private rule.");
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("Public rule.");
+      expect(ctx).toContain("Private rule.");
+    });
+
+    it("skips empty CLAUDE.md files", async () => {
+      fs.writeFileSync(path.join(tmpDir, "CLAUDE.md"), "   ");
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).not.toContain("PROJECT INSTRUCTIONS");
+    });
+  });
+
   // ─── printContext ─────────────────────────────────────────
   describe("printContext()", () => {
     it("prints empty line instead of project info to console", async () => {

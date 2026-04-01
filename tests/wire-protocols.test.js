@@ -8,6 +8,7 @@ const {
   openaiProtocol,
   anthropicProtocol,
   ollamaProtocol,
+  ANTHROPIC_CACHE_BOUNDARY,
 } = require("../cli/providers/wire-protocols");
 
 describe("wire-protocols.js", () => {
@@ -198,6 +199,45 @@ describe("wire-protocols.js", () => {
       expect(body.model).toBe("claude-sonnet-4-6");
       expect(body.system).toBe("You are helpful.");
       expect(body.stream).toBe(true);
+    });
+
+    it("splits system prompt into cached array when boundary is present", () => {
+      const dynamic = "Working directory: /tmp\nProject: my-app";
+      const staticPart = "# Core Behavior\nBe helpful and concise.";
+      const system = `${dynamic}\n${ANTHROPIC_CACHE_BOUNDARY}\n${staticPart}`;
+
+      const body = proto.buildRequestBody({
+        model: "claude-sonnet-4-6",
+        messages: [],
+        tools: [],
+        maxTokens: 8192,
+        temperature: 0.2,
+        stream: false,
+        extra: { system },
+      });
+
+      expect(Array.isArray(body.system)).toBe(true);
+      expect(body.system).toHaveLength(2);
+      expect(body.system[0].type).toBe("text");
+      expect(body.system[0].text).toBe(dynamic);
+      expect(body.system[0].cache_control).toBeUndefined();
+      expect(body.system[1].type).toBe("text");
+      expect(body.system[1].text).toBe(staticPart);
+      expect(body.system[1].cache_control).toEqual({ type: "ephemeral" });
+    });
+
+    it("keeps system as string when no boundary is present", () => {
+      const body = proto.buildRequestBody({
+        model: "claude-sonnet-4-6",
+        messages: [],
+        tools: [],
+        maxTokens: 8192,
+        temperature: 0.2,
+        stream: false,
+        extra: { system: "Plain system prompt without boundary." },
+      });
+      expect(typeof body.system).toBe("string");
+      expect(body.system).toBe("Plain system prompt without boundary.");
     });
 
     it("converts tools to Anthropic format", () => {

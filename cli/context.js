@@ -195,6 +195,8 @@ async function updateContextMtimes() {
     path.join(process.cwd(), "README.md"),
     path.join(process.cwd(), ".gitignore"),
     path.join(process.cwd(), ".git", "HEAD"),
+    path.join(process.cwd(), "CLAUDE.md"),
+    path.join(process.cwd(), ".nex", "CLAUDE.md"),
   ];
 
   for (const file of filesToTrack) {
@@ -273,6 +275,36 @@ async function gatherProjectContext(cwd) {
     if (giExists) {
       const content = await fs.readFile(giPath, "utf-8");
       parts.push(`GITIGNORE:\n${content.trim()}`);
+    }
+
+    // CLAUDE.md — project-level instructions (Claude Code compatible, gitignored)
+    const claudeMdPath = path.join(cwd, "CLAUDE.md");
+    const claudeMdExists = await safe(() =>
+      fs
+        .access(claudeMdPath)
+        .then(() => true)
+        .catch(() => false),
+    );
+    if (claudeMdExists) {
+      const content = await fs.readFile(claudeMdPath, "utf-8");
+      if (content.trim())
+        parts.push(`PROJECT INSTRUCTIONS (CLAUDE.md):\n${content.trim()}`);
+    }
+
+    // .nex/CLAUDE.md — private project instructions (gitignored, never committed)
+    const nexClaudeMdPath = path.join(cwd, ".nex", "CLAUDE.md");
+    const nexClaudeMdExists = await safe(() =>
+      fs
+        .access(nexClaudeMdPath)
+        .then(() => true)
+        .catch(() => false),
+    );
+    if (nexClaudeMdExists) {
+      const content = await fs.readFile(nexClaudeMdPath, "utf-8");
+      if (content.trim())
+        parts.push(
+          `PRIVATE PROJECT INSTRUCTIONS (.nex/CLAUDE.md):\n${content.trim()}`,
+        );
     }
 
     fileContext = parts.join("\n\n");

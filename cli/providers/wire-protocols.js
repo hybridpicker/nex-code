@@ -293,6 +293,12 @@ class AnthropicStreamParser extends StreamParser {
   }
 }
 
+/** Marker that splits the system prompt into a dynamic and a static half.
+ *  The static half (behavioral rules) is cached via cache_control to avoid
+ *  re-paying its tokens on every API call. */
+const ANTHROPIC_CACHE_BOUNDARY =
+  "<!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->";
+
 class AnthropicProtocol extends WireProtocol {
   getEndpoint() {
     return "/messages";
@@ -314,7 +320,28 @@ class AnthropicProtocol extends WireProtocol {
       temperature,
     };
     if (stream) body.stream = true;
-    if (extra?.system) body.system = extra.system;
+    if (extra?.system) {
+      const sys = extra.system;
+      const idx = sys.indexOf(ANTHROPIC_CACHE_BOUNDARY);
+      if (idx !== -1) {
+        // Split into a per-session dynamic block and a cacheable static block.
+        // Anthropic's prompt caching saves the static half across requests.
+        const dynamic = sys.slice(0, idx).trimEnd();
+        const staticPart = sys
+          .slice(idx + ANTHROPIC_CACHE_BOUNDARY.length)
+          .trimStart();
+        body.system = [
+          { type: "text", text: dynamic },
+          {
+            type: "text",
+            text: staticPart,
+            cache_control: { type: "ephemeral" },
+          },
+        ];
+      } else {
+        body.system = sys;
+      }
+    }
     if (tools && tools.length > 0) body.tools = tools;
     return body;
   }
@@ -459,6 +486,8 @@ const anthropicProtocol = new AnthropicProtocol();
 const ollamaProtocol = new OllamaChatProtocol();
 
 module.exports = {
+  // Constants
+  ANTHROPIC_CACHE_BOUNDARY,
   // Base classes (for testing/extension)
   WireProtocol,
   StreamParser,
