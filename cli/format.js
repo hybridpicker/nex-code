@@ -226,6 +226,34 @@ function formatResult(text, maxLines = 8) {
   return out;
 }
 
+// Fun thinking verbs shown during model inference — inspired by Claude Code's spinner verbs
+const THINKING_VERBS = [
+  "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
+  "Bootstrapping", "Brewing", "Calculating", "Cascading", "Cerebrating",
+  "Channeling", "Churning", "Coalescing", "Cogitating", "Computing",
+  "Concocting", "Considering", "Contemplating", "Crafting", "Crunching",
+  "Crystallizing", "Cultivating", "Deciphering", "Deliberating", "Determining",
+  "Doing", "Elucidating", "Forging", "Forming", "Generating",
+  "Harmonizing", "Hatching", "Herding", "Ideating", "Implementing",
+  "Inferring", "Initializing", "Innovating", "Investigating", "Iterating",
+  "Manifesting", "Meditating", "Mulling", "Nexing", "Noodling",
+  "Orchestrating", "Perpending", "Pondering", "Processing", "Reasoning",
+  "Ruminating", "Scheming", "Shaping", "Simmering", "Solving",
+  "Sorting", "Synthesizing", "Thinking", "Tinkering", "Transmuting",
+  "Unraveling", "Vibing", "Wrangling",
+];
+
+let _thinkingVerbIdx = Math.floor(Math.random() * THINKING_VERBS.length);
+
+/**
+ * Returns a fun rotating thinking verb for the spinner (e.g. "Cogitating…")
+ */
+function getThinkingVerb() {
+  const verb = THINKING_VERBS[_thinkingVerbIdx % THINKING_VERBS.length];
+  _thinkingVerbIdx++;
+  return `${verb}…`;
+}
+
 /**
  * Returns spinner text for a tool execution, or null if the tool
  * should not show a spinner (interactive or has its own spinner).
@@ -243,25 +271,25 @@ function getToolSpinnerText(name, args) {
       return null;
 
     case "read_file":
-      return `Reading: ${args.path || "file"}`;
+      return `Reading ${args.path || "file"}`;
     case "list_directory":
-      return `Listing: ${args.path || "."}`;
+      return `Listing ${args.path || "."}`;
     case "search_files":
-      return `Searching: ${args.pattern || "..."}`;
+      return `Searching ${args.pattern || "..."}`;
     case "glob":
-      return `Glob: ${args.pattern || "..."}`;
+      return `Searching ${args.pattern || "..."}`;
     case "grep":
-      return `Grep: ${args.pattern || "..."}`;
+      return `Searching ${args.pattern || "..."}`;
     case "web_fetch":
-      return `Fetching: ${(args.url || "").substring(0, 60)}`;
+      return `Fetching ${(args.url || "").substring(0, 60)}`;
     case "web_search":
       return `Searching web: ${(args.query || "").substring(0, 50)}`;
     case "git_status":
-      return "Git status...";
+      return "Checking git status";
     case "git_diff":
-      return `Git diff${args.file ? `: ${args.file}` : ""}...`;
+      return `Diffing${args.file ? ` ${args.file}` : ""}`;
     case "git_log":
-      return `Git log${args.file ? `: ${args.file}` : ""}...`;
+      return `Reading git log${args.file ? ` (${args.file})` : ""}`;
     case "gh_run_list":
       return `GitHub Actions: listing runs${args.workflow ? ` (${args.workflow})` : ""}...`;
     case "gh_run_view":

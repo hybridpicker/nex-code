@@ -5887,6 +5887,38 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── Per-message tool result budget ─────────────────────────────────────
+      // When N tools run in parallel their results land in one API "user" turn.
+      // Cap the aggregate size so a batch of large reads doesn't flood context.
+      // Claude Code uses 200K chars; we apply the same guard here.
+      {
+        const PER_MSG_BUDGET = 200_000;
+        let totalChars = toolMessages.reduce(
+          (s, m) => s + (typeof m.content === "string" ? m.content.length : 0),
+          0,
+        );
+        if (totalChars > PER_MSG_BUDGET) {
+          // Trim the largest results first until we're under budget
+          const sorted = toolMessages
+            .map((m, i) => ({ i, len: typeof m.content === "string" ? m.content.length : 0 }))
+            .sort((a, b) => b.len - a.len);
+          for (const { i, len } of sorted) {
+            if (totalChars <= PER_MSG_BUDGET) break;
+            const excess = totalChars - PER_MSG_BUDGET;
+            const keep = Math.max(len - excess, 500);
+            if (keep < len && typeof toolMessages[i].content === "string") {
+              toolMessages[i] = {
+                ...toolMessages[i],
+                content:
+                  toolMessages[i].content.substring(0, keep) +
+                  `\n...(truncated ${len - keep} chars — per-message budget)`,
+              };
+              totalChars -= len - keep;
+            }
+          }
+        }
+      }
+
       for (const toolMsg of toolMessages) {
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
