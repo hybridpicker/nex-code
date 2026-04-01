@@ -572,3 +572,64 @@ Disable with `NEX_FEW_SHOT=0`.
 
 **Impact:** Model-agnostic improvement that works immediately on all Ollama
 Cloud models without fine-tuning or system-prompt changes.
+
+---
+
+### 2026-04-01 — Compact prompt restructure, circuit breaker, per-message budget, spinner model label
+
+#### Structured compact prompt with analysis scratchpad
+
+The previous compact prompt was a short bullet-point instruction (~40 words).
+Replaced with a 9-section structured prompt derived from analysis of the
+Claude Code source (leaked NanmiCoder/claude-code-haha, 2026-03-31):
+
+1. Primary Request and Intent
+2. Key Technical Concepts
+3. Files and Code Sections
+4. Errors and Fixes
+5. Problem Solving
+6. All User Messages
+7. Pending Tasks
+8. Current Work
+9. Optional Next Step
+
+The model is instructed to wrap its reasoning in `<analysis>` tags first,
+then emit the summary inside `<summary>` tags. The `<analysis>` block is
+stripped before the summary is stored — the model gets a scratchpad without
+polluting the context window.
+
+Summary budget raised from 500 → 2000 tokens.
+
+#### Compaction circuit breaker
+
+New `_consecutiveFailures` counter in `cli/compactor.js`. After 3 consecutive
+failed compaction attempts (empty result, token-ratio check failed, or
+exception), further compaction calls are skipped for the session. Resets on
+`/clear` and on any successful compaction.
+
+**Why:** When context is irrecoverably over the model's limit, repeated
+compaction attempts waste API calls and add latency with no benefit.
+
+#### Per-message tool result budget (200 K chars)
+
+When parallel tool calls produce results that collectively exceed 200,000
+characters in a single user turn, the largest results are trimmed first until
+the aggregate is under budget. The trim marker is
+`...(truncated N chars — per-message budget)`.
+
+Claude Code uses the same 200 K threshold. Without this cap, a batch of large
+file reads could flood the context in a single step.
+
+#### Spinner shows active model and inference verb
+
+Replaced the 60-word fun-verb list (copied from Claude Code's spinner) with
+10 actual LLM inference terms: Sampling, Decoding, Attending, Inferring,
+Generating, Routing, Embedding, Reasoning, Tokenizing, Predicting.
+
+The spinner label combines the current verb with the active model ID:
+`Sampling · devstral-2:123b`. `setActiveModelForSpinner()` is called once
+per `processInput()` invocation, so the label tracks model switches
+(e.g., after a retry that falls back to a different model).
+
+**Why:** Shows users which model is actually running at a glance —
+genuinely useful in a multi-model tool, not just decorative.
