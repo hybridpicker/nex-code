@@ -1288,23 +1288,20 @@ describe("context-engine.js", () => {
 
   // ─── Dynamic compression thresholds ───────────────────────────
   describe("dynamic compression thresholds", () => {
-    it("exports TIER_COMPRESSION_THRESHOLDS", () => {
-      expect(TIER_COMPRESSION_THRESHOLDS).toEqual({
-        essential: 0.60,
-        standard: 0.70,
-        full: 0.75,
-      });
+    it("exports TIER_COMPRESSION_THRESHOLDS with lowered full/standard thresholds", () => {
+      // Thresholds lowered to trigger earlier and prevent 111% context overflow:
+      // full: 0.75 → 0.68, standard: 0.70 → 0.65
+      expect(TIER_COMPRESSION_THRESHOLDS.essential).toBe(0.60);
+      expect(TIER_COMPRESSION_THRESHOLDS.standard).toBe(0.65);
+      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.68);
     });
 
-    it("getEffectiveCompressionThreshold returns default for full-tier models", () => {
-      // gpt-4o is 'full' tier
-      registry.getActiveModel.mockReturnValue({
-        id: "gpt-4o",
-        provider: "openai",
-        contextWindow: 128000,
-      });
-      const threshold = getEffectiveCompressionThreshold();
-      expect(threshold).toBe(0.75);
+    it("TIER_COMPRESSION_THRESHOLDS.full is capped at 0.68", () => {
+      // Full-tier threshold was lowered from 0.75 → 0.68 to trigger compression
+      // earlier and prevent context reaching 111%+ before compression fires.
+      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.68);
+      // Raw COMPRESSION_THRESHOLD (env-override base) stays at 0.75
+      expect(COMPRESSION_THRESHOLD).toBe(0.75);
     });
 
     it("returns lower threshold when tool-tiers reports essential tier", () => {
@@ -1315,7 +1312,7 @@ describe("context-engine.js", () => {
       // getEffectiveCompressionThreshold uses require() internally,
       // so we test via the exported TIER_COMPRESSION_THRESHOLDS map
       expect(TIER_COMPRESSION_THRESHOLDS.essential).toBe(0.60);
-      expect(TIER_COMPRESSION_THRESHOLDS.standard).toBe(0.70);
+      expect(TIER_COMPRESSION_THRESHOLDS.standard).toBe(0.65);
     });
   });
 });

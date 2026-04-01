@@ -178,8 +178,10 @@ describe("hooks.js", () => {
 
   // ─── runHooks ─────────────────────────────────────────────
   describe("runHooks()", () => {
-    it("returns empty array when no hooks configured", () => {
-      expect(runHooks("pre-tool")).toEqual([]);
+    it("returns empty results and blocked:false when no hooks configured", () => {
+      const r = runHooks("pre-tool");
+      expect(r.results).toEqual([]);
+      expect(r.blocked).toBe(false);
     });
 
     it("runs all hooks for an event", () => {
@@ -192,12 +194,13 @@ describe("hooks.js", () => {
         }),
       );
 
-      const results = runHooks("post-response");
+      const { results, blocked } = runHooks("post-response");
       expect(results).toHaveLength(2);
       expect(results[0].success).toBe(true);
       expect(results[0].output).toBe("first");
       expect(results[1].success).toBe(true);
       expect(results[1].output).toBe("second");
+      expect(blocked).toBe(false);
     });
 
     it("passes context as NEX_ env vars", () => {
@@ -208,12 +211,12 @@ describe("hooks.js", () => {
         JSON.stringify({ hooks: { "post-tool": ["echo $NEX_TOOL_NAME"] } }),
       );
 
-      const results = runHooks("post-tool", { tool_name: "bash" });
+      const { results } = runHooks("post-tool", { tool_name: "bash" });
       expect(results).toHaveLength(1);
       expect(results[0].output).toBe("bash");
     });
 
-    it("stops on pre-* hook failure", () => {
+    it("stops on pre-* hook failure (non-blocking)", () => {
       const configDir = path.join(tmpDir, ".nex");
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
@@ -223,9 +226,27 @@ describe("hooks.js", () => {
         }),
       );
 
-      const results = runHooks("pre-tool");
+      const { results, blocked } = runHooks("pre-tool");
       expect(results).toHaveLength(1);
       expect(results[0].success).toBe(false);
+      expect(blocked).toBe(false); // exit 1 warns but doesn't block
+    });
+
+    it("blocks tool call when pre-* hook exits with code 2", () => {
+      const configDir = path.join(tmpDir, ".nex");
+      fs.mkdirSync(configDir, { recursive: true });
+      // Write a script that exits with code 2
+      const scriptPath = path.join(configDir, "block-hook.sh");
+      fs.writeFileSync(scriptPath, "#!/bin/sh\necho 'blocked by policy'\nexit 2\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(configDir, "config.json"),
+        JSON.stringify({ hooks: { "pre-tool": [scriptPath] } }),
+      );
+
+      const { results, blocked, blockReason } = runHooks("pre-tool");
+      expect(blocked).toBe(true);
+      expect(blockReason).toMatch(/blocked by policy/);
+      expect(results[0].exitCode).toBe(2);
     });
 
     it("continues on post-* hook failure", () => {
@@ -236,7 +257,7 @@ describe("hooks.js", () => {
         JSON.stringify({ hooks: { "post-tool": ["false", "echo continued"] } }),
       );
 
-      const results = runHooks("post-tool");
+      const { results } = runHooks("post-tool");
       expect(results).toHaveLength(2);
       expect(results[0].success).toBe(false);
       expect(results[1].success).toBe(true);

@@ -87,10 +87,15 @@ function executeHook(command, env = {}, timeout = 30000) {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return { success: true, output: output.trim() };
+    return { success: true, exitCode: 0, output: output.trim() };
   } catch (err) {
+    const exitCode = typeof err.status === "number" ? err.status : 1;
     return {
       success: false,
+      exitCode,
+      // exit code 2 means the hook wants to hard-block the tool call
+      blocked: exitCode === 2,
+      output: err.stdout ? err.stdout.trim() : "",
       error: err.stderr ? err.stderr.trim() : err.message,
     };
   }
@@ -100,11 +105,16 @@ function executeHook(command, env = {}, timeout = 30000) {
  * Run all hooks for an event
  * @param {string} event
  * @param {Object} context — contextual data passed as env vars
- * @returns {Array<{command: string, success: boolean, output?: string, error?: string}>}
+ * @returns {{ results: Array, blocked: boolean, blockReason?: string }}
+ *
+ * Exit code semantics (pre-tool hooks only):
+ *   0  → allow (continue normally)
+ *   2  → hard-block the tool call; blockReason is returned to the model
+ *   other non-zero → warn but continue (same as before)
  */
 function runHooks(event, context = {}) {
   const hooks = getHooksForEvent(event);
-  if (hooks.length === 0) return [];
+  if (hooks.length === 0) return { results: [], blocked: false };
 
   // Convert context to NEX_* env vars
   const env = {};
@@ -117,13 +127,21 @@ function runHooks(event, context = {}) {
     const result = executeHook(command, env);
     results.push({ command, ...result });
 
-    // Stop on failure for pre-* hooks (they can block)
+    // exit code 2 on pre-* hooks = hard block
+    // Prefer stdout output as the reason (script can echo a message), fall
+    // back to stderr, then the generic error message.
+    if (result.blocked && event.startsWith("pre-")) {
+      const reason = result.output || result.error || "hook blocked tool call";
+      return { results, blocked: true, blockReason: reason };
+    }
+
+    // other failure on pre-* hooks = stop chain but don't block
     if (!result.success && event.startsWith("pre-")) {
       break;
     }
   }
 
-  return results;
+  return { results, blocked: false };
 }
 
 /**

@@ -277,10 +277,12 @@ const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
 
 // Per-tier compression thresholds: smaller models need earlier compression
 // because they are more sensitive to noise in context.
+// Full-tier lowered from 0.75 → 0.68 so compression triggers before the model
+// runs into hard context limits and loses progress state.
 const TIER_COMPRESSION_THRESHOLDS = {
   essential: 0.60,
-  standard: 0.70,
-  full: COMPRESSION_THRESHOLD, // 0.75 default
+  standard: 0.65,
+  full: Math.min(COMPRESSION_THRESHOLD, 0.68),
 };
 
 /**
@@ -570,6 +572,56 @@ function extractActiveFiles(messages, recentCount = 10) {
  * @param {object} [options] - { threshold, keepRecent }
  * @returns {{ messages: Array, compressed: boolean, tokensRemoved: number }}
  */
+/**
+ * Build a structured progress snapshot to pin before compression.
+ * The snapshot captures which files were modified, the current phase, and
+ * recent assistant summaries so the model doesn't lose its place after
+ * context is compressed away.
+ *
+ * Returns a message object with _pinned:true, or null if nothing worth pinning.
+ * @param {Array} messages
+ * @param {{ filesModified?: Set<string>, currentPhase?: string }} opts
+ * @returns {object|null}
+ */
+function buildProgressSnapshot(messages, { filesModified = new Set(), currentPhase = null } = {}) {
+  const parts = [];
+
+  if (filesModified.size > 0) {
+    const files = [...filesModified]
+      .map((f) => f.split("/").slice(-2).join("/"))
+      .join(", ");
+    parts.push(`Files already modified: ${files} — do NOT rewrite these, use edit_file for additions only.`);
+  }
+
+  if (currentPhase) {
+    parts.push(`Current phase: ${currentPhase}`);
+  }
+
+  // Last 3 assistant texts with actual content (skip pure tool-call turns)
+  const assistantTexts = messages
+    .filter(
+      (m) =>
+        m.role === "assistant" &&
+        typeof m.content === "string" &&
+        m.content.trim().length > 30,
+    )
+    .slice(-3)
+    .map((m) => m.content.trim().slice(0, 200).replace(/\n+/g, " "));
+
+  if (assistantTexts.length > 0) {
+    parts.push("Recent progress:\n" + assistantTexts.map((t) => `- ${t}`).join("\n"));
+  }
+
+  if (parts.length === 0) return null;
+
+  return {
+    role: "system",
+    content: `## Progress State (preserved through compression)\n${parts.join("\n")}`,
+    _pinned: true,
+    _progressSnapshot: true,
+  };
+}
+
 // Skip-cache: if message count + last message identity haven't changed,
 // the previous fitToContext result is still valid.
 let _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
@@ -697,19 +749,22 @@ async function fitToContext(messages, tools, options = {}) {
   }
 
   // Phase 4: Remove lowest-relevance messages until we fit.
+  // Pinned messages (progress snapshots) are never removed.
   const activeFiles = extractActiveFiles([...compressed, ...recentMessages]);
   const scored = compressed.map((msg, i) => ({
     msg,
-    score: scoreMessageRelevance(msg, i, compressed.length, activeFiles),
+    score: msg._pinned ? Infinity : scoreMessageRelevance(msg, i, compressed.length, activeFiles),
     tokens: estimateMessageTokens(msg),
   }));
 
   while (scored.length > 0 && tokens > available) {
-    // Find lowest-scoring message
-    let minIdx = 0;
-    for (let i = 1; i < scored.length; i++) {
-      if (scored[i].score < scored[minIdx].score) minIdx = i;
+    // Find lowest-scoring non-pinned message
+    let minIdx = -1;
+    for (let i = 0; i < scored.length; i++) {
+      if (scored[i].score === Infinity) continue; // skip pinned
+      if (minIdx === -1 || scored[i].score < scored[minIdx].score) minIdx = i;
     }
+    if (minIdx === -1) break; // only pinned messages left — can't compress further
     tokens -= scored[minIdx].tokens;
     scored.splice(minIdx, 1);
   }
@@ -906,6 +961,7 @@ module.exports = {
   compressToolResult,
   scoreMessageRelevance,
   extractActiveFiles,
+  buildProgressSnapshot,
   fitToContext,
   forceCompress,
   truncateFileContent,
