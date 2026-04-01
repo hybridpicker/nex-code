@@ -26,6 +26,7 @@ const {
   forceCompress,
   getUsage,
   estimateTokens,
+  buildProgressSnapshot,
 } = require("./context-engine");
 const { autoSave, flushAutoSave } = require("./session");
 const {
@@ -144,7 +145,6 @@ const {
 } = require("./planner");
 const { StreamRenderer } = require("./render");
 const { runHooks } = require("./hooks");
-const { buildProgressSnapshot } = require("./context-engine");
 const { routeMCPCall, getMCPToolDefinitions } = require("./mcp");
 const {
   getSkillInstructions,
@@ -2659,18 +2659,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _autoCtx = getUsage(apiMessages, _allTools);
         const _threshold = totalSteps === 0 ? 65 : 78;
         if (_autoCtx.percentage >= _threshold) {
-          // Inject a structured progress snapshot before compression so the model
+          // Inject a fresh progress snapshot before compression so the model
           // retains its place after old messages are dropped. The snapshot is
           // pinned (_pinned:true) and will survive Phase 4 relevance removal.
-          // Only inject once per compression event (avoid duplicates).
-          const _alreadyHasSnapshot = apiMessages.some((m) => m._progressSnapshot);
-          if (!_alreadyHasSnapshot && (filesModified.size > 0 || _currentPhase !== "plan")) {
+          // Always refresh the snapshot so it reflects the latest state.
+          if (filesModified.size > 0 || (_phaseEnabled && _currentPhase !== "plan")) {
             const _snap = buildProgressSnapshot(conversationMessages, {
               filesModified,
               currentPhase: _phaseEnabled ? _currentPhase : null,
             });
             if (_snap) {
-              // Insert after system message so it's near the top
+              // Replace any existing snapshot, then insert after system message
+              const _existingIdx = apiMessages.findIndex((m) => m._progressSnapshot);
+              if (_existingIdx !== -1) {
+                apiMessages.splice(_existingIdx, 1);
+              }
               const _sysIdx = apiMessages.findIndex((m) => m.role === "system");
               apiMessages.splice(_sysIdx + 1, 0, _snap);
             }
