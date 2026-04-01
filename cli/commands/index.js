@@ -3693,16 +3693,34 @@ async function startREPL() {
     // Draw ABOVE the status bar, at bottom of scroll region.
     const startRow = scrollEnd - _sugN + 1;
     let buf = "\x1b7"; // DECSC: save cursor
+    const maxLen = (footer._cols || 80) - 1;
+
     for (let i = 0; i < show.length; i++) {
       const { cmd, desc } = show[i];
-      const gap = " ".repeat(Math.max(0, padLen - cmd.length + 2));
+      let gapLen = Math.max(0, padLen - cmd.length + 2);
+      
+      const prefixLen = 2 + cmd.length + gapLen;
+      let displayDesc = desc;
+      
+      if (prefixLen + desc.length > maxLen) {
+        const avail = Math.max(0, maxLen - prefixLen - 3);
+        if (avail > 0) {
+          displayDesc = desc.substring(0, avail) + "...";
+        } else {
+          displayDesc = "";
+          gapLen = 1;
+        }
+      }
+      
+      const gap = " ".repeat(gapLen);
+
       if (i === selectedIdx) {
         // Highlighted row — reverse video so it stands out as the active selection
-        buf += `\x1b[${startRow + i};1H\x1b[2K \x1b[7m ${C.bold}${cmd}${C.reset}\x1b[7m${gap}${desc}\x1b[27m${C.reset}`;
+        buf += `\x1b[${startRow + i};1H\x1b[2K \x1b[7m ${C.bold}${cmd}${C.reset}\x1b[7m${gap}${displayDesc}\x1b[27m${C.reset}`;
       } else {
         const typed = cmd.substring(0, line.length);
         const rest = cmd.substring(line.length);
-        buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${desc}${C.reset}`;
+        buf += `\x1b[${startRow + i};1H\x1b[2K  ${C.cyan}${typed}${C.reset}${C.dim}${rest}${gap}${displayDesc}${C.reset}`;
       }
     }
     if (hits.length > maxShow) {
