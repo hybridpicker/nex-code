@@ -102,6 +102,7 @@ const {
   formatSectionHeader,
   formatMilestone,
   getThinkingVerb,
+  setActiveModelForSpinner,
 } = require("./format");
 
 module.exports = {
@@ -123,4 +124,5 @@ module.exports = {
   formatSectionHeader,
   formatMilestone,
   getThinkingVerb,
+  setActiveModelForSpinner,
 };
