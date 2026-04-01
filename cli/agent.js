@@ -248,6 +248,37 @@ function buildUserContent(text) {
   return blocks.length > 1 ? blocks : text;
 }
 
+// ─── Frustration Detector ────────────────────────────────────
+
+/**
+ * Patterns that indicate user frustration.
+ * Detected via regex (not LLM inference) for cost efficiency.
+ */
+const FRUSTRATION_PATTERNS = [
+  /\bwtf\b/i,
+  /\buff\b/i,
+  /\bugh\b/i,
+  /\bffs\b/i,
+  /\bargh\b/i,
+  /why (?:isn'?t|doesn'?t|won'?t|can'?t|don'?t)/i,
+  /(?:still|again) (?:broken|not working|failing|wrong)/i,
+  /already told you/i,
+  /come on[!.]/i,
+  /seriously\?/i,
+  /how (?:many|much) (?:times|more)/i,
+  /nothing (?:works?|is working)/i,
+];
+
+/**
+ * Returns true if the input text shows signs of user frustration.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function detectFrustration(text) {
+  if (typeof text !== "string" || !text) return false;
+  return FRUSTRATION_PATTERNS.some((p) => p.test(text));
+}
+
 // ─── LLM Output Repetition Detector ─────────────────────────
 
 /**
@@ -2318,6 +2349,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   if (_lastCreationSummary && typeof userInput === "string") {
     _resolvedInput = `${_lastCreationSummary}\n\n${userInput}`;
     _lastCreationSummary = null; // consume once
+  }
+  // Inject a soft empathy note when the user appears frustrated so the model
+  // acknowledges the difficulty before proceeding with the task.
+  if (
+    typeof _resolvedInput === "string" &&
+    detectFrustration(_resolvedInput)
+  ) {
+    _resolvedInput +=
+      "\n\n[Note for assistant: the user appears frustrated — acknowledge their concern briefly and empathetically before proceeding]";
   }
   const userContent = buildUserContent(_resolvedInput);
   conversationMessages.push({ role: "user", content: userContent });
@@ -6263,6 +6303,7 @@ module.exports = {
   getProjectContextHash,
   // Export for testing
   buildUserContent,
+  detectFrustration,
   // Export loop detection for testing and external use
   detectAndTruncateLoop,
   // Mid-run input injection
