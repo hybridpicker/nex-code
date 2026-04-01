@@ -163,6 +163,18 @@ function runHeadlessTask(task) {
   // Slash commands (e.g. /bench, /benchmark, /trend) must be routed to the
   // command handler, not sent to the model as a prompt.
   if (task.startsWith("/")) {
+    // Load skills so skill commands (e.g. /ar-self-improve) are recognized
+    const { loadAllSkills, handleSkillCommand } = require("../cli/skills");
+    loadAllSkills();
+    const skillResult = handleSkillCommand(task);
+    if (skillResult && skillResult.agentPrompt) {
+      // Skill returned an agent prompt — run it through processInput
+      const { processInput, getConversationMessages } = require("../cli/agent");
+      processInput(skillResult.agentPrompt, null, { autoOrchestrate, orchestratorModel })
+        .then(() => process.exit(0))
+        .catch((err) => { console.error(err.message); process.exit(1); });
+      return;
+    }
     const { handleSlashCommand } = require("../cli/commands/index");
     handleSlashCommand(task, null)
       .then(() => process.exit(0))
