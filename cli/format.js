@@ -226,32 +226,37 @@ function formatResult(text, maxLines = 8) {
   return out;
 }
 
-// Fun thinking verbs shown during model inference — inspired by Claude Code's spinner verbs
+// LLM inference verbs — what's actually happening inside the model
 const THINKING_VERBS = [
-  "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
-  "Bootstrapping", "Brewing", "Calculating", "Cascading", "Cerebrating",
-  "Channeling", "Churning", "Coalescing", "Cogitating", "Computing",
-  "Concocting", "Considering", "Contemplating", "Crafting", "Crunching",
-  "Crystallizing", "Cultivating", "Deciphering", "Deliberating", "Determining",
-  "Doing", "Elucidating", "Forging", "Forming", "Generating",
-  "Harmonizing", "Hatching", "Herding", "Ideating", "Implementing",
-  "Inferring", "Initializing", "Innovating", "Investigating", "Iterating",
-  "Manifesting", "Meditating", "Mulling", "Nexing", "Noodling",
-  "Orchestrating", "Perpending", "Pondering", "Processing", "Reasoning",
-  "Ruminating", "Scheming", "Shaping", "Simmering", "Solving",
-  "Sorting", "Synthesizing", "Thinking", "Tinkering", "Transmuting",
-  "Unraveling", "Vibing", "Wrangling",
+  "Sampling",
+  "Decoding",
+  "Attending",
+  "Inferring",
+  "Generating",
+  "Routing",
+  "Embedding",
+  "Reasoning",
+  "Tokenizing",
+  "Predicting",
 ];
 
 let _thinkingVerbIdx = Math.floor(Math.random() * THINKING_VERBS.length);
 
+// Injected by agent.js so the spinner can show which model is active
+let _activeModelId = null;
+function setActiveModelForSpinner(modelId) {
+  _activeModelId = modelId;
+}
+
 /**
- * Returns a fun rotating thinking verb for the spinner (e.g. "Cogitating…")
+ * Returns a spinner label combining the current inference verb and active model.
+ * Example: "Sampling · devstral-2:123b"
  */
 function getThinkingVerb() {
   const verb = THINKING_VERBS[_thinkingVerbIdx % THINKING_VERBS.length];
   _thinkingVerbIdx++;
-  return `${verb}…`;
+  const suffix = _activeModelId ? ` · ${_activeModelId}` : "";
+  return `${verb}${suffix}`;
 }
 
 /**
@@ -799,5 +804,6 @@ module.exports = {
   formatSectionHeader,
   formatMilestone,
   getThinkingVerb,
+  setActiveModelForSpinner,
   THINKING_VERBS,
 };

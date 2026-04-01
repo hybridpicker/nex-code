@@ -13,6 +13,7 @@ const {
   formatMilestone,
   setActiveTaskProgress,
   getThinkingVerb,
+  setActiveModelForSpinner,
 } = require("./ui");
 const { debugLog, warnLog } = require("./debug");
 const { MilestoneTracker } = require("./milestone");
@@ -2399,6 +2400,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     { role: "system", content: effectiveSystemPrompt },
     ...conversationMessages,
   ];
+
+  // Keep spinner model label in sync with whatever model is active right now
+  setActiveModelForSpinner(getActiveModelId());
 
   // Pre-spinner: visible activity during fitToContext + getUsage (can take 50–5000ms with LLM compacting)
   const preSpinner = new Spinner(getThinkingVerb());
