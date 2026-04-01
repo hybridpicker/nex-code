@@ -455,7 +455,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a file's contents with line numbers. You MUST use this tool at least once on a file BEFORE calling edit_file or patch_file on it — this ensures you have the exact current content and edits will match. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Example: to read lines 100-150 of a large file, call read_file with line_start=100, line_end=150. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding.",
+        "Read a file's contents with line numbers. Always read a file before editing it to ensure exact content matching. Example: read_file path=src/app.js line_start=10 line_end=20. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Concrete example: read_file(path='src/app.js', line_start=10, line_end=20) reads lines 10-20 of src/app.js. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding.",
       parameters: {
         type: "object",
         properties: {
@@ -497,7 +497,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message (e.g., 'Most similar text (line 42)') to re-read that specific region with line_start=37, line_end=47, then retry with the exact text from that read. For multiple changes to the same file, prefer patch_file (single atomic operation).",
+        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. Example: use edit_file for changing one line in an existing file like package.json, but NOT for creating a new file (use write_file instead). COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message (e.g., 'Most similar text (line 42)') to re-read that specific region with line_start=37, line_end=47, then retry with the exact text from that read. For multiple changes to the same file, prefer patch_file (single atomic operation).",
       parameters: {
         type: "object",
         properties: {
@@ -558,7 +558,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "glob",
       description:
-        "Find files matching a glob pattern. Fast file search by name/extension. Returns paths sorted by modification time. Use this to FIND files before reading them — never guess file paths, always glob first. Example: use glob for '**/*.test.js' to find all test files, but NOT for searching content like 'error' in files (use grep tool instead). Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to find the path, then read_file to read it.",
+        "Find files matching a glob pattern. Fast file search by name/extension. Returns paths sorted by modification time. Use this to FIND files before reading them — never guess file paths, always glob first. Concrete example: glob(pattern='src/**/*.test.js') finds all test files in src directory. Do NOT use for searching content like 'error' in files (use grep tool instead). Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to find the path, then read_file to read it.",
       parameters: {
         type: "object",
         properties: {
