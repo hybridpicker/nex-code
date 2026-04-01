@@ -12,7 +12,7 @@ Aktuell werden interne System-Meldungen immer ausgegeben und machen den Output u
 [force-compressed — ~253 tokens freed]
 [dual-block deadlock: SSH storm relaxed — allowing 1 SSH call (relax 1/1)]
 ⚠ Bad request (400) — force-compressing and retrying... (attempt 1/3)
-⚠ Jarvis-local guard: blocking local bash
+⚠ Server-local guard: blocking local bash
 BLOCKED: read_file("cli/orchestrator.js") denied — file already in context
 ```
 
@@ -46,7 +46,7 @@ module.exports = { DEBUG, debugLog, warnLog };
 Relevante Dateien (suche mit grep):
 
 ```bash
-grep -rn "Super-nuclear\|force-compress\|SSH storm\|deadlock\|Loop warning\|Scroll warning\|BLOCKED\|Jarvis-local guard" cli/ --include="*.js" -l
+grep -rn "Super-nuclear\|force-compress\|SSH storm\|deadlock\|Loop warning\|Scroll warning\|BLOCKED\|Server-local guard" cli/ --include="*.js" -l
 ```
 
 **Was NICHT versteckt werden soll** (immer sichtbar):

@@ -177,7 +177,7 @@ describe("deploy tool with config param", () => {
         remote_path: "/var/www/app",
       },
     });
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) =>
       cb(null, "sent 1024 bytes", ""),
     );
@@ -209,7 +209,7 @@ describe("deploy tool with config param", () => {
         deploy_script: "systemctl restart nginx",
       },
     });
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) => cb(null, "ok", ""));
     // Override remote_path
     const { executeTool } = require("../cli/tools");
@@ -233,7 +233,7 @@ describe("deploy tool with config param", () => {
         deploy_script: "systemctl restart nginx",
       },
     });
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) =>
       cb(null, "sent 512 bytes", ""),
     );

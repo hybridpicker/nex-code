@@ -24,8 +24,8 @@ const {
   getPostWipeToolBudget,
   setPostWipeToolBudget,
   decPostWipeToolBudget,
-  getJarvisLocalWarnFired,
-  setJarvisLocalWarnFired,
+  getServerLocalWarnFired,
+  setServerLocalWarnFired,
   clearAll,
 } = require("../cli/loop-guard");
 
@@ -130,10 +130,10 @@ describe("loop-guard.js", () => {
       expect(getPostWipeToolBudget()).toBe(4);
     });
 
-    it("Jarvis local warn", () => {
-      expect(getJarvisLocalWarnFired()).toBe(0);
-      setJarvisLocalWarnFired(3);
-      expect(getJarvisLocalWarnFired()).toBe(3);
+    it("server local warn", () => {
+      expect(getServerLocalWarnFired()).toBe(0);
+      setServerLocalWarnFired(3);
+      expect(getServerLocalWarnFired()).toBe(3);
     });
   });
 

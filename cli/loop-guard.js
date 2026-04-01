@@ -55,7 +55,7 @@ let superNuclearFires = 0;
 let planRejectionCount = 0;
 let sshBlockedAfterStorm = false;
 let postWipeToolBudget = Infinity;
-let jarvisLocalWarnFired = 0;
+let serverLocalWarnFired = 0;
 
 function clearAll() {
   bashCmdCounts.clear();
@@ -72,7 +72,7 @@ function clearAll() {
   planRejectionCount = 0;
   sshBlockedAfterStorm = false;
   postWipeToolBudget = Infinity;
-  jarvisLocalWarnFired = 0;
+  serverLocalWarnFired = 0;
 }
 
 // ─── Accessors (avoid direct mutation from outside) ─────────────────────────
@@ -111,11 +111,11 @@ function decPostWipeToolBudget() {
   if (postWipeToolBudget !== Infinity) postWipeToolBudget--;
   return postWipeToolBudget;
 }
-function getJarvisLocalWarnFired() {
-  return jarvisLocalWarnFired;
+function getServerLocalWarnFired() {
+  return serverLocalWarnFired;
 }
-function setJarvisLocalWarnFired(n) {
-  jarvisLocalWarnFired = n;
+function setServerLocalWarnFired(n) {
+  serverLocalWarnFired = n;
 }
 
 module.exports = {
@@ -146,8 +146,8 @@ module.exports = {
   getPostWipeToolBudget,
   setPostWipeToolBudget,
   decPostWipeToolBudget,
-  getJarvisLocalWarnFired,
-  setJarvisLocalWarnFired,
+  getServerLocalWarnFired,
+  setServerLocalWarnFired,
   // Reset
   clearAll,
 };

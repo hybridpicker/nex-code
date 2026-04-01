@@ -30,12 +30,12 @@ const { spawnSync, execSync } = require("child_process");
 const HOME = process.env.HOME;
 const SESSION_FILE = path.join(
   HOME,
-  "Coding/jarvis-agent/.nex/sessions/_autosave.json",
+  "Coding/server-agent/.nex/sessions/_autosave.json",
 );
-const STATE_FILE = path.join(HOME, "Coding/jarvis-agent/.nex/loop-state.json");
+const STATE_FILE = path.join(HOME, "Coding/server-agent/.nex/loop-state.json");
 const NEX_DIR = path.join(HOME, "Coding/nex-code");
 const CLAUDE_BIN = path.join(HOME, ".local/bin/claude");
-const JARVIS_SSH = process.env.JARVIS_SSH_HOST; // set in LaunchAgent plist EnvironmentVariables
+const SERVER_SSH = process.env.SERVER_SSH_HOST; // set in LaunchAgent plist EnvironmentVariables
 const NODE_BIN = process.execPath;
 
 const DEBOUNCE_MS = 90_000; // wait 90s after last write before treating session as complete
@@ -100,10 +100,10 @@ function scoreSession() {
   }
 }
 
-// ── Matrix notification via Jarvis ──────────────────────────────────────────
+// ── Matrix notification via server ──────────────────────────────────────────
 function sendMatrix(message) {
-  if (!JARVIS_SSH) {
-    log("Matrix notification skipped — JARVIS_SSH_HOST not set.");
+  if (!SERVER_SSH) {
+    log("Matrix notification skipped — SERVER_SSH_HOST not set.");
     return;
   }
   try {
@@ -112,7 +112,7 @@ function sendMatrix(message) {
     const tmpFile = `/tmp/nex-matrix-${Date.now()}.json`;
     require("fs").writeFileSync(tmpFile, payload);
     execSync(
-      `ssh -o ConnectTimeout=10 -o BatchMode=yes ${JARVIS_SSH} ` +
+      `ssh -o ConnectTimeout=10 -o BatchMode=yes ${SERVER_SSH} ` +
         `"curl -sf -X POST http://localhost:3000/matrix/notify ` +
         `-H 'Content-Type: application/json' -d @-" < ${tmpFile}`,
       { timeout: 20_000 },

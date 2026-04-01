@@ -1372,7 +1372,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "remote_agent",
       description:
-        'Delegate a coding task to nex-code running on a remote server. Use this when the task involves server-side projects (musikschule, stadtkapelle, cahill, schoensgibl, jarvis) that live on almalinux9/jarvis. Runs nex-code --auto on the server and streams output. Server is a profile name from .nex/servers.json or "user@host".',
+        'Delegate a coding task to nex-code running on a remote server. Use this when the task involves server-side projects (musikschule, stadtkapelle, cahill, schoensgibl) that live on almalinux9. Runs nex-code --auto on the server and streams output. Server is a profile name from .nex/servers.json or "user@host".',
       parameters: {
         type: "object",
         properties: {
@@ -1389,7 +1389,7 @@ const TOOL_DEFINITIONS = [
           project_path: {
             type: "string",
             description:
-              "Working directory on the remote server (e.g. /home/jarvis/jarvis-agent). Defaults to home directory.",
+              "Working directory on the remote server (e.g. /home/deploy/app). Defaults to home directory.",
           },
           model: {
             type: "string",
@@ -1810,7 +1810,7 @@ const TOOL_DEFINITIONS = [
           service_name: {
             type: "string",
             description:
-              'Systemd unit name for action=service (e.g. "nginx", "jarvis-api", "gunicorn"). .service suffix optional.',
+              'Systemd unit name for action=service (e.g. "nginx", "my-api", "gunicorn"). .service suffix optional.',
           },
           service_action: {
             type: "string",
@@ -1844,7 +1844,7 @@ const TOOL_DEFINITIONS = [
           unit: {
             type: "string",
             description:
-              'Systemd unit to filter for journalctl (e.g. "nginx", "jarvis-api"). Omit for system-wide.',
+              'Systemd unit to filter for journalctl (e.g. "nginx", "my-api"). Omit for system-wide.',
           },
           since: {
             type: "string",
