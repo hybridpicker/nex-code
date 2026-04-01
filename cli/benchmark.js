@@ -1392,7 +1392,7 @@ async function runDiscoverBenchmark({
   return merged;
 }
 
-// ─── Jarvis Scenario Benchmark ────────────────────────────────────────────────
+// ─── Scenario Benchmark ───────────────────────────────────────────────────────
 
 /**
  * Generic fallback scenarios — no server IPs or internal paths.
@@ -1472,7 +1472,7 @@ function loadScenarios(cwd) {
  * @param {object} scenario   — scenario definition (successCriteria, maxTurns)
  * @returns {{ score, grade, issues, summary, bonuses }}
  */
-function scoreJarvisScenario(messages, scenario) {
+function scoreScenario(messages, scenario) {
   const {
     scoreMessages,
     _extractToolCalls,
@@ -1518,7 +1518,7 @@ function scoreJarvisScenario(messages, scenario) {
 }
 
 /**
- * Run a single Jarvis scenario as a child process.
+ * Run a single scenario as a child process.
  * Returns the path to the autosave session file written by the child.
  *
  * @param {object} scenario
@@ -1612,7 +1612,7 @@ async function _runScenarioProcess(scenario, opts = {}) {
  * @param {string} version
  * @param {string} model
  */
-function _printJarvisResults(results, version, model) {
+function _printBenchmarkResults(results, version, model) {
   const overallScore =
     results.length > 0
       ? Math.round(
@@ -1708,7 +1708,7 @@ function showScoreTrend(n = 10) {
 }
 
 /**
- * Main entry point for the Jarvis scenario benchmark.
+ * Main entry point for the scenario benchmark.
  *
  * @param {object} opts
  * @param {boolean} [opts.dryRun=false]   — list scenarios without running
@@ -1717,7 +1717,7 @@ function showScoreTrend(n = 10) {
  * @param {Function} [opts.onProgress]    — callback({ id, name, done, score, grade })
  * @returns {Promise<Array<{ id, name, score, grade, issues, bonuses }>>}
  */
-async function runJarvisBenchmark({
+async function runScenarioBenchmark({
   dryRun = false,
   model,
   cwd,
@@ -1729,7 +1729,7 @@ async function runJarvisBenchmark({
 
   if (dryRun) {
     console.log(
-      `\n${C.bold}Jarvis Benchmark — Scenarios (dry-run):${C.reset}\n`,
+      `\n${C.bold}Scenario Benchmark — Scenarios (dry-run):${C.reset}\n`,
     );
     for (const s of scenarios) {
       console.log(
@@ -1774,7 +1774,7 @@ async function runJarvisBenchmark({
         bonuses: [],
       };
     } else {
-      scored = scoreJarvisScenario(messages, scenario);
+      scored = scoreScenario(messages, scenario);
     }
 
     const result = {
@@ -1810,7 +1810,7 @@ async function runJarvisBenchmark({
     }
   }
 
-  _printJarvisResults(results, pkg.version, activeModel);
+  _printBenchmarkResults(results, pkg.version, activeModel);
   return results;
 }
 
@@ -1825,10 +1825,10 @@ module.exports = {
   scoreResult,
   DEFAULT_MODELS,
   QUICK_MODELS,
-  // Jarvis scenario benchmark
-  runJarvisBenchmark,
+  // Scenario benchmark
+  runScenarioBenchmark,
   showScoreTrend,
   loadScenarios,
   DEFAULT_SCENARIOS,
-  scoreJarvisScenario,
+  scoreScenario,
 };

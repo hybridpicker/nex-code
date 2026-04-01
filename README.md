@@ -125,7 +125,7 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 
 **Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime, no daemon process.
 
-**Server-aware from the first message.** When your prompt contains a URL whose domain matches a configured SSH profile (e.g. `jarvis.example.com` → profile `jarvis`), nex-code probes the server before responding — listing ports, running processes, and data directories. The model receives this topology before its first token, so it goes straight to `ssh_exec` instead of reading local files.
+**Server-aware from the first message.** When your prompt contains a URL whose domain matches a configured SSH profile (e.g. `server.example.com` → profile `server`), nex-code probes the server before responding — listing ports, running processes, and data directories. The model receives this topology before its first token, so it goes straight to `ssh_exec` instead of reading local files.
 
 **Few-shot behavior injection.** On each session start, nex-code injects a short example of the correct tool sequence for the detected task type (sysadmin → check remote logs first; coding → read file before editing; data → explain before rewriting). Works across all models without fine-tuning. Customize with your own high-scoring sessions via `npm run extract-examples`.
 
@@ -161,33 +161,22 @@ Rankings are based on nex-code's own `/benchmark` — 14-task quick benchmark ag
 ### Flat-Rate / Pay-as-you-go
 
 <!-- nex-benchmark-start -->
-<!-- Updated: 2026-03-31 — run `/benchmark --discover` after new Ollama Cloud releases -->
+<!-- Updated: 2026-04-01 — run `/benchmark --discover` after new Ollama Cloud releases -->
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `qwen3-vl:235b` | **97.9** | 14.4s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
-| 🥈 | `rnj-1:8b` | 92.9 | 3.7s | 131K | Fast and accurate — best latency/score balance |
-| 🥉 | `qwen3-vl:235b-instruct` | 88.6 | 6.5s | 131K | Recommended default |
-| — | `ministral-3:8b` | 73.1 | 2.3s | 131K | Fastest strong model — 2.2s latency, 70+ score |
-| — | `qwen3-coder-next` | 71.4 | 2.8s | 256K | — |
-| — | `qwen3-next:80b` | 70.6 | 11.6s | 131K | — |
-| — | `qwen3.5:397b` | 68.9 | 3.9s | 256K | — |
-| — | `minimax-m2.7` | 68.7 | 6.8s | 200K | — |
-| — | `glm-5` | 67.6 | 4.5s | 131K | — |
-| — | `devstral-2:123b` | 67.6 | 2.0s | 131K | Sysadmin + SSH tasks, reliable coding |
-| — | `glm-4.7` | 66.5 | 5.1s | 131K | — |
-| — | `kimi-k2-thinking` | 66.3 | 18.4s | 256K | — |
-| — | `ministral-3:14b` | 65.8 | 3.8s | 131K | — |
-| — | `devstral-small-2:24b` | 65.5 | 2.3s | 131K | Fast sub-agents, simple lookups |
-| — | `ministral-3:3b` | 65.4 | 2.2s | 32K | — |
-| — | `kimi-k2.5` | 65.2 | 3.5s | 256K | Large repos — faster than k2:1t |
-| — | `kimi-k2:1t` | 65.2 | 4.2s | 256K | Large repos (>100K tokens) |
-| — | `minimax-m2.1` | 64.2 | 5.4s | 200K | — |
-| — | `glm-4.6` | 63.9 | 4.9s | 131K | — |
-| — | `qwen3-coder:480b` | 63.2 | 14.1s | 131K | Heavy coding sessions, large context |
-| — | `nemotron-3-super` | 61.3 | 2.6s | 256K | — |
-| — | `gpt-oss:20b` | 60.9 | 2.5s | 131K | Fast small model, good overall score |
-| — | `mistral-large-3:675b` | 60.8 | 3.8s | 131K | — |
+| 🥇 | `qwen3-vl:235b-instruct` | **79.9** | 3.8s | 131K | Best latency/score balance — recommended default |
+| 🥈 | `qwen3-vl:235b` | 79.4 | 12.3s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
+| 🥉 | `qwen3-coder-next` | 74.9 | 1.7s | 256K | — |
+| — | `rnj-1:8b` | 74.6 | 2.5s | 131K | — |
+| — | `ministral-3:8b` | 74.2 | 1.2s | 131K | Fastest strong model — 2.2s latency, 70+ score |
+| — | `qwen3.5:397b` | 72.8 | 2.1s | 256K | — |
+| — | `qwen3-next:80b` | 71.3 | 10.3s | 131K | — |
+| — | `devstral-2:123b` | 69.9 | 1.6s | 131K | Sysadmin + SSH tasks, reliable coding |
+| — | `minimax-m2.7` | 69.4 | 4.1s | 200K | — |
+| — | `glm-5` | 69 | 7.6s | 131K | — |
+| — | `glm-4.7` | 67.8 | 3.7s | 131K | — |
+| — | `kimi-k2-thinking` | 62 | 2.4s | 256K | — |
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
@@ -672,7 +661,7 @@ Or create `.nex/servers.json` manually:
 {
   "prod": {
     "host": "94.130.37.43",
-    "user": "jarvis",
+    "user": "deploy",
     "port": 22,
     "key": "~/.ssh/id_rsa",
     "os": "almalinux9",
@@ -728,7 +717,7 @@ Create `.nex/deploy.json` (or use `/init deploy`):
   "api": {
     "server": "prod",
     "method": "git",
-    "remote_path": "/home/jarvis/my-api",
+    "remote_path": "/home/deploy/my-api",
     "branch": "main",
     "deploy_script": "npm ci --omit=dev && sudo systemctl restart my-api",
     "health_check": "systemctl is-active my-api"

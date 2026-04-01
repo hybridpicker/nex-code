@@ -117,7 +117,7 @@ function getTools() {
 
 describe("ssh_exec", () => {
   it("executes command and returns stdout", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "active\n",
       stderr: "",
@@ -167,7 +167,7 @@ describe("ssh_exec", () => {
   });
 
   it("shows exit code on SSH failure", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "",
       stderr: "Permission denied",
@@ -185,19 +185,19 @@ describe("ssh_exec", () => {
   });
 
   it("accepts user@host as server", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
-      stdout: "jarvis\n",
+      stdout: "deploy\n",
       stderr: "",
       exitCode: 0,
     });
     const { executeTool } = getTools();
     const result = await executeTool(
       "ssh_exec",
-      { server: "jarvis@1.2.3.4", command: "whoami" },
+      { server: "deploy@1.2.3.4", command: "whoami" },
       { autoConfirm: true, silent: true },
     );
-    expect(result).toContain("jarvis");
+    expect(result).toContain("deploy");
   });
 });
 
@@ -205,9 +205,9 @@ describe("ssh_exec", () => {
 
 describe("ssh_upload", () => {
   it("uploads file and calls scpUpload", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockScpUpload.mockResolvedValue(
-      "Uploaded /tmp/test.txt → jarvis@1.2.3.4:/tmp/test.txt",
+      "Uploaded /tmp/test.txt → deploy@1.2.3.4:/tmp/test.txt",
     );
     const { executeTool } = getTools();
     const result = await executeTool(
@@ -238,9 +238,9 @@ describe("ssh_upload", () => {
 
 describe("ssh_download", () => {
   it("downloads file and calls scpDownload", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockScpDownload.mockResolvedValue(
-      "Downloaded jarvis@1.2.3.4:/var/log/error.log → /tmp/error.log",
+      "Downloaded deploy@1.2.3.4:/var/log/error.log → /tmp/error.log",
     );
     const { executeTool } = getTools();
     const result = await executeTool(
@@ -286,7 +286,7 @@ describe("service_manage", () => {
   it("runs status remotely via sshExec", async () => {
     mockResolveProfile.mockReturnValue({
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       sudo: true,
     });
     mockSshExec.mockResolvedValue({
@@ -355,7 +355,7 @@ describe("service_logs", () => {
   });
 
   it("fetches logs remotely via sshExec", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "Mar 11 10:00:00 nginx: started",
       stderr: "",
@@ -419,7 +419,7 @@ describe("server-context", () => {
   it("includes server profiles in context", () => {
     // server-context.js uses loadServerProfiles() from cli/ssh — configure the mock
     require("../cli/ssh").loadServerProfiles.mockReturnValue({
-      prod: { host: "1.2.3.4", user: "jarvis", os: "almalinux9" },
+      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux9" },
     });
     const { getServerContext } = require("../cli/server-context");
     const ctx = getServerContext();

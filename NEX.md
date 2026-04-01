@@ -118,16 +118,16 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 - `NEX_STALE_WARN_MS` (default: `60000`) — Warn if no tokens received for N ms
 - `NEX_STALE_ABORT_MS` (default: `120000`) — Abort and retry stream after N ms without tokens
 
-## WICHTIG: Jarvis läuft auf dem Server
+## WICHTIG: Server-Agent läuft auf dem Server
 
-Wenn der User Jarvis-Fehlermeldungen meldet (set_reminder, cron, Google Auth, SmartThings etc.),
+Wenn der User Server-Fehlermeldungen meldet (set_reminder, cron, Google Auth, SmartThings etc.),
 sind diese IMMER vom deployed System auf 94.130.37.43 — NICHT lokal.
 
-Vorgehen bei Jarvis-Fehlern:
+Vorgehen bei Server-Fehlern:
 
 1. ZUERST Server-Logs prüfen: ssh_exec auf 94.130.37.43, tail logs/api.log
-2. DANN Code analysieren: /home/jarvis/jarvis-agent/ (nicht lokale Kopie)
-3. Fix deployen: git pull + systemctl restart jarvis-api
+2. DANN Code analysieren: /home/deploy/server-agent/ (nicht lokale Kopie)
+3. Fix deployen: git pull + systemctl restart server-api
 
 ## Key Patterns
 
@@ -194,7 +194,7 @@ scoreSession("my-session"); // => { score: 9.0, issues: [...], summary: '...' }
 
 ### Benchmark Suite (`cli/benchmark.js`)
 
-Five Jarvis-style scenarios run against a live model, scored automatically.
+Five scenario-based benchmarks run against a live model, scored automatically.
 
 Slash commands:
 

@@ -7,11 +7,11 @@ from runaway log-reading sessions to reliable, self-terminating task execution.
 
 ## 1. The Problem
 
-When nex-code was first deployed as the backend for Jarvis self-improvement
-(via `self-improving.js` on the Jarvis server), sessions on real-world tasks
+When nex-code was first deployed as the backend for server self-improvement
+(via `self-improving.js` on the server), sessions on real-world tasks
 exhibited a consistent failure pattern:
 
-- **110+ steps** on Jarvis debug scenarios that should take 5-10 steps
+- **110+ steps** on server debug scenarios that should take 5-10 steps
 - **Expanding-range log reads** — `sed -n '1,50p'`, then `sed -n '51,100p'`,
   then `sed -n '101,150p'`… filling the entire context window with log noise
 - **Context floods** leading to HTTP 400 errors on the next API call
@@ -156,7 +156,7 @@ the pattern established for stop-signal and sed-n injections.
 
 **Problem:** Three issues from a 1.5/10 session:
 
-1. The dual-block deadlock relaxer (SSH storm + Jarvis-local guard both active)
+1. The dual-block deadlock relaxer (SSH storm + Server-local guard both active)
    had no usage cap — it fired every batch, letting the agent bypass the SSH
    storm block repeatedly and accumulate 34+ tool calls.
 2. Auto-plan mode activated when `--auto` was passed (YOLO mode), causing the
@@ -220,7 +220,7 @@ disk, which is how the benchmark suite uses it.
 
 ### Benchmark Suite (`cli/benchmark.js`)
 
-Five Jarvis-style scenarios that exercise the full agentic loop against a live
+Five Scenario-based scenarios that exercise the full agentic loop against a live
 model. Each scenario has:
 
 - A realistic multi-step prompt (e.g. "Debug why the API service is failing")
@@ -282,7 +282,7 @@ triggered deductions.
 
 ### Automated Cron loop
 
-A cron job fires every 20 minutes on the Jarvis server. It:
+A cron job fires every 20 minutes on the server. It:
 
 1. Reads the last saved session from `.nex/sessions/`
 2. Scores it via `session-scorer.js`
@@ -306,7 +306,7 @@ When adding a new tool or modifying the agentic loop:
 
 ### 2026-03-22 — v0.3.72: Terminal Noise Reduction & Deadlock Fix
 
-**Context:** Session analysis showed 3/10 and 5/10 scores on Jarvis debug
+**Context:** Session analysis showed 3/10 and 5/10 scores on server debug
 scenarios. Root causes: read_file loops (13× same file), cascading compression
 messages, and a deadlock where files couldn't be re-read after context wipe.
 
@@ -434,7 +434,7 @@ Starting with v0.4.0, nex-code graduates from a single-agent loop to a
 
 ### 2026-03-26 — Server Investigation State Machine
 
-**Problem:** On Jarvis server debug tasks the model investigated too broadly —
+**Problem:** On server debug tasks the model investigated too broadly —
 reading 5+ unrelated files instead of fixing after root cause was identified.
 SSH storm (6 calls, no error found) caused the model to fall back to local file
 reads instead of asking the user for missing information. False-positive
@@ -474,9 +474,9 @@ command itself matches a health/status/check/ping/validate pattern. Prevents
 false stops when `tail logs/api.log` returns app logs that happen to contain
 that JSON fragment.
 
-#### Jarvis-local guard: German crash vocabulary
+#### Server-local guard: German crash vocabulary
 
-Extended `_isJarvisDebugging` regex to cover German crash terms (`gecrasht`,
+Extended `_isServerDebugging` regex to cover German crash terms (`gecrasht`,
 `abgestürzt`) and Swarm-agent crash patterns. Previously `"Swarm: 2 Agents
 gecrasht"` did not activate the guard.
 
@@ -488,7 +488,7 @@ gecrasht"` did not activate the guard.
 - **Session score issues** — for scores ≥ 7, issues shown inline as a dim
   compact summary instead of one `⚠` line per issue
 
-**Outcome:** Session score on Jarvis server investigation task: 3.5 → **9.5/10**.
+**Outcome:** Session score on server investigation task: 3.5 → **9.5/10**.
 
 ---
 
@@ -534,7 +534,7 @@ rules for three common open-model failure modes.
 #### Server auto-probe on URL match (`probeUrlServer`)
 
 When the user's first message contains an `https://` URL whose domain segments
-match a configured SSH profile name (e.g. `jarvis` in `jarvis.schoensgibl.com`),
+match a configured SSH profile name (e.g. `server` in `server.schoensgibl.com`),
 nex-code runs a 4-second SSH probe concurrently with context fitting:
 
 - Listening ports (`ss -tlnp`)

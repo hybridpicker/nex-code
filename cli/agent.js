@@ -1500,7 +1500,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
-${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error or Jarvis message, SSH investigate FIRST — NEVER answer from training knowledge alone
+${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone
 - **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
@@ -2509,24 +2509,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
 
-  // ─── Jarvis-local guard: detect if this task is Jarvis server debugging ───
-  // If the first user message mentions Jarvis error keywords, flag so we can
+  // ─── Server-local guard: detect if this task is server debugging ───
+  // If the first user message mentions server error keywords, flag so we can
   // intercept local tool calls and redirect to ssh_exec.
   const _firstUserText = (() => {
     const m = conversationMessages.find((r) => r.role === "user");
     return typeof m?.content === "string" ? m.content : "";
   })();
   // Only trigger for actual server debugging, not for feature development tasks.
-  // "jarvis" alone is too broad — e.g. "add feature to jarvis" should NOT block local reads.
-  const _isJarvisDebugging =
-    /set_reminder|google.?auth|cron:|api\.log|jarvis.{0,30}(fehler|error|fail|broken|crash|nicht.{0,10}(funktioniert|läuft)|debug)|(?:fehler|error|crash|broken|gecrasht|abgestürzt).{0,30}jarvis|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
+  const _isServerDebugging =
+    /set_reminder|google.?auth|cron:|api\.log|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
       _firstUserText,
     );
-  let _jarvisLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
+  let _serverLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Pre-loop root-cause scan: briefing / initial context ────────────────
   // The user's message may already contain error output from a prior run or
-  // a jarvis briefing. Scan it once so fix-phase kicks in from iteration 0.
+  // a server briefing. Scan it once so fix-phase kicks in from iteration 0.
   if (!_rootCauseDetected) {
     const _allInitial = conversationMessages
       .filter((m) => m.role === "user" || m.role === "tool")
@@ -3369,7 +3368,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // If the SSH storm triggered the context overflow, we must keep SSH blocked
               // so the agent can't immediately repeat the same storm after context wipe.
               // SSH unblocks naturally when the agent sends a text-only response.
-              _jarvisLocalWarnFired = 0; // re-arm local guard for fresh start
+              _serverLocalWarnFired = 0; // re-arm local guard for fresh start
               // Preserve read counts for any file read ≥2× so it can't restart a
               // flood cycle after a wipe. Files read once reset to 1 (unbounded
               // re-reads stay blocked, one targeted section still allowed).
@@ -3377,7 +3376,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // or past cap and gets at most a couple targeted reads left.
               // Previously: only files read ≥4× were preserved; files read 2-3×
               // reset to 1, allowing 5 more reads per wipe — causing 16× read
-              // loops across 3 context wipes (observed in jarvis session).
+              // loops across 3 context wipes (observed in agent session).
               for (const [p, entry] of _sessionFileReadCounts) {
                 const c = entry?.count ?? entry ?? 0;
                 _setLoopCount(_sessionFileReadCounts, p, c >= 2 ? c : 1);
@@ -4739,7 +4738,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // MUST synthesize with what it already has. Unblocked when the agent produces
       // a text-only LLM response (no tool calls) — see below in the LLM response handler.
       //
-      // Dual-block deadlock prevention: if SSH storm AND Jarvis-local guard are BOTH
+      // Dual-block deadlock prevention: if SSH storm AND Server-local guard are BOTH
       // active, the LLM has no information source at all and will hallucinate bad code.
       // In that case, relax the SSH storm block and give the LLM one more SSH call.
       if (_sshBlockedAfterStorm) {
@@ -4749,12 +4748,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _anyNonSsh = prepared.some(
           (p) => p.canExecute && p.fnName !== "ssh_exec",
         );
-        const _jarvisGuardActive =
-          _isJarvisDebugging && _jarvisLocalWarnFired < 3;
+        const _serverGuardActive =
+          _isServerDebugging && _serverLocalWarnFired < 3;
         if (
           _allSsh.length > 0 &&
           !_anyNonSsh &&
-          _jarvisGuardActive &&
+          _serverGuardActive &&
           _sshDeadlockRelaxCount < 1
         ) {
           // Only SSH calls in this batch and local guard would also block — deadlock.
@@ -4780,26 +4779,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
-      // ─── Jarvis-local guard (pre-execution) ─────────────────────────────────────
-      // If this is a Jarvis-debugging task (first user message contains Jarvis error
+      // ─── Server-local guard (pre-execution) ─────────────────────────────────────
+      // If this is a server-debugging task (first user message contains server error
       // keywords), block the first local bash/read_file/find_files call and set an
       // errorResult so the LLM gets a clear "use ssh_exec" message instead of running
       // locally. Fires once per session. Must be pre-execution (before executeBatch)
       // — post-execution warnings can't prevent the tool from running.
       // SKIP when SSH is blocked after storm — local tools are the only fallback.
-      if (_isJarvisDebugging && _jarvisLocalWarnFired < 3 && !_sshBlockedAfterStorm) {
+      if (_isServerDebugging && _serverLocalWarnFired < 3 && !_sshBlockedAfterStorm) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
           if (!["bash", "read_file", "find_files"].includes(prep.fnName))
             continue;
-          _jarvisLocalWarnFired++;
+          _serverLocalWarnFired++;
           {
             const _allTools = getAllToolDefinitions();
             const { messages: _c } = forceCompress(apiMessages, _allTools);
             apiMessages = _c;
           }
           debugLog(
-            `${C.yellow}  ⚠ Jarvis-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`,
+            `${C.yellow}  ⚠ Server-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`,
           );
           prep.canExecute = false;
           prep.errorResult = {

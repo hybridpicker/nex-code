@@ -305,7 +305,7 @@ async function runDeployWizard(serverProfiles, nexDir) {
 
     const remotePath = await ask(
       method === "git"
-        ? "Remote repo path (e.g. /home/jarvis/my-app)"
+        ? "Remote repo path (e.g. /home/deploy/my-app)"
         : "Remote destination path (e.g. /var/www/app)",
     );
     if (!remotePath) {
