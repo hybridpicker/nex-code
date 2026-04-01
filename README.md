@@ -78,16 +78,16 @@ npm update -g nex-code
 
 ---
 
-## vs. Claude Code & Gemini CLI
+## Why nex-code?
 
-| | nex-code | Claude Code | Gemini CLI |
-|---|---|---|---|
-| Free tier | ✅ Ollama Cloud flat-rate | ❌ subscription required | ⚠️ limited free quota |
-| Open models | ✅ devstral, Kimi K2, Qwen3 | ❌ Anthropic only | ❌ Google only |
-| Local Ollama | ✅ | ❌ | ❌ |
-| Multi-provider | ✅ swap with one env var | ❌ | ❌ |
-| VS Code sidebar | ✅ built-in, same install | ✅ | ❌ |
-| Startup time | ~100ms | ~2–4s | ~1–2s |
+| Feature | nex-code | Closed-source alternatives |
+|---|---|---|
+| Free tier | ✅ Ollama Cloud flat-rate | ❌ subscription or limited quota |
+| Open models | ✅ devstral, Kimi K2, Qwen3 | ❌ vendor-locked |
+| Local Ollama | ✅ | ❌ |
+| Multi-provider | ✅ swap with one env var | ❌ |
+| VS Code sidebar | ✅ built-in | partial |
+| Startup time | ~100ms | 1–4s |
 | Runtime deps | 2 | heavy | heavy |
 | Infra tools | ✅ SSH, Docker, K8s built-in | ❌ | ❌ |
 

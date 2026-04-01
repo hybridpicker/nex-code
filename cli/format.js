@@ -41,7 +41,7 @@ const TOOL_DOT_COLOR = {
   deploy: T.tool_sysadmin,
 };
 
-// Human-readable labels for tool names (Claude Code style: short, capitalized)
+// Human-readable labels for tool names (short, capitalized)
 const TOOL_LABELS = {
   read_file: "Read",
   write_file: "Write",

@@ -181,8 +181,8 @@ describe("web_search with Perplexity", () => {
     jest.unmock("../cli/tools");
     jest.mock("../cli/file-history", () => ({ recordChange: jest.fn() }));
     jest.mock("../cli/diff", () => ({
-      showClaudeDiff: jest.fn(),
-      showClaudeNewFile: jest.fn(),
+      showDiff: jest.fn(),
+      showNewFile: jest.fn(),
       showEditDiff: jest.fn(),
       confirmFileChange: jest.fn().mockResolvedValue(true),
     }));
