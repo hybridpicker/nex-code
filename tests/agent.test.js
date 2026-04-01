@@ -1586,6 +1586,43 @@ describe("agent.js", () => {
     });
   });
 
+  // ─── detectFrustration ─────────────────────────────────────
+  describe("detectFrustration", () => {
+    const { detectFrustration } = require("../cli/agent");
+
+    it("detects wtf", () => {
+      expect(detectFrustration("wtf why doesn't this work")).toBe(true);
+    });
+
+    it("detects 'still broken'", () => {
+      expect(detectFrustration("it's still broken")).toBe(true);
+    });
+
+    it("detects 'already told you'", () => {
+      expect(detectFrustration("I already told you to fix this")).toBe(true);
+    });
+
+    it("detects 'why doesn't'", () => {
+      expect(detectFrustration("why doesn't the test pass?")).toBe(true);
+    });
+
+    it("detects ugh", () => {
+      expect(detectFrustration("ugh, same error again")).toBe(true);
+    });
+
+    it("returns false for normal messages", () => {
+      expect(detectFrustration("please fix the login bug")).toBe(false);
+    });
+
+    it("returns false for empty string", () => {
+      expect(detectFrustration("")).toBe(false);
+    });
+
+    it("returns false for non-string", () => {
+      expect(detectFrustration(null)).toBe(false);
+    });
+  });
+
   // ─── buildUserContent ──────────────────────────────────────
   describe("buildUserContent", () => {
     const { buildUserContent } = require("../cli/agent");

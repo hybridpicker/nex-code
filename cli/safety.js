@@ -5,6 +5,33 @@
 const readline = require("readline");
 const { C } = require("./ui");
 
+// ─── Bash Sanitizer ──────────────────────────────────────────
+
+/**
+ * Zero-width unicode characters that can split keywords to bypass pattern
+ * matching. E.g. `r\u200bm -rf /` looks like `rm -rf /` to a shell but
+ * fools a naive regex that searches for the literal string `rm`.
+ */
+const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u2060\u00AD]/g;
+
+/**
+ * Zsh `=cmd` expansion: `=curl` expands to the full path of `curl`,
+ * bypassing checks that look for the plain command name at the start.
+ */
+const ZSH_EQUALS_CMD_RE = /^=([\w-]+)/;
+
+/**
+ * Normalise a bash/zsh command string before running security checks.
+ *  1. Strips zero-width unicode chars used to split blocked keywords.
+ *  2. Strips the leading `=` from Zsh equals-expansion (`=curl` → `curl`).
+ * @param {string} cmd
+ * @returns {string}
+ */
+function sanitizeBashCommand(cmd) {
+  if (typeof cmd !== "string") return cmd;
+  return cmd.replace(ZERO_WIDTH_RE, "").replace(ZSH_EQUALS_CMD_RE, "$1");
+}
+
 const FORBIDDEN_PATTERNS = [
   /rm\s+-rf\s+\/(?:\s|$)/,
   /rm\s+-rf\s+~(?:\/|\s|$)/,
@@ -285,24 +312,27 @@ function setReadlineInterface(rl) {
 }
 
 function isForbidden(command) {
+  const cmd = sanitizeBashCommand(command);
   for (const pat of FORBIDDEN_PATTERNS) {
-    if (pat.test(command)) return pat;
+    if (pat.test(cmd)) return pat;
   }
   return null;
 }
 
 function isDangerous(command) {
+  const cmd = sanitizeBashCommand(command);
   // SSH read-only commands are safe — skip confirmation
-  if (/ssh\s/.test(command) && isSSHReadOnly(command)) return false;
+  if (/ssh\s/.test(cmd) && isSSHReadOnly(cmd)) return false;
   for (const pat of DANGEROUS_BASH) {
-    if (pat.test(command)) return true;
+    if (pat.test(cmd)) return true;
   }
   return false;
 }
 
 function isCritical(command) {
+  const cmd = sanitizeBashCommand(command);
   for (const pat of CRITICAL_BASH) {
-    if (pat.test(command)) return true;
+    if (pat.test(cmd)) return true;
   }
   return false;
 }
@@ -313,9 +343,10 @@ function isCritical(command) {
  */
 function isBashPathForbidden(command) {
   if (process.env.NEX_UNPROTECT === "1") return null;
-  if (!DESTRUCTIVE_CMDS.test(command)) return null;
+  const cmd = sanitizeBashCommand(command);
+  if (!DESTRUCTIVE_CMDS.test(cmd)) return null;
   for (const pat of BASH_PROTECTED_PATHS) {
-    if (pat.test(command)) return pat;
+    if (pat.test(cmd)) return pat;
   }
   return null;
 }
@@ -488,6 +519,7 @@ function setAllowAlwaysHandler(fn) {
 }
 
 module.exports = {
+  sanitizeBashCommand,
   FORBIDDEN_PATTERNS,
   SSH_FORBIDDEN_PATTERNS,
   BASH_PROTECTED_PATHS,
