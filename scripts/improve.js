@@ -202,7 +202,7 @@ function commit(pattern, oldScore, newScore) {
   }
 }
 
-function runClaudeCodeFix(prompt) {
+function runHeadlessFix(prompt) {
   // Use nex-code itself in headless mode to implement the fix
   const result = spawnSync("node", [
     NEX_CODE,
@@ -314,7 +314,7 @@ async function main() {
     // 3. Implement fix
     console.log("  Running fix...");
     const fixPrompt = buildFixPrompt(cluster);
-    const fixResult = runClaudeCodeFix(fixPrompt);
+    const fixResult = runHeadlessFix(fixPrompt);
     if (!fixResult.ok) {
       console.log(`  Fix failed: ${fixResult.reason} — reverting`);
       revert();

@@ -543,7 +543,7 @@ nex-code runs a 4-second SSH probe concurrently with context fitting:
 
 The result is injected as a synthetic `user`/`assistant` exchange before the
 first real turn. The model knows the server's running topology before it types
-its first character — mirroring how Claude Code auto-detects server context.
+its first character — auto-detecting server context before the session begins.
 
 This is the primary fix for the "model looks at local files when URL points to
 remote server" failure mode.

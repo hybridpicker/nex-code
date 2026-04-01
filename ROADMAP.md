@@ -9,7 +9,7 @@ Items are ordered by expected impact. Community contributions are welcome on all
 
 ### VS Code Extension
 
-IDE integration is the biggest UX gap vs Claude Code and Gemini CLI.
+IDE integration is the biggest UX gap vs closed-source alternatives.
 A VS Code extension that embeds the nex-code REPL or exposes it as a sidebar panel would close this gap entirely.
 
 - Status: **Planned**

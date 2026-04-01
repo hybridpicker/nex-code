@@ -1,7 +1,7 @@
 /**
  * cli/dream.js — Dream Memory Consolidation
  *
- * Inspired by Claude Code's autoDream system. Runs in two phases:
+ * Post-session memory consolidation. Runs in two phases:
  *
  * Phase 1 (sync, on session end): Write a lightweight dream log with session
  *   statistics — tool call counts, error patterns, frequently accessed files.
