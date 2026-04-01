@@ -4731,7 +4731,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (!grepPath) continue;
         const pending = _pendingGrepFileCounts.get(grepPath) || 0;
         const alreadyGrepped = _getLoopCount(grepFileCounts, grepPath) + pending;
-        if (alreadyGrepped >= LOOP_ABORT_GREP_FILE) {
+        // When the file has already been read, its content is in context — greps
+        // on it are almost always redundant. Use a tighter abort threshold (3)
+        // so the model is forced to use context after at most 3 grep attempts
+        // rather than the default 8. This was the root cause of the "grep flood
+        // on single file" pattern observed in session scoring.
+        const fileAlreadyReadForGrep = _getLoopCount(fileReadCounts, grepPath) >= 1;
+        const effectiveGrepAbort = fileAlreadyReadForGrep
+          ? Math.min(3, LOOP_ABORT_GREP_FILE)
+          : LOOP_ABORT_GREP_FILE;
+        if (alreadyGrepped >= effectiveGrepAbort) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
             `${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`,
@@ -4756,7 +4765,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             role: "tool",
             content: readsAlsoBlocked
               ? `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried AND reads are also exhausted. The content is already in your context. Do not attempt to read or grep this file again.`
-              : `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Work with the grep results already in your context.`,
+              : fileAlreadyReadForGrep
+                ? `BLOCKED: grep("${grepPath}") denied — file was already read and ${alreadyGrepped} grep patterns tried. The content is already in your context; use it instead of searching again.`
+                : `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Work with the grep results already in your context.`,
             tool_call_id: prep.callId,
           };
         }
