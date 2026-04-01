@@ -932,7 +932,7 @@ describe("tools.js", () => {
         .mockImplementation(() => {});
       await executeTool("read_file", { path: fp });
       const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-      expect(output).toContain("Reading:");
+      expect(output).toContain("Reading");
       writeSpy.mockRestore();
     });
 
@@ -943,7 +943,7 @@ describe("tools.js", () => {
         .mockImplementation(() => {});
       await executeTool("grep", { pattern: "const", path: tmpDir });
       const output = writeSpy.mock.calls.map((c) => c[0]).join("");
-      expect(output).toContain("Grep:");
+      expect(output).toContain("Searching");
       writeSpy.mockRestore();
     });
 

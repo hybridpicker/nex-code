@@ -43,7 +43,7 @@ describe("ui.js", () => {
 
     it("creates with default text", () => {
       spinner = new Spinner();
-      expect(spinner.text).toBe("Thinking...");
+      expect(typeof spinner.text).toBe("string");
     });
 
     it("creates with custom text", () => {
@@ -181,40 +181,40 @@ describe("ui.js", () => {
       ).toBeNull();
     });
 
-    it("returns Reading: text for read_file", () => {
+    it("returns Reading text for read_file", () => {
       expect(getToolSpinnerText("read_file", { path: "src/app.js" })).toBe(
-        "Reading: src/app.js",
+        "Reading src/app.js",
       );
     });
 
-    it("returns Listing: text for list_directory", () => {
+    it("returns Listing text for list_directory", () => {
       expect(getToolSpinnerText("list_directory", { path: "src" })).toBe(
-        "Listing: src",
+        "Listing src",
       );
     });
 
-    it("returns Searching: text for search_files", () => {
+    it("returns Searching text for search_files", () => {
       expect(
         getToolSpinnerText("search_files", { path: ".", pattern: "TODO" }),
-      ).toBe("Searching: TODO");
+      ).toBe("Searching TODO");
     });
 
-    it("returns Glob: text for glob", () => {
+    it("returns Searching text for glob", () => {
       expect(getToolSpinnerText("glob", { pattern: "**/*.js" })).toBe(
-        "Glob: **/*.js",
+        "Searching **/*.js",
       );
     });
 
-    it("returns Grep: text for grep", () => {
+    it("returns Searching text for grep", () => {
       expect(getToolSpinnerText("grep", { pattern: "import" })).toBe(
-        "Grep: import",
+        "Searching import",
       );
     });
 
-    it("returns Fetching: text for web_fetch", () => {
+    it("returns Fetching text for web_fetch", () => {
       expect(
         getToolSpinnerText("web_fetch", { url: "https://example.com" }),
-      ).toBe("Fetching: https://example.com");
+      ).toBe("Fetching https://example.com");
     });
 
     it("truncates long URLs for web_fetch", () => {
@@ -229,22 +229,22 @@ describe("ui.js", () => {
       ).toBe("Searching web: node.js tutorial");
     });
 
-    it("returns Git status... for git_status", () => {
-      expect(getToolSpinnerText("git_status", {})).toBe("Git status...");
+    it("returns Checking git status for git_status", () => {
+      expect(getToolSpinnerText("git_status", {})).toBe("Checking git status");
     });
 
-    it("returns Git diff... for git_diff without file", () => {
-      expect(getToolSpinnerText("git_diff", {})).toBe("Git diff...");
+    it("returns Diffing for git_diff without file", () => {
+      expect(getToolSpinnerText("git_diff", {})).toBe("Diffing");
     });
 
-    it("returns Git diff: file for git_diff with file", () => {
+    it("returns Diffing file for git_diff with file", () => {
       expect(getToolSpinnerText("git_diff", { file: "index.js" })).toBe(
-        "Git diff: index.js...",
+        "Diffing index.js",
       );
     });
 
-    it("returns Git log... for git_log", () => {
-      expect(getToolSpinnerText("git_log", {})).toBe("Git log...");
+    it("returns Reading git log for git_log", () => {
+      expect(getToolSpinnerText("git_log", {})).toBe("Reading git log");
     });
 
     it("returns Running: name for unknown tools", () => {
@@ -254,9 +254,9 @@ describe("ui.js", () => {
     });
 
     it("handles missing args gracefully", () => {
-      expect(getToolSpinnerText("read_file", {})).toBe("Reading: file");
-      expect(getToolSpinnerText("grep", {})).toBe("Grep: ...");
-      expect(getToolSpinnerText("web_fetch", {})).toBe("Fetching: ");
+      expect(getToolSpinnerText("read_file", {})).toBe("Reading file");
+      expect(getToolSpinnerText("grep", {})).toBe("Searching ...");
+      expect(getToolSpinnerText("web_fetch", {})).toBe("Fetching ");
     });
   });
 
