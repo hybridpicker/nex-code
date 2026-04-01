@@ -497,7 +497,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace specific text in a file. IMPORTANT: old_text must match the file content EXACTLY — including all whitespace, indentation (tabs vs spaces), and newlines. You MUST call read_file on the target file first to see the exact content — never guess or recall from memory. Example: use edit_file for changing one line in an existing file like package.json, but NOT for creating a new file (use write_file instead). COMMON FAILURE: old_text doesn't match because you guessed the content instead of reading the file first. If the edit fails with 'old_text not found', use the line number from the error message (e.g., 'Most similar text (line 42)') to re-read that specific region with line_start=37, line_end=47, then retry with the exact text from that read. For multiple changes to the same file, prefer patch_file (single atomic operation).",
+        "Replace specific text in a file. Call this directly when you know the exact text to replace. Example: edit_file(path='src/config.js', old_text='debug: false', new_text='debug: true'). IMPORTANT: old_text must match EXACTLY — whitespace, indentation, newlines. If you do not already have the file content in context, call read_file first to avoid mismatches. Do NOT call read_file instead of edit_file — call edit_file to make the change. If the edit fails with 'old_text not found', re-read that region with line_start/line_end then retry. For multiple replacements in one file, prefer patch_file (atomic). For new files, use write_file instead.",
       parameters: {
         type: "object",
         properties: {
@@ -580,7 +580,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "grep",
       description:
-        "Search file contents with regex. Returns matching lines with file paths and line numbers. Prefer this over bash grep/rg — this tool returns structured, formatted output. Example: use grep for searching 'error' in all .js files with grep -r 'error' src/, but NOT for finding all .js files (use glob instead). Use output_mode='files_with_matches' when you only need file paths (faster, less output). Use output_mode='content' (default) for matching lines with context. Use head_limit to cap results and avoid overwhelming output on broad searches. Use include to filter by file type (e.g. '*.js'). Supports context lines (context, before_context, after_context), offset for pagination, type filter, and multiline for cross-line patterns.",
+        "Search file CONTENTS with regex — use this when you need to find text inside files. Example: grep(pattern='callStream') finds files containing the text 'callStream'. Do NOT use glob for this — glob finds files by NAME pattern, grep searches file CONTENTS. Use output_mode='files_with_matches' for just file paths, output_mode='content' (default) for matching lines. Use include to filter by file type (e.g. '*.js'). Supports context lines, offset pagination, and multiline patterns.",
       parameters: {
         type: "object",
         properties: {
