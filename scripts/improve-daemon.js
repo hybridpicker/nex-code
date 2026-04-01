@@ -4,7 +4,7 @@
  *
  * Watches _autosave.json for new sessions. After a session ends (90s debounce):
  *   1. Score the session
- *   2. If score improved and stop-conditions not met: run one improvement pass via Claude Code headless
+ *   2. If score improved and stop-conditions not met: run one improvement pass via nex-code headless
  *   3. Commit fixes to devel, push — GitHub Actions handles CI + npm publish
  *   4. Send Matrix notification when loop ends (plateau / max passes / score 9.5+)
  *
@@ -162,7 +162,7 @@ function runImprovementPass(score, issues) {
     `Do NOT end with just "Done", "Analysis complete", "Finished", or any single word or short phrase. ` +
     `Always write a substantive closing paragraph of at least 2 sentences.`;
 
-  log("Running improvement pass via Claude Code headless...");
+  log("Running improvement pass via nex-code headless...");
   const res = spawnSync(
     CLAUDE_BIN,
     ["--print", "--dangerously-skip-permissions", "-p", prompt],
@@ -179,7 +179,7 @@ function runImprovementPass(score, issues) {
   );
 
   if (res.status !== 0) {
-    log(`Claude pass exited with status ${res.status}`);
+    log(`Headless pass exited with status ${res.status}`);
   } else {
     log("Improvement pass complete.");
   }
@@ -245,7 +245,7 @@ function onSessionChange() {
     if (score >= SCORE_TARGET) {
       sendMatrix(
         `✅ nex-code auto-improve: Score erreicht ${score}/10 ${grade} — kein weiterer Fix nötig.\n` +
-          `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`,
+          `Pass ${state.pass}/${MAX_PASSES}. Devel bereit → \`nex-improve stop\` zum Mergen.`,
       );
       log("Score target reached. Daemon will wait for next session.");
       return;
@@ -272,7 +272,7 @@ function onSessionChange() {
       sendMatrix(
         `📊 nex-code auto-improve: Score Plateau bei ${score}/10 (${PLATEAU_COUNT}× gleich).\n` +
           `Pass ${state.pass}/${MAX_PASSES}. Weitere Fixes brauchen neue Sessions.\n` +
-          `Devel bereit → \`nex-improve stop\` in Claude zum Mergen.`,
+          `Devel bereit → \`nex-improve stop\` zum Mergen.`,
       );
       log("Score plateau detected. Stopping improvement loop.");
       writeState({

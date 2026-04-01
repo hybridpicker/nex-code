@@ -281,12 +281,12 @@ function showSideBySideDiff(filePath, oldText, newText, width) {
 }
 
 /**
- * Claude Code-style diff display
+ * Inline diff display
  * Header: ⏺ Update(relPath) or ⏺ Create(relPath)
  * Summary: ⎿  Added N lines, removed M lines
  * Numbered context/change lines with ···  hunk separators
  */
-function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
+function showDiff(filePath, oldContent, newContent, options = {}) {
   const label = options.label || "Update";
   const contextSize = options.context || 3;
   const annotations = options.annotations || []; // Array of { line, message, severity }
@@ -438,9 +438,9 @@ function showClaudeDiff(filePath, oldContent, newContent, options = {}) {
 }
 
 /**
- * Claude Code-style new file display
+ * New file display with line numbers
  */
-function showClaudeNewFile(filePath, content, options = {}) {
+function showNewFile(filePath, content, options = {}) {
   const relPath = path.isAbsolute(filePath)
     ? path.relative(process.cwd(), filePath)
     : filePath;
@@ -512,6 +512,6 @@ module.exports = {
   showNewFilePreview,
   confirmFileChange,
   showSideBySideDiff,
-  showClaudeDiff,
-  showClaudeNewFile,
+  showDiff,
+  showNewFile,
 };

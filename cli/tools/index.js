@@ -18,8 +18,8 @@ const {
   confirm,
 } = require("../safety");
 const {
-  showClaudeDiff,
-  showClaudeNewFile,
+  showDiff,
+  showNewFile,
   showEditDiff,
   confirmFileChange,
 } = require("../diff");
@@ -2073,7 +2073,7 @@ async function _executeToolInner(name, args, options = {}) {
       const stats = await fs.stat(fp);
       const lineCount = lines.length;
 
-      // Hard cap: unbounded reads are limited to 350 lines (like Claude Code's pagination).
+      // Hard cap: unbounded reads are limited to 350 lines to protect context window.
       // This prevents large files from flooding the context window and causing 400 errors.
       // The model must use line_start/line_end to read specific sections of large files.
       const FULL_READ_CAP = 350;
@@ -2116,12 +2116,12 @@ async function _executeToolInner(name, args, options = {}) {
         if (exists) {
           oldContent = await fs.readFile(fp, "utf-8");
           const annotations = await runDiagnostics(fp, args.content);
-          showClaudeDiff(fp, oldContent, args.content, { annotations });
+          showDiff(fp, oldContent, args.content, { annotations });
           const ok = await confirmFileChange("Overwrite");
           if (!ok) return "CANCELLED: User declined to overwrite file.";
         } else {
           const annotations = await runDiagnostics(fp, args.content);
-          showClaudeNewFile(fp, args.content, { annotations });
+          showNewFile(fp, args.content, { annotations });
           const ok = await confirmFileChange("Create");
           if (!ok) return "CANCELLED: User declined to create file.";
         }
@@ -2198,7 +2198,7 @@ async function _executeToolInner(name, args, options = {}) {
           if (fix) {
             if (!options.autoConfirm) {
               const annotations = await runDiagnostics(fp, fix.content);
-              showClaudeDiff(fp, content, fix.content, { annotations });
+              showDiff(fp, content, fix.content, { annotations });
               const ok = await confirmFileChange(
                 `Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`,
               );
@@ -2250,7 +2250,7 @@ async function _executeToolInner(name, args, options = {}) {
       if (!options.autoConfirm) {
         const preview = content.split(matchText).join(args.new_text);
         const annotations = await runDiagnostics(fp, preview);
-        showClaudeDiff(fp, content, preview, { annotations });
+        showDiff(fp, content, preview, { annotations });
         const label = fuzzyMatched ? "Apply (fuzzy match)" : "Apply";
         const ok = await confirmFileChange(label);
         if (!ok) return "CANCELLED: User declined to apply edit.";
@@ -2710,7 +2710,7 @@ async function _executeToolInner(name, args, options = {}) {
       }
       if (!options.autoConfirm) {
         const annotations = await runDiagnostics(fp, preview);
-        showClaudeDiff(fp, content, preview, { annotations });
+        showDiff(fp, content, preview, { annotations });
         const label = anyFuzzy
           ? "Apply patches (fuzzy match)"
           : "Apply patches";

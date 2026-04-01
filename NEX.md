@@ -33,7 +33,7 @@ cli/git.js               → Git Intelligence (Async) (smart commit, diff, branc
 cli/render.js            → Rich Terminal Rendering (Markdown, Syntax Highlighting)
 cli/mcp.js               → MCP Client (JSON-RPC over stdio)
 cli/hooks.js             → Hook System (pre-tool, post-tool, etc.)
-cli/diff.js              → LCS Diff + Claude Code-Style Display + Confirmations
+cli/diff.js              → LCS Diff + Inline Display + Confirmations
 cli/context.js           → Auto-Context (package.json, git, README)
 cli/file-history.js      → In-session Undo/Redo for file changes
 cli/ui.js                → ANSI Colors, Spinner, TaskProgress (live animated display), Formatting, Compact Summaries

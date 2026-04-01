@@ -80,7 +80,7 @@ cli/                     # All source code
   context-engine.js      # Token management + context compression
   providers/             # Provider implementations
     registry.js          # Provider dispatch + model management
-    anthropic.js         # Anthropic/Claude provider
+    anthropic.js         # Anthropic provider
     openai.js            # OpenAI provider
     gemini.js            # Google Gemini provider
     ollama.js            # Ollama provider
