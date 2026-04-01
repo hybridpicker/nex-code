@@ -358,6 +358,15 @@ function confirm(question, opts = {}) {
 
     const render = () => {
       const startRow = _dialogStartRow();
+      // Shrink the scroll region to rows above the dialog so that any concurrent
+      // stdout writes (dream consolidation, git branch fetch, etc.) that reach
+      // scrollEnd cannot scroll the dialog rows upward.  Without this, cleanup
+      // would erase the original rows (now blank after scroll) while the shifted
+      // dialog text remained visible ("Previous session found. Resume?" staying
+      // in terminal after dismissal).
+      if (global._nexRawWrite && startRow > 1) {
+        global._nexRawWrite(`\x1b[1;${startRow - 1}r`);
+      }
       // Build the entire dialog as a single write — no \n, pure absolute positioning.
       let buf = `\x1b[${startRow};1H\x1b[2K${C.yellow}${question}${C.reset}`;
       for (let i = 0; i < options.length; i++) {
@@ -382,6 +391,10 @@ function confirm(question, opts = {}) {
         buf += `\x1b[${startRow + i};1H\x1b[2K`;
       }
       raw(buf);
+      // Restore full scroll region (shrunk in render() to protect dialog rows).
+      if (global._nexRawWrite && global._nexFooter) {
+        global._nexRawWrite(`\x1b[1;${global._nexFooter._scrollEnd}r`);
+      }
       // Redraw footer in case a previous (broken) render overlapped it.
       if (global._nexFooter) global._nexFooter.drawFooter();
       if (_rl) _rl.resume();

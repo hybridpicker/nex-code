@@ -279,22 +279,26 @@ class StickyFooter {
       }
 
       if (self._cursorOnInputRow) {
-        // Single printable char: readline fast-path echo — keep on input row.
-        if (
-          data.length <= 4 &&
-          !data.includes("\n") &&
-          !data.includes("\r") &&
-          !/[\x00-\x1f\x7f]/.test(data)
-        ) {
-          _dbg("STDOUT: char intercept:", JSON.stringify(data));
+        // Short write with no newline or carriage return: treat as readline
+        // input-row activity regardless of whether it contains control chars.
+        // This covers both the printable-char fast-path echo AND single control
+        // chars like \x7f (Backspace), \x08 (BS), \x12 (Ctrl+R reverse-search),
+        // and short ANSI cursor-movement sequences (\x1b[C, \x1b[D, …).
+        // Without this, control chars fail the old !/[\x00-\x1f\x7f]/ check and
+        // fall through to the "anchor to workspace" path, writing raw ^R/^H etc.
+        // to the scroll region (visible as "k^RRRRRRR" artefacts).
+        // Agent output is always longer than 4 chars OR contains \n/\r so it
+        // is not affected.
+        if (data.length <= 4 && !data.includes("\n") && !data.includes("\r")) {
+          _dbg("STDOUT: input-row intercept:", JSON.stringify(data));
           if (self._origRefreshLine) {
             self._doRefreshLine();
           }
           return true;
         }
-        // All other writes (agent output, section headers, \r-based animations,
-        // token streams): anchor to the workspace so nothing lands on the
-        // input/status rows. The footer must always stay free for the user.
+        // Longer write or write with \n/\r: agent output, section headers,
+        // \r-based animations, token streams. Anchor to the workspace so
+        // nothing lands on the input/status rows.
         _dbg(
           "STDOUT: non-echo on input row, anchoring to workspace, data=" +
             JSON.stringify(data).slice(0, 100),
