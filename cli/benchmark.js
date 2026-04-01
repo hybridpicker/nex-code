@@ -1172,6 +1172,30 @@ function printResults(summary, taskCount) {
     }
   }
 
+  // Per-model task failures (compact — only printed when models have failures)
+  const failingModels = summary.filter((r) =>
+    r.results.some((t) => !t.error && (!t.correctTool || !t.validArgs)),
+  );
+  if (failingModels.length > 0) {
+    console.log(`${C.bold}Failing tasks:${C.reset}`);
+    for (const row of failingModels) {
+      const failures = row.results.filter(
+        (t) => !t.error && (!t.correctTool || !t.validArgs),
+      );
+      if (failures.length === 0) continue;
+      const modelShort = row.model.slice(0, 22);
+      const items = failures.map((t) => {
+        if (!t.correctTool) {
+          const called = t.toolCalled || "(none)";
+          return `${C.dim}${t.taskId}${C.reset} ${C.red}→${called}${C.reset}`;
+        }
+        return `${C.dim}${t.taskId}${C.reset} ${C.yellow}bad-args${C.reset}`;
+      });
+      console.log(`  ${C.dim}${modelShort.padEnd(22)}${C.reset}  ${items.join("  ")}`);
+    }
+    console.log();
+  }
+
   // Per-category winners (only shown if category tasks were included)
   const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic"];
   const hasCatData = summary.some(
