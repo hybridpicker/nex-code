@@ -279,7 +279,10 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
     }
   }
 
-  console.log(`\n${G}  ✓ Setup complete!${R}\n`);
+  console.log(`\n${G}  ✓ Setup complete!${R}`);
+  console.log(
+    `\n${CY}💡 Tip: Run ${B}/benchmark${R} ${CY}to automatically find and use the best models for your tasks.${R}\n`
+  );
 }
 
 module.exports = { runSetupWizard };
