@@ -765,7 +765,7 @@ async function prepareToolCall(tc) {
     "read_file", "list_directory", "glob", "grep", "bash",
     "git_status", "git_diff", "git_log", "ssh_exec",
   ]);
-  if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName)) {
+  if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName) && !fnName.startsWith("skill_")) {
     _planPhaseBlockedCount++;
     debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only, block #${_planPhaseBlockedCount})${C.reset}`);
     return {
@@ -777,7 +777,7 @@ async function prepareToolCall(tc) {
       },
     };
   }
-  if (_phaseEnabled && _currentPhase === "verify" && !_PHASE_VERIFY_ALLOWED.has(fnName)) {
+  if (_phaseEnabled && _currentPhase === "verify" && !_PHASE_VERIFY_ALLOWED.has(fnName) && !fnName.startsWith("skill_")) {
     debugLog(`${C.yellow}  ✗ ${fnName}: blocked in verify phase (read + bash only)${C.reset}`);
     return {
       callId, fnName, args: finalArgs, canExecute: false,
