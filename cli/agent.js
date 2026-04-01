@@ -901,7 +901,12 @@ async function executeSingleTool(prep, quiet = false) {
   if (preHook.blocked) {
     const blockMsg = `BLOCKED: pre-tool hook rejected ${prep.fnName}: ${preHook.blockReason}`;
     if (!quiet) console.log(`${C.yellow}  [hook pre-tool] BLOCKED: ${preHook.blockReason}${C.reset}`);
-    return blockMsg;
+    const blockSummary = formatToolSummary(prep.fnName, prep.args, blockMsg, true);
+    if (!quiet) console.log(blockSummary);
+    return {
+      msg: { role: "tool", content: blockMsg, tool_call_id: prep.callId },
+      summary: blockSummary,
+    };
   }
   if (!quiet && preHookResults.length > 0) {
     for (const result of preHookResults) {
