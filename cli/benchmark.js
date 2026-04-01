@@ -1274,6 +1274,9 @@ function autoUpdateRouting(summary) {
       console.log(
         `\n${C.dim}  Routing updated: ${changed.join(", ")}${C.reset}`,
       );
+      console.log(
+        `\n${C.green}💡 The best models have been saved to ~/.nex-code/.env and will be automatically used by nex-code from now on.${C.reset}`,
+      );
     }
   } catch {
     /* non-fatal — routing update failure must not break benchmark output */
