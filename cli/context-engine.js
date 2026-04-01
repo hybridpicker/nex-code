@@ -676,14 +676,17 @@ async function fitToContext(messages, tools, options = {}) {
   const recentMessages = messages.slice(recentStart);
 
   // Phase 0: LLM Compacting
-  const nonCompacted = oldMessages.filter((m) => !m._compacted);
+  // Pinned messages (progress snapshots) are excluded from LLM compaction
+  // and re-added after, so they survive regardless of what the compactor returns.
+  const pinnedMessages = oldMessages.filter((m) => m._pinned);
+  const nonCompacted = oldMessages.filter((m) => !m._compacted && !m._pinned);
   if (nonCompacted.length >= 6) {
     try {
       const { compactMessages } = require("./compactor");
       const compactResult = await compactMessages(nonCompacted);
       if (compactResult) {
-        const kept = oldMessages.filter((m) => m._compacted);
-        const compressedOld = [...kept, compactResult.message];
+        const kept = oldMessages.filter((m) => m._compacted && !m._pinned);
+        const compressedOld = [...pinnedMessages, ...kept, compactResult.message];
         const r = buildResult(system, compressedOld, recentMessages);
         const t = estimateMessagesTokens(r);
         if (t + toolTokens <= targetMax) {
