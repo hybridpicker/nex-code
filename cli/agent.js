@@ -144,6 +144,7 @@ const {
 } = require("./planner");
 const { StreamRenderer } = require("./render");
 const { runHooks } = require("./hooks");
+const { buildProgressSnapshot } = require("./context-engine");
 const { routeMCPCall, getMCPToolDefinitions } = require("./mcp");
 const {
   getSkillInstructions,
@@ -894,7 +895,14 @@ async function executeSingleTool(prep, quiet = false) {
     console.log(formatToolCall(prep.fnName, prep.args));
   }
 
-  const preHookResults = runHooks("pre-tool", { tool_name: prep.fnName });
+  const preHook = runHooks("pre-tool", { tool_name: prep.fnName });
+  const preHookResults = preHook.results;
+  // exit code 2 from a pre-tool hook hard-blocks the tool call
+  if (preHook.blocked) {
+    const blockMsg = `BLOCKED: pre-tool hook rejected ${prep.fnName}: ${preHook.blockReason}`;
+    if (!quiet) console.log(`${C.yellow}  [hook pre-tool] BLOCKED: ${preHook.blockReason}${C.reset}`);
+    return blockMsg;
+  }
   if (!quiet && preHookResults.length > 0) {
     for (const result of preHookResults) {
       if (result.success) {
@@ -942,7 +950,8 @@ async function executeSingleTool(prep, quiet = false) {
     _serverHooks.onToolEnd(prep.fnName, summary, !isError);
   }
 
-  const postHookResults = runHooks("post-tool", { tool_name: prep.fnName });
+  const postHook = runHooks("post-tool", { tool_name: prep.fnName });
+  const postHookResults = postHook.results;
   if (!quiet && postHookResults.length > 0) {
     for (const result of postHookResults) {
       if (result.success) {
@@ -2650,6 +2659,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _autoCtx = getUsage(apiMessages, _allTools);
         const _threshold = totalSteps === 0 ? 65 : 78;
         if (_autoCtx.percentage >= _threshold) {
+          // Inject a structured progress snapshot before compression so the model
+          // retains its place after old messages are dropped. The snapshot is
+          // pinned (_pinned:true) and will survive Phase 4 relevance removal.
+          // Only inject once per compression event (avoid duplicates).
+          const _alreadyHasSnapshot = apiMessages.some((m) => m._progressSnapshot);
+          if (!_alreadyHasSnapshot && (filesModified.size > 0 || _currentPhase !== "plan")) {
+            const _snap = buildProgressSnapshot(conversationMessages, {
+              filesModified,
+              currentPhase: _phaseEnabled ? _currentPhase : null,
+            });
+            if (_snap) {
+              // Insert after system message so it's near the top
+              const _sysIdx = apiMessages.findIndex((m) => m.role === "system");
+              apiMessages.splice(_sysIdx + 1, 0, _snap);
+            }
+          }
+
           const { messages: _compressed, tokensRemoved: _freed } =
             forceCompress(apiMessages, _allTools, totalSteps === 0);
           if (_freed > 0) {
@@ -3872,6 +3898,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.green}  ✓ Verification phase complete${_hasFailed ? " (loop-back exhausted)" : " (PASS)"}${C.reset}`,
             );
+            // Clean task completion: verify passed without failure → break immediately.
+            // This prevents the model from looping after it has already finished.
+            if (!_hasFailed) {
+              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
           }
         }
         // In plan mode: if the LLM presented a plan without reading ANY files first,
@@ -5218,6 +5252,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _investigationCapFired = false; // allow re-investigation after an edit
             _readsSinceCapFired = 0;
             _editsMadeThisSession++; // track how many edits have been made
+            // Reset re-read guard for the edited file so the model can verify
+            // the edit once without hitting the "already read" block.
+            const _editedPath = prep.args?.path || prep.args?.file_path;
+            if (_editedPath) {
+              _setLoopCount(_sessionFileReadCounts, _editedPath, 1);
+              _sessionFileReadRanges.delete(_editedPath);
+            }
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
             if (_investigationCapFired) _readsSinceCapFired++;

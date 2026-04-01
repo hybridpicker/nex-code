@@ -118,6 +118,18 @@ function setServerLocalWarnFired(n) {
   serverLocalWarnFired = n;
 }
 
+/**
+ * Reset read counter for a file after a successful edit.
+ * Allows one verification re-read without triggering the re-read guard.
+ * Called from agent.js whenever edit_file / patch_file / write_file succeeds.
+ * @param {string} filePath
+ */
+function resetFileReadCount(filePath) {
+  setCount(fileReadCounts, filePath, 1);
+  fileReadRanges.delete(filePath);
+  reReadBlockShown.delete(filePath);
+}
+
 module.exports = {
   // TTL helpers
   getCount,
@@ -150,4 +162,5 @@ module.exports = {
   setServerLocalWarnFired,
   // Reset
   clearAll,
+  resetFileReadCount,
 };
