@@ -5098,7 +5098,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             : "";
         if (
           preBlockContent.startsWith("BLOCKED:") ||
-          preBlockContent.startsWith("PLAN MODE:")
+          preBlockContent.startsWith("PLAN MODE:") ||
+          preBlockContent.startsWith("PLAN PHASE:")
         ) {
           consecutiveBlocks++;
           if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
