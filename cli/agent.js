@@ -4937,16 +4937,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // Print bullet header immediately (before execution) so it appears while working
       const _showStepHeader = !batchOpts.skipSummaries && !stepPrinted;
       let _spinAnim = null;
+      let _blinkHeaderRow = null; // absolute row of blink header for reliable cleanup
       if (_showStepHeader && !hasAskUser) {
         stepPrinted = true;
         batchOpts.skipSpinner = true;
         if (process.stdout.isTTY) {
+          // Capture the row where the blink header will land BEFORE writing, so
+          // the cleanup can use absolute positioning even if a confirm dialog moves
+          // the cursor to a different row during tool execution.
+          if (global._nexFooter) {
+            _blinkHeaderRow = Math.min(
+              global._nexFooter._lastOutputRow + 1,
+              global._nexFooter._scrollEnd,
+            );
+          }
           // Blink the ⏺ via ANSI \x1b[5m while the tool executes — no interval needed,
           // the terminal handles blinking natively so it works even for sub-ms tools
           process.stdout.write(
             formatSectionHeader(prepared, totalSteps, false, "blink"),
           );
-          _spinAnim = true; // flag: header needs \r\x1b[2K cleanup after execution
+          _spinAnim = true; // flag: header needs cleanup after execution
         } else if (!_serverHooks) {
           // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
           process.stdout.write(
@@ -4973,9 +4983,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _longCmdTimer = setInterval(() => {
             const _elapsed = Math.round((Date.now() - _longStart) / 1000);
             if (_elapsed >= 3) {
-              process.stdout.write(
-                `\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false, "blink")} ${C.dim}[${_elapsed}s]${C.reset}`,
-              );
+              const _hdr = `${formatSectionHeader(prepared, totalSteps, false, "blink")} ${C.dim}[${_elapsed}s]${C.reset}`;
+              if (_blinkHeaderRow !== null) {
+                process.stdout.write(`\x1b[${_blinkHeaderRow};1H\x1b[2K${_hdr}`);
+              } else {
+                process.stdout.write(`\r\x1b[2K${_hdr}`);
+              }
             }
           }, 1000);
         }
@@ -4993,12 +5006,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _longCmdTimer = null;
       }
 
-      // Stop blink, finalize header with static dot
+      // Stop blink, finalize header with static dot.
+      // Use absolute row positioning when available — a confirm dialog during tool
+      // execution moves the cursor away from the blink header row, so \r\x1b[2K
+      // would clear the wrong row and trigger an unwanted scroll.
       if (_spinAnim) {
         _spinAnim = null;
-        process.stdout.write(
-          `\r\x1b[2K${formatSectionHeader(prepared, totalSteps, false)}\n`,
-        );
+        const _staticHeader = formatSectionHeader(prepared, totalSteps, false);
+        if (_blinkHeaderRow !== null) {
+          process.stdout.write(
+            `\x1b[${_blinkHeaderRow};1H\x1b[2K${_staticHeader}\n`,
+          );
+        } else {
+          process.stdout.write(`\r\x1b[2K${_staticHeader}\n`);
+        }
+        _blinkHeaderRow = null;
       }
 
       // Print summaries below the header (skip ask_user — it renders its own UI)
@@ -5007,8 +5029,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           (_, si) => !(prepared[si] && prepared[si].fnName === "ask_user"),
         );
         for (const s of shownSummaries) console.log(s);
-        // Blank line after each step group for visual separation
-        console.log("");
 
         // Milestone tracking — linesBack no longer needed (append-only emit)
         const toolNames = prepared
