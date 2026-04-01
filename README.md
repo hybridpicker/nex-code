@@ -101,7 +101,7 @@ npm update -g nex-code
 
 **Open-model first.** Not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
 
-**Smart model routing.** The built-in `/benchmark` system tests all configured models against 56 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
+**Smart model routing.** The built-in `/benchmark` system tests all configured models against 62 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
 
 | Detected task             | Routed model (example)      |
 | ------------------------- | --------------------------- |
@@ -156,18 +156,18 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 ## Ollama Cloud — Recommended Model Setup
 
 nex-code was built with Ollama Cloud as its primary provider. No subscription, no billing surprises.
-Rankings are based on nex-code's own `/benchmark` — 15 tool-calling tasks against real nex-code schemas.
+Rankings are based on nex-code's own `/benchmark` — 14-task quick benchmark against real nex-code schemas (62 tasks full run).
 
 ### Flat-Rate / Pay-as-you-go
 
 <!-- nex-benchmark-start -->
-<!-- Updated: 2026-03-29 — run `/benchmark --discover` after new Ollama Cloud releases -->
+<!-- Updated: 2026-03-31 — run `/benchmark --discover` after new Ollama Cloud releases -->
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `qwen3-vl:235b` | **77.1** | 14.4s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
-| 🥈 | `qwen3-vl:235b-instruct` | 76.3 | 6.5s | 131K | Best latency/score balance — recommended default |
-| 🥉 | `rnj-1:8b` | 74 | 3.7s | 131K | — |
+| 🥇 | `qwen3-vl:235b` | **97.9** | 14.4s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
+| 🥈 | `rnj-1:8b` | 92.9 | 3.7s | 131K | Fast and accurate — best latency/score balance |
+| 🥉 | `qwen3-vl:235b-instruct` | 88.6 | 6.5s | 131K | Recommended default |
 | — | `ministral-3:8b` | 73.1 | 2.3s | 131K | Fastest strong model — 2.2s latency, 70+ score |
 | — | `qwen3-coder-next` | 71.4 | 2.8s | 256K | — |
 | — | `qwen3-next:80b` | 70.6 | 11.6s | 131K | — |
@@ -208,8 +208,8 @@ NEX_FAST_MODEL=devstral-small-2:24b   # quick lookups, fast sub-agents
 ### Run the benchmark yourself
 
 ```bash
-/benchmark             # full run: 15 tasks × 5 models
-/benchmark --quick     # fast run: 7 tasks × 3 models
+/benchmark             # full run: 62 tasks × 5 models
+/benchmark --quick     # fast run: 14 tasks × 3 models  (doubled from 7 for better resolution)
 /benchmark --discover  # detect new Ollama Cloud models, benchmark + auto-update README
 /benchmark --models=minimax-m2.7:cloud,qwen3-coder:480b
 /benchmark --history   # show OpenClaw nightly trend
@@ -924,6 +924,16 @@ The agent follows a repeating cycle on a dedicated `autoresearch/<tag>` branch: 
 /ar-status                # show experiment history with trends
 /ar-clear                 # reset experiment history
 ```
+
+The loop can also run **headless** — useful for unattended overnight sessions:
+
+```bash
+nex-code --task "/ar-self-improve" --no-auto-orchestrate --max-turns 200
+```
+
+`/ar-self-improve` uses nex-code's own 14-task quick benchmark as the fitness metric. Each experiment that raises the average score above the session baseline is kept; all others are reverted with `git reset`. The benchmark output includes a **Failing tasks** section that names which tasks each model got wrong, making root causes immediately visible.
+
+> **Self-improvement history** (2026-03-31): baseline 86.7 → **92.9** (+6.2 pts) in one session. Key fix: rewording the `edit_file` tool description so models call it directly instead of first calling `read_file`. `rnj-1:8b` jumped from 77.1 → 97.9 on that change alone.
 
 ### Memory
 
