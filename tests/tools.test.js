@@ -4288,7 +4288,7 @@ describe("tools.js", () => {
       });
       const result = await executeTool("ssh_exec", {
         server: "production",
-        command: 'grep -i "GOOGLE" /home/jarvis/remote-service/.env',
+        command: 'grep -i "GOOGLE" /home/deploy/server-agent/.env',
       });
       expect(result).toContain("BLOCKED");
       expect(result).toContain("SSH secret-exposure");
@@ -4302,7 +4302,7 @@ describe("tools.js", () => {
       const result = await executeTool("ssh_exec", {
         server: "production",
         command:
-          "cat /home/jarvis/remote-service/credentials/google-credentials.json",
+          "cat /home/deploy/server-agent/credentials/google-credentials.json",
       });
       expect(result).toContain("BLOCKED");
       expect(result).toContain("SSH secret-exposure");

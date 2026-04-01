@@ -44,7 +44,7 @@ describe("loadServerProfiles", () => {
 
   it("loads profiles from .nex/servers.json", () => {
     writeServers({
-      prod: { host: "1.2.3.4", user: "jarvis", os: "almalinux9" },
+      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux9" },
     });
     const { loadServerProfiles } = require("../cli/ssh");
     const p = loadServerProfiles();
@@ -65,7 +65,7 @@ describe("loadServerProfiles", () => {
 
 describe("resolveProfile", () => {
   it("resolves named profile", () => {
-    writeServers({ prod: { host: "1.2.3.4", user: "jarvis" } });
+    writeServers({ prod: { host: "1.2.3.4", user: "deploy" } });
     const { resolveProfile } = require("../cli/ssh");
     const p = resolveProfile("prod");
     expect(p.host).toBe("1.2.3.4");
@@ -102,7 +102,7 @@ describe("resolveProfile", () => {
 describe("buildSSHArgs", () => {
   it("includes BatchMode, ConnectTimeout, StrictHostKeyChecking", () => {
     const { buildSSHArgs } = require("../cli/ssh");
-    const { args } = buildSSHArgs({ host: "1.2.3.4", user: "jarvis" });
+    const { args } = buildSSHArgs({ host: "1.2.3.4", user: "deploy" });
     expect(args).toContain("BatchMode=yes");
     expect(args.some((a) => a.includes("ConnectTimeout"))).toBe(true);
     expect(args.some((a) => a.includes("StrictHostKeyChecking"))).toBe(true);
@@ -112,7 +112,7 @@ describe("buildSSHArgs", () => {
     const { buildSSHArgs } = require("../cli/ssh");
     const { args } = buildSSHArgs({
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       key: "~/.ssh/id_rsa",
     });
     const iIdx = args.indexOf("-i");
@@ -136,7 +136,7 @@ describe("buildSSHArgs", () => {
 
   it("includes ControlMaster args", () => {
     const { buildSSHArgs } = require("../cli/ssh");
-    const { args } = buildSSHArgs({ host: "1.2.3.4", user: "jarvis" });
+    const { args } = buildSSHArgs({ host: "1.2.3.4", user: "deploy" });
     expect(args.some((a) => a.includes("ControlMaster"))).toBe(true);
     expect(args.some((a) => a.includes("ControlPath"))).toBe(true);
     expect(args.some((a) => a.includes("ControlPersist"))).toBe(true);
@@ -144,8 +144,8 @@ describe("buildSSHArgs", () => {
 
   it("returns correct target user@host", () => {
     const { buildSSHArgs } = require("../cli/ssh");
-    const { target } = buildSSHArgs({ host: "1.2.3.4", user: "jarvis" });
-    expect(target).toBe("jarvis@1.2.3.4");
+    const { target } = buildSSHArgs({ host: "1.2.3.4", user: "deploy" });
+    expect(target).toBe("deploy@1.2.3.4");
   });
 
   it("returns host-only target when no user", () => {
@@ -158,7 +158,7 @@ describe("buildSSHArgs", () => {
 // ─── enrichSSHError ───────────────────────────────────────────
 
 describe("enrichSSHError", () => {
-  const profile = { host: "1.2.3.4", user: "jarvis", key: "~/.ssh/id_rsa" };
+  const profile = { host: "1.2.3.4", user: "deploy", key: "~/.ssh/id_rsa" };
 
   it("enriches connection refused", () => {
     const { enrichSSHError } = require("../cli/ssh");
@@ -209,16 +209,16 @@ describe("enrichSSHError", () => {
 describe("formatProfile", () => {
   it("formats basic profile", () => {
     const { formatProfile } = require("../cli/ssh");
-    const str = formatProfile("prod", { host: "1.2.3.4", user: "jarvis" });
+    const str = formatProfile("prod", { host: "1.2.3.4", user: "deploy" });
     expect(str).toContain("prod");
-    expect(str).toContain("jarvis@1.2.3.4");
+    expect(str).toContain("deploy@1.2.3.4");
   });
 
   it("includes OS when set", () => {
     const { formatProfile } = require("../cli/ssh");
     const str = formatProfile("prod", {
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       os: "almalinux9",
     });
     expect(str).toContain("almalinux9");
@@ -240,7 +240,7 @@ describe("formatProfile", () => {
     const { formatProfile } = require("../cli/ssh");
     const str = formatProfile("prod", {
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       key: "~/.ssh/id_ed25519",
     });
     expect(str).toContain("key:~/.ssh/id_ed25519");
@@ -250,7 +250,7 @@ describe("formatProfile", () => {
     const { formatProfile } = require("../cli/ssh");
     const str = formatProfile("prod", {
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       sudo: true,
     });
     expect(str).toContain("sudo:yes");
@@ -260,7 +260,7 @@ describe("formatProfile", () => {
     const { formatProfile } = require("../cli/ssh");
     const str = formatProfile("prod", {
       host: "1.2.3.4",
-      user: "jarvis",
+      user: "deploy",
       sudo: false,
     });
     expect(str).not.toContain("sudo");

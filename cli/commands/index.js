@@ -126,7 +126,7 @@ const SLASH_COMMANDS = [
   },
   {
     cmd: "/bench [--dry-run] [--model=<spec>]",
-    desc: "Run Jarvis scenario benchmark (5 agentic tasks)",
+    desc: "Run scenario benchmark (5 agentic tasks)",
   },
   {
     cmd: "/trend [n]",
@@ -2392,7 +2392,7 @@ For each issue, include:
           `\n${C.dim}No servers configured. Create .nex/servers.json:${C.reset}`,
         );
         console.log(
-          `${C.dim}  { "prod": { "host": "1.2.3.4", "user": "jarvis", "os": "almalinux9" } }${C.reset}\n`,
+          `${C.dim}  { "prod": { "host": "1.2.3.4", "user": "deploy", "os": "almalinux9" } }${C.reset}\n`,
         );
         return true;
       }
@@ -3023,19 +3023,19 @@ For each issue, include:
     }
 
     case "/bench": {
-      const { runJarvisBenchmark } = require("../benchmark");
+      const { runScenarioBenchmark } = require("../benchmark");
       const dryRun = rest.includes("--dry-run");
       const mFlag = rest.find((r) => r.startsWith("--model="));
       const model = mFlag ? mFlag.replace("--model=", "").trim() : undefined;
 
       if (!dryRun) {
         console.log(
-          `\n${C.bold}Jarvis Benchmark${C.reset}  ` +
+          `\n${C.bold}Scenario Benchmark${C.reset}  ` +
             `${C.dim}5 agentic scenarios · each run as child process${C.reset}\n`,
         );
       }
 
-      await runJarvisBenchmark({
+      await runScenarioBenchmark({
         dryRun,
         model,
         cwd: CWD,

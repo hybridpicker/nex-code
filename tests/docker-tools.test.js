@@ -123,7 +123,7 @@ describe("container_list", () => {
   });
 
   it("lists containers on remote server", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "abc123   nginx   Up",
       stderr: "",
@@ -178,7 +178,7 @@ describe("container_logs", () => {
   });
 
   it("fetches logs remotely", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "log line from server",
       stderr: "",
@@ -259,7 +259,7 @@ describe("container_exec", () => {
   });
 
   it("executes command on remote server via sshExec", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({
       stdout: "uid=0(root)",
       stderr: "",
@@ -307,7 +307,7 @@ describe("container_manage", () => {
   });
 
   it("restarts a container remotely", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockSshExec.mockResolvedValue({ stdout: "app", stderr: "", exitCode: 0 });
     const { executeTool } = getTools();
     const result = await executeTool(
@@ -356,10 +356,10 @@ describe("container_manage", () => {
 
 describe("deploy", () => {
   it("rsyncs local path to remote server", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) => {
       expect(cmd).toContain("rsync");
-      expect(cmd).toContain("jarvis@1.2.3.4:/var/www/app");
+      expect(cmd).toContain("deploy@1.2.3.4:/var/www/app");
       cb(null, "sent 1024 bytes  received 32 bytes", "");
     });
     const { executeTool } = getTools();
@@ -372,7 +372,7 @@ describe("deploy", () => {
   });
 
   it("runs deploy_script after sync", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) =>
       cb(null, "sent 512 bytes", ""),
     );
@@ -397,7 +397,7 @@ describe("deploy", () => {
   });
 
   it("returns dry run output without executing", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) => {
       expect(cmd).toContain("--dry-run");
       cb(null, "would send: dist/index.html", "");
@@ -418,7 +418,7 @@ describe("deploy", () => {
   });
 
   it("excludes specified paths", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) => {
       expect(cmd).toContain('--exclude="node_modules"');
       expect(cmd).toContain('--exclude=".env"');
@@ -468,7 +468,7 @@ describe("deploy", () => {
   });
 
   it("returns error on rsync failure", async () => {
-    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "jarvis" });
+    mockResolveProfile.mockReturnValue({ host: "1.2.3.4", user: "deploy" });
     mockExecImpl.mockImplementation((cmd, opts, cb) => {
       const e = new Error("rsync error");
       e.stderr = "rsync: connection refused";

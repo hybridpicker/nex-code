@@ -9,7 +9,7 @@
  * {
  *   "prod": {
  *     "host": "203.0.113.10",
- *     "user": "jarvis",
+ *     "user": "deploy",
  *     "port": 22,            // optional, default 22
  *     "key": "~/.ssh/id_rsa", // optional, falls back to SSH agent
  *     "os": "almalinux9",    // optional: almalinux9 | macos | ubuntu | debian

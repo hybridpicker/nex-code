@@ -126,7 +126,7 @@ describe("getProfileNames", () => {
   });
 });
 
-describe("getDeploymentContextBlock — Jarvis rules", () => {
+describe("getDeploymentContextBlock — server rules", () => {
   const { getDeploymentContextBlock } = require("../cli/server-context");
 
   // Mock fs.readFileSync to simulate NEX.md with server keyword
@@ -137,23 +137,23 @@ describe("getDeploymentContextBlock — Jarvis rules", () => {
     jest.restoreAllMocks();
   });
 
-  test("includes Jarvis rules when profile has host 203.0.113.10", () => {
+  test("includes server rules when profile has host 203.0.113.10", () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "203.0.113.10", user: "root", os: "almalinux9" },
+      prod: { host: "203.0.113.10", user: "root", os: "almalinux9" },
     });
     const block = getDeploymentContextBlock();
     expect(block).toBeDefined();
-    expect(block).toContain("Jarvis Debugging Rules");
+    expect(block).toContain("Server Debugging Rules");
     expect(block).toContain("ssh_exec");
-    expect(block).toContain("/home/jarvis/remote-service/logs/");
+    expect(block).toContain("/home/deploy/server-agent/logs/");
   });
 
-  test("omits Jarvis rules when no profile has Jarvis host", () => {
+  test("omits server rules when no profile has server host", () => {
     loadServerProfiles.mockReturnValue({
       web: { host: "example.com", user: "deploy", os: "ubuntu" },
     });
     const block = getDeploymentContextBlock();
     expect(block).toBeDefined();
-    expect(block).not.toContain("Jarvis Debugging Rules");
+    expect(block).not.toContain("Server Debugging Rules");
   });
 });
