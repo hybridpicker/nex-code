@@ -4442,7 +4442,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 const oldLen = pe - ps || 1;
                 const superreads = overlapLen / oldLen >= 0.7 && overlapLen / newLen < 0.7;
                 const isNarrowRead = newEnd - newStart <= NARROW_READ_PASS_THROUGH;
-                if (!isNarrowRead && (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7)) {
+                // Narrow reads bypass the 70% overlap threshold — but only when the
+                // narrow section is NOT fully contained within the already-read range.
+                // A narrow read that is 100% inside a known range re-reads content
+                // already in context and must be blocked regardless of its size.
+                const fullyContained = overlapLen >= newLen;
+                if (fullyContained || (!isNarrowRead && (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7))) {
                   const shortPath = path.split("/").slice(-2).join("/");
                   const rangeKey = `${path}:${newStart}-${newEnd}`;
                   const rangeBlockCount = (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
@@ -5803,10 +5808,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
-            // Record targeted read range so overlap detection can warn on duplicates
-            if (prep.args.line_start != null) {
-              const rs = prep.args.line_start || 1;
-              const re = prep.args.line_end || rs + 350;
+            // Record the read range so overlap detection can catch duplicate reads.
+            // Unbounded reads (no line_start) are stored as [1, 350] — the tool
+            // truncates at 350 lines, so that is the slice now in context. Without
+            // this, narrow targeted re-reads that fall within the first 350 lines
+            // bypass overlap detection entirely because prevRanges is empty.
+            {
+              const rs = prep.args.line_start != null ? prep.args.line_start || 1 : 1;
+              const re =
+                prep.args.line_start != null
+                  ? prep.args.line_end || rs + 350
+                  : 350; // unbounded read — first 350 lines are now in context
               if (!_sessionFileReadRanges.has(prep.args.path))
                 _sessionFileReadRanges.set(prep.args.path, []);
               _sessionFileReadRanges.get(prep.args.path).push([rs, re]);
