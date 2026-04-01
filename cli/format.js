@@ -798,4 +798,6 @@ module.exports = {
   formatToolSummary,
   formatSectionHeader,
   formatMilestone,
+  getThinkingVerb,
+  THINKING_VERBS,
 };
