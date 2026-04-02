@@ -934,28 +934,31 @@ nex-code --task "/ar-self-improve" --no-auto-orchestrate --max-turns 200
 
 ### Real-Life Benchmark
 
-A comprehensive benchmark suite that tests nex-code on 27 real-world tasks across 7 categories, using code patterns from actual projects:
+A comprehensive benchmark suite that tests nex-code on **35 real-world tasks** across 7 categories, sourced from actual projects (cookbook, drumcomputer, chord-library, jarvis-agent, practice-wizard, AlmaLinux9 server docs):
 
 | Category | Weight | Tasks | What it tests |
 |----------|--------|-------|---------------|
-| Bug Fixing | 25% | 5 | Diagnose and fix real bugs (off-by-one, async/await, destructuring, timezone) |
-| Feature Implementation | 20% | 5 | Add endpoints, CSV export, volume control, chord filtering, rate limiting |
-| Code Understanding | 10% | 4 | Analyze codebases, find env vars, audit dependencies, map routes |
-| Server/DevOps | 15% | 4 | Nginx configs, systemd services, deploy scripts, Dockerfiles |
-| Multi-file Refactoring | 15% | 4 | Extract shared modules, rename across files, split monoliths, fix import paths |
-| Test Writing | 10% | 3 | Unit tests, API tests, edge case coverage |
+| Bug Fixing | 25% | 6 | Off-by-one, async/await, destructuring, timezone, promise race conditions |
+| Feature Implementation | 20% | 7 | Endpoints, CSV export, volume control, chord filtering, rate limiting, JSONL cost analysis, CLI stats tools |
+| Code Understanding | 10% | 5 | Project structure analysis, env var scanning, dependency audit, route mapping, DB schema analysis |
+| Server/DevOps | 15% | 6 | Nginx configs, systemd services, deploy scripts, Dockerfiles, firewall rules, SSH key rotation |
+| Multi-file Refactoring | 15% | 5 | Extract modules, rename across files, split monoliths, fix imports, Django migration audit |
+| Test Writing | 10% | 4 | Unit tests, API tests, edge cases, music theory transposition |
 | Documentation | 5% | 2 | Setup guides, API documentation |
 
 Each task runs nex-code headless in an isolated temp directory with real file structures, then evaluates the result for task completion (40%), edit precision (25%), efficiency (20%), and quality (15%).
 
+> **Benchmark results** (2026-04-02): baseline **79/100** → **84/100** after efficiency tuning. All failures are timeout-related — when nex-code finishes in time, it scores 90. Strongest: bug fixing (90), testing (90), docs (90). Weakest: features (66→improving), refactoring (70→improving). Ministral-3:8b and devstral-2:123b score comparably (84 vs 84).
+
 ```bash
-npm run benchmark:reallife                           # full suite
+npm run benchmark:reallife                           # full 35-task suite (~90 min)
 npm run benchmark:reallife -- --category bugfix      # single category
 npm run benchmark:reallife -- --tasks bugfix-off-by-one-pagination  # single task
+npm run benchmark:reallife -- --model ministral-3:8b # test specific model
 npm run benchmark:report                             # view score trends
 ```
 
-The **improvement loop** runs the benchmark, clusters failures, implements a targeted fix, re-benchmarks, and keeps or reverts:
+The **improvement loop** (Karpathy-style autoresearch) runs the benchmark, clusters failures, implements a targeted fix to nex-code's own source, re-benchmarks, and keeps or reverts:
 
 ```bash
 npm run improve:reallife                             # interactive

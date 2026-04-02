@@ -69,6 +69,7 @@ function runTask(task, model) {
       NODE_PATH: process.env.NODE_PATH,
       NEX_SKIP_BUILTIN_SKILLS: "1",
       NEX_AUTO_ORCHESTRATE: "false",
+      NEX_SKIP_COMPACTOR: "1",
     };
     // Forward only NEX_* and OLLAMA_* vars (non-secret config)
     for (const [k, v] of Object.entries(process.env)) {
@@ -76,6 +77,7 @@ function runTask(task, model) {
     }
     safeEnv.NEX_SKIP_BUILTIN_SKILLS = "1";
     safeEnv.NEX_AUTO_ORCHESTRATE = "false";
+    safeEnv.NEX_SKIP_COMPACTOR = "1";
 
     const proc = spawn("node", args, {
       cwd: tmpDir,
