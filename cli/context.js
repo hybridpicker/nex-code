@@ -134,6 +134,9 @@ const contextMtimes = new Map();
 let contextCacheExpiry = null;
 const CACHE_TTL_MS = 30000; // Cache valid for 30 seconds
 
+// Git info cache — same TTL as file context
+let _gitCache = { result: null, expiry: 0, cwd: null };
+
 async function safe(fn) {
   try {
     return await fn();
@@ -313,41 +316,45 @@ async function gatherProjectContext(cwd) {
     await updateContextMtimes();
   }
 
-  // Always fetch fresh git info (changes frequently)
-  // Run all git operations in parallel for maximum performance
+  // Git info cache — 30s TTL matching file context cache.
+  // Git state rarely changes between loop iterations (same session),
+  // and the 4 exec() calls add 200-800ms per uncached call.
   const gitParts = [fileContext];
+  let branch, status, log, conflicts;
 
-  const [branch, status, log, conflicts] = await Promise.all([
-    // Git branch
-    safe(async () => {
-      const { stdout } = await exec("git branch --show-current", {
-        cwd,
-        timeout: 5000,
-      });
-      return stdout.trim();
-    }),
+  if (_gitCache.result && Date.now() < _gitCache.expiry && _gitCache.cwd === cwd) {
+    ({ branch, status, log, conflicts } = _gitCache.result);
+  } else {
+    // Run all git operations in parallel for maximum performance
+    [branch, status, log, conflicts] = await Promise.all([
+      safe(async () => {
+        const { stdout } = await exec("git branch --show-current", {
+          cwd,
+          timeout: 5000,
+        });
+        return stdout.trim();
+      }),
 
-    // Git status
-    safe(async () => {
-      const { stdout } = await exec("git status --short", {
-        cwd,
-        timeout: 5000,
-      });
-      return stdout.trim();
-    }),
+      safe(async () => {
+        const { stdout } = await exec("git status --short", {
+          cwd,
+          timeout: 5000,
+        });
+        return stdout.trim();
+      }),
 
-    // Git log
-    safe(async () => {
-      const { stdout } = await exec("git log --oneline -5", {
-        cwd,
-        timeout: 5000,
-      });
-      return stdout.trim();
-    }),
+      safe(async () => {
+        const { stdout } = await exec("git log --oneline -5", {
+          cwd,
+          timeout: 5000,
+        });
+        return stdout.trim();
+      }),
 
-    // Merge conflicts
-    getMergeConflicts(),
-  ]);
+      getMergeConflicts(),
+    ]);
+    _gitCache = { result: { branch, status, log, conflicts }, expiry: Date.now() + CACHE_TTL_MS, cwd };
+  }
 
   if (branch) gitParts.push(`GIT BRANCH: ${branch}`);
   if (status) gitParts.push(`GIT STATUS:\n${status}`);
@@ -428,5 +435,6 @@ module.exports = {
     contextCache.clear();
     contextMtimes.clear();
     contextCacheExpiry = null;
+    _gitCache = { result: null, expiry: 0, cwd: null };
   },
 };

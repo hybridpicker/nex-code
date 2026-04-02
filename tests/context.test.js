@@ -258,4 +258,56 @@ describe("context.js", () => {
       logSpy.mockRestore();
     });
   });
+
+  // ─── git command caching ─────────────────────────────────
+  describe("git command caching", () => {
+    it("caches git results on second call within TTL", async () => {
+      const cp = require("child_process");
+      let execCallCount = 0;
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") { cb = opts; opts = {}; }
+        execCallCount++;
+        if (cmd.includes("git branch")) cb(null, { stdout: "main\n" });
+        else if (cmd.includes("git status")) cb(null, { stdout: "" });
+        else if (cmd.includes("git log")) cb(null, { stdout: "abc123 initial\n" });
+        else cb(new Error("unknown cmd"));
+      });
+
+      // First call — should exec git commands
+      const ctx1 = await gatherProjectContext(tmpDir);
+      const firstCallCount = execCallCount;
+
+      // Second call — should use cached git results (no new exec calls)
+      const ctx2 = await gatherProjectContext(tmpDir);
+      const secondCallCount = execCallCount - firstCallCount;
+
+      expect(ctx1).toContain("main");
+      expect(ctx2).toContain("main");
+      // Second call should have fewer exec calls (git commands cached)
+      expect(secondCallCount).toBeLessThan(firstCallCount);
+    });
+
+    it("refreshes git cache after clearContextCache", async () => {
+      const cp = require("child_process");
+      const context = require("../cli/context");
+      let branchName = "main";
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") { cb = opts; opts = {}; }
+        if (cmd.includes("git branch")) cb(null, { stdout: branchName + "\n" });
+        else if (cmd.includes("git status")) cb(null, { stdout: "" });
+        else if (cmd.includes("git log")) cb(null, { stdout: "abc initial\n" });
+        else cb(new Error("unknown cmd"));
+      });
+
+      const ctx1 = await gatherProjectContext(tmpDir);
+      expect(ctx1).toContain("main");
+
+      // Change branch and clear cache
+      branchName = "devel";
+      context._clearContextCache();
+
+      const ctx2 = await gatherProjectContext(tmpDir);
+      expect(ctx2).toContain("devel");
+    });
+  });
 });
