@@ -8,15 +8,17 @@ const {
   listSnapshots,
   restoreSnapshot,
 } = require("../cli/file-history");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 jest.mock("child_process", () => ({
   execSync: jest.fn(),
+  execFileSync: jest.fn(),
 }));
 
 describe("snapshot functions", () => {
   beforeEach(() => {
     execSync.mockReset();
+    execFileSync.mockReset();
   });
 
   // ─── createSnapshot ───────────────────────────────────────────────────────
@@ -24,8 +26,8 @@ describe("snapshot functions", () => {
     it("returns ok:true when stash succeeds", () => {
       execSync
         .mockReturnValueOnce(Buffer.from("M some-file.js")) // git status --porcelain
-        .mockReturnValueOnce(Buffer.from("")) // git stash push
         .mockReturnValueOnce(Buffer.from("")); // git stash pop
+      execFileSync.mockReturnValueOnce(Buffer.from("")); // git stash push (execFileSync)
       const result = createSnapshot("my-snap", "/tmp");
       expect(result.ok).toBe(true);
       expect(result.label).toContain("nex-snapshot-my-snap");
@@ -40,8 +42,8 @@ describe("snapshot functions", () => {
 
     it("returns ok:false when git stash throws", () => {
       execSync
-        .mockReturnValueOnce(Buffer.from("M file.js"))
-        .mockImplementationOnce(() => {
+        .mockReturnValueOnce(Buffer.from("M file.js"));
+      execFileSync.mockImplementationOnce(() => {
           throw new Error("git error");
         });
       const result = createSnapshot("fail", "/tmp");

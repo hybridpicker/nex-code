@@ -2739,6 +2739,12 @@ async function _executeToolInner(name, args, options = {}) {
       const url = args.url;
       const maxLen = args.max_length || 10000;
       try {
+        // SSRF protection: block private/internal IP ranges
+        const parsedUrl = new URL(url);
+        const host = parsedUrl.hostname;
+        if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|0\.|localhost$|\[::1?\]|\[fd|fc)/i.test(host)) {
+          return "ERROR: Fetching private/internal addresses is not allowed.";
+        }
         const resp = await axios.get(url, {
           timeout: 15000,
           maxContentLength: 1048576,
@@ -3061,7 +3067,7 @@ async function _executeToolInner(name, args, options = {}) {
       if (args.branch) ghArgs.push("--branch", args.branch);
       if (args.status) ghArgs.push("--status", args.status);
       try {
-        const { stdout } = await exec(`gh ${ghArgs.join(" ")}`, {
+        const { stdout } = await execFile("gh", ghArgs, {
           cwd: process.cwd(),
           timeout: 30000,
         });
@@ -3093,9 +3099,10 @@ async function _executeToolInner(name, args, options = {}) {
 
     case "gh_run_view": {
       if (!args.run_id) return "ERROR: run_id is required";
+      if (!/^\d+$/.test(String(args.run_id))) return "ERROR: run_id must be numeric";
       try {
         if (args.log) {
-          const { stdout } = await exec(`gh run view ${args.run_id} --log`, {
+          const { stdout } = await execFile("gh", ["run", "view", String(args.run_id), "--log"], {
             cwd: process.cwd(),
             timeout: 60000,
             maxBuffer: 5 * 1024 * 1024,
@@ -3105,8 +3112,8 @@ async function _executeToolInner(name, args, options = {}) {
             (stdout.length > 8000 ? "\n...(truncated)" : "")
           );
         }
-        const { stdout } = await exec(
-          `gh run view ${args.run_id} --json status,conclusion,name,headBranch,createdAt,updatedAt,jobs`,
+        const { stdout } = await execFile(
+          "gh", ["run", "view", String(args.run_id), "--json", "status,conclusion,name,headBranch,createdAt,updatedAt,jobs"],
           { cwd: process.cwd(), timeout: 30000 },
         );
         const run = JSON.parse(stdout);
@@ -3145,22 +3152,24 @@ async function _executeToolInner(name, args, options = {}) {
 
     case "gh_workflow_trigger": {
       if (!args.workflow) return "ERROR: workflow is required";
+      if (!/^[\w./-]+$/.test(args.workflow)) return "ERROR: invalid workflow name";
       const { confirm: confirmTrigger } = require("../safety");
       const branch = args.branch || (await getCurrentBranch()) || "main";
-      const inputStr = args.inputs
-        ? Object.entries(args.inputs)
-            .map(([k, v]) => `-f ${k}=${v}`)
-            .join(" ")
-        : "";
-      const cmd =
-        `gh workflow run ${args.workflow} --ref ${branch} ${inputStr}`.trim();
+      if (!/^[\w./-]+$/.test(branch)) return "ERROR: invalid branch name";
+      const ghArgs = ["workflow", "run", args.workflow, "--ref", branch];
+      if (args.inputs) {
+        for (const [k, v] of Object.entries(args.inputs)) {
+          if (!/^[\w-]+$/.test(k)) return `ERROR: invalid input key: ${k}`;
+          ghArgs.push("-f", `${k}=${v}`);
+        }
+      }
       console.log(
         `\n${C.yellow}  ⚠ Trigger workflow: ${args.workflow} on ${branch}${C.reset}`,
       );
       const ok = await confirmTrigger("  Trigger?");
       if (!ok) return "CANCELLED: User declined to trigger workflow.";
       try {
-        await exec(cmd, { cwd: process.cwd(), timeout: 30000 });
+        await execFile("gh", ghArgs, { cwd: process.cwd(), timeout: 30000 });
         return `Workflow "${args.workflow}" triggered on branch "${branch}". Check status with gh_run_list.`;
       } catch (e) {
         return `ERROR: ${(e.stderr || e.message || "").toString().split("\n")[0]}`;
@@ -3512,13 +3521,13 @@ async function _executeToolInner(name, args, options = {}) {
         ? `${profile.user || "root"}@${profile.host}`
         : args.server;
       const sshKey = profile?.key ? ["-i", profile.key] : [];
-      const workDir = args.project_path || profile?.home || "~";
-      const model = args.model || "";
+      const workDir = (args.project_path || profile?.home || "~").replace(/[^a-zA-Z0-9_/~.-]/g, "");
+      const model = (args.model || "").replace(/[^a-zA-Z0-9_:.-]/g, "");
 
       // Write task to temp file on remote, run nex-code, stream output
       const taskB64 = Buffer.from(args.task).toString("base64");
       const remoteScript = [
-        `TMPFILE=$(mktemp /tmp/nexcode-XXXXXX.txt)`,
+        `TMPFILE=$(mktemp /tmp/nexcode-XXXXXX.txt) && chmod 600 "$TMPFILE"`,
         `echo "${taskB64}" | base64 -d > "$TMPFILE"`,
         `cd "${workDir}" 2>/dev/null || true`,
         model
@@ -3535,7 +3544,7 @@ async function _executeToolInner(name, args, options = {}) {
         [
           ...sshKey,
           "-o",
-          "StrictHostKeyChecking=no",
+          "StrictHostKeyChecking=accept-new",
           "-o",
           "ConnectTimeout=10",
           target,

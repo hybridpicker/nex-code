@@ -115,7 +115,7 @@ async function browserScreenshot(
       os.tmpdir(),
       `nex-screenshot-${Date.now()}.png`,
     );
-    fs.writeFileSync(tmpPath, buf);
+    fs.writeFileSync(tmpPath, buf, { mode: 0o600 });
     return {
       path: tmpPath,
       base64: buf.toString("base64"),

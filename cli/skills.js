@@ -491,7 +491,7 @@ function getLoadedSkills() {
  * @returns {Promise<{ ok: boolean, name: string, error?: string }>}
  */
 async function installSkill(url, options = {}) {
-  const { execSync } = require("child_process");
+  const { execFileSync } = require("child_process");
   const dir = initSkillsDir();
 
   // Normalize URL: support shorthand "user/repo" → GitHub URL
@@ -516,10 +516,9 @@ async function installSkill(url, options = {}) {
 
   // Clone
   try {
-    if (!/^https?:\/\/[a-zA-Z0-9._\-/:@#?=&%+~]+$/.test(gitUrl))
+    if (!/^https?:\/\/[a-zA-Z0-9._\-/:.@]+$/.test(gitUrl))
       throw new Error(`Invalid git URL: ${gitUrl}`);
-    const safeTarget = targetDir.replace(/'/g, "'\\''");
-    execSync(`git clone --depth 1 '${gitUrl}' '${safeTarget}'`, {
+    execFileSync("git", ["clone", "--depth", "1", gitUrl, targetDir], {
       timeout: 30000,
       stdio: "pipe",
     });

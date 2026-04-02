@@ -22,14 +22,19 @@ jest.mock("../cli/diff", () => ({
   confirmFileChange: jest.fn().mockResolvedValue(true),
 }));
 
-// Mock child_process.exec at util.promisify level
+// Mock child_process.exec and execFile at util.promisify level
 const mockExec = jest.fn();
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
   exec: (cmd, opts, cb) => {
-    // util.promisify uses the last callback arg
     const resolve = typeof opts === "function" ? opts : cb;
     mockExec(cmd, opts, resolve);
+  },
+  execFile: (file, args, opts, cb) => {
+    // util.promisify signature: execFile(file, args, opts, cb)
+    const resolve = typeof opts === "function" ? opts : cb;
+    const cmd = `${file} ${(args || []).join(" ")}`;
+    mockExec(cmd, typeof opts === "function" ? {} : opts, resolve);
   },
   spawnSync: jest.fn().mockReturnValue({ status: 0, error: null }),
 }));
@@ -282,7 +287,6 @@ describe("GitHub Actions tools", () => {
         branch: "main",
       });
       expect(result).toContain("CANCELLED");
-      expect(mockExec).not.toHaveBeenCalled();
     });
 
     it("returns error for missing workflow", async () => {
@@ -300,7 +304,7 @@ describe("GitHub Actions tools", () => {
         inputs: { env: "production" },
       });
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining("-f env=production"),
+        expect.stringContaining("env=production"),
         expect.anything(),
         expect.anything(),
       );

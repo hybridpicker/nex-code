@@ -52,8 +52,7 @@ for (const [name, def] of Object.entries(FLAG_DEFINITIONS)) {
   const globalName = `__FEATURE_${name}__`;
   // Check if esbuild replaced the global (typeof check avoids ReferenceError)
   try {
-    // eslint-disable-next-line no-eval
-    const buildTimeValue = eval(`typeof ${globalName} !== 'undefined' ? ${globalName} : undefined`);
+    const buildTimeValue = globalThis[globalName];
     if (buildTimeValue !== undefined) {
       _runtimeFlags[name] = !!buildTimeValue;
       continue;
