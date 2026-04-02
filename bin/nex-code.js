@@ -25,8 +25,11 @@ Options:
   --prompt-file <path>     Read prompt from file and run headless (avoids shell escaping)
   --delete-prompt-file     Delete the prompt file after reading (use with --prompt-file)
   --auto                   Skip all confirmations (implies --task / --prompt-file)
+  --flatrate               Flatrate mode: 100 turns, 6 parallel agents, 5 retries (auto on with OLLAMA_API_KEY)
   --yolo, -yolo            Skip all confirmations (interactive YOLO mode)
   --server                 Start JSON-lines IPC server (used by VS Code extension)
+  --daemon [config]        Run as background watcher (reads .nex/daemon.json)
+  --watch [config]         Alias for --daemon
   --model <spec>           Set model (e.g. openai:gpt-4o)
   --max-turns <n>          Max agentic loop iterations (default: 50)
   --orchestrate            Use multi-agent orchestrator (with --task)
@@ -70,6 +73,29 @@ if (!yoloMode) {
   } catch {
     /* ignore malformed config */
   }
+}
+
+// ─── Flatrate mode ────────────────────────────────────────────
+// Auto-activates when OLLAMA_API_KEY is set (Ollama Cloud flatrate plan)
+// or via explicit --flatrate flag. Shifts optimization from "minimize tokens"
+// to "maximize correctness": more iterations, more parallel agents, more retries.
+const flatrateMode =
+  args.includes("--flatrate") ||
+  (!!process.env.OLLAMA_API_KEY && !process.env.NEX_NO_FLATRATE);
+if (flatrateMode) {
+  // Set env vars before any module loads — sub-agent.js and orchestrator.js
+  // read these at require-time to configure their constants.
+  if (!process.env.NEX_MAX_PARALLEL) process.env.NEX_MAX_PARALLEL = "6";
+  if (!process.env.NEX_MAX_SUBTASKS) process.env.NEX_MAX_SUBTASKS = "10";
+  if (!process.env.NEX_MAX_CHAT_RETRIES) process.env.NEX_MAX_CHAT_RETRIES = "5";
+  // Prefer other Ollama Cloud models before falling back to external providers
+  if (!process.env.OLLAMA_FALLBACK_CHAIN) {
+    process.env.OLLAMA_FALLBACK_CHAIN = "ministral-3:8b,qwen3-vl:235b-instruct,devstral-small-2:24b";
+  }
+  // Print badge on stderr so it shows even in --json mode
+  process.stderr.write(
+    "\x1b[38;2;80;210;120m◆\x1b[0m \x1b[1mFlatrate mode\x1b[0m\x1b[2m — 100 turns · 6 parallel agents · 5 retries · verify-on\x1b[0m\n",
+  );
 }
 
 // ─── --model ──────────────────────────────────────────────────
@@ -150,6 +176,11 @@ function runHeadlessTask(task) {
     const { setAutoConfirm } = require("../cli/safety");
     setAutoConfirm(true);
   }
+  // Flatrate: raise the iteration cap after agent.js is loaded
+  if (flatrateMode) {
+    const { setMaxIterations } = require("../cli/agent");
+    setMaxIterations(100);
+  }
   // In headless mode, default to a fast model unless --model was explicitly set
   const hasExplicitModel = args.includes("--model");
   if (!hasExplicitModel) {
@@ -223,6 +254,23 @@ if (args.includes("--server")) {
   return; // event loop keeps process alive — no further code should run
 }
 
+// ─── --daemon / --watch (background watcher mode) ────────────
+if (args.includes("--daemon") || args.includes("--watch")) {
+  const flagIdx = args.includes("--daemon")
+    ? args.indexOf("--daemon")
+    : args.indexOf("--watch");
+  const next = args[flagIdx + 1];
+  // next might be a config path or another flag (or undefined)
+  const resolvedCfg =
+    next && !next.startsWith("--") ? next : ".nex/daemon.json";
+  const { startDaemon } = require("../cli/daemon");
+  startDaemon(resolvedCfg).catch((e) => {
+    console.error("Daemon error:", e.message);
+    process.exit(1);
+  });
+  return; // daemon handles SIGINT itself — keep process alive
+}
+
 // ─── --prompt-file (headless mode from file) ─────────────────
 const promptFileIdx = args.indexOf("--prompt-file");
 if (promptFileIdx !== -1) {
@@ -290,6 +338,11 @@ if (promptFileIdx !== -1) {
     // Normal REPL mode — run interactive setup if needed, then start REPL
     checkSetup().then(() => {
       preventSleep();
+      // Flatrate: apply iteration cap for interactive sessions too
+      if (flatrateMode) {
+        const { setMaxIterations } = require("../cli/agent");
+        setMaxIterations(100);
+      }
       const { startREPL } = require("../cli/index");
       startREPL();
       // Background: check for new Ollama Cloud models once per week (non-blocking)
