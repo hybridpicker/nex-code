@@ -14,7 +14,7 @@ function getSessionsDir() {
 function ensureDir() {
   const dir = getSessionsDir();
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }
 

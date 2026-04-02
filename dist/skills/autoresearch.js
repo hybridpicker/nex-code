@@ -14,7 +14,7 @@
  * - No iteration cap by default — runs until stopped
  */
 
-const { execSync, spawn } = require("child_process");
+const { execSync, execFileSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -473,7 +473,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           // Check if branch already exists
           let branchExists = false;
           try {
-            execSync(`git rev-parse --verify ${branchName}`, {
+            execFileSync("git", ["rev-parse", "--verify", branchName], {
               cwd: process.cwd(),
               stdio: ["pipe", "pipe", "pipe"],
             });
@@ -492,7 +492,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
             } catch {
               // Ignore stash errors (nothing to stash)
             }
-            execSync(`git checkout ${branchName}`, {
+            execFileSync("git", ["checkout", branchName], {
               cwd: process.cwd(),
               stdio: ["pipe", "pipe", "pipe"],
             });
@@ -504,7 +504,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           }
 
           const sourceBranch = gitBranch() || "unknown";
-          execSync(`git checkout -b ${branchName}`, {
+          execFileSync("git", ["checkout", "-b", branchName], {
             cwd: process.cwd(),
             stdio: ["pipe", "pipe", "pipe"],
           });
@@ -554,8 +554,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           }).trim();
 
           if (hasChanges) {
-            execSync(
-              `git commit -m "autoresearch: checkpoint before: ${(args.message || "experiment").replace(/"/g, '\\"')}"`,
+            execFileSync("git", ["commit", "-m", `autoresearch: checkpoint before: ${args.message || "experiment"}`],
               { cwd: process.cwd(), stdio: "pipe" },
             );
           }

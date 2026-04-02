@@ -250,7 +250,8 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
     const existing = fs.existsSync(envPath)
       ? fs.readFileSync(envPath, "utf-8").trimEnd() + "\n\n"
       : "";
-    fs.writeFileSync(envPath, existing + envLines.join("\n") + "\n");
+    fs.writeFileSync(envPath, existing + envLines.join("\n") + "\n", { mode: 0o600 });
+    try { fs.chmodSync(envPath, 0o600); } catch { /* best-effort */ }
     // auto-add .env to .gitignore
     const gitignorePath = path.join(process.cwd(), ".gitignore");
     if (fs.existsSync(gitignorePath)) {

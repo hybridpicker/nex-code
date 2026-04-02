@@ -6,7 +6,7 @@ const fs = require("fs").promises;
 const fsSync = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 const BLOB_THRESHOLD = 100 * 1024; // 100 KB
 
@@ -339,7 +339,7 @@ function createSnapshot(name, cwd = process.cwd()) {
         error: "No changes to snapshot (working tree clean)",
       };
     }
-    execSync(`git stash push -u -m "${label}"`, { cwd, timeout: 15000 });
+    execFileSync("git", ["stash", "push", "-u", "-m", label], { cwd, timeout: 15000 });
     // Immediately pop so working tree is restored (we're just tagging the state)
     execSync("git stash pop", { cwd, timeout: 10000 });
     return { name: label, label, ok: true };
