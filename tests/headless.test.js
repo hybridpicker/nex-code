@@ -36,6 +36,14 @@ describe("headless mode (bin/nex-code.js)", () => {
     });
   });
 
+  // ─── --daemon in --help ─────────────────────────────────────
+  describe("--daemon flag", () => {
+    it("--help output mentions --daemon", () => {
+      const out = execFileSync("node", [BIN, "--help"], { encoding: "utf-8" });
+      expect(out).toContain("--daemon");
+    });
+  });
+
   // ─── --task validation ──────────────────────────────────────
   describe("--task validation", () => {
     it("exits with error when --task has no prompt", () => {
