@@ -208,10 +208,17 @@ function estimateDeltaTokens(oldMessages, newMessages) {
 
 /**
  * Estimate tokens for tool definitions.
+ * Cached by array reference (WeakMap) — tool definitions don't change mid-session,
+ * but this function is called 11+ times per loop iteration via getUsage()/forceCompress().
  */
+const _toolTokensCache = new WeakMap();
+
 function estimateToolsTokens(tools) {
   if (!tools || tools.length === 0) return 0;
-  return estimateTokens(JSON.stringify(tools));
+  if (_toolTokensCache.has(tools)) return _toolTokensCache.get(tools);
+  const tokens = estimateTokens(JSON.stringify(tools));
+  _toolTokensCache.set(tools, tokens);
+  return tokens;
 }
 
 // ─── Context Window ────────────────────────────────────────────

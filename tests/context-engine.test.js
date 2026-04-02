@@ -162,6 +162,38 @@ describe("context-engine.js", () => {
       ];
       expect(estimateToolsTokens(tools)).toBeGreaterThan(10);
     });
+
+    it("returns cached result for same array reference", () => {
+      const tools = [
+        {
+          type: "function",
+          function: {
+            name: "read_file",
+            description: "Read a file from disk",
+            parameters: {
+              type: "object",
+              properties: { path: { type: "string" } },
+            },
+          },
+        },
+      ];
+      const first = estimateToolsTokens(tools);
+      const second = estimateToolsTokens(tools);
+      expect(second).toBe(first);
+    });
+
+    it("computes separately for different array references", () => {
+      const tools1 = [
+        { type: "function", function: { name: "a", description: "short", parameters: {} } },
+      ];
+      const tools2 = [
+        { type: "function", function: { name: "a", description: "short", parameters: {} } },
+        { type: "function", function: { name: "b", description: "another tool with more text", parameters: {} } },
+      ];
+      const t1 = estimateToolsTokens(tools1);
+      const t2 = estimateToolsTokens(tools2);
+      expect(t2).toBeGreaterThan(t1);
+    });
   });
 
   // ─── getContextWindow ──────────────────────────────────────
