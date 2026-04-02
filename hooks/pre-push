@@ -127,4 +127,35 @@ if [ "$VIOLATION_COUNT" -gt 0 ]; then
   exit 1
 fi
 
+# ─── Benchmark Gate ─────────────────────────────────────────────
+# Runs smoke-test benchmark and blocks push if quality/speed regressed.
+# Bypass via: NEX_SKIP_BENCHMARK=1 git push
+
+if [ "${NEX_SKIP_BENCHMARK:-0}" = "1" ]; then
+  echo "[pre-push] Benchmark gate skipped (NEX_SKIP_BENCHMARK=1)"
+else
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  GATE_SCRIPT="${REPO_ROOT}/scripts/benchmark-gate.js"
+
+  if [ -f "$GATE_SCRIPT" ]; then
+    echo "[pre-push] Running benchmark gate..."
+    if ! node "$GATE_SCRIPT"; then
+      echo ""
+      echo "╔══════════════════════════════════════════════════════════╗"
+      echo "║  BENCHMARK REGRESSION — push blocked                    ║"
+      echo "╠══════════════════════════════════════════════════════════╣"
+      echo "║  Quality or speed regressed below baseline.             ║"
+      echo "║  Review the output above for details.                   ║"
+      echo "║                                                         ║"
+      echo "║  Update baseline: npm run benchmark:gate -- --update-baseline"
+      echo "║  Bypass: NEX_SKIP_BENCHMARK=1 git push                 ║"
+      echo "╚══════════════════════════════════════════════════════════╝"
+      echo ""
+      exit 1
+    fi
+  else
+    echo "[pre-push] Warning: benchmark-gate.js not found, skipping gate"
+  fi
+fi
+
 exit 0
