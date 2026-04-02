@@ -4603,6 +4603,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           // else: normal targeted section read of a large file — let through silently
         } else if (alreadyRead >= 1) {
+          // Test-failure recovery: allow one full re-read if a test command just
+          // failed while this file was recently edited. Without this bypass, the model
+          // cannot inspect the broken output it produced and invents ghost problems.
+          const _recoveryCount = _sessionLastEditFailed.get(path) || 0;
+          if (_recoveryCount > 0) {
+            const shortPath = path.split("/").slice(-2).join("/");
+            console.log(
+              `${C.cyan}  ↩ Full re-read: "${shortPath}" — test-failure recovery (${_recoveryCount} remaining)${C.reset}`,
+            );
+            const newRecovery = _recoveryCount - 1;
+            if (newRecovery <= 0) {
+              _sessionLastEditFailed.delete(path);
+            } else {
+              _sessionLastEditFailed.set(path, newRecovery);
+            }
+            // fall through — read is allowed
+          } else {
           // Unbounded re-read — block immediately to prevent context flood
           const shortPath = path.split("/").slice(-2).join("/");
           const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
@@ -4629,6 +4646,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
             tool_call_id: prep.callId,
           };
+          } // end else (no recovery budget)
         }
         // If this read was approved, count it as pending so subsequent reads in
         // the same batch see an accurate cumulative count and can't all slip
@@ -5220,6 +5238,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (firstLine.includes("old_text not found")) {
             const prevCount = _sessionLastEditFailed.get(prep.args.path) || 0;
             _sessionLastEditFailed.set(prep.args.path, prevCount + 1);
+          }
+        }
+        // Test-failure recovery: when a test/build command fails after edits, allow one
+        // full re-read of each recently edited file so the model can diagnose broken output.
+        // Without this, the model cannot see its own broken edit and invents ghost problems.
+        if (!isOk && prep.fnName === "bash" && _sessionFileEditCounts.size > 0) {
+          const cmd = (prep.args?.command || "").toLowerCase();
+          const isTestLike = /\b(test|jest|vitest|pytest|mocha|tsc|build|lint|eslint|check)\b/.test(cmd);
+          if (isTestLike) {
+            for (const [editedPath] of _sessionFileEditCounts) {
+              if (!_sessionLastEditFailed.has(editedPath)) {
+                _sessionLastEditFailed.set(editedPath, 1);
+                debugLog(`${C.cyan}  ↩ Test failure — queuing recovery re-read: "${editedPath.split("/").pop()}"${C.reset}`);
+              }
+            }
           }
         }
         // Track consecutive file-not-found errors — after 2+ misses, force search instead of guessing
