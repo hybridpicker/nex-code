@@ -26,6 +26,22 @@ Two-tier command filtering protects against dangerous operations:
 
 All tool implementations that execute external commands use `execFileSync` with argument arrays (not string interpolation) to prevent shell injection from LLM-generated arguments.
 
+### SSRF Protection
+
+The `web_fetch` tool validates URLs against private/internal IP ranges before making requests. Blocked ranges include `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `localhost`, and IPv6 private addresses. This prevents the LLM from accessing internal services or cloud metadata endpoints.
+
+### File Permission Hardening
+
+Sensitive files are created with restrictive permissions:
+
+- `.env` files: `0600` (owner read/write only)
+- Session files (`.nex/sessions/`): `0600` with directories at `0700`
+- Temporary files (screenshots, debug logs): `0600`
+
+### SSH Security
+
+Remote agent spawning uses `StrictHostKeyChecking=accept-new` (accepts on first connect, rejects key changes) and creates temporary task files with `chmod 600`. Path and model arguments are sanitized with allowlist character sets.
+
 ### MCP Environment Isolation
 
 MCP server subprocesses receive only a safe allowlist of environment variables (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `TERM`, `NODE_ENV`). API keys and secrets from `process.env` are never leaked to MCP servers.
@@ -42,7 +58,7 @@ Tool results (e.g., `read_file`, `bash`) are automatically scanned for common se
 
 - **LLM-generated commands**: The `bash` tool executes shell commands suggested by the LLM. While safety patterns block many dangerous commands, the pattern list is not exhaustive. Always review commands before confirming execution.
 - **File access**: The LLM can read and write files within the working directory. The permission system can restrict this, but defaults allow read access.
-- **Network access**: `web_fetch` and `web_search` tools can make HTTP requests. These can be disabled via the permission system.
+- **Network access**: `web_fetch` and `web_search` tools can make HTTP requests to public endpoints. Private/internal IPs are blocked, but DNS rebinding attacks are not covered. These tools can be disabled via the permission system.
 
 ## Recommendations
 

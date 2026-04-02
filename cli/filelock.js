@@ -68,8 +68,8 @@ function atomicWrite(filePath, content) {
   const dir = path.dirname(filePath);
   const tmp = path.join(dir, `.nex-tmp.${process.pid}.${Date.now()}`);
   try {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, content, "utf-8");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(tmp, content, { encoding: "utf-8", mode: 0o600 });
     fs.renameSync(tmp, filePath);
   } catch (err) {
     try {
