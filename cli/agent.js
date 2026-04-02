@@ -397,7 +397,12 @@ function detectAndTruncateLoop(text, maxRepeats = 5) {
     }
   }
 
-  if (maxCount <= maxRepeats)
+  // Dynamic threshold for file reading patterns to prevent timeout loops
+  const isFileReadingPattern = worstParagraph.toLowerCase().includes('read_file') || 
+                            worstParagraph.toLowerCase().includes('reading');
+  const effectiveMaxRepeats = isFileReadingPattern ? 2 : maxRepeats;
+  
+  if (maxCount <= effectiveMaxRepeats)
     return { text, truncated: false, repeatCount: maxCount };
 
   // Truncate after the maxRepeats-th occurrence of the repeated paragraph
@@ -3433,7 +3438,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _superNuclearFires++;
               // Scale budget with pending work: 3 extra calls per pending file, capped at +15.
               // Ensures a 5-file task has enough budget to read + edit remaining files post-wipe.
-              _postWipeToolBudget = 12 + Math.min(_pendingFileCount * 3, 15); // extendable +5 on progress
+              _postWipeToolBudget = 10 + Math.min(_pendingFileCount * 3, 7); // within safety bounds [10,17]
               _postWipeEverFired = true; // track that a wipe occurred (distinguishes exhausted from initial -1)
               _filesModifiedAtWipe = filesModified.size; // track progress baseline for budget extension
               _postWipeBudgetExtended = false; // one-time extension flag
@@ -3874,6 +3879,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             conversationMessages.push(continueNudge);
             continue; // retry without counting as a step
           }
+        }
+        // ─── Early exit in headless mode ──────────────────────────────────────
+        // When running in auto/headless mode (benchmarks, improvement loop), once
+        // the model has edited files and produces a text-only response, the task
+        // is done. Skip further verification/polish iterations to save time.
+        if (getAutoConfirm() && !opts.skillLoop && filesModified.size > 0 && hasText && totalSteps >= 2) {
+          debugLog(
+            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified, text response received${C.reset}`,
+          );
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          saveNow(conversationMessages);
+          break outer;
         }
         // ─── Phase transitions (plan → implement → verify) ────────────────────
         // Auto-advance if model keeps hitting the plan-phase bash block without

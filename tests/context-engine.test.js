@@ -1293,13 +1293,13 @@ describe("context-engine.js", () => {
       // full: 0.75 → 0.68, standard: 0.70 → 0.65
       expect(TIER_COMPRESSION_THRESHOLDS.essential).toBe(0.60);
       expect(TIER_COMPRESSION_THRESHOLDS.standard).toBe(0.65);
-      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.68);
+      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.75);
     });
 
-    it("TIER_COMPRESSION_THRESHOLDS.full is capped at 0.68", () => {
-      // Full-tier threshold was lowered from 0.75 → 0.68 to trigger compression
-      // earlier and prevent context reaching 111%+ before compression fires.
-      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.68);
+    it("TIER_COMPRESSION_THRESHOLDS.full matches COMPRESSION_THRESHOLD", () => {
+      // Full-tier raised to 0.75 — earlier 0.68 was causing frequent
+      // fitToContext overhead, hurting task completion speed.
+      expect(TIER_COMPRESSION_THRESHOLDS.full).toBe(0.75);
       // Raw COMPRESSION_THRESHOLD (env-override base) stays at 0.75
       expect(COMPRESSION_THRESHOLD).toBe(0.75);
     });
