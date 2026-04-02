@@ -325,7 +325,7 @@ async function decompose(prompt, model, opts = {}) {
   if (totalEstimated > SESSION_BUDGET) {
     const { debugLog: _dl } = require("./debug");
     _dl(
-      `\x1b[33m  ⚠ Orchestrator: total estimated calls ${totalEstimated} > ${SESSION_BUDGET} — consider raising maxSubTasks\x1b[0m`,
+      `${require("./theme").T.yellow}  ⚠ Orchestrator: total estimated calls ${totalEstimated} > ${SESSION_BUDGET} — consider raising maxSubTasks${require("./theme").T.reset}`,
     );
   }
 

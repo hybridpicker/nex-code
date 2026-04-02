@@ -693,7 +693,7 @@ npm install
       expect(stderrSpy.mock.calls[0][0]).toBe("\x1b[?25l");
       // Second write: frame 0 (● in cyan)
       expect(stderrSpy.mock.calls[1][0]).toContain("●");
-      expect(stderrSpy.mock.calls[1][0]).toContain("\x1b[36m");
+      expect(stderrSpy.mock.calls[1][0]).toContain(require("../cli/theme").T.cyan);
       sr.stopCursor();
     });
 

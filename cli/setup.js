@@ -12,12 +12,13 @@ const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 
-const R = "\x1b[0m";
-const B = "\x1b[1m";
-const D = "\x1b[2m";
-const Y = "\x1b[33m";
-const CY = "\x1b[36m";
-const G = "\x1b[32m";
+const { T } = require("./theme");
+const R = T.reset;
+const B = T.bold;
+const D = T.dim;
+const Y = T.yellow;
+const CY = T.cyan;
+const G = T.green;
 
 // ─── helpers ─────────────────────────────────────────────────
 
