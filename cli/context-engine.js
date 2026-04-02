@@ -233,11 +233,21 @@ function getContextWindow() {
  * @param {Array} tools - Tool definitions
  * @returns {{ used: number, limit: number, percentage: number, breakdown: object }}
  */
-let _usageCache = { msgCount: -1, lastMsgRef: null, toolCount: -1, result: null };
+let _usageCache = {
+  msgCount: -1, lastMsgRef: null, toolCount: -1, result: null,
+  // Incremental tracking: avoid O(n) full recalculation when messages are only appended
+  messagesRef: null,       // reference to the messages array itself
+  messageTokens: 0,        // running total of message tokens
+  systemTokens: 0,
+  conversationTokens: 0,
+  toolResultTokens: 0,
+};
 
 function getUsage(messages, tools) {
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
   const toolCount = tools ? tools.length : 0;
+
+  // Fast path: exact same state as last call
   if (
     _usageCache.result &&
     messages.length === _usageCache.msgCount &&
@@ -247,27 +257,55 @@ function getUsage(messages, tools) {
     return _usageCache.result;
   }
 
-  const messageTokens = estimateMessagesTokens(messages);
+  let messageTokens, systemTokens, conversationTokens, toolResultTokens;
+
+  // Incremental path: same array reference with only new messages appended
+  if (
+    _usageCache.messagesRef === messages &&
+    messages.length > _usageCache.msgCount &&
+    _usageCache.msgCount >= 0
+  ) {
+    // Start from cached totals and only compute the new messages
+    messageTokens = _usageCache.messageTokens;
+    systemTokens = _usageCache.systemTokens;
+    conversationTokens = _usageCache.conversationTokens;
+    toolResultTokens = _usageCache.toolResultTokens;
+
+    for (let i = _usageCache.msgCount; i < messages.length; i++) {
+      const t = estimateMessageTokens(messages[i]);
+      messageTokens += t;
+      if (messages[i].role === "system") {
+        systemTokens += t;
+      } else if (messages[i].role === "tool") {
+        toolResultTokens += t;
+      } else {
+        conversationTokens += t;
+      }
+    }
+  } else {
+    // Full recalculation (array changed, messages removed/replaced, or first call)
+    messageTokens = 0;
+    systemTokens = 0;
+    conversationTokens = 0;
+    toolResultTokens = 0;
+
+    for (const msg of messages) {
+      const t = estimateMessageTokens(msg);
+      messageTokens += t;
+      if (msg.role === "system") {
+        systemTokens += t;
+      } else if (msg.role === "tool") {
+        toolResultTokens += t;
+      } else {
+        conversationTokens += t;
+      }
+    }
+  }
+
   const toolTokens = estimateToolsTokens(tools);
   const used = messageTokens + toolTokens;
   const limit = getContextWindow();
   const percentage = limit > 0 ? (used / limit) * 100 : 0;
-
-  // Breakdown
-  let systemTokens = 0;
-  let conversationTokens = 0;
-  let toolResultTokens = 0;
-
-  for (const msg of messages) {
-    const t = estimateMessageTokens(msg);
-    if (msg.role === "system") {
-      systemTokens += t;
-    } else if (msg.role === "tool") {
-      toolResultTokens += t;
-    } else {
-      conversationTokens += t;
-    }
-  }
 
   const result = {
     used,
@@ -282,7 +320,11 @@ function getUsage(messages, tools) {
     messageCount: messages.length,
   };
 
-  _usageCache = { msgCount: messages.length, lastMsgRef: lastMsg, toolCount, result };
+  _usageCache = {
+    msgCount: messages.length, lastMsgRef: lastMsg, toolCount, result,
+    messagesRef: messages,
+    messageTokens, systemTokens, conversationTokens, toolResultTokens,
+  };
   return result;
 }
 
@@ -646,7 +688,10 @@ let _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
 
 function invalidateFitToContextCache() {
   _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
-  _usageCache = { msgCount: -1, lastMsgRef: null, toolCount: -1, result: null };
+  _usageCache = {
+    msgCount: -1, lastMsgRef: null, toolCount: -1, result: null,
+    messagesRef: null, messageTokens: 0, systemTokens: 0, conversationTokens: 0, toolResultTokens: 0,
+  };
 }
 
 async function fitToContext(messages, tools, options = {}) {
@@ -694,10 +739,56 @@ async function fitToContext(messages, tools, options = {}) {
   let oldMessages = messages.slice(startIdx, recentStart);
   const recentMessages = messages.slice(recentStart);
 
-  // Phase 0: LLM Compacting
-  // Pinned messages (progress snapshots) are excluded from LLM compaction
-  // and re-added after, so they survive regardless of what the compactor returns.
-  // Skip in benchmark/headless mode — the LLM round-trip adds 100-500ms per call.
+  // ── Cheap compression first (Phases 1-3) ────────────────────────────
+  // Try string-based compression before the expensive LLM compactor.
+  // This avoids the 100-500ms LLM round-trip when simple truncation suffices.
+
+  // Phase 1: Light compression
+  let compressed = oldMessages.map((msg) => compressMessage(msg, "light"));
+  let result = buildResult(system, compressed, recentMessages);
+  let tokens = estimateMessagesTokens(result);
+
+  if (tokens + toolTokens <= targetMax) {
+    return {
+      messages: result,
+      compressed: true,
+      compacted: false,
+      tokensRemoved: originalTokens - tokens,
+    };
+  }
+
+  // Phase 2: Medium compression
+  compressed = oldMessages.map((msg) => compressMessage(msg, "medium"));
+  result = buildResult(system, compressed, recentMessages);
+  tokens = estimateMessagesTokens(result);
+
+  if (tokens + toolTokens <= targetMax) {
+    return {
+      messages: result,
+      compressed: true,
+      compacted: false,
+      tokensRemoved: originalTokens - tokens,
+    };
+  }
+
+  // Phase 3: Aggressive compression
+  compressed = oldMessages.map((msg) => compressMessage(msg, "aggressive"));
+  result = buildResult(system, compressed, recentMessages);
+  tokens = estimateMessagesTokens(result);
+
+  if (tokens + toolTokens <= targetMax) {
+    return {
+      messages: result,
+      compressed: true,
+      compacted: false,
+      tokensRemoved: originalTokens - tokens,
+    };
+  }
+
+  // ── Phase 4: LLM Compacting (only when cheap compression wasn't enough) ──
+  // The LLM compactor fires an API call (100-500ms) to semantically summarize
+  // old messages. Only use it when Phases 1-3 couldn't fit the context.
+  // Pinned messages (progress snapshots) are excluded and re-added after.
   const skipCompactor = process.env.NEX_SKIP_COMPACTOR === "1";
   const pinnedMessages = oldMessages.filter((m) => m._pinned);
   const nonCompacted = oldMessages.filter((m) => !m._compacted && !m._pinned);
@@ -718,7 +809,7 @@ async function fitToContext(messages, tools, options = {}) {
             tokensRemoved: originalTokens - t,
           };
         }
-        // Compacted but still too large → continue with compacted messages as base
+        // Compacted but still too large → continue to Phase 5 with compacted messages
         oldMessages = compressedOld;
       }
     } catch (err) {
@@ -727,52 +818,7 @@ async function fitToContext(messages, tools, options = {}) {
     }
   }
 
-  // Determine compression level based on how far over target we are
-  const overageRatio = (totalUsed - targetMax) / targetMax;
-
-  // Phase 1: Light compression (≤15% over target)
-  let compressed = oldMessages.map((msg) => compressMessage(msg, "light"));
-  let result = buildResult(system, compressed, recentMessages);
-  let tokens = estimateMessagesTokens(result);
-
-  if (tokens + toolTokens <= targetMax) {
-    return {
-      messages: result,
-      compressed: true,
-      compacted: false,
-      tokensRemoved: originalTokens - tokens,
-    };
-  }
-
-  // Phase 2: Medium compression (≤30% over target)
-  compressed = oldMessages.map((msg) => compressMessage(msg, "medium"));
-  result = buildResult(system, compressed, recentMessages);
-  tokens = estimateMessagesTokens(result);
-
-  if (tokens + toolTokens <= targetMax) {
-    return {
-      messages: result,
-      compressed: true,
-      compacted: false,
-      tokensRemoved: originalTokens - tokens,
-    };
-  }
-
-  // Phase 3: Aggressive compression (>30% over target)
-  compressed = oldMessages.map((msg) => compressMessage(msg, "aggressive"));
-  result = buildResult(system, compressed, recentMessages);
-  tokens = estimateMessagesTokens(result);
-
-  if (tokens + toolTokens <= targetMax) {
-    return {
-      messages: result,
-      compressed: true,
-      compacted: false,
-      tokensRemoved: originalTokens - tokens,
-    };
-  }
-
-  // Phase 4: Remove lowest-relevance messages until we fit.
+  // Phase 5: Remove lowest-relevance messages until we fit.
   // Pinned messages (progress snapshots) are never removed.
   const activeFiles = extractActiveFiles([...compressed, ...recentMessages]);
   const scored = compressed.map((msg, i) => ({

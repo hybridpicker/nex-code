@@ -2644,6 +2644,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const toolCounts = new Map();
   const filesModified = new Set();
   const filesRead = new Set();
+  let _readOnlyToolStreak = 0;        // consecutive read-only tool iterations (no file writes)
+  let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
   // Loop detection: use session-level Maps so counters persist across REPL turns.
@@ -6238,6 +6240,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`,
             );
           }
+        }
+      }
+
+      // ─── Stagnation detection (headless mode) ────────────────────────────
+      // In headless/auto-confirm mode, track consecutive iterations where only
+      // read-only tools (read_file, grep, glob, list_directory, bash) run with
+      // no file modifications. If the model keeps investigating without acting
+      // for too many iterations, it's stagnating — force early exit.
+      if (getAutoConfirm() && !opts.skillLoop) {
+        const _batchHasWrite = prepared.some(
+          (p) => p && ["write_file", "edit_file", "patch_file"].includes(p.fnName),
+        );
+        if (_batchHasWrite) {
+          _readOnlyToolStreak = 0;
+        } else {
+          if (_readOnlyToolStreak === 0) _filesModifiedAtStreakStart = filesModified.size;
+          _readOnlyToolStreak++;
+        }
+        // After 8+ read-only iterations with no new file writes, force exit
+        if (_readOnlyToolStreak >= 8 && totalSteps >= 4 && filesModified.size === _filesModifiedAtStreakStart) {
+          debugLog(
+            `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
+          );
+          if (taskProgress) { taskProgress.stop(); taskProgress = null; }
+          setOnChange(null);
+          _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+          saveNow(conversationMessages);
+          break outer;
         }
       }
 

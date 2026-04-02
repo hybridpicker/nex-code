@@ -31,6 +31,7 @@ const {
   TIER_COMPRESSION_THRESHOLDS,
   SAFETY_MARGIN,
   KEEP_RECENT,
+  invalidateFitToContextCache,
 } = require("../cli/context-engine");
 
 const registry = require("../cli/providers/registry");
@@ -224,6 +225,88 @@ describe("context-engine.js", () => {
       expect(usage.percentage).toBeLessThan(10);
       expect(usage.limit).toBe(128000);
     });
+
+    it("uses incremental cache when messages are appended to the same array", () => {
+      invalidateFitToContextCache(); // reset cache
+      const messages = [
+        { role: "system", content: "System prompt" },
+        { role: "user", content: "Hello" },
+      ];
+      const tools = [];
+
+      const usage1 = getUsage(messages, tools);
+      expect(usage1.messageCount).toBe(2);
+      const tokens1 = usage1.used;
+
+      // Append a new message to the same array
+      messages.push({ role: "assistant", content: "Hi there!" });
+      const usage2 = getUsage(messages, tools);
+
+      expect(usage2.messageCount).toBe(3);
+      expect(usage2.used).toBeGreaterThan(tokens1);
+      // Breakdown should include the new assistant message
+      expect(usage2.breakdown.conversation).toBeGreaterThan(usage1.breakdown.conversation);
+    });
+
+    it("incremental cache produces same results as full recalculation", () => {
+      invalidateFitToContextCache();
+      const messages = [
+        { role: "system", content: "You are a helpful assistant" },
+        { role: "user", content: "Fix the bug in auth.js" },
+      ];
+
+      // Prime the cache
+      getUsage(messages, []);
+
+      // Append several messages
+      messages.push({ role: "assistant", content: "Let me check that file." });
+      messages.push({ role: "tool", content: "file contents here...", tool_call_id: "c1" });
+      messages.push({ role: "assistant", content: "I found the issue." });
+
+      // Get incremental result
+      const incremental = getUsage(messages, []);
+
+      // Force full recalculation by invalidating cache
+      invalidateFitToContextCache();
+      const full = getUsage(messages, []);
+
+      expect(incremental.used).toBe(full.used);
+      expect(incremental.breakdown.system).toBe(full.breakdown.system);
+      expect(incremental.breakdown.conversation).toBe(full.breakdown.conversation);
+      expect(incremental.breakdown.toolResults).toBe(full.breakdown.toolResults);
+      expect(incremental.percentage).toBe(full.percentage);
+    });
+
+    it("falls back to full recalculation when array reference changes", () => {
+      invalidateFitToContextCache();
+      const messages1 = [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi" },
+      ];
+      getUsage(messages1, []);
+
+      // New array with same content but different reference
+      const messages2 = [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi" },
+        { role: "user", content: "What's up?" },
+      ];
+      const usage = getUsage(messages2, []);
+      expect(usage.messageCount).toBe(3);
+      expect(usage.used).toBeGreaterThan(0);
+    });
+
+    it("falls back to full recalculation after invalidation", () => {
+      const messages = [{ role: "user", content: "Hello" }];
+      getUsage(messages, []);
+      invalidateFitToContextCache();
+
+      messages.push({ role: "assistant", content: "Hi there!" });
+      // After invalidation, msgCount is -1, so incremental path won't fire
+      const usage = getUsage(messages, []);
+      expect(usage.messageCount).toBe(2);
+      expect(usage.used).toBeGreaterThan(0);
+    });
   });
 
   // ─── compressMessage ───────────────────────────────────────
@@ -335,6 +418,70 @@ describe("context-engine.js", () => {
       const { compressed, tokensRemoved } = await fitToContext(messages, []);
       expect(compressed).toBe(true);
       expect(tokensRemoved).toBeGreaterThan(0);
+    });
+
+    it("skips LLM compactor when cheap compression is sufficient", async () => {
+      // Use a context window where the conversation exceeds threshold but
+      // cheap (string) compression can fit. The compactor should NOT be called.
+      // Context: 2000 tokens, threshold ~0.65 → targetMax ~1100 tokens
+      // Messages: ~1500 raw tokens → over threshold but light truncation brings under
+      registry.getActiveModel.mockReturnValue({
+        id: "test",
+        contextWindow: 2000,
+      });
+      compactMessages.mockClear();
+
+      const messages = [
+        { role: "system", content: "sys" },
+        // 12 tool results: 400 chars each ≈ 100 tokens each → ~1200 tokens total
+        // Light compression truncates to 200 chars → ~50 tokens each → ~600 tokens
+        ...Array.from({ length: 12 }, (_, i) => ({
+          role: "tool",
+          content: "x".repeat(400),
+          tool_call_id: `c${i}`,
+        })),
+        // 10 recent messages (kept intact, ~50 tokens total)
+        ...Array.from({ length: 10 }, (_, i) => ({
+          role: "user",
+          content: `r ${i}`,
+        })),
+      ];
+
+      const { compressed, compacted } = await fitToContext(messages, [], { force: true });
+      expect(compressed).toBe(true);
+      expect(compacted).toBe(false);
+      // compactMessages should NOT have been called — cheap compression was enough
+      expect(compactMessages).not.toHaveBeenCalled();
+    });
+
+    it("uses LLM compactor when cheap compression is insufficient", async () => {
+      // Use a very small context where even aggressive compression can't fit
+      registry.getActiveModel.mockReturnValue({
+        id: "test",
+        contextWindow: 100,
+      });
+      compactMessages.mockClear();
+      // Return a compacted message that saves space
+      compactMessages.mockResolvedValueOnce({
+        message: { role: "assistant", content: "summary", _compacted: true },
+      });
+
+      const messages = [
+        { role: "system", content: "sys" },
+        // Many long messages — even aggressive compression won't fit 100 token window
+        ...Array.from({ length: 20 }, (_, i) => ({
+          role: "assistant",
+          content: "reasoning ".repeat(50),
+        })),
+        ...Array.from({ length: 10 }, (_, i) => ({
+          role: "user",
+          content: `recent ${i}`,
+        })),
+      ];
+
+      await fitToContext(messages, [], { force: true });
+      // compactMessages SHOULD have been called as a last resort
+      expect(compactMessages).toHaveBeenCalled();
     });
 
     it("keeps system prompt intact", async () => {

@@ -300,7 +300,7 @@ const { validateToolArgs } = require("../cli/tool-validator");
 const { routeSkillCall } = require("../cli/skills");
 const { routeMCPCall } = require("../cli/mcp");
 const { checkPermission } = require("../cli/permissions");
-const { confirm } = require("../cli/safety");
+const { confirm, getAutoConfirm } = require("../cli/safety");
 const { fitToContext, getUsage } = require("../cli/context-engine");
 const { trackUsage } = require("../cli/costs");
 const { autoSave } = require("../cli/session");
@@ -2686,6 +2686,81 @@ describe("agent.js", () => {
           m.content.includes("Previous session created"),
       );
       expect(hasNote).toBe(false);
+    });
+  });
+
+  // ─── stagnation detection (headless mode) ────────────────
+  describe("stagnation detection", () => {
+    afterEach(() => {
+      getAutoConfirm.mockReturnValue(false);
+    });
+
+    it("exits after 8 consecutive read-only tool iterations in headless mode", async () => {
+      clearConversation();
+      getAutoConfirm.mockReturnValue(true);
+
+      // Set up 9 consecutive read-only tool iterations (8 triggers exit)
+      for (let n = 0; n < 9; n++) {
+        mockStream("reading", [
+          { function: { name: "read_file", arguments: { path: `/file${n}.js` } }, id: `c${n}` },
+        ]);
+        executeTool.mockResolvedValueOnce(`content of file${n}`);
+      }
+      // This should NOT be reached
+      mockStream("SHOULD NOT REACH");
+
+      await processInput("Investigate the codebase");
+
+      const msgs = getConversationMessages();
+      const hasUnreached = msgs.some(
+        (m) => typeof m.content === "string" && m.content.includes("SHOULD NOT REACH"),
+      );
+      expect(hasUnreached).toBe(false);
+    });
+
+    it("resets stagnation counter when a write tool is used", async () => {
+      clearConversation();
+      getAutoConfirm.mockReturnValue(true);
+
+      // 5 read-only iterations
+      for (let n = 0; n < 5; n++) {
+        mockStream("reading", [
+          { function: { name: "read_file", arguments: { path: `/file${n}.js` } }, id: `r${n}` },
+        ]);
+        executeTool.mockResolvedValueOnce(`content`);
+      }
+      // 1 write iteration → resets counter
+      mockStream("editing", [
+        { function: { name: "edit_file", arguments: { path: "/fix.js" } }, id: "w1" },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      // Then a text-only turn → headless early exit (existing logic: filesModified > 0 + text)
+      mockStream("Done with the fix.");
+
+      await processInput("Fix the bug");
+
+      const msgs = getConversationMessages();
+      const hasDone = msgs.some(
+        (m) => typeof m.content === "string" && m.content.includes("Done with the fix"),
+      );
+      expect(hasDone).toBe(true);
+    });
+
+    it("does not trigger in interactive mode", async () => {
+      clearConversation();
+      getAutoConfirm.mockReturnValue(false);
+
+      // In interactive mode, first text-only response exits via normal path
+      mockStream("reading", [
+        { function: { name: "read_file", arguments: { path: "/a.js" } }, id: "c1" },
+      ]);
+      executeTool.mockResolvedValueOnce("content");
+      mockStream("Here is what I found.");
+
+      await processInput("Check a.js");
+
+      const msgs = getConversationMessages();
+      expect(msgs.length).toBeGreaterThan(0);
     });
   });
 });
