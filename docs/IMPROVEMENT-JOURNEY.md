@@ -633,3 +633,49 @@ per `processInput()` invocation, so the label tracks model switches
 
 **Why:** Shows users which model is actually running at a glance —
 genuinely useful in a multi-model tool, not just decorative.
+
+---
+
+### 2026-04-02
+
+#### `6e6c205` — Four hardening improvements from Claude Code source leak
+
+**Problem:** Lessons from the published Claude Code source revealed four gaps in nex-code's robustness and token efficiency.
+
+**Fixes:**
+
+1. **Frustration detector (`agent.js`)** — Regex-based pattern set (no LLM inference cost) recognises when a user is frustrated. Injects a soft empathy note so the model acknowledges the difficulty before proceeding.
+
+2. **CLAUDE.md / `.nex/CLAUDE.md` project instructions (`context.js`)** — `gatherProjectContext()` now loads `CLAUDE.md` (Claude Code–compatible) and the private `.nex/CLAUDE.md` (gitignored) into the system-prompt context. Both are tracked for cache invalidation via mtime.
+
+3. **Zsh / Unicode bash sanitizer (`safety.js`)** — `sanitizeBashCommand()` strips zero-width Unicode characters (U+200B–U+200D, U+FEFF, U+2060, U+00AD) and normalises Zsh `=cmd` expansion before all security checks run. Prevents bypass attempts that split keyword boundaries.
+
+4. **Anthropic prompt cache_control (`wire-protocols.js`)** — `AnthropicProtocol.buildRequestBody()` now splits the system prompt at `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` and marks the static half with `cache_control: { type: "ephemeral" }`, reducing repeated token spend on the Claude API provider.
+
+---
+
+#### `39d46a4` + `c243a7d` — Daemon / watch mode (`cli/daemon.js`)
+
+**Problem:** Long-running workflows (CI-style test watching, nightly audits, post-commit reviews) required external tooling or manual re-runs.
+
+**Fix:** Added `--daemon [config]` / `--watch [config]` flags backed by a new `cli/daemon.js` module (~425 lines, zero new npm deps).
+
+Three trigger types:
+- **`file-change`** — `fs.watch({ recursive: true })` + configurable debounce; passes `{changedFile}` / `{changedFiles}` template vars into the task string.
+- **`git-commit`** — polls `git log --format=%H -1` every 10 s; fires when HEAD changes; passes `{commitHash}` / `{commitMessage}`.
+- **`schedule`** — `setInterval`; supports `*/N * * * *` (every N minutes) and `0 H * * *` (daily at hour H); logs a warning and skips unsupported syntax.
+
+Additional details:
+- Desktop (`osascript`) and Matrix (`https.request`) notifications per trigger.
+- `clearConversation()` called after each task to isolate sessions.
+- Log rotation: one-line JSON per event, truncated (not deleted) at 5 MB.
+- Helpful error + full example config when `.nex/daemon.json` is missing.
+- 13 new unit tests; all 97 test suites (3892 tests) green.
+
+---
+
+#### `830f8c1` — Three pipeline robustness fixes
+
+1. **Tool-arg JSON repair (`wire-protocols.js`)** — `repairToolArgs()` normalises tool call arguments that devstral/qwen3 emit as a JSON string or with trailing commas.
+2. **Error-code propagation (`providers/ollama.js`)** — API errors now carry `err.code` so `classifyError()` in `sub-agent.js` correctly identifies retryable HTTP 502/503 and `ECONNRESET` failures.
+3. **Test-failure re-read bypass (`agent.js`)** — after a test run fails on a recently edited file, the model is allowed one full re-read so it can inspect the actual broken output rather than inventing ghost problems.

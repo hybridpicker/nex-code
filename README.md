@@ -123,7 +123,9 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 
 **Built-in VS Code extension.** A sidebar chat panel with streaming output, collapsible tool cards, and native VS Code theme support — shipped in the same repo, no separate install.
 
-**Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime, no daemon process.
+**Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime.
+
+**Daemon / watch mode.** Run `nex-code --daemon` to keep the process alive and fire tasks automatically on filesystem changes, git commits, or a cron schedule — configured via `.nex/daemon.json`. No extra dependencies; uses Node's built-in `fs.watch` and `setInterval`.
 
 **Server-aware from the first message.** When your prompt contains a URL whose domain matches a configured SSH profile (e.g. `server.example.com` → profile `server`), nex-code probes the server before responding — listing ports, running processes, and data directories. The model receives this topology before its first token, so it goes straight to `ssh_exec` instead of reading local files.
 
@@ -389,6 +391,9 @@ nex-code --prompt-file /tmp/task.txt --yolo --json
 | `--auto`                   | Skip confirmations (non-interactive, no REPL banner)                                                          |
 | `--yolo`                   | Skip all confirmations including dangerous commands (also configurable via `.nex/config.json` `"yolo": true`) |
 | `--server`                 | Start JSON-lines IPC server (used by the VS Code extension)                                                   |
+| `--daemon [config]`        | Run as background watcher — fires tasks on file changes, git commits, or schedule (reads `.nex/daemon.json`)  |
+| `--watch [config]`         | Alias for `--daemon`                                                                                          |
+| `--flatrate`               | Flatrate mode: 100 turns, 6 parallel agents, 5 retries (auto-enabled when `OLLAMA_API_KEY` is set)            |
 | `--json`                   | Output `{"success":true,"response":"..."}` to stdout                                                          |
 | `--max-turns <n>`          | Override the agentic loop iteration limit                                                                     |
 | `--model <spec>`           | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
@@ -924,6 +929,60 @@ nex-code --task "/ar-self-improve" --no-auto-orchestrate --max-turns 200
 `/ar-self-improve` uses nex-code's own 14-task quick benchmark as the fitness metric. Each experiment that raises the average score above the session baseline is kept; all others are reverted with `git reset`. The benchmark output includes a **Failing tasks** section that names which tasks each model got wrong, making root causes immediately visible.
 
 > **Self-improvement history** (2026-03-31): baseline 86.7 → **92.9** (+6.2 pts) in one session. Key fix: rewording the `edit_file` tool description so models call it directly instead of first calling `read_file`. `rnj-1:8b` jumped from 77.1 → 97.9 on that change alone.
+
+### Daemon / Watch Mode
+
+Keep nex-code running in the background and fire tasks automatically when things change. Reads config from `.nex/daemon.json` (or a path passed after the flag):
+
+```bash
+nex-code --daemon          # reads .nex/daemon.json
+nex-code --daemon /path/to/config.json
+nex-code --watch           # alias
+```
+
+**Example `.nex/daemon.json`:**
+
+```json
+{
+  "triggers": [
+    {
+      "on": "file-change",
+      "glob": "**/*.{js,ts}",
+      "ignore": ["dist/**", "node_modules/**"],
+      "task": "run npm test -- --testPathPattern={changedFile} and report results",
+      "debounceMs": 2000,
+      "auto": true
+    },
+    {
+      "on": "git-commit",
+      "task": "review the last commit for bugs or security issues — commit: {commitHash} \"{commitMessage}\"",
+      "auto": true
+    },
+    {
+      "on": "schedule",
+      "cron": "0 8 * * *",
+      "task": "check npm audit and report any new vulnerabilities",
+      "auto": true
+    }
+  ],
+  "notify": ["desktop", "matrix"],
+  "logFile": ".nex/daemon.log"
+}
+```
+
+**Trigger types:**
+
+| Type | Mechanism | Template vars |
+|------|-----------|---------------|
+| `file-change` | `fs.watch({ recursive: true })` + debounce | `{changedFile}`, `{changedFiles}` |
+| `git-commit` | polls `git log` every 10 s | `{commitHash}`, `{commitMessage}` |
+| `schedule` | `setInterval` — supports `*/N * * * *` and `0 H * * *` | — |
+
+**Notifications:** `"desktop"` fires a macOS notification via `osascript`. `"matrix"` posts to the room set in `NEX_MATRIX_URL` / `NEX_MATRIX_TOKEN` / `NEX_MATRIX_ROOM`.
+
+Each triggered task runs in its own isolated session (`clearConversation()` is called after every task). Events are appended as one-line JSON to `logFile`; the file is truncated (not deleted) when it exceeds 5 MB.
+
+No new npm dependencies — uses only Node.js built-ins (`fs`, `https`, `child_process`).
 
 ### Memory
 
