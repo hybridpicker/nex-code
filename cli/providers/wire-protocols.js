@@ -378,6 +378,40 @@ class AnthropicProtocol extends WireProtocol {
   }
 }
 
+// ─── Tool call argument repair (Ollama models) ──────────────
+// Some Ollama models (devstral, qwen3) occasionally return tool call
+// arguments as a JSON string instead of a parsed object, or with minor
+// syntax errors (trailing commas, literal \n in strings). This function
+// attempts to normalize them into a plain object before the caller uses them.
+
+function repairToolArgs(raw) {
+  // Already a plain object — nothing to do
+  if (raw !== null && typeof raw === "object") return raw;
+  // Not a string — can't repair
+  if (typeof raw !== "string") return raw || {};
+
+  // 1. Try clean parse first
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // fall through to repair attempts
+  }
+
+  // 2. Strip trailing commas before } or ]
+  let cleaned = raw.replace(/,\s*([}\]])/g, "$1");
+  // 3. Replace unescaped literal newlines inside strings with \\n
+  cleaned = cleaned.replace(/([^\\])\n/g, "$1\\n");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // fall through
+  }
+
+  // 4. Give up — return empty object and log a warning
+  // (better to call the tool with empty args than to drop it silently)
+  return {};
+}
+
 // ─── 3. Ollama Chat API Protocol (NDJSON) ───────────────────
 
 class OllamaStreamParser extends StreamParser {
@@ -425,7 +459,7 @@ class OllamaStreamParser extends StreamParser {
         id: tc.id || `ollama-${Date.now()}-${i}`,
         function: {
           name: tc.function?.name || tc.name || "unknown",
-          arguments: tc.function?.arguments || tc.arguments || {},
+          arguments: repairToolArgs(tc.function?.arguments ?? tc.arguments),
         },
       })),
     };
@@ -468,7 +502,7 @@ class OllamaChatProtocol extends WireProtocol {
         id: tc.id || `ollama-${Date.now()}-${i}`,
         function: {
           name: tc.function?.name || tc.name || "unknown",
-          arguments: tc.function?.arguments || tc.arguments || {},
+          arguments: repairToolArgs(tc.function?.arguments ?? tc.arguments),
         },
       })),
     };

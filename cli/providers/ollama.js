@@ -435,7 +435,11 @@ class OllamaProvider extends BaseProvider {
         ? ` [HTTP ${err.response.status}]`
         : "";
       const msg = await readStreamErrorBody(err, (p) => p?.error);
-      throw new Error(`API Error${status}: ${msg}`);
+      // Preserve error code so classifyError() in sub-agent.js can detect
+      // retryable network/server errors (ECONNRESET, 502/503, etc.).
+      const apiErr = new Error(`API Error${status}: ${msg}`);
+      apiErr.code = err.code || (err.response?.status ? `HTTP_${err.response.status}` : undefined);
+      throw apiErr;
     }
 
     const parser = ollamaProtocol.createStreamParser(onToken, {
@@ -461,7 +465,11 @@ class OllamaProvider extends BaseProvider {
 
       response.data.on("error", (err) => {
         if (options.signal?.aborted) return;
-        reject(new Error(`Stream error: ${err.message}`));
+        // Preserve the original error code so classifyError() in sub-agent.js can
+        // detect retryable stream drops (ECONNRESET, ETIMEDOUT, etc.) and retry.
+        const streamErr = new Error(`Stream error: ${err.message}`);
+        streamErr.code = err.code || err.name;
+        reject(streamErr);
       });
 
       response.data.on("end", () => {

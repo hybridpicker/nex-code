@@ -26,8 +26,8 @@ function _estTok(text) {
 }
 
 const MAX_SUB_ITERATIONS = 15;
-const MAX_PARALLEL_AGENTS = 5;
-const MAX_CHAT_RETRIES = 3;
+const MAX_PARALLEL_AGENTS = parseInt(process.env.NEX_MAX_PARALLEL || "5", 10);
+const MAX_CHAT_RETRIES = parseInt(process.env.NEX_MAX_CHAT_RETRIES || "3", 10);
 // Depth-1 agents (reviewers) get fewer iterations to stay lightweight
 const MAX_REVIEWER_ITERATIONS = 8;
 const MAX_REVIEWER_AGENTS = 2;
