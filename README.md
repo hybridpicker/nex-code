@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-3719-blue.svg" alt="Tests: 3719">
+  <img src="https://img.shields.io/badge/tests-3892-blue.svg" alt="Tests: 3892">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -929,6 +929,37 @@ nex-code --task "/ar-self-improve" --no-auto-orchestrate --max-turns 200
 `/ar-self-improve` uses nex-code's own 14-task quick benchmark as the fitness metric. Each experiment that raises the average score above the session baseline is kept; all others are reverted with `git reset`. The benchmark output includes a **Failing tasks** section that names which tasks each model got wrong, making root causes immediately visible.
 
 > **Self-improvement history** (2026-03-31): baseline 86.7 → **92.9** (+6.2 pts) in one session. Key fix: rewording the `edit_file` tool description so models call it directly instead of first calling `read_file`. `rnj-1:8b` jumped from 77.1 → 97.9 on that change alone.
+
+### Real-Life Benchmark
+
+A comprehensive benchmark suite that tests nex-code on 27 real-world tasks across 7 categories, using code patterns from actual projects:
+
+| Category | Weight | Tasks | What it tests |
+|----------|--------|-------|---------------|
+| Bug Fixing | 25% | 5 | Diagnose and fix real bugs (off-by-one, async/await, destructuring, timezone) |
+| Feature Implementation | 20% | 5 | Add endpoints, CSV export, volume control, chord filtering, rate limiting |
+| Code Understanding | 10% | 4 | Analyze codebases, find env vars, audit dependencies, map routes |
+| Server/DevOps | 15% | 4 | Nginx configs, systemd services, deploy scripts, Dockerfiles |
+| Multi-file Refactoring | 15% | 4 | Extract shared modules, rename across files, split monoliths, fix import paths |
+| Test Writing | 10% | 3 | Unit tests, API tests, edge case coverage |
+| Documentation | 5% | 2 | Setup guides, API documentation |
+
+Each task runs nex-code headless in an isolated temp directory with real file structures, then evaluates the result for task completion (40%), edit precision (25%), efficiency (20%), and quality (15%).
+
+```bash
+npm run benchmark:reallife                           # full suite
+npm run benchmark:reallife -- --category bugfix      # single category
+npm run benchmark:reallife -- --tasks bugfix-off-by-one-pagination  # single task
+npm run benchmark:report                             # view score trends
+```
+
+The **improvement loop** runs the benchmark, clusters failures, implements a targeted fix, re-benchmarks, and keeps or reverts:
+
+```bash
+npm run improve:reallife                             # interactive
+npm run improve:reallife -- --max-passes 20          # unattended
+./scripts/improve-reallife-overnight.sh              # overnight with logging
+```
 
 ### Daemon / Watch Mode
 

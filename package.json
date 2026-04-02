@@ -30,6 +30,9 @@
     "improve": "node scripts/improve.js",
     "extract-examples": "node scripts/extract-examples.js",
     "benchmark:realworld": "node scripts/benchmark-realworld.js",
+    "benchmark:reallife": "node scripts/benchmark-reallife.js",
+    "benchmark:report": "node scripts/benchmark-reallife-report.js",
+    "improve:reallife": "node scripts/improve-reallife.js",
     "release": "npm version patch && git push --follow-tags && npm publish"
   },
   "keywords": [
