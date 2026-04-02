@@ -165,10 +165,21 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
     evalResult = { taskCompletion: 0, editPrecision: 0, quality: 0, error: err.message };
   }
 
-  // Efficiency: tool calls vs budget
-  const efficiency = toolCalls > 0
-    ? Math.max(0, 1 - Math.max(0, toolCalls - task.maxToolCalls) / task.maxToolCalls)
-    : 0.5;
+  // Efficiency: time-based when tool counting is unavailable (0 tools reported),
+  // otherwise tool calls vs budget. Time-based: full marks under 70% of timeout,
+  // linear decay from 100% to 50% between 70%-100% of timeout.
+  const timeoutMs = task.timeoutMs || 180000;
+  let efficiency;
+  if (toolCalls > 0) {
+    efficiency = Math.max(0, 1 - Math.max(0, toolCalls - task.maxToolCalls) / task.maxToolCalls);
+  } else {
+    const timeRatio = elapsed / timeoutMs;
+    if (timeRatio <= 0.7) {
+      efficiency = 1.0;
+    } else {
+      efficiency = 1.0 - ((timeRatio - 0.7) / 0.3) * 0.5;
+    }
+  }
 
   // Composite score: completion(40%) + precision(25%) + efficiency(20%) + quality(15%)
   let score = Math.round(
@@ -178,9 +189,10 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
     (evalResult.quality || 0) * 0.15
   );
 
-  // Penalty: cap at 50 if timed out
+  // Penalty: proportional reduction for timeout (not hard cap)
+  // Tasks that completed the work but timed out still get credit for completion
   if (completionReason === "timeout") {
-    score = Math.min(score, 50);
+    score = Math.round(score * 0.7);
   }
 
   return {
@@ -350,9 +362,12 @@ async function main() {
   console.log(`  History: ${historyPath}\n`);
 }
 
-main().catch((err) => {
-  console.error("Benchmark failed:", err);
-  process.exit(1);
-});
+// Only run main() when executed directly, not when required as a module
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Benchmark failed:", err);
+    process.exit(1);
+  });
+}
 
 module.exports = { runTask, evaluateTask, TASKS };
