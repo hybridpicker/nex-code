@@ -817,8 +817,10 @@ Every file change is shown in a diff-style format before being applied:
 
 Nex Code automatically adapts all colours to your terminal's background:
 
-- **Dark terminals** — bright, saturated palette with `\x1b[2m` dim for muted text
+- **Dark terminals** — desaturated, accessible palette with `\x1b[2m` dim for muted text
 - **Light/white terminals** — darker, high-contrast palette; dim replaced with explicit grey to stay visible on white backgrounds; command echo uses a light blue-grey highlight instead of dark grey
+
+All colours use **24-bit RGB escape codes** (`\x1b[38;2;r;g;bm`) — no ANSI system colours 0–7. This ensures consistent rendering across all terminal themes (Dracula, Tokyo Night, Ghostty, Hyper, macOS Terminal, Solarized, etc.) without neon-saturated remaps or low-contrast issues. Tested against 20 terminal presets for WCAG contrast, saturation, and deuteranopia distinguishability.
 
 Detection priority:
 
