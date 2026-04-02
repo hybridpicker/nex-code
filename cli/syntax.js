@@ -10,15 +10,16 @@
 
 "use strict";
 
-// ─── ANSI token colors (16-color safe, readable on dark + light) ─────────────
+// ─── ANSI token colors (explicit RGB via theme, readable on all terminals) ───
+const { T } = require("./theme");
 const S = {
-  kw:    "\x1b[34m",   // blue — keywords
-  str:   "\x1b[32m",   // green — string literals
-  cmt:   "\x1b[90m",   // dark gray — comments
-  num:   "\x1b[33m",   // yellow — numbers
-  type:  "\x1b[36m",   // cyan — class names / types / tags
-  punct: "\x1b[35m",   // magenta — decorators / annotations
-  reset: "\x1b[0m",
+  kw:    T.syn_keyword, // blue — keywords
+  str:   T.syn_string,  // green — string literals
+  cmt:   T.syn_comment, // dark gray — comments
+  num:   T.syn_number,  // yellow — numbers
+  type:  T.cyan,        // cyan — class names / types / tags
+  punct: T.magenta,     // magenta — decorators / annotations
+  reset: T.reset,
 };
 
 // ─── Keyword sets per language ────────────────────────────────────────────────
@@ -96,18 +97,35 @@ function detectLang(filePath) {
   return EXT_MAP[ext] || null;
 }
 
+// ─── ANSI-safe regex replacement ────────────────────────────────────────────
+// Applies a regex replacement only to non-ANSI text segments,
+// preventing colour codes inserted by earlier passes from being re-tokenized.
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function _replaceOutsideAnsi(str, regex, replacer) {
+  const parts = str.split(ANSI_RE);
+  const codes = str.match(ANSI_RE) || [];
+  let result = "";
+  for (let i = 0; i < parts.length; i++) {
+    result += parts[i].replace(regex, replacer);
+    if (i < codes.length) result += codes[i];
+  }
+  return result;
+}
+
 // ─── Per-language highlight functions ────────────────────────────────────────
 
 function _highlightJSON(line) {
-  return line
-    // Keys first (object property names)
-    .replace(/"([^"\\]|\\.)*"\s*:/g, (m) => S.type + m + S.reset)
-    // Remaining strings
-    .replace(/"([^"\\]|\\.)*"/g, (m) => S.str + m + S.reset)
-    // Numbers
-    .replace(/\b-?(\d+(\.\d+)?([eE][+-]?\d+)?)\b/g, (m) => S.num + m + S.reset)
-    // Keywords
-    .replace(/\b(true|false|null)\b/g, (m) => S.kw + m + S.reset);
+  let out = line;
+  // Keys first (object property names)
+  out = out.replace(/"([^"\\]|\\.)*"\s*:/g, (m) => S.type + m + S.reset);
+  // Remaining strings
+  out = _replaceOutsideAnsi(out, /"([^"\\]|\\.)*"/g, (m) => S.str + m + S.reset);
+  // Numbers
+  out = _replaceOutsideAnsi(out, /\b-?(\d+(\.\d+)?([eE][+-]?\d+)?)\b/g, (m) => S.num + m + S.reset);
+  // Keywords
+  out = _replaceOutsideAnsi(out, /\b(true|false|null)\b/g, (m) => S.kw + m + S.reset);
+  return out;
 }
 
 function _highlightHTML(line) {
@@ -115,31 +133,33 @@ function _highlightHTML(line) {
   if (/<!--/.test(line)) {
     return line.replace(/<!--[\s\S]*?(?:-->|$)/g, (m) => S.cmt + m + S.reset);
   }
-  return line
-    // Closing / opening tag names
-    .replace(/(<\/?)([a-zA-Z][a-zA-Z0-9.-]*)/g, (m, open, tag) =>
-      open + S.type + tag + S.reset)
-    // Attribute names
-    .replace(/\s([a-zA-Z][a-zA-Z0-9-]*)=/g, (m, attr) =>
-      " " + S.kw + attr + S.reset + "=")
-    // Attribute values
-    .replace(/"([^"]*)"/g, (m) => S.str + m + S.reset);
+  let out = line;
+  // Closing / opening tag names
+  out = out.replace(/(<\/?)([a-zA-Z][a-zA-Z0-9.-]*)/g, (m, open, tag) =>
+    open + S.type + tag + S.reset);
+  // Attribute names
+  out = _replaceOutsideAnsi(out, /\s([a-zA-Z][a-zA-Z0-9-]*)=/g, (m, attr) =>
+    " " + S.kw + attr + S.reset + "=");
+  // Attribute values
+  out = _replaceOutsideAnsi(out, /"([^"]*)"/g, (m) => S.str + m + S.reset);
+  return out;
 }
 
 function _highlightCSS(line) {
-  return line
-    // Block comments
-    .replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (m) => S.cmt + m + S.reset)
-    // Hex colors
-    .replace(/#[0-9a-fA-F]{3,8}\b/g, (m) => S.num + m + S.reset)
-    // Numbers with units
-    .replace(/\b(-?\d+(?:\.\d+)?)(px|em|rem|vh|vw|vmin|vmax|%|s|ms|deg|fr)\b/g,
-      (m, n, u) => S.num + n + S.reset + u)
-    // CSS property names (word followed by colon)
-    .replace(/([a-z][a-z-]*)(\s*:)/g, (m, prop, colon) =>
-      S.type + prop + S.reset + colon)
-    // Strings
-    .replace(/"[^"]*"|'[^']*'/g, (m) => S.str + m + S.reset);
+  let out = line;
+  // Block comments
+  out = out.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (m) => S.cmt + m + S.reset);
+  // Hex colors
+  out = _replaceOutsideAnsi(out, /#[0-9a-fA-F]{3,8}\b/g, (m) => S.num + m + S.reset);
+  // Numbers with units
+  out = _replaceOutsideAnsi(out, /\b(-?\d+(?:\.\d+)?)(px|em|rem|vh|vw|vmin|vmax|%|s|ms|deg|fr)\b/g,
+    (m, n, u) => S.num + n + S.reset + u);
+  // CSS property names (word followed by colon)
+  out = _replaceOutsideAnsi(out, /([a-z][a-z-]*)(\s*:)/g, (m, prop, colon) =>
+    S.type + prop + S.reset + colon);
+  // Strings
+  out = _replaceOutsideAnsi(out, /"[^"]*"|'[^']*'/g, (m) => S.str + m + S.reset);
+  return out;
 }
 
 // ─── Main tokenizer (JS / PY / SH / GO / RS / JAVA) ─────────────────────────

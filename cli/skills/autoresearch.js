@@ -17,6 +17,7 @@
 const { execSync, execFileSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { T: _T } = require("../theme");
 
 // Lazy-load agent to reset read guards between experiments
 function resetReadGuards() {
@@ -959,7 +960,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
           args.metric < sessionBaselineScore
         ) {
           console.log(
-            `\x1b[31m   ⚠ Score ${args.metric} < baseline ${sessionBaselineScore} — overriding kept=true to kept=false\x1b[0m`,
+            `${_T.red}   ⚠ Score ${args.metric} < baseline ${sessionBaselineScore} — overriding kept=true to kept=false${_T.reset}`,
           );
           args.kept = false;
           args.status = "discard";
@@ -994,8 +995,8 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
         const keptCount = experiments.filter((e) => e.kept).length;
         const revertedCount = experiments.filter((e) => !e.kept).length;
         const statusIcon = args.kept
-          ? "\x1b[32m✔ KEPT\x1b[0m"
-          : "\x1b[31m✘ REVERTED\x1b[0m";
+          ? `${_T.green}✔ KEPT${_T.reset}`
+          : `${_T.red}✘ REVERTED${_T.reset}`;
         const delta =
           prev != null && typeof args.metric === "number"
             ? ` (${args.metric > prev ? "+" : ""}${(args.metric - prev).toFixed(1)} pts)`
@@ -1085,7 +1086,7 @@ Use ar_run_experiment with output_file to redirect, then ar_extract_metric to re
 
           const expNum = experiments.length + 1;
           console.log(
-            `\x1b[33m   ↩ Reverted\x1b[0m  ${currentHash.slice(0, 7)} → ${newHash.slice(0, 7)}${args.reason ? `  (${args.reason})` : ""}`,
+            `${_T.yellow}   ↩ Reverted${_T.reset}  ${currentHash.slice(0, 7)} → ${newHash.slice(0, 7)}${args.reason ? `  (${args.reason})` : ""}`,
           );
 
           return JSON.stringify({
@@ -1287,7 +1288,7 @@ function _runWatchTest(testCommand, changedFile) {
     } catch {
       // Agent not in active conversation — just log
       process.stderr.write(
-        `\n\x1b[33m⚠ Watch: tests failed after ${changedFile} changed\x1b[0m\n`,
+        `\n${_T.yellow}⚠ Watch: tests failed after ${changedFile} changed${_T.reset}\n`,
       );
     }
   }

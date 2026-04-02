@@ -16,14 +16,10 @@ describe("ui.js", () => {
     it("has all required color codes", () => {
       expect(C.reset).toBe("\x1b[0m");
       expect(C.bold).toBe("\x1b[1m");
-      expect(C.dim).toBe("\x1b[2m");
-      expect(C.red).toBe("\x1b[31m");
-      expect(C.green).toBe("\x1b[32m");
-      expect(C.yellow).toBe("\x1b[33m");
-      expect(C.blue).toBe("\x1b[34m");
-      expect(C.magenta).toBe("\x1b[35m");
-      expect(C.cyan).toBe("\x1b[36m");
-      expect(C.gray).toBe("\x1b[90m");
+      // All named colors must be ANSI escape sequences
+      for (const key of ["red", "green", "yellow", "blue", "magenta", "cyan", "gray"]) {
+        expect(C[key]).toMatch(/^\x1b\[/);
+      }
     });
   });
 

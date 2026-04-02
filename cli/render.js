@@ -482,7 +482,7 @@ class StreamRenderer {
     const pos = BOUNCE_POSITIONS[this._cursorFrame % BOUNCE_POSITIONS.length];
     let track = "";
     for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? "\x1b[36m●\x1b[0m" : " ";
+      track += i === pos ? `${require("./theme").T.cyan}●${require("./theme").T.reset}` : " ";
     }
     this._cursorWrite(`\x1b[2K\r${track}`);
     this._cursorFrame++;

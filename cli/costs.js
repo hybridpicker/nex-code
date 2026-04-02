@@ -14,6 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { T } = require("./theme");
 const { atomicWrite, withFileLockSync } = require("./filelock");
 
 const PRICING = {
@@ -78,7 +79,7 @@ function trackUsage(provider, model, inputTokens, outputTokens) {
     const budget = checkBudget(provider);
     if (!budget.allowed) {
       process.stderr.write(
-        `\x1b[33m\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}\x1b[0m\n`,
+        `${T.yellow}\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}${T.reset}\n`,
       );
     }
   }

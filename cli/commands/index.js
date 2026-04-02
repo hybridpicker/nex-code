@@ -3342,11 +3342,12 @@ async function startREPL() {
   // ─── ask_user handler — options-based clarification UI ──────
   const { setAskUserHandler } = require("../tools");
   setAskUserHandler(async (question, options) => {
-    const C_reset = "\x1b[0m",
-      C_bold = "\x1b[1m",
-      C_dim = "\x1b[2m";
-    const C_cyan = "\x1b[36m",
-      C_yellow = "\x1b[33m";
+    const { T: _T } = require("../theme");
+    const C_reset = _T.reset,
+      C_bold = _T.bold,
+      C_dim = _T.dim;
+    const C_cyan = _T.cyan,
+      C_yellow = _T.yellow;
 
     process.stdout.write(
       `\n  ${C_bold}${C_yellow}❓${C_reset}  ${C_bold}${question}${C_reset}\n\n`,
