@@ -1299,6 +1299,369 @@ module.exports = app;
     maxTurns: 12,
     timeoutMs: 180000,
   },
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Server/DevOps (additional — SSH/firewall focus)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "devops-firewall-rules",
+    category: "devops",
+    description:
+      "Create a firewall-cmd script that opens ports 9011-9023 for webhook services, " +
+      "blocks external access to port 5432 (PostgreSQL), and adds rate limiting " +
+      "on port 443 (max 1000 req/min). Include verification commands.",
+    sourceProject: "Documentation/AlmaLinux9Server",
+    setupFn(tmpDir) {
+      copyFiles("Documentation/AlmaLinux9Server", [
+        "00-SERVER-OVERVIEW.md",
+        "10-AUTO-DEPLOY.md",
+        "11-SERVER-MONITORING.md",
+      ], tmpDir);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const files = fs.readdirSync(tmpDir).filter(f => f.endsWith(".sh") || f.includes("firewall"));
+      if (files.length > 0) {
+        const content = fs.readFileSync(path.join(tmpDir, files[0]), "utf-8");
+        if (content.includes("9011") && content.includes("9023")) score.taskCompletion += 30;
+        if (content.includes("5432")) score.taskCompletion += 25;
+        if (content.includes("443") && content.includes("rate")) score.taskCompletion += 25;
+        if (content.includes("--list-all") || content.includes("verify")) score.taskCompletion += 20;
+        if (content.includes("#!/bin/bash")) score.quality += 50;
+        if (content.includes("#")) score.quality += 50; // has comments
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-ssh-key-rotation",
+    category: "devops",
+    description:
+      "Create an SSH key rotation script (ssh-rotate.sh) that generates ED25519 keys monthly, " +
+      "maintains 2 active keys for zero-downtime rotation, logs all changes to an audit file " +
+      "with timestamps, and includes a rollback mechanism. Add a cron job definition.",
+    sourceProject: "Documentation/AlmaLinux9Server",
+    setupFn(tmpDir) {
+      copyFiles("Documentation/AlmaLinux9Server", [
+        "00-SERVER-OVERVIEW.md",
+        "10-AUTO-DEPLOY.md",
+      ], tmpDir);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const rotateFile = path.join(tmpDir, "ssh-rotate.sh");
+      if (fs.existsSync(rotateFile)) {
+        const content = fs.readFileSync(rotateFile, "utf-8");
+        if (content.includes("ed25519") || content.includes("ED25519")) score.taskCompletion += 25;
+        if (content.includes("authorized_keys")) score.taskCompletion += 25;
+        if (content.includes("rollback") || content.includes("backup")) score.taskCompletion += 25;
+        if (content.includes("audit") || content.includes("log")) score.taskCompletion += 25;
+        if (content.includes("#!/bin/bash")) score.quality += 50;
+        if (content.includes("cron") || content.includes("0 0")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Data Processing (new)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "data-jsonl-cost-analysis",
+    category: "feature",
+    description:
+      "Parse the action-log.jsonl file and create a cost analysis tool (cost-report.js) that " +
+      "calculates per-provider costs using these rates: Gemini $0.075/$0.3 per M tokens, " +
+      "DeepSeek $0.14/$0.28, Qwen $0.02/$0.06. Output JSON with breakdown by provider and date.",
+    sourceProject: "jarvis-agent",
+    setupFn(tmpDir) {
+      // Create a sample JSONL file
+      const lines = [
+        '{"timestamp":"2026-03-01T10:00:00Z","provider":"gemini","model":"gemini-2.5-flash","input_tokens":1500,"output_tokens":500,"status":"success"}',
+        '{"timestamp":"2026-03-01T11:00:00Z","provider":"deepseek","model":"deepseek-v3","input_tokens":2000,"output_tokens":800,"status":"success"}',
+        '{"timestamp":"2026-03-01T12:00:00Z","provider":"qwen","model":"qwen3-coder","input_tokens":1000,"output_tokens":300,"status":"success"}',
+        '{"timestamp":"2026-03-02T10:00:00Z","provider":"gemini","model":"gemini-2.5-flash","input_tokens":3000,"output_tokens":1200,"status":"success"}',
+        '{"timestamp":"2026-03-02T11:00:00Z","provider":"deepseek","model":"deepseek-v3","input_tokens":500,"output_tokens":200,"status":"error"}',
+      ];
+      fs.writeFileSync(path.join(tmpDir, "action-log.jsonl"), lines.join("\n"));
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const reportFile = path.join(tmpDir, "cost-report.js");
+      if (fs.existsSync(reportFile)) {
+        const content = fs.readFileSync(reportFile, "utf-8");
+        if (content.includes("jsonl") || content.includes("readline")) score.taskCompletion += 25;
+        if (content.includes("0.075") || content.includes("gemini")) score.taskCompletion += 25;
+        if (content.includes("JSON.stringify") || content.includes("json")) score.taskCompletion += 25;
+        if (content.includes("provider") && content.includes("cost")) score.taskCompletion += 25;
+        if (content.includes("try") || content.includes("catch")) score.quality += 50;
+        if (content.includes("//") || content.includes("/*")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Multi-file Refactoring (additional — Django focus)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "refactor-django-migration-audit",
+    category: "refactor",
+    description:
+      "Analyze the Django migration files in chords/migrations/ and create a migration-audit.py " +
+      "script that validates the dependency chain (no orphans, no circular deps), extracts " +
+      "schema changes per migration, and outputs a JSON report with field additions/removals.",
+    sourceProject: "chord-library",
+    setupFn(tmpDir) {
+      // Copy migration files
+      const migrationsDir = path.join(CODING, "chord-library", "backend", "chords", "migrations");
+      const destMigrations = path.join(tmpDir, "chords", "migrations");
+      fs.mkdirSync(destMigrations, { recursive: true });
+      if (fs.existsSync(migrationsDir)) {
+        const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith(".py"));
+        for (const f of files) {
+          fs.copyFileSync(path.join(migrationsDir, f), path.join(destMigrations, f));
+        }
+      }
+      // Copy models.py for reference
+      const modelsPath = path.join(CODING, "chord-library", "backend", "chords", "models.py");
+      if (fs.existsSync(modelsPath)) {
+        fs.mkdirSync(path.join(tmpDir, "chords"), { recursive: true });
+        fs.copyFileSync(modelsPath, path.join(tmpDir, "chords", "models.py"));
+      }
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const auditFile = path.join(tmpDir, "migration-audit.py");
+      if (fs.existsSync(auditFile)) {
+        const content = fs.readFileSync(auditFile, "utf-8");
+        if (content.includes("dependencies") || content.includes("dependency")) score.taskCompletion += 25;
+        if (content.includes("operations") || content.includes("AddField")) score.taskCompletion += 25;
+        if (content.includes("json") || content.includes("JSON")) score.taskCompletion += 25;
+        if (content.includes("circular") || content.includes("orphan") || content.includes("chain")) score.taskCompletion += 25;
+        if (content.includes("def ") || content.includes("class ")) score.quality += 50;
+        if (content.includes("__main__") || content.includes("argparse")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 12,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Understanding (additional — analytics focus)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "understand-db-schema-analysis",
+    category: "understanding",
+    description:
+      "Read DATABASE_README.md and create a schema-summary.json that lists all tables, " +
+      "their columns with types, foreign key relationships, and indexes. " +
+      "Include a 'statistics' field counting total tables, columns, and relationships.",
+    sourceProject: "practice-wizard",
+    setupFn(tmpDir) {
+      copyFiles("practice-wizard", ["DATABASE_README.md"], tmpDir);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const summaryFile = path.join(tmpDir, "schema-summary.json");
+      if (fs.existsSync(summaryFile)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(summaryFile, "utf-8"));
+          if (data.tables || data.schema) score.taskCompletion += 30;
+          if (data.statistics || data.summary) score.taskCompletion += 20;
+          if (JSON.stringify(data).includes("column")) score.taskCompletion += 25;
+          if (JSON.stringify(data).includes("foreign") || JSON.stringify(data).includes("relation")) score.taskCompletion += 25;
+          score.quality = 100; // Valid JSON = good quality
+        } catch {
+          score.taskCompletion += 10; // File exists but invalid JSON
+        }
+      }
+      return score;
+    },
+    maxToolCalls: 8,
+    maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Testing (additional — edge case focus)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "testing-music-transposition",
+    category: "testing",
+    description:
+      "Create a test file (transposition.test.js) that tests a chord transposition function. " +
+      "The function transpose(chord, semitones) takes a chord name like 'Cmaj7' and returns " +
+      "the transposed chord. Write the function in transpose.js AND comprehensive tests " +
+      "covering: all 12 keys, flats/sharps, minor/major/7th/dim chords, edge cases (0 semitones, 12 semitones = same).",
+    sourceProject: null,
+    setupFn(tmpDir) {
+      fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({
+        name: "transposition-test",
+        scripts: { test: "node --experimental-vm-modules node_modules/.bin/jest" },
+        devDependencies: { jest: "^29.0.0" },
+      }, null, 2));
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const testFile = path.join(tmpDir, "transposition.test.js");
+      const srcFile = path.join(tmpDir, "transpose.js");
+      if (fs.existsSync(testFile)) {
+        const content = fs.readFileSync(testFile, "utf-8");
+        if (content.includes("describe") || content.includes("test(")) score.taskCompletion += 25;
+        if (content.includes("Cmaj7") || content.includes("transpose")) score.taskCompletion += 25;
+        if (content.includes("minor") || content.includes("m7") || content.includes("dim")) score.taskCompletion += 25;
+        if ((content.match(/test\(|it\(/g) || []).length >= 5) score.taskCompletion += 25;
+        score.quality += 50;
+      }
+      if (fs.existsSync(srcFile)) {
+        const content = fs.readFileSync(srcFile, "utf-8");
+        if (content.includes("function") || content.includes("=>")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Bug Fixing (additional — async/promise focus)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "bugfix-promise-race-condition",
+    category: "bugfix",
+    description:
+      "Fix the race condition in worker.js. The processQueue() function processes items " +
+      "in parallel but doesn't wait for all promises before resolving. Items sometimes " +
+      "get processed twice or skipped. Fix the bug so all items are processed exactly once.",
+    sourceProject: null,
+    setupFn(tmpDir) {
+      // Plant a known race condition bug
+      fs.writeFileSync(path.join(tmpDir, "worker.js"), `
+const queue = [];
+let processing = false;
+
+async function processQueue() {
+  if (processing) return; // BUG: race condition — multiple callers can pass this check
+  processing = true;
+
+  const results = [];
+  for (const item of queue) {
+    // BUG: not awaited — fires and forgets
+    fetch(item.url).then(r => results.push(r));
+  }
+
+  processing = false;
+  queue.length = 0;
+  return results; // BUG: returns empty — promises haven't resolved
+}
+
+function addToQueue(item) {
+  queue.push(item);
+  processQueue(); // BUG: not awaited
+}
+
+module.exports = { addToQueue, processQueue, queue };
+`);
+      fs.writeFileSync(path.join(tmpDir, "worker.test.js"), `
+const { addToQueue, processQueue, queue } = require('./worker');
+
+test('processes all items exactly once', async () => {
+  addToQueue({ url: 'http://example.com/1' });
+  addToQueue({ url: 'http://example.com/2' });
+  const results = await processQueue();
+  expect(results).toHaveLength(2);
+});
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fs.existsSync(path.join(tmpDir, "worker.js"))) {
+        const content = fs.readFileSync(path.join(tmpDir, "worker.js"), "utf-8");
+        if (content.includes("await") && content.includes("Promise")) score.taskCompletion += 35;
+        if (content.includes("Promise.all") || content.includes("Promise.allSettled")) score.taskCompletion += 35;
+        if (!content.includes(".then(r => results.push(r))")) score.taskCompletion += 30; // removed fire-and-forget
+        if (content.includes("mutex") || content.includes("lock") || content.includes("splice")) score.quality += 50;
+        if (content.includes("//") || content.includes("/*")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 8,
+    maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CATEGORY: Feature (additional — CLI tool creation)
+  // ═══════════════════════════════════════════════════════════════
+
+  {
+    id: "feat-cli-practice-stats",
+    category: "feature",
+    description:
+      "Create a CLI tool (practice-stats.js) that reads practice-sessions.json and outputs " +
+      "statistics: total hours, longest streak (consecutive days), most practiced category, " +
+      "average session length. Support --format json|table flags. Use only Node.js built-ins.",
+    sourceProject: null,
+    setupFn(tmpDir) {
+      // Create sample practice data
+      const sessions = [
+        { date: "2026-03-01", minutes: 45, category: "scales", completed: true },
+        { date: "2026-03-02", minutes: 60, category: "repertoire", completed: true },
+        { date: "2026-03-03", minutes: 30, category: "scales", completed: true },
+        { date: "2026-03-05", minutes: 90, category: "technique", completed: false },
+        { date: "2026-03-06", minutes: 45, category: "repertoire", completed: true },
+        { date: "2026-03-07", minutes: 60, category: "scales", completed: true },
+        { date: "2026-03-08", minutes: 30, category: "repertoire", completed: true },
+        { date: "2026-03-09", minutes: 75, category: "scales", completed: true },
+      ];
+      fs.writeFileSync(path.join(tmpDir, "practice-sessions.json"), JSON.stringify(sessions, null, 2));
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      const statsFile = path.join(tmpDir, "practice-stats.js");
+      if (fs.existsSync(statsFile)) {
+        const content = fs.readFileSync(statsFile, "utf-8");
+        if (content.includes("practice-sessions.json") || content.includes("readFile")) score.taskCompletion += 20;
+        if (content.includes("streak") || content.includes("consecutive")) score.taskCompletion += 20;
+        if (content.includes("total") && content.includes("hours")) score.taskCompletion += 20;
+        if (content.includes("--format") || content.includes("argv")) score.taskCompletion += 20;
+        if (content.includes("category") || content.includes("most")) score.taskCompletion += 20;
+        if (content.includes("#!/usr/bin/env node") || content.includes("process.argv")) score.quality += 50;
+        if (content.includes("//") || content.includes("/**")) score.quality += 50;
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
 ];
 
 module.exports = { TASKS, CATEGORY_WEIGHTS, copyFiles, copyTree, initGit, fileContains, fileExists, filesChanged };

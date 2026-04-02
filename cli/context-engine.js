@@ -227,11 +227,26 @@ function getContextWindow() {
 
 /**
  * Get current token usage breakdown.
+ * Cached by message count + last message identity to avoid redundant recalculation
+ * when called multiple times per loop iteration.
  * @param {Array} messages - Current conversation messages
  * @param {Array} tools - Tool definitions
  * @returns {{ used: number, limit: number, percentage: number, breakdown: object }}
  */
+let _usageCache = { msgCount: -1, lastMsgRef: null, toolCount: -1, result: null };
+
 function getUsage(messages, tools) {
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const toolCount = tools ? tools.length : 0;
+  if (
+    _usageCache.result &&
+    messages.length === _usageCache.msgCount &&
+    lastMsg === _usageCache.lastMsgRef &&
+    toolCount === _usageCache.toolCount
+  ) {
+    return _usageCache.result;
+  }
+
   const messageTokens = estimateMessagesTokens(messages);
   const toolTokens = estimateToolsTokens(tools);
   const used = messageTokens + toolTokens;
@@ -254,7 +269,7 @@ function getUsage(messages, tools) {
     }
   }
 
-  return {
+  const result = {
     used,
     limit,
     percentage: Math.round(percentage * 10) / 10,
@@ -266,6 +281,9 @@ function getUsage(messages, tools) {
     },
     messageCount: messages.length,
   };
+
+  _usageCache = { msgCount: messages.length, lastMsgRef: lastMsg, toolCount, result };
+  return result;
 }
 
 // ─── Auto-Compression ──────────────────────────────────────────
@@ -277,12 +295,12 @@ const KEEP_RECENT = parseInt(process.env.NEX_KEEP_RECENT, 10) || 10;
 
 // Per-tier compression thresholds: smaller models need earlier compression
 // because they are more sensitive to noise in context.
-// Full-tier lowered from 0.75 → 0.68 so compression triggers before the model
-// runs into hard context limits and loses progress state.
+// Full-tier raised to 0.75 — the 0.68 cap was triggering fitToContext too
+// frequently, adding overhead that hurt task completion speed.
 const TIER_COMPRESSION_THRESHOLDS = {
   essential: 0.60,
   standard: 0.65,
-  full: Math.min(COMPRESSION_THRESHOLD, 0.68),
+  full: Math.min(COMPRESSION_THRESHOLD, 0.75),
 };
 
 /**
@@ -628,6 +646,7 @@ let _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
 
 function invalidateFitToContextCache() {
   _fitToContextCache = { msgCount: -1, lastMsgRef: null, result: null };
+  _usageCache = { msgCount: -1, lastMsgRef: null, toolCount: -1, result: null };
 }
 
 async function fitToContext(messages, tools, options = {}) {
@@ -678,9 +697,11 @@ async function fitToContext(messages, tools, options = {}) {
   // Phase 0: LLM Compacting
   // Pinned messages (progress snapshots) are excluded from LLM compaction
   // and re-added after, so they survive regardless of what the compactor returns.
+  // Skip in benchmark/headless mode — the LLM round-trip adds 100-500ms per call.
+  const skipCompactor = process.env.NEX_SKIP_COMPACTOR === "1";
   const pinnedMessages = oldMessages.filter((m) => m._pinned);
   const nonCompacted = oldMessages.filter((m) => !m._compacted && !m._pinned);
-  if (nonCompacted.length >= 6) {
+  if (!skipCompactor && nonCompacted.length >= 6) {
     try {
       const { compactMessages } = require("./compactor");
       const compactResult = await compactMessages(nonCompacted);

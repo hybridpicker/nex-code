@@ -8,7 +8,7 @@ const PROFILES = {
   "devstral-2": {
     staleWarn: 30000,
     staleAbort: 90000,
-    investigationCap: 12,
+    investigationCap: 18,
     postEditCap: 10,
     briefing: `You are devstral-2, a strong coding model optimized for agentic tasks.
 Use tools confidently and without hesitation — tool use is the expected workflow.
@@ -65,7 +65,7 @@ You handle complex multi-step tasks well — don't cut corners prematurely.`,
 const DEFAULTS = {
   staleWarn: 60000,
   staleAbort: 120000,
-  investigationCap: 12,
+  investigationCap: 18,
   postEditCap: 10,
 };
 

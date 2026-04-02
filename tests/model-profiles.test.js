@@ -18,7 +18,7 @@ describe("model-profiles.js", () => {
       const p = getModelProfile("devstral-2:123b");
       expect(p.staleWarn).toBe(30000);
       expect(p.staleAbort).toBe(90000);
-      expect(p.investigationCap).toBe(12);
+      expect(p.investigationCap).toBe(18);
       expect(p.postEditCap).toBe(10);
     });
 
@@ -63,7 +63,7 @@ describe("model-profiles.js", () => {
       expect(p.staleWarn).toBe(5000);
       expect(p.staleAbort).toBe(15000);
       // Non-stale values still come from profile
-      expect(p.investigationCap).toBe(12);
+      expect(p.investigationCap).toBe(18);
     });
 
     it("rejects invalid ENV values (NaN)", () => {

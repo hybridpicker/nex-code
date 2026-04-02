@@ -264,11 +264,11 @@ function runHeadlessFix(prompt) {
     NEX_CODE,
     "--task", prompt,
     "--auto",
-    "--max-turns", "30",
+    "--max-turns", "15",
   ], {
     cwd: ROOT,
     stdio: ["pipe", "pipe", "pipe"],
-    timeout: 300000,
+    timeout: 180000, // 3 min — tight enough to prevent flatrate mode
     env: { ...process.env, NEX_AUTO_ORCHESTRATE: "false" },
   });
 
