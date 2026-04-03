@@ -331,7 +331,8 @@ class OllamaProvider extends BaseProvider {
   // Ollama vision models use { content: string, images: ['base64...'] } at message level.
   _formatMessages(messages) {
     return messages.map((msg) => {
-      if (msg.role === "user" && Array.isArray(msg.content)) {
+      // Handle multimodal content (text + images) for user and tool messages
+      if (Array.isArray(msg.content)) {
         const textParts = [];
         const images = [];
         for (const block of msg.content) {
@@ -339,8 +340,9 @@ class OllamaProvider extends BaseProvider {
           else if (block.type === "image" && block.data)
             images.push(block.data);
         }
-        const formatted = { role: "user", content: textParts.join("\n") };
+        const formatted = { role: msg.role, content: textParts.join("\n") };
         if (images.length > 0) formatted.images = images;
+        if (msg.tool_call_id) formatted.tool_call_id = msg.tool_call_id;
         return formatted;
       }
       return msg;

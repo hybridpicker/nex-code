@@ -151,12 +151,22 @@ class OpenAIProvider extends BaseProvider {
       };
     }
     if (msg.role === "tool") {
-      return {
-        role: "tool",
-        content:
+      // Extract text from multimodal tool results (images handled separately)
+      let content;
+      if (Array.isArray(msg.content)) {
+        const textParts = msg.content
+          .filter((b) => b.type === "text")
+          .map((b) => b.text);
+        content = textParts.join("\n") || JSON.stringify(msg.content);
+      } else {
+        content =
           typeof msg.content === "string"
             ? msg.content
-            : JSON.stringify(msg.content),
+            : JSON.stringify(msg.content);
+      }
+      return {
+        role: "tool",
+        content,
         tool_call_id: msg.tool_call_id,
       };
     }

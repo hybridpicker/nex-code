@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-3892-blue.svg" alt="Tests: 3892">
+  <img src="https://img.shields.io/badge/tests-3920-blue.svg" alt="Tests: 3920">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -139,6 +139,8 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 - GitHub Actions tools (trigger, monitor runs)
 - Named deploy configs (`rsync`-based, `/deploy`)
 - Browser agent via Playwright (optional, not bundled)
+- Visual review — screenshot → vision analysis → structured feedback
+- Clipboard image capture (macOS) — analyze copied screenshots
 - Grounded web search via Perplexity or DuckDuckGo
 
 **Developer safety:**
@@ -151,7 +153,7 @@ The verify phase catches incomplete work before reporting "done" — if tests fa
 
 **Extensible.** Plugin API (`registerTool` + lifecycle hooks), skill system (install from any git URL), MCP server support.
 
-**Tested.** 3719 tests, 83% coverage, CI on every push.
+**Tested.** 3920 tests, CI on every push.
 
 ---
 
@@ -343,14 +345,32 @@ nex-code -yolo
 
 The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
 
-**Vision / Screenshot → Code** — drop an image path anywhere in your message and nex-code will send it to a vision-capable model automatically:
+**Vision / Screenshot → Code** — nex-code understands images from three sources:
 
 ```
+# Local files — drop a path anywhere in your message
 > /path/to/screenshot.png implement this UI in React
 > describe the layout in mockup.png and generate the CSS
+
+# Remote URLs — paste any image URL directly
+> analyze https://example.com/design-mockup.png and implement it
+
+# Clipboard — say "clipboard" and nex-code grabs the image (macOS)
+> what's wrong with the layout in my clipboard
 ```
 
-Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemini, and Ollama vision models (llava, qwen2-vl, etc.).
+Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemini, and Ollama vision models (qwen3-vl, llava, etc.).
+
+**Visual Review tool** — the model can screenshot a URL, see the result, and give structured visual feedback in one step:
+
+```
+> screenshot localhost:3000 and tell me what's wrong with the navbar spacing
+> do a visual review of the homepage, focus on responsive layout
+```
+
+The `visual_review` tool captures a screenshot, embeds it as a vision block, and prompts for structured analysis (layout, typography, spacing, colors). It supports before/after comparison via the `compare_with` parameter.
+
+**Clipboard tool** — the model can also grab clipboard images on demand via `clipboard_image`. Requires `pngpaste` (`brew install pngpaste`) for best results, falls back to osascript.
 
 ### YOLO Mode
 
