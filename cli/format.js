@@ -345,6 +345,18 @@ function getToolSpinnerText(name, args) {
           return `Sysadmin${srv}: ${args.action}...`;
       }
     }
+    case "visual_diff":
+      return "Comparing screenshots (pixel diff)...";
+    case "responsive_sweep":
+      return `Responsive sweep: ${(args.url || "").substring(0, 50)}...`;
+    case "visual_annotate":
+      return `Annotating screenshot (${(args.annotations || []).length} markers)...`;
+    case "visual_watch":
+      return `Visual watch: ${(args.url || "").substring(0, 50)}...`;
+    case "design_tokens":
+      return "Extracting design tokens...";
+    case "design_compare":
+      return `Comparing against reference design...`;
     default:
       return `Running: ${name}`;
   }

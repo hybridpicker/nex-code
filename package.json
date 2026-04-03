@@ -73,7 +73,9 @@
   "license": "MIT",
   "dependencies": {
     "axios": "^1.7.0",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "esbuild": "^0.27.3",
