@@ -6,7 +6,6 @@ vscode/*.vsix
 .nex/
 !.nex/brain/
 !.nex/brain/*.md
-!.nex/benchmark-baseline.json
 .nex/brain/.brain-index.json
 .nex/brain/.embeddings.json
 coverage/
