@@ -2,7 +2,7 @@
 # scripts/jarvis/setup.sh — Deploy nex-code improvement automation to jarvis (almalinux9)
 #
 # Run from Mac:
-#   ssh clawbook   (or ssh jarvis@94.130.37.43)
+#   ssh clawbook
 #   cd ~/nex-code && bash scripts/jarvis/setup.sh
 #
 # Or remotely:
