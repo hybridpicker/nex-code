@@ -1,10 +1,9 @@
 [Unit]
 Description=nex-code weekly full benchmark
-After=network.target ollama.service
+After=network.target
 
 [Service]
 Type=oneshot
-User=jarvis
 WorkingDirectory=/home/jarvis/nex-code
 ExecStart=/usr/bin/node /home/jarvis/nex-code/scripts/benchmark-reallife.js
 Environment=HOME=/home/jarvis
@@ -14,4 +13,4 @@ StandardError=append:/home/jarvis/nex-code/scripts/benchmark-results/weekly-benc
 TimeoutStartSec=3600
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

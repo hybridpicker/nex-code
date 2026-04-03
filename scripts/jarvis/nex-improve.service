@@ -1,24 +1,20 @@
 [Unit]
 Description=nex-code improvement loop
-After=network.target ollama.service
-Wants=ollama.service
+After=network.target
 
 [Service]
 Type=simple
-User=jarvis
 WorkingDirectory=/home/jarvis/nex-code
-ExecStart=/usr/bin/node /home/jarvis/nex-code/scripts/improve-reallife-overnight.sh
+ExecStart=/bin/bash /home/jarvis/nex-code/scripts/improve-reallife-overnight.sh
 Environment=HOME=/home/jarvis
 Environment=NODE_ENV=production
 Environment=NEX_SKIP_COMPACTOR=1
 Restart=no
 StandardOutput=append:/home/jarvis/nex-code/scripts/benchmark-results/jarvis-improve.log
 StandardError=append:/home/jarvis/nex-code/scripts/benchmark-results/jarvis-improve.log
-
-# Resource limits — don't starve the server
 CPUQuota=80%
 MemoryMax=4G
 TimeoutStopSec=30
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
