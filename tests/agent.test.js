@@ -1854,14 +1854,28 @@ describe("agent.js", () => {
   describe("loop detection", () => {
     it("warns after editing the same file multiple times", async () => {
       process.env.NEX_DEBUG = "true";
-      // Three edits to trigger warning (LOOP_WARN_EDITS = 3)
+      // Three edits to trigger warning (LOOP_WARN_EDITS = 3).
+      // Map-first gate requires a read_file between edits to the same file,
+      // so interleave reads to let all three edits through.
       for (let i = 0; i < 3; i++) {
         mockStream("", [
           {
             function: { name: "edit_file", arguments: { path: "loop.js" } },
-            id: `c${i}`,
+            id: `e${i}`,
           },
         ]);
+        if (i < 2) {
+          // Targeted re-read (line_start required) clears the map-first stale flag.
+          // Unbounded re-reads are blocked after an edit because the file is already
+          // in context (fileReadCounts is set to 1 by the edit guard). A targeted
+          // read bypasses that block and lets the map-first gate flag get cleared.
+          mockStream("", [
+            {
+              function: { name: "read_file", arguments: { path: "loop.js", line_start: 1, line_end: 50 } },
+              id: `r${i}`,
+            },
+          ]);
+        }
       }
       mockStream("Done");
       executeTool.mockResolvedValue("ok");
@@ -1872,8 +1886,10 @@ describe("agent.js", () => {
 
     it("aborts after too many edits to the same file", async () => {
       process.env.NEX_DEBUG = "true";
-      // 5 edits to trigger abort (LOOP_ABORT_EDITS = 5)
-      for (let i = 0; i < 5; i++) {
+      // Map-first gate blocks repeat edits to the same file without a re-read.
+      // 1 successful edit followed by 5 consecutive blocked attempts triggers
+      // LOOP_ABORT_BLOCKS (= 5), which also logs "Loop abort".
+      for (let i = 0; i < 6; i++) {
         mockStream("", [
           {
             function: { name: "edit_file", arguments: { path: "stuck.js" } },
