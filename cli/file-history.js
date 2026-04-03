@@ -416,7 +416,7 @@ function restoreSnapshot(target, cwd = process.cwd()) {
       return { ok: false, error: `Snapshot not found: ${target}` };
     }
 
-    execSync(`git stash apply stash@{${entry.index}}`, { cwd, timeout: 15000 });
+    execFileSync("git", ["stash", "apply", `stash@{${entry.index}}`], { cwd, timeout: 15000 });
     return { ok: true, label: entry.label };
   } catch (err) {
     return { ok: false, error: err.message };

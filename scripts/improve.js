@@ -14,7 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync, spawnSync } = require("child_process");
+const { execSync, execFileSync, spawnSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 const RESULTS_DIR = path.join(__dirname, "benchmark-results");
@@ -193,7 +193,7 @@ function commit(pattern, oldScore, newScore) {
   try {
     execSync("git add cli/", { cwd: ROOT, stdio: "pipe" });
     const msg = `improve: address ${pattern} pattern (${oldScore} → ${newScore})`;
-    execSync(`git commit -m "${msg}"`, { cwd: ROOT, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", msg], { cwd: ROOT, stdio: "pipe" });
     console.log(`  Committed: ${msg}`);
     return true;
   } catch (err) {

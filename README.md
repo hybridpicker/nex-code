@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hybridpicker/nex-code/stargazers">⭐ If this saves you time, a star helps others find it.</a>
+  <a href="https://github.com/hybridpicker/nex-code/stargazers">If this saves you time, a star helps others find it.</a>
 </p>
 
 <p align="center">
@@ -28,17 +28,7 @@
 
 ---
 
-```
- ██▄▄██   nex-code  v0.3.54
- █▀██▀█   devstral-2:123b  ·  /help
- ▀████▀
-```
-
----
-
 ## Demo
-
-
 
 https://github.com/user-attachments/assets/68a6c134-2d13-4d66-bc5e-befea3acb794
 
@@ -48,235 +38,92 @@ https://github.com/user-attachments/assets/68a6c134-2d13-4d66-bc5e-befea3acb794
 
 ```bash
 npx nex-code
+# or install globally:
+npm install -g nex-code && cd ~/your-project && nex-code
 ```
 
-Or install globally:
-
-```bash
-npm install -g nex-code
-cd ~/your-project
-nex-code
-```
-
-That's it. You'll see the banner, your project context, and the `>` prompt. Start typing.
-
----
-
-## Automatic Updates
-
-Nex Code automatically checks for new versions when you start it. If a newer version is available, you'll see a notification with instructions on how to update:
-
-```
-💡 New version available! Run npm update -g nex-code to upgrade from x.x.x to x.x.x
-```
-
-To update to the latest version:
-
-```bash
-npm update -g nex-code
-```
+On first launch, an interactive setup wizard guides you through provider and credential configuration. Re-run anytime with `/setup`.
 
 ---
 
 ## Why nex-code?
+
+**Ollama Cloud first.** Built and optimized for [Ollama Cloud](https://ollama.com) — the flat-rate platform running devstral, Kimi K2, Qwen3-Coder, and 47+ models. Other providers (OpenAI, Anthropic, Gemini) work via the same interface.
 
 | Feature | nex-code | Closed-source alternatives |
 |---|---|---|
-| Free tier | ✅ Ollama Cloud flat-rate | ❌ subscription or limited quota |
-| Open models | ✅ devstral, Kimi K2, Qwen3 | ❌ vendor-locked |
-| Local Ollama | ✅ | ❌ |
-| Multi-provider | ✅ swap with one env var | ❌ |
-| VS Code sidebar | ✅ built-in | partial |
-| Startup time | ~100ms | 1–4s |
-| Runtime deps | 2 | heavy | heavy |
-| Infra tools | ✅ SSH, Docker, K8s built-in | ❌ | ❌ |
+| Free tier | Ollama Cloud flat-rate | subscription or limited quota |
+| Open models | devstral, Kimi K2, Qwen3 | vendor-locked |
+| Local Ollama | yes | no |
+| Multi-provider | swap with one env var | no |
+| VS Code sidebar | built-in | partial |
+| Startup time | ~100ms | 1-4s |
+| Runtime deps | 2 | heavy |
+| Infra tools | SSH, Docker, K8s built-in | no |
+
+**Smart model routing.** The built-in `/benchmark` tests all configured models across 62 tool-calling tasks in 5 categories and auto-routes to the best model per task type.
+
+**Phase-based execution.** Tasks run through Plan (analyze) -> Implement (code) -> Verify (test) phases, each with the optimal model. Auto-loops back on test failures.
+
+**45 built-in tools** across file ops, git, SSH, Docker, Kubernetes, deploy, browser, GitHub Actions, and visual review.
+
+**2 runtime dependencies** (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime.
 
 ---
 
-## Why nex-code?
+## Ollama Cloud Model Rankings
 
-**Ollama Cloud first.** nex-code is built and optimized for [Ollama Cloud](https://ollama.com) — the flat-rate platform that runs devstral, Kimi K2, Qwen3-Coder, and 47+ other open models. All behavioral tuning (loop detection, context compression, tool-call repair) is done against real Ollama Cloud sessions. Other providers (OpenAI, Anthropic, Gemini) work via the same interface but are not the primary target.
-
-**Recommended model: `devstral-2:123b`** — purpose-built for agentic coding, highest score on nex-code's own benchmark, best tool-call reliability.
-
-**Open-model first.** Not locked to any single vendor. Tool tiers (`essential / standard / full`) adapt automatically to the model's capability level, so smaller models don't receive tool schemas they can't handle. A 5-layer auto-fix loop catches and retries malformed tool calls without user intervention.
-
-**Smart model routing.** The built-in `/benchmark` system tests all configured models against 62 real nex-code tool-calling tasks across 5 task categories. The results feed a routing table so nex-code can automatically switch to the best model for the detected task type:
-
-| Detected task             | Routed model (example)      |
-| ------------------------- | --------------------------- |
-| Frontend / CSS / React    | `qwen3-coder:480b`          |
-| Sysadmin / Docker / nginx | `devstral-2:123b`           |
-| Data / SQL / migrations   | `devstral-2:123b`           |
-| Agentic swarms            | `minimax-m2.7:cloud`        |
-| General coding            | `devstral-2:123b` (default) |
-
-**Phase-based execution.** On Ollama Cloud, each task automatically runs through three phases — each with the optimal model:
-
-| Phase         | Purpose                          | Default model            |
-| ------------- | -------------------------------- | ------------------------ |
-| **Plan**      | Analyze codebase, find root cause | `qwen3-coder:480b`     |
-| **Implement** | Write code, edit files            | active model (default)  |
-| **Verify**    | Run tests, check correctness     | `devstral-small-2:24b` |
-
-The verify phase catches incomplete work before reporting "done" — if tests fail, it loops back to implement automatically. Phase models are auto-updated by `/benchmark`. Disable with `NEX_PHASE_ROUTING=0`.
-
-**Built-in VS Code extension.** A sidebar chat panel with streaming output, collapsible tool cards, and native VS Code theme support — shipped in the same repo, no separate install.
-
-**Lightweight.** 2 runtime dependencies (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime.
-
-**Daemon / watch mode.** Run `nex-code --daemon` to keep the process alive and fire tasks automatically on filesystem changes, git commits, or a cron schedule — configured via `.nex/daemon.json`. No extra dependencies; uses Node's built-in `fs.watch` and `setInterval`.
-
-**Server-aware from the first message.** When your prompt contains a URL whose domain matches a configured SSH profile (e.g. `server.example.com` → profile `server`), nex-code probes the server before responding — listing ports, running processes, and data directories. The model receives this topology before its first token, so it goes straight to `ssh_exec` instead of reading local files.
-
-**Few-shot behavior injection.** On each session start, nex-code injects a short example of the correct tool sequence for the detected task type (sysadmin → check remote logs first; coding → read file before editing; data → explain before rewriting). Works across all models without fine-tuning. Customize with your own high-scoring sessions via `npm run extract-examples`.
-
-**Infrastructure tools built in:**
-
-- SSH server management (AlmaLinux, macOS, any Linux)
-- Docker tools — local and remote via SSH
-- Kubernetes overview (`/k8s`)
-- GitHub Actions tools (trigger, monitor runs)
-- Named deploy configs (`rsync`-based, `/deploy`)
-- Browser agent via Playwright (optional, not bundled)
-- Visual review — screenshot → vision analysis → structured feedback
-- Clipboard image capture (macOS) — analyze copied screenshots
-- Grounded web search via Perplexity or DuckDuckGo
-
-**Developer safety:**
-
-- Pre-push secret detection — blocks commits that contain API keys or tokens
-- Full audit log (JSONL + sanitization)
-- Undo/Redo with persistence across restarts
-- Cost tracking and per-provider budget limits
-- Plan mode — analysis-only pass before any file changes
-
-**Extensible.** Plugin API (`registerTool` + lifecycle hooks), skill system (install from any git URL), MCP server support.
-
-**Tested.** 3920 tests, CI on every push.
-
----
-
-## Ollama Cloud — Recommended Model Setup
-
-nex-code was built with Ollama Cloud as its primary provider. No subscription, no billing surprises.
-Rankings are based on nex-code's own `/benchmark` — 14-task quick benchmark against real nex-code schemas (62 tasks full run).
-
-### Flat-Rate / Pay-as-you-go
+Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, argument validity, and schema compliance.
 
 <!-- nex-benchmark-start -->
 <!-- Updated: 2026-04-01 — run `/benchmark --discover` after new Ollama Cloud releases -->
 
-| Rank | Model | Score | Avg Latency | Context | Best For |
+| Rank | Model | Score | Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `qwen3-vl:235b-instruct` | **79.9** | 3.8s | 131K | Best latency/score balance — recommended default |
-| 🥈 | `qwen3-vl:235b` | 79.4 | 12.3s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
-| 🥉 | `qwen3-coder-next` | 74.9 | 1.7s | 256K | — |
-| — | `rnj-1:8b` | 74.6 | 2.5s | 131K | — |
-| — | `ministral-3:8b` | 74.2 | 1.2s | 131K | Fastest strong model — 2.2s latency, 70+ score |
-| — | `qwen3.5:397b` | 72.8 | 2.1s | 256K | — |
-| — | `qwen3-next:80b` | 71.3 | 10.3s | 131K | — |
-| — | `devstral-2:123b` | 69.9 | 1.6s | 131K | Sysadmin + SSH tasks, reliable coding |
-| — | `minimax-m2.7` | 69.4 | 4.1s | 200K | — |
-| — | `glm-5` | 69 | 7.6s | 131K | — |
-| — | `glm-4.7` | 67.8 | 3.7s | 131K | — |
-| — | `kimi-k2-thinking` | 62 | 2.4s | 256K | — |
+| 1 | `qwen3-vl:235b-instruct` | **79.9** | 3.8s | 131K | Best latency/score balance |
+| 2 | `qwen3-vl:235b` | 79.4 | 12.3s | 131K | Frontier tool selection |
+| 3 | `qwen3-coder-next` | 74.9 | 1.7s | 256K | — |
+| 4 | `ministral-3:8b` | 74.2 | 1.2s | 131K | Fastest strong model |
+| 5 | `devstral-2:123b` | 69.9 | 1.6s | 131K | Sysadmin/SSH, reliable |
 
-> Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
-> Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
+> Run `/benchmark --discover` to detect new models and auto-update this table.
 <!-- nex-benchmark-end -->
 
-### Recommended `.env` for Ollama Cloud (Flat-Rate)
+**Recommended `.env`:**
 
 ```env
 DEFAULT_PROVIDER=ollama
-DEFAULT_MODEL=devstral-2:123b         # nex-code benchmark winner (84/100, 1.5s)
-
-# Sub-agent routing
-NEX_HEAVY_MODEL=qwen3-coder:480b      # complex multi-step coding
-NEX_STANDARD_MODEL=devstral-2:123b    # routine tasks
-NEX_FAST_MODEL=devstral-small-2:24b   # quick lookups, fast sub-agents
+DEFAULT_MODEL=devstral-2:123b
+NEX_HEAVY_MODEL=qwen3-coder:480b
+NEX_STANDARD_MODEL=devstral-2:123b
+NEX_FAST_MODEL=devstral-small-2:24b
 ```
-
-### Run the benchmark yourself
-
-```bash
-/benchmark             # full run: 62 tasks × 5 models
-/benchmark --quick     # fast run: 14 tasks × 3 models  (doubled from 7 for better resolution)
-/benchmark --discover  # detect new Ollama Cloud models, benchmark + auto-update README
-/benchmark --models=minimax-m2.7:cloud,qwen3-coder:480b
-/benchmark --history   # show OpenClaw nightly trend
-```
-
-Switch anytime: `/model devstral-2:123b` or update `DEFAULT_MODEL` in `.env`.
-The best models discovered are automatically saved to `~/.nex-code/.env` to persist globally across all your projects.
-Auto-discovery runs weekly via the scheduled improvement task and updates this table automatically.
 
 ---
 
 ## Setup
 
-### Prerequisites
-
-- Node.js 18+
-- At least one API key **or** a local [Ollama](https://ollama.com/download) server
-
-### Install from npm
+**Prerequisites:** Node.js 18+ and at least one API key (or local Ollama).
 
 ```bash
-npm install -g nex-code
+# .env (or set environment variables)
+OLLAMA_API_KEY=your-key       # Ollama Cloud
+OPENAI_API_KEY=your-key       # OpenAI
+ANTHROPIC_API_KEY=your-key    # Anthropic
+GEMINI_API_KEY=your-key       # Gemini
+PERPLEXITY_API_KEY=your-key   # optional — grounded web search
+
+DEFAULT_PROVIDER=ollama
+DEFAULT_MODEL=devstral-2:123b
 ```
 
-Or run directly without installing:
-
-```bash
-npx nex-code
-```
-
-### Install from source (for contributors)
+**Install from source:**
 
 ```bash
 git clone https://github.com/hybridpicker/nex-code.git
-cd nex-code
-npm install
-npm run build         # Build the high-performance bundle
-cp .env.example .env
-npm link
-npm run install-hooks
+cd nex-code && npm install && npm run build
+cp .env.example .env && npm link && npm run install-hooks
 ```
-
-### Configure a Provider
-
-Create a `.env` file in your project directory (or set environment variables):
-
-```bash
-# Pick any — only one is required
-OLLAMA_API_KEY=your-key       # Ollama Cloud (Qwen3 Coder, Qwen3.5, DeepSeek R1, Devstral, Kimi K2.5, Llama 4, MiniMax M2.5, GLM 4.7)
-OPENAI_API_KEY=your-key       # OpenAI (GPT-4o, GPT-4.1, o1, o3, o4-mini)
-ANTHROPIC_API_KEY=your-key    # Anthropic (Claude Sonnet 4.6, Opus 4.6, Haiku 4.5)
-GEMINI_API_KEY=your-key       # Google Gemini (3.1 Pro Preview, 2.5 Pro/Flash, 2.0 Flash)
-PERPLEXITY_API_KEY=your-key   # Perplexity (optional — enables grounded web search)
-# No key needed for local Ollama — just have it running
-
-# Optional tuning
-DEFAULT_PROVIDER=ollama        # Active provider on startup
-DEFAULT_MODEL=devstral-2:123b  # Active model on startup (see /benchmark for ranking)
-FALLBACK_CHAIN=anthropic,openai # Providers tried on failure (comma-separated)
-NEX_STALE_WARN_MS=60000        # Warn if no tokens received for N ms (default: 60000)
-NEX_STALE_ABORT_MS=120000      # Abort and retry stream after N ms of silence (default: 120000)
-NEX_LANGUAGE=auto              # Response language: "auto" (mirrors user's language, default) or e.g. "English", "Deutsch"
-NEX_THEME=dark                 # Force dark/light theme (overrides auto-detection). Use if colours look wrong for your terminal profile.
-FOOTER_DEBUG=1                 # Write terminal layout debug log to /tmp/footer-debug.log
-```
-
-### Verify
-
-```bash
-cd ~/any-project
-nex-code
-```
-
-You should see the banner, your project context, and the `>` prompt.
 
 ---
 
@@ -286,1361 +133,211 @@ You should see the banner, your project context, and the `>` prompt.
 > explain the main function in index.js
 > add input validation to the createUser handler
 > run the tests and fix any failures
-> refactor this to use async/await instead of callbacks
-```
-
-### Try These Scenarios
-
-**Understand an unfamiliar codebase:**
-
-```
-> give me an overview of this project — architecture, key files, tech stack
-> how does authentication work here? trace the flow from login to session
-> find all API endpoints and list them with their HTTP methods
-```
-
-**Fix bugs with context:**
-
-```
 > the /users endpoint returns 500 — find the bug and fix it
-> tests are failing in auth.test.js — figure out why and fix it
-> there's a memory leak somewhere — profile the app and find it
 ```
 
-**Add features end-to-end:**
-
-```
-> add rate limiting to all API routes (100 req/min per IP)
-> add a /health endpoint that checks DB connectivity
-> implement pagination for the GET /products endpoint
-```
-
-**Refactor and improve:**
-
-```
-> refactor the database queries to use a connection pool
-> this function is 200 lines — break it into smaller functions
-> migrate these callbacks to async/await
-```
-
-**DevOps and CI:**
-
-```
-> write a Dockerfile for this project
-> set up GitHub Actions CI that runs tests on push
-> add a pre-commit hook that runs linting
-```
-
-**Multi-step autonomous work (YOLO mode):**
+**YOLO mode** — skip all confirmations, auto-runs `caffeinate` on macOS:
 
 ```bash
 nex-code -yolo
 ```
 
-```
-> read the entire src/ directory, run the tests, fix all failures, then commit
-> add input validation to every POST endpoint, add tests, run them
-> upgrade all dependencies to latest, fix any breaking changes, run tests
-```
-
-The agent decides autonomously whether to use tools or just respond with text. Simple questions get direct answers. Coding tasks trigger the agentic tool loop.
-
-**Vision / Screenshot → Code** — nex-code understands images from three sources:
-
-```
-# Local files — drop a path anywhere in your message
-> /path/to/screenshot.png implement this UI in React
-> describe the layout in mockup.png and generate the CSS
-
-# Remote URLs — paste any image URL directly
-> analyze https://example.com/design-mockup.png and implement it
-
-# Clipboard — say "clipboard" and nex-code grabs the image (macOS)
-> what's wrong with the layout in my clipboard
-```
-
-Supported formats: PNG, JPG, GIF, WebP, BMP. Works with Anthropic, OpenAI, Gemini, and Ollama vision models (qwen3-vl, llava, etc.).
-
-**Visual Review tool** — the model can screenshot a URL, see the result, and give structured visual feedback in one step:
-
-```
-> screenshot localhost:3000 and tell me what's wrong with the navbar spacing
-> do a visual review of the homepage, focus on responsive layout
-```
-
-The `visual_review` tool captures a screenshot, embeds it as a vision block, and prompts for structured analysis (layout, typography, spacing, colors). It supports before/after comparison via the `compare_with` parameter.
-
-**Clipboard tool** — the model can also grab clipboard images on demand via `clipboard_image`. Requires `pngpaste` (`brew install pngpaste`) for best results, falls back to osascript.
-
-### YOLO Mode
-
-Skip all confirmation prompts — file changes, dangerous commands, and tool permissions are auto-approved. The banner shows a `⚡ YOLO` indicator. Toggle at runtime with `/autoconfirm`.
-
-On macOS, nex-code automatically runs `caffeinate` for the duration of the session (idle sleep and disk sleep are suppressed), so long autonomous tasks won't be interrupted by the system going to sleep. This applies to all modes, not just YOLO.
-
-You can also enable YOLO mode permanently for a project via `.nex/config.json`:
-
-```json
-{ "yolo": true }
-```
-
-### Headless / Programmatic Mode
-
-Run nex-code non-interactively from scripts, CI pipelines, or other processes:
+**Headless / Programmatic:**
 
 ```bash
-# Inline prompt
-nex-code --task "refactor src/index.js to use async/await" --yolo
-
-# Prompt from file (avoids shell-escaping issues with special characters)
-nex-code --prompt-file /tmp/task.txt --yolo
-
-# Delete the file after reading
-nex-code --prompt-file /tmp/task.txt --delete-prompt-file --yolo
-
-# JSON output for programmatic parsing
+nex-code --task "refactor src/index.js to async/await" --yolo
 nex-code --prompt-file /tmp/task.txt --yolo --json
-# → {"success":true,"response":"..."}
+nex-code --daemon          # background watcher (reads .nex/daemon.json)
 ```
 
-| Flag                       | Description                                                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `--task <prompt>`          | Run a single prompt and exit                                                                                  |
-| `--prompt-file <path>`     | Read prompt from a UTF-8 file and run headless                                                                |
-| `--delete-prompt-file`     | Delete the prompt file after reading (use with `--prompt-file`)                                               |
-| `--auto`                   | Skip confirmations (non-interactive, no REPL banner)                                                          |
-| `--yolo`                   | Skip all confirmations including dangerous commands (also configurable via `.nex/config.json` `"yolo": true`) |
-| `--server`                 | Start JSON-lines IPC server (used by the VS Code extension)                                                   |
-| `--daemon [config]`        | Run as background watcher — fires tasks on file changes, git commits, or schedule (reads `.nex/daemon.json`)  |
-| `--watch [config]`         | Alias for `--daemon`                                                                                          |
-| `--flatrate`               | Flatrate mode: 100 turns, 6 parallel agents, 5 retries (auto-enabled when `OLLAMA_API_KEY` is set)            |
-| `--json`                   | Output `{"success":true,"response":"..."}` to stdout                                                          |
-| `--max-turns <n>`          | Override the agentic loop iteration limit                                                                     |
-| `--model <spec>`           | Use a specific model (e.g. `anthropic:claude-sonnet-4-6`)                                                     |
-| `--debug`                  | Show internal diagnostic messages (compression, loop detection, guards)                                       |
-| `--no-auto-orchestrate`    | Disable auto-orchestration for multi-goal prompts (on by default; also: `NEX_AUTO_ORCHESTRATE=false`)         |
-| `--orchestrator-model <m>` | Model for decomposition/synthesis step (default: `kimi-k2.5`)                                                 |
+| Flag | Description |
+|---|---|
+| `--task <prompt>` | Run a single prompt and exit |
+| `--prompt-file <path>` | Read prompt from file |
+| `--yolo` | Skip all confirmations |
+| `--server` | JSON-lines IPC server (VS Code extension) |
+| `--daemon` | Background watcher (file changes, git commits, cron) |
+| `--flatrate` | 100 turns, 6 parallel agents, 5 retries |
+| `--json` | JSON output to stdout |
+| `--max-turns <n>` | Override agentic loop limit |
+| `--model <spec>` | e.g. `anthropic:claude-sonnet-4-6` |
+| `--debug` | Show diagnostic messages |
 
----
+**Vision / Screenshot:**
 
-## VS Code Extension
-
-nex-code ships with a built-in VS Code extension (`vscode/`) — no separate repo needed. It adds a sidebar chat panel with streaming output, collapsible tool cards, and confirmation dialogs, all styled with VS Code's native theme variables.
-
-**Architecture:** The extension spawns `nex-code --server` as a child process and communicates over a JSON-lines protocol on stdin/stdout. No agent logic is duplicated — the CLI is the single source of truth.
-
-**Requirements:** nex-code must be in `$PATH` — either `npm install -g nex-code` or `npm link` for local development.
-
-**Install:**
-
-```bash
-cd vscode
-npm install
-npm run package        # syncs version, builds, and creates .vsix
-# Cmd+Shift+P → Extensions: Install from VSIX...
+```
+> /path/to/screenshot.png implement this UI in React
+> analyze https://example.com/mockup.png and implement it
+> what's wrong with the layout in my clipboard    # macOS clipboard
+> screenshot localhost:3000 and review the navbar spacing
 ```
 
-**Settings** (`Settings → Extensions → Nex Code`):
-
-| Setting                   | Default           | Description                 |
-| ------------------------- | ----------------- | --------------------------- |
-| `nexCode.executablePath`  | `nex-code`        | Path to the nex-code binary |
-| `nexCode.defaultProvider` | `ollama`          | LLM provider                |
-| `nexCode.defaultModel`    | `devstral-2:123b` | Model name                  |
-| `nexCode.anthropicApiKey` | —                 | Anthropic API key           |
-| `nexCode.openaiApiKey`    | —                 | OpenAI API key              |
-| `nexCode.ollamaApiKey`    | —                 | Ollama Cloud API key        |
-| `nexCode.geminiApiKey`    | —                 | Google Gemini API key       |
-| `nexCode.maxTurns`        | `50`              | Max agentic loop iterations |
-
-**Commands** (`Cmd+Shift+P`):
-
-| Command                   | Description                                           |
-| ------------------------- | ----------------------------------------------------- |
-| `Nex Code: Clear Chat`    | Clear conversation history                            |
-| `Nex Code: Switch Model`  | Pick a different model                                |
-| `Nex Code: Restart Agent` | Restart the child process (e.g. after source changes) |
+Formats: PNG, JPG, GIF, WebP, BMP. Works with all providers that support vision.
 
 ---
 
 ## Providers & Models
 
-Switch providers and models at runtime:
-
 ```
-/model                         # interactive model picker (arrow keys + Enter)
-/model openai:gpt-4o           # switch directly
-/model anthropic:claude-sonnet
-/model gemini:gemini-2.5-pro
-/model local:llama3
-/providers                     # see all available providers & models
+/model                      # interactive picker
+/model openai:gpt-4o        # switch directly
+/providers                  # list all
+/fallback anthropic,openai  # auto-switch on failure
 ```
 
-| Provider      | Models                                                                                                                                   | Env Variable        |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| **ollama**    | Qwen3 Coder, Qwen3.5 (397B, 122B-A10B, 35B-A3B, 27B, 9B, 4B, 2B, 0.8B), DeepSeek R1, Devstral, Kimi K2.5, MiniMax M2.5, GLM 4.7, Llama 4 | `OLLAMA_API_KEY`    |
-| **openai**    | GPT-4o, GPT-4.1, o1, o3, o4-mini                                                                                                         | `OPENAI_API_KEY`    |
-| **anthropic** | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5, Sonnet 4.5, Sonnet 4                                                                             | `ANTHROPIC_API_KEY` |
-| **gemini**    | Gemini 3.1 Pro Preview, 2.5 Pro/Flash, 1.5 Pro/Flash                                                                                     | `GEMINI_API_KEY`    |
-| **local**     | Any model on your local Ollama server                                                                                                    | (none)              |
-
-Fallback chains let you auto-switch when a provider fails:
-
-```
-/fallback anthropic,openai,local
-```
-
-**Wire Protocol Layer:** All 5 providers share 3 wire protocol implementations (OpenAI-compatible SSE, Anthropic Messages SSE, Ollama NDJSON). Stream parsing, tool call accumulation, and response normalization are handled by reusable `StreamParser` classes — eliminating duplicated protocol code across providers.
+| Provider | Models | Env Variable |
+|---|---|---|
+| **ollama** | Qwen3, DeepSeek R1, Devstral, Kimi K2, MiniMax, GLM, Llama 4 | `OLLAMA_API_KEY` |
+| **openai** | GPT-4o, GPT-4.1, o1, o3, o4-mini | `OPENAI_API_KEY` |
+| **anthropic** | Claude Opus 4.6, Sonnet 4.6, Haiku 4.5 | `ANTHROPIC_API_KEY` |
+| **gemini** | Gemini 3.1 Pro, 2.5 Pro/Flash | `GEMINI_API_KEY` |
+| **local** | Any local Ollama model | (none) |
 
 ---
 
 ## Commands
 
-Type `/` to see inline suggestions as you type. Tab completion is supported for slash commands and file paths (type a path containing `/` and press Tab).
+Type `/` for inline suggestions. Tab completion for commands and file paths.
 
-| Command                                       | Description                                                                                                                                        |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/help`                                       | Full help                                                                                                                                          |
-| `/model [spec]`                               | Show/switch model (e.g. `openai:gpt-4o`)                                                                                                           |
-| `/providers`                                  | List all providers and models                                                                                                                      |
-| `/fallback [chain]`                           | Show/set fallback chain                                                                                                                            |
-| `/tokens`                                     | Token usage and context budget                                                                                                                     |
-| `/costs`                                      | Session token costs                                                                                                                                |
-| `/budget`                                     | Show/set per-provider cost limits                                                                                                                  |
-| `/clear`                                      | Clear conversation                                                                                                                                 |
-| `/context`                                    | Show project context                                                                                                                               |
-| `/autoconfirm`                                | Toggle auto-confirm for file changes                                                                                                               |
-| `/save [name]`                                | Save current session                                                                                                                               |
-| `/load <name>`                                | Load a saved session                                                                                                                               |
-| `/sessions`                                   | List saved sessions                                                                                                                                |
-| `/resume`                                     | Resume last session                                                                                                                                |
-| `/branches`                                   | Show session tree (all conversation branches)                                                                                                      |
-| `/timeline [n]`                               | Show message timeline of current branch                                                                                                            |
-| `/goto <index>`                               | Jump to a message index (truncates later messages)                                                                                                 |
-| `/fork [index] [name]`                        | Create a new branch at the given message index                                                                                                     |
-| `/switch-branch <name>`                       | Switch to a different conversation branch                                                                                                          |
-| `/delete-branch <name>`                       | Delete a conversation branch                                                                                                                       |
-| `/remember <text>`                            | Save a memory (persists across sessions)                                                                                                           |
-| `/forget <key>`                               | Delete a memory                                                                                                                                    |
-| `/memory`                                     | Show all memories                                                                                                                                  |
-| `/brain add <name>`                           | Add a document to the knowledge base                                                                                                               |
-| `/brain list`                                 | List all brain documents                                                                                                                           |
-| `/brain search <query>`                       | Search the knowledge base                                                                                                                          |
-| `/brain show <name>`                          | Show a brain document                                                                                                                              |
-| `/brain remove <name>`                        | Remove a brain document                                                                                                                            |
-| `/brain rebuild`                              | Rebuild keyword index                                                                                                                              |
-| `/brain embed`                                | Build/rebuild embedding index                                                                                                                      |
-| `/brain status`                               | Show brain status (docs, index, embeddings)                                                                                                        |
-| `/brain review`                               | Review pending brain changes (git diff)                                                                                                            |
-| `/brain undo`                                 | Undo last brain write                                                                                                                              |
-| `/learn`                                      | Reflect on session and auto-update memory + NEX.md                                                                                                 |
-| `/permissions`                                | Show tool permissions                                                                                                                              |
-| `/allow <tool>`                               | Auto-allow a tool                                                                                                                                  |
-| `/deny <tool>`                                | Block a tool                                                                                                                                       |
-| `/plan [task]`                                | Plan mode (analyze before executing)                                                                                                               |
-| `/plan edit`                                  | Open current plan in `$EDITOR` for review/modification                                                                                             |
-| `/plans`                                      | List saved plans                                                                                                                                   |
-| `/auto [level]`                               | Set autonomy: interactive/semi-auto/autonomous                                                                                                     |
-| `/commit [msg]`                               | Smart commit (analyze diff, suggest message)                                                                                                       |
-| `/diff`                                       | Show current diff                                                                                                                                  |
-| `/branch [name]`                              | Create feature branch                                                                                                                              |
-| `/mcp`                                        | MCP servers and tools                                                                                                                              |
-| `/hooks`                                      | Show configured hooks                                                                                                                              |
-| `/skills`                                     | List, enable, disable skills                                                                                                                       |
-| `/tree [depth]`                               | Show project file tree (default depth 3)                                                                                                           |
-| `/retry [--model <id>]`                       | Retry the last user turn; optionally switch model first (`/retry --model kimi-k2.5`)                                                               |
-| `/undo`                                       | Undo last file change                                                                                                                              |
-| `/redo`                                       | Redo last undone change                                                                                                                            |
-| `/history`                                    | Show file change history                                                                                                                           |
-| `/snapshot [name]`                            | Create a named git snapshot of current changes                                                                                                     |
-| `/restore [name\|last]`                       | Restore a previously created snapshot                                                                                                              |
-| `/review [--strict] [file]`                   | Deep code review: 3-phase protocol (broad scan → grep deep-dive → report), score table, diff fix snippets. `--strict` forces ≥3 critical findings. |
-| `/k8s [user@host]`                            | Kubernetes overview: namespaces + pod health (remote via SSH optional)                                                                             |
-| `/setup`                                      | Interactive setup wizard — configure provider, API keys, web search                                                                                |
-| `/benchmark [--quick\|--discover\|--history]` | Rank models on nex-code tool-calling tasks, auto-update routing                                                                                    |
-| `/install-skill <url>`                        | Install a skill from a git repo                                                                                                                    |
-| `/search-skill <query>`                       | Search GitHub for nex-code skills                                                                                                                  |
-| `/remove-skill <name>`                        | Remove an installed skill                                                                                                                          |
-| `/audit`                                      | Show tool execution audit summary                                                                                                                  |
-| `/exit`                                       | Quit                                                                                                                                               |
+| Command | Description |
+|---|---|
+| `/help` | Full help |
+| `/model [spec]` / `/providers` | Switch model / list all |
+| `/clear` | Clear conversation |
+| `/save` / `/load` / `/sessions` / `/resume` | Session management |
+| `/branches` / `/fork` / `/switch-branch` / `/goto` | Session tree navigation |
+| `/remember` / `/forget` / `/memory` | Persistent memory |
+| `/brain add\|list\|search\|show\|remove` | Knowledge base |
+| `/plan [task]` / `/plan edit` / `/plan approve` | Plan mode |
+| `/commit [msg]` / `/diff` / `/branch` | Git intelligence |
+| `/undo` / `/redo` / `/history` | Persistent undo/redo |
+| `/snapshot [name]` / `/restore` | Git snapshots |
+| `/permissions` / `/allow` / `/deny` | Tool permissions |
+| `/costs` / `/budget` | Cost tracking and limits |
+| `/review [--strict]` | Deep code review |
+| `/benchmark` | Model ranking (62 tasks) |
+| `/autoresearch` / `/ar-self-improve` | Autonomous optimization loops |
+| `/servers` / `/docker` / `/deploy` / `/k8s` | Infrastructure management |
+| `/skills` / `/install-skill` / `/mcp` / `/hooks` | Extensibility |
+| `/tree [depth]` | Project file tree |
+| `/audit` | Tool execution audit |
+| `/setup` | Interactive setup wizard |
 
 ---
 
 ## Tools
 
-The agent has 45 built-in tools:
+45 built-in tools:
 
-### Core & File System
+**Core:** `bash`, `read_file`, `write_file`, `edit_file`, `patch_file`, `list_directory`, `search_files`, `glob`, `grep`
 
-| Tool             | Description                                                  |
-| ---------------- | ------------------------------------------------------------ |
-| `bash`           | Execute shell commands (90s timeout, 5MB buffer)             |
-| `read_file`      | Read files with optional line range (binary detection)       |
-| `write_file`     | Create or overwrite files (with diff preview + confirmation) |
-| `edit_file`      | Targeted text replacement (with diff preview + confirmation) |
-| `patch_file`     | Atomic multi-replacement in a single operation               |
-| `list_directory` | Tree view with depth control and glob filtering              |
-| `search_files`   | Regex search across files (like grep)                        |
-| `glob`           | Fast file search by name/extension pattern                   |
-| `grep`           | Content search with regex and line numbers                   |
+**Git & Web:** `git_status`, `git_diff`, `git_log`, `web_fetch`, `web_search`
 
-### Git & Web
+**Agents:** `ask_user`, `task_list`, `spawn_agents`, `switch_model`
 
-| Tool         | Description                                                                |
-| ------------ | -------------------------------------------------------------------------- |
-| `git_status` | Git working tree status                                                    |
-| `git_diff`   | Git diff with optional path filter                                         |
-| `git_log`    | Git commit history with configurable count                                 |
-| `web_fetch`  | Fetch content from a URL                                                   |
-| `web_search` | Grounded search via Perplexity (if `PERPLEXITY_API_KEY` set) or DuckDuckGo |
+**Browser** (optional, requires Playwright): `browser_open`, `browser_screenshot`, `browser_click`, `browser_fill`
 
-### Interaction & Agents
+**GitHub Actions & K8s:** `gh_run_list`, `gh_run_view`, `gh_workflow_trigger`, `k8s_pods`, `k8s_logs`, `k8s_exec`, `k8s_apply`, `k8s_rollout`
 
-| Tool           | Description                                            |
-| -------------- | ------------------------------------------------------ |
-| `ask_user`     | Ask the user a question and wait for input             |
-| `task_list`    | Create and manage task lists for multi-step operations |
-| `spawn_agents` | Run parallel sub-agents with auto model routing        |
-| `switch_model` | Switch active model mid-conversation                   |
+**SSH & Server:** `ssh_exec`, `ssh_upload`, `ssh_download`, `service_manage`, `service_logs`, `sysadmin`, `remote_agent`
 
-### Browser (optional — requires Playwright)
+**Docker:** `container_list`, `container_logs`, `container_exec`, `container_manage`
 
-| Tool                 | Description                                                        |
-| -------------------- | ------------------------------------------------------------------ |
-| `browser_open`       | Open URL in headless browser, return text + links (JS-heavy pages) |
-| `browser_screenshot` | Screenshot a URL → saved file + vision-ready path                  |
-| `browser_click`      | Click element by CSS selector or visible text                      |
-| `browser_fill`       | Fill form field and optionally submit                              |
+**Deploy:** `deploy`, `deployment_status`
 
-### GitHub Actions
+**Frontend:** `frontend_recon` — scans design tokens, layout, and framework stack before any frontend work
 
-| Tool                  | Description                                                          |
-| --------------------- | -------------------------------------------------------------------- |
-| `gh_run_list`         | List GitHub Actions workflow runs                                    |
-| `gh_run_view`         | View run details and step logs                                       |
-| `gh_workflow_trigger` | Trigger a workflow dispatch event                                    |
-| `k8s_pods`            | List Kubernetes pods (local kubectl or remote via SSH)               |
-| `k8s_logs`            | Fetch pod logs with `--tail` / `--since` filtering                   |
-| `k8s_exec`            | Run a command inside a pod (with confirmation)                       |
-| `k8s_apply`           | Apply a manifest file — `dry_run` mode supported (with confirmation) |
-| `k8s_rollout`         | Rollout status / restart / history / undo for deployments            |
+**Visual:** `visual_diff`, `responsive_sweep`, `visual_annotate`, `visual_watch`, `design_tokens`, `design_compare`
 
-### SSH & Server Management
-
-Requires `.nex/servers.json` — run `/init` to configure. See [Server Management](#server-management).
-
-| Tool             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ssh_exec`       | Execute a command on a remote server via SSH                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `ssh_upload`     | Upload a file or directory via SCP                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `ssh_download`   | Download a file or directory via SCP                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `service_manage` | Start/stop/restart/reload/enable/disable a systemd service (local or remote)                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `service_logs`   | Fetch journalctl logs (local or remote, with `--since` support)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `sysadmin`       | Senior sysadmin operations on any Linux server (local or SSH). Actions: `audit` (full health overview), `disk_usage`, `process_list`, `network_status`, `package` (dnf/apt auto-detect), `user_manage` (list/create/delete/add_ssh_key), `firewall` (firewalld/ufw/iptables auto-detect), `cron` (list/add/remove), `ssl_check` (domain or cert file), `log_tail` (any log), `find_large` (big files by size). Read-only actions run without confirmation; state-changing actions require approval. |
-| `remote_agent`   | Delegate a full coding task to a **nex-code instance running on a remote server** via SSH. Writes the task to a temp file, executes `nex-code --prompt-file ... --auto` on the remote, and streams back the result. Requires `.nex/servers.json`. Optional `project_path` (defaults to remote home dir) and `model` override. Timeout: 5 minutes.                                                                                                                                                   |
-
-### Docker
-
-| Tool               | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `container_list`   | List Docker containers (local or remote via SSH)  |
-| `container_logs`   | Fetch Docker container logs (`--tail`, `--since`) |
-| `container_exec`   | Execute a command inside a running container      |
-| `container_manage` | Start/stop/restart/remove/inspect a container     |
-
-### Deploy
-
-| Tool                | Description                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deploy`            | Deploy to a remote server via **rsync** (sync local files) or **git** (git pull on remote) + optional post-deploy script + optional health check. Supports named configs from `.nex/deploy.json`. |
-| `deployment_status` | Check deployment health across all configured servers — server reachability, service status, health checks. Reads `.nex/deploy.json`.                                                             |
-
-### Frontend Design
-
-| Tool             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `frontend_recon` | **Mandatory first step before any frontend work.** Scans the project and returns: (1) design tokens — CSS custom properties (`:root`), Tailwind theme colors/fonts, (2) main layout/index page structure, (3) a reference component of the same type (`type=` hint), (4) detected JS/CSS framework stack — Vue/React, Alpine.js v2 vs v3, HTMX, Tailwind, Django. Call this before writing any markup or styles so the agent uses the project's actual design system instead of inventing one. |
-
-**Interactive commands** (vim, top, htop, ssh, tmux, fzf, etc.) are automatically detected and spawned with full TTY passthrough — no separate handling required.
-
-**Browser tools** require Playwright (`npm install playwright && npx playwright install chromium`). nex-code works without it — browser tools return a helpful install message if missing.
-
-Additional tools can be added via [MCP servers](#mcp) or [Skills](#skills).
+Additional tools via [MCP servers](#mcp) or [Skills](#skills).
 
 ---
 
-## Server Management
-
-nex-code has first-class support for remote server management via SSH, optimised for **AlmaLinux 9** and **macOS**.
-
-### Setup
-
-Run `/init` inside nex-code to interactively configure your servers:
-
-```
-> /init
-```
-
-Or create `.nex/servers.json` manually:
-
-```json
-{
-  "prod": {
-    "host": "94.130.37.43",
-    "user": "deploy",
-    "port": 22,
-    "key": "~/.ssh/id_rsa",
-    "os": "almalinux9",
-    "sudo": true
-  },
-  "macbook": {
-    "host": "192.168.1.10",
-    "user": "lukas",
-    "os": "macos"
-  }
-}
-```
-
-**OS values**: `almalinux9`, `almalinux8`, `ubuntu`, `debian`, `macos`
-
-When `.nex/servers.json` exists, the agent automatically receives OS-aware context:
-
-- **AlmaLinux 9**: `dnf`, `firewalld`, `systemctl`, SELinux hints
-- **macOS**: `brew`, `launchctl`, `log show` instead of `journalctl`
-
-If the project also has a `NEX.md` containing deployment indicators (`ssh`, `server`, `systemctl`, etc.), nex-code injects a **Deployment Context** block at the top of its system prompt. This tells the model that the application runs on the remote server — not locally — and steers debugging toward `ssh_exec`/`service_logs` instead of local `read_file` calls on server-side paths like `logs/`.
-
-### Slash Commands
-
-| Command                    | Description                                        |
-| -------------------------- | -------------------------------------------------- |
-| `/servers`                 | List all configured server profiles                |
-| `/servers ping`            | Check SSH connectivity for all servers in parallel |
-| `/servers ping <name>`     | Check a specific server                            |
-| `/docker`                  | List running containers across all servers + local |
-| `/docker -a`               | Include stopped containers                         |
-| `/deploy`                  | List all named deploy configs                      |
-| `/deploy <name>`           | Run a named deploy (with confirmation)             |
-| `/deploy <name> --dry-run` | Preview without syncing                            |
-| `/init`                    | Interactive wizard: create `.nex/servers.json`     |
-| `/init deploy`             | Interactive wizard: create `.nex/deploy.json`      |
-
-### Named Deploy Configs
-
-Create `.nex/deploy.json` (or use `/init deploy`):
-
-```json
-{
-  "prod": {
-    "server": "prod",
-    "method": "rsync",
-    "local_path": "dist/",
-    "remote_path": "/var/www/app",
-    "exclude": ["node_modules", ".env"],
-    "deploy_script": "systemctl restart gunicorn",
-    "health_check": "https://myapp.example.com/health"
-  },
-  "api": {
-    "server": "prod",
-    "method": "git",
-    "remote_path": "/home/deploy/my-api",
-    "branch": "main",
-    "deploy_script": "npm ci --omit=dev && sudo systemctl restart my-api",
-    "health_check": "systemctl is-active my-api"
-  }
-}
-```
-
-Then deploy with:
-
-```
-> /deploy prod
-```
-
-Or from within a conversation:
-
-```
-deploy the latest build to prod
-```
-
----
-
-## Features
-
-### Compact Output
-
-The agent loop uses a bouncing-ball spinner (`● · · · ·` → `· ● · · ·` → …) during tool execution, then prints compact 1-line summaries:
-
-```
-  ⏺ Read, Grep, Edit
-  ⎿  Read 45 lines from app.js
-  ⎿  12 matches "TODO"
-  ⎿  old_text not found
-```
-
-After multi-step tasks, a résumé and context-aware follow-up suggestions are shown:
-
-```
-  ── 3 steps · 8 tools · 2 files modified · 37s ──
-  💡 /diff · /commit · /undo
-```
-
-Step counts match between inline `── step N ──` markers and the résumé. Elapsed time is included. Read-heavy sessions (analysis, status checks) suggest `/save · /clear` instead.
-
-When the model runs tools but produces no visible text, an automatic nudge forces it to summarize findings — preventing silent completions where the user sees nothing.
-
-### Response Quality
-
-The system prompt enforces substantive responses: the model always presents findings as formatted text after using tools (users only see 1-line tool summaries). Responses use markdown with headers, bullet lists, and code blocks. The model states its approach before non-trivial tasks and summarizes results after completing work.
-
-**Language:** By default (`NEX_LANGUAGE=auto`), the model mirrors the language of the user's message — write in German, get a German response; write in English, get an English response. Set `NEX_LANGUAGE=English` (or any language) to force a fixed response language.
-
-**Code examples:** The model is instructed to always show actual, working code — never pseudocode or placeholder snippets.
-
-### Performance
-
-- **Asynchronous I/O**: The entire CLI is built on non-blocking I/O. File reads, writes, and git operations never block the main thread, keeping the UI responsive even during heavy tasks.
-- **Fast Startup**: Pre-bundled with `esbuild` to minimize module loading overhead, achieving sub-100ms startup times.
-- **In-Memory Indexing**: A background indexing engine (using `ripgrep` or a fast fallback) keeps project file paths in RAM for instant file discovery, path auto-fixing, and glob searches.
-
-### Streaming Output
-
-Tokens appear live as the model generates them. Bouncing-ball spinner during connection, then real-time line-by-line rendering via `StreamRenderer` with terminal width-aware word wrapping, markdown formatting, and syntax highlighting (JS, TS, Python, Go, Rust, CSS, HTML, and more).
-
-### Paste Detection
-
-Automatic bracketed paste mode: pasting multi-line text into the prompt is detected and combined into a single input. A `[Pasted content — N lines]` indicator is shown with a preview of the first line. The user must press Enter to send — pasted content never auto-fires. The paste handler stores the combined text and waits for explicit submission.
-
-### Ctrl+C Cancellation
-
-Pressing Ctrl+C during a running request immediately cancels the active HTTP stream and returns to the prompt:
-
-- An `AbortController` signal flows from the readline SIGINT handler through the agent loop to the provider's HTTP request
-- All providers (Ollama, OpenAI, Anthropic, Gemini, local) destroy the response stream on abort
-- No EPIPE errors after cancellation (stdout writes are EPIPE-guarded)
-- During processing: first Ctrl+C aborts the task and returns to prompt; second Ctrl+C force-exits
-- At the idle prompt: first Ctrl+C shows `(Press Ctrl+C again to exit)`, second Ctrl+C exits (hint resets after 2 s)
-- readline intercepts Ctrl+C on TTY (`rl.on('SIGINT')`) to prevent readline close → `process.exit(0)` race
-
-### Diff Preview
-
-Every file change is shown in a diff-style format before being applied:
-
-- **Header**: `⏺ Update(file)` or `⏺ Create(file)` with relative path
-- **Summary**: `⎿  Added N lines, removed M lines`
-- **Numbered lines**: right-justified line numbers with red `-` / green `+` markers
-- **Context**: 3 lines of surrounding context per change, multiple hunks separated by `···`
-- OOM-safe: large diffs (>2000 lines) fall back to add/remove instead of LCS
-- All changes require `[y/n]` confirmation (toggle with `/autoconfirm` or start with `-yolo`)
-
-### Terminal Theme Detection
-
-Nex Code automatically adapts all colours to your terminal's background:
-
-- **Dark terminals** — desaturated, accessible palette with `\x1b[2m` dim for muted text
-- **Light/white terminals** — darker, high-contrast palette; dim replaced with explicit grey to stay visible on white backgrounds; command echo uses a light blue-grey highlight instead of dark grey
-
-All colours use **24-bit RGB escape codes** (`\x1b[38;2;r;g;bm`) — no ANSI system colours 0–7. This ensures consistent rendering across all terminal themes (Dracula, Tokyo Night, Ghostty, Hyper, macOS Terminal, Solarized, etc.) without neon-saturated remaps or low-contrast issues. Tested against 20 terminal presets for WCAG contrast, saturation, and deuteranopia distinguishability.
-
-Detection priority:
-
-1. `NEX_THEME=light|dark` env var — explicit override, useful if auto-detection is wrong
-2. `COLORFGBG` env var — set by iTerm2 and other terminals
-3. **OSC 11 query** — asks the terminal emulator directly for its background colour (works with Apple Terminal, iTerm2, WezTerm, Ghostty, and most xterm-compatible terminals). Result is cached per terminal session in `~/.nex-code/.theme_cache.json`, so the one-time ~100 ms startup cost only occurs on first launch in each terminal window.
-4. Default → dark
-
-If you use multiple Apple Terminal profiles (e.g. white, dark teal, dark green), each window is detected independently — no manual configuration needed.
-
-### Auto-Context
-
-On startup, the CLI reads your project and injects context into the system prompt:
-
-- `package.json` — name, version, scripts, dependencies
-- `README.md` — first 50 lines
-- Git info — branch, status, recent commits
-- `.gitignore` content
-- **Merge conflicts** — detected and shown as a red warning; included in LLM context so the agent avoids editing conflicted files
-
-### Context Engine
-
-Automatic token management with compression when the context window gets full. Tracks token usage across system prompt, conversation, tool results, and tool definitions.
-
-### Safety Layer
-
-Three tiers of protection:
-
-- **Forbidden** (blocked): `rm -rf /`, `rm -rf .`, `mkfs`, `dd if=`, fork bombs, `curl|sh`, `cat .env`, `chmod 777`, reverse shells — 30+ patterns
-- **Critical** (always re-prompted, even in YOLO mode): `rm -rf`, `sudo`, `--no-verify` (hook bypass), `git reset --hard`, `git clean -f`, `git checkout --`, `git push --force` — every run requires explicit confirmation, no exceptions
-- **Notable** (confirmation on first use): `git push`, `npm publish`, `ssh`, `HUSKY=0`, `SKIP_HUSKY=1` — first-time prompt, then respects "always allow"
-- **SSH read-only safe list**: Common read-only SSH commands (`systemctl status`, `journalctl`, `tail`, `cat`, `git pull`, etc.) skip the dangerous-command confirmation
-- **Path protection**: Sensitive paths (`.ssh/`, `.aws/`, `.env`, credentials) are blocked from file operations
-- **Loop detection**: Edit-loop abort after 4 edits to the same file (warn at 2); bash-command loop abort after 8 identical commands (warn at 5); consecutive-error abort after 10 failures (warn at 6)
-- **Stale-stream detection**: Warns after 60 s without tokens (shows retry count + seconds until auto-abort); auto-switches to the fast model on retry 1 and offers interactive recovery when all retries are exhausted
-- **Auto Plan Mode**: Implementation tasks (`implement`, `refactor`, `create`, `build`, `add`, `write`, …) automatically activate plan mode — read-only analysis first, approve before any writes. Disable with `NEX_AUTO_PLAN=0`
-- **Intent-first behavior**: Before executing, the agent understands why you asked. If it finds something that contradicts or already satisfies the task, it asks instead of proceeding blindly
-- **Pre-push secret detection**: Git hook scans diffs for API keys, private keys, hardcoded secrets, SSH+IP patterns, and `.env` leaks before allowing push
-- **Post-merge automation**: Auto-bumps patch version on `devel→main` merge; runs `npm install` when `package.json` changes
-
-### Sessions
-
-nex-code automatically saves your conversation after every turn. If the process crashes or is closed unexpectedly, the next startup will detect the autosave and offer to restore it:
-
-```
-Previous session found. Resume? (y/n)
-```
-
-Only sessions from the last 24 hours are offered for auto-resume. Older autosaves are silently skipped.
-
-**Session commands:**
-
-| Command        | Description                                              |
-| -------------- | -------------------------------------------------------- |
-| `/save <name>` | Save current conversation under a named slot             |
-| `/load <name>` | Restore a previously saved session                       |
-| `/sessions`    | List all saved sessions with message count and timestamp |
-| `/resume`      | Resume the most recently saved session                   |
-
-```
-/save my-feature        # save with name
-/load my-feature        # restore by name
-/sessions               # list all saved sessions
-/resume                 # restore the latest session
-```
-
-Sessions are stored in `.nex/sessions/` as JSON files. Auto-saves always write to `_autosave` (overwritten each turn). Writes are atomic — a temp file is written and renamed, so a crash mid-write never corrupts the saved state.
-
-### Session Trees
-
-Navigate your conversation history like git branches. Fork at any point, explore alternative approaches, and switch between branches:
-
-```
-/timeline            # see message indices
-/fork 5 experiment   # branch from message 5
-/branches            # see all branches
-/switch-branch main  # go back to main
-/goto 3              # jump to message 3 (truncates later messages)
-/delete-branch experiment
-```
-
-This enables non-linear conversations: try an approach, and if it doesn't work, fork from an earlier point and try something different — without losing the original attempt.
-
-### Autoresearch
-
-Autonomous optimization loops inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch). The agent creates a dedicated experiment branch, edits code, runs experiments, and automatically keeps improvements or reverts failures:
-
-```
-/autoresearch reduce test runtime while maintaining correctness
-/autoresearch optimize bundle size under 500kb
-```
-
-The agent follows a repeating cycle on a dedicated `autoresearch/<tag>` branch: **setup branch** -> **checkpoint** -> **edit** -> **run experiment** -> **log result** -> **keep or revert (git reset)**. Runs indefinitely until you interrupt. Experiments are logged to `.nex/autoresearch/experiments.json` with metrics, resource usage, and complexity tracking. Output can be redirected to log files with metric extraction via grep patterns to protect context.
-
-```
-/ar-self-improve          # self-improvement loop using nex-code's benchmark as metric
-/ar-self-improve sysadmin # focus on a specific weak category
-/ar-status                # show experiment history with trends
-/ar-clear                 # reset experiment history
-```
-
-The loop can also run **headless** — useful for unattended overnight sessions:
-
-```bash
-nex-code --task "/ar-self-improve" --no-auto-orchestrate --max-turns 200
-```
-
-`/ar-self-improve` uses nex-code's own 14-task quick benchmark as the fitness metric. Each experiment that raises the average score above the session baseline is kept; all others are reverted with `git reset`. The benchmark output includes a **Failing tasks** section that names which tasks each model got wrong, making root causes immediately visible.
-
-> **Self-improvement history** (2026-03-31): baseline 86.7 → **92.9** (+6.2 pts) in one session. Key fix: rewording the `edit_file` tool description so models call it directly instead of first calling `read_file`. `rnj-1:8b` jumped from 77.1 → 97.9 on that change alone.
-
-### Real-Life Benchmark
-
-A comprehensive benchmark suite that tests nex-code on **35 real-world tasks** across 7 categories, sourced from actual projects (cookbook, drumcomputer, chord-library, jarvis-agent, practice-wizard, AlmaLinux9 server docs):
-
-| Category | Weight | Tasks | What it tests |
-|----------|--------|-------|---------------|
-| Bug Fixing | 25% | 6 | Off-by-one, async/await, destructuring, timezone, promise race conditions |
-| Feature Implementation | 20% | 7 | Endpoints, CSV export, volume control, chord filtering, rate limiting, JSONL cost analysis, CLI stats tools |
-| Code Understanding | 10% | 5 | Project structure analysis, env var scanning, dependency audit, route mapping, DB schema analysis |
-| Server/DevOps | 15% | 6 | Nginx configs, systemd services, deploy scripts, Dockerfiles, firewall rules, SSH key rotation |
-| Multi-file Refactoring | 15% | 5 | Extract modules, rename across files, split monoliths, fix imports, Django migration audit |
-| Test Writing | 10% | 4 | Unit tests, API tests, edge cases, music theory transposition |
-| Documentation | 5% | 2 | Setup guides, API documentation |
-
-Each task runs nex-code headless in an isolated temp directory with real file structures, then evaluates the result for task completion (40%), edit precision (25%), efficiency (20%), and quality (15%).
-
-> **Benchmark results** (2026-04-02): baseline **79/100** → **84/100** after efficiency tuning. All failures are timeout-related — when nex-code finishes in time, it scores 90. Strongest: bug fixing (90), testing (90), docs (90). Weakest: features (66→improving), refactoring (70→improving). Ministral-3:8b and devstral-2:123b score comparably (84 vs 84).
-
-```bash
-npm run benchmark:reallife                           # full 35-task suite (~90 min)
-npm run benchmark:reallife -- --category bugfix      # single category
-npm run benchmark:reallife -- --tasks bugfix-off-by-one-pagination  # single task
-npm run benchmark:reallife -- --model ministral-3:8b # test specific model
-npm run benchmark:report                             # view score trends
-```
-
-The **improvement loop** (Karpathy-style autoresearch) runs the benchmark, clusters failures, implements a targeted fix to nex-code's own source, re-benchmarks, and keeps or reverts:
-
-```bash
-npm run improve:reallife                             # interactive
-npm run improve:reallife -- --max-passes 20          # unattended
-./scripts/improve-reallife-overnight.sh              # overnight with logging
-```
-
-### Daemon / Watch Mode
-
-Keep nex-code running in the background and fire tasks automatically when things change. Reads config from `.nex/daemon.json` (or a path passed after the flag):
-
-```bash
-nex-code --daemon          # reads .nex/daemon.json
-nex-code --daemon /path/to/config.json
-nex-code --watch           # alias
-```
-
-**Example `.nex/daemon.json`:**
-
-```json
-{
-  "triggers": [
-    {
-      "on": "file-change",
-      "glob": "**/*.{js,ts}",
-      "ignore": ["dist/**", "node_modules/**"],
-      "task": "run npm test -- --testPathPattern={changedFile} and report results",
-      "debounceMs": 2000,
-      "auto": true
-    },
-    {
-      "on": "git-commit",
-      "task": "review the last commit for bugs or security issues — commit: {commitHash} \"{commitMessage}\"",
-      "auto": true
-    },
-    {
-      "on": "schedule",
-      "cron": "0 8 * * *",
-      "task": "check npm audit and report any new vulnerabilities",
-      "auto": true
-    }
-  ],
-  "notify": ["desktop", "matrix"],
-  "logFile": ".nex/daemon.log"
-}
-```
-
-**Trigger types:**
-
-| Type | Mechanism | Template vars |
-|------|-----------|---------------|
-| `file-change` | `fs.watch({ recursive: true })` + debounce | `{changedFile}`, `{changedFiles}` |
-| `git-commit` | polls `git log` every 10 s | `{commitHash}`, `{commitMessage}` |
-| `schedule` | `setInterval` — supports `*/N * * * *` and `0 H * * *` | — |
-
-**Notifications:** `"desktop"` fires a macOS notification via `osascript`. `"matrix"` posts to the room set in `NEX_MATRIX_URL` / `NEX_MATRIX_TOKEN` / `NEX_MATRIX_ROOM`.
-
-Each triggered task runs in its own isolated session (`clearConversation()` is called after every task). Events are appended as one-line JSON to `logFile`; the file is truncated (not deleted) when it exceeds 5 MB.
-
-No new npm dependencies — uses only Node.js built-ins (`fs`, `https`, `child_process`).
-
-### Memory
-
-Persistent project memory that survives across sessions:
-
-```
-/remember lang=TypeScript
-/remember always use yarn instead of npm
-/memory
-/forget lang
-```
-
-Also loads `NEX.md` from project root for project-level instructions.
-
-### Brain — Persistent Knowledge Base
-
-A project-scoped knowledge base stored in `.nex/brain/`. The agent automatically retrieves relevant documents for each query and can write new entries as it discovers useful patterns, decisions, or context:
-
-```
-/brain add auth-flow         # add a document (prompted for content)
-/brain search "jwt token"    # keyword + semantic search
-/brain list                  # list all documents
-/brain show auth-flow        # display a document
-/brain remove auth-flow      # delete a document
-/brain status                # index health (docs, keywords, embeddings)
-/brain review                # git diff of recent brain writes
-/brain undo                  # undo last brain write
-```
-
-The agent uses the `brain_write` tool to save discoveries automatically. All writes are tracked in git so you can review, revert, or audit what the agent has stored.
-
-### Plan Mode
-
-Analyze before executing — the agent explores the codebase with read-only tools, produces a structured plan, then you approve before any changes are made.
-
-**Auto Plan Mode** — nex-code automatically activates plan mode when it detects an implementation task (prompts containing `implement`, `refactor`, `create`, `build`, `add`, `write`, etc.). No manual `/plan` needed:
-
-```
-> implement a search endpoint    # → Auto Plan Mode activates immediately
-> refactor the auth module       # → Auto Plan Mode activates immediately
-> how does auth work?            # → normal mode (question, not implementation)
-```
-
-Disable with `NEX_AUTO_PLAN=0` if you prefer manual control.
-
-```
-/plan refactor the auth module   # manual: enter plan mode with optional task
-/plan status                     # show extracted steps with status icons
-/plan edit                       # open plan in $EDITOR (nano/vim/code) to modify
-/plan approve                    # approve and exit plan mode (all tools re-enabled)
-/auto semi-auto                  # set autonomy level
-```
-
-Plan mode is **hard-enforced**: only read-only tools (`read_file`, `list_directory`, `search_files`, `glob`, `grep`, `web_search`, `web_fetch`, `git_status`, `git_diff`, `git_log`, `git_show`, `ask_user`) are available. Any attempt to call a write tool is blocked at the API level.
-
-**Step extraction**: when the LLM outputs a numbered plan, steps are automatically parsed into a structured list. During execution the spinner shows `Plan step 2/4: Implement tests` and `/plan status` shows per-step progress (○ pending → → in progress → ✓ done). The plan text is saved to `.nex/plans/current-plan.md`.
-
-### Snapshots
-
-Named git snapshots — save and restore working-tree state at any point:
-
-```
-/snapshot before-refactor   # create snapshot named "before-refactor"
-/snapshot list               # list all saved snapshots
-/restore last                # restore most recent snapshot
-/restore before-refactor     # restore by name
-/restore list                # show all available snapshots
-```
-
-Snapshots use `git stash` internally — no extra state files. The working tree is restored immediately after stashing so your changes are preserved. Use `/restore` when you want to roll back to a known-good state.
-
-### File Tree
-
-Visualize the project structure:
-
-```
-/tree          # show tree at depth 3
-/tree 2        # shallower view
-/tree 5        # deeper view (max 8)
-```
-
-Automatically excludes `node_modules`, `.git`, `dist`, `build`, `coverage`, and all entries listed in `.gitignore`. Directories are sorted before files.
-
-### Undo / Redo (Persistent)
-
-Undo/redo for all file changes (write, edit, patch) — **survives restart**:
-
-```
-/undo                # undo last file change
-/redo                # redo last undone change
-/history             # show file change history
-```
-
-Undo stack holds up to 50 changes, persisted to `.nex/history/`. Large files (>100KB) are deduplicated via SHA-256 blob storage. History is auto-pruned after 7 days. `/clear` resets the in-memory stack.
-
-> **Snapshots vs Undo**: `/undo` operates on the persistent change stack for fine-grained per-file rollback across sessions. `/snapshot` + `/restore` use git stash for broader checkpoints across multiple files.
-
-### Desktop Notifications
-
-On macOS, nex-code fires a system notification when a task completes after ≥ 30 seconds — useful when running long autonomous tasks in the background. No configuration needed; requires macOS Notification Center access.
-
-### Task Management
-
-Create structured task lists for complex multi-step operations:
-
-```
-/tasks                # show current task list
-/tasks clear          # clear all tasks
-```
-
-The agent uses `task_list` to create, update, and track progress on tasks with dependency support.
-
-When the agent creates a task list, a **live animated display** replaces the static output:
-
-```
-✽ Adding cost limit functions… (1m 35s · ↓ 2.6k tokens)
-  ⎿  ✔ Create cli/picker.js — Interactive Terminal Picker
-     ◼ Add cost limits to cli/costs.js
-     ◻ Add budget gate to cli/providers/registry.js
-     ◻ Update cli/index.js
-     ◻ Run tests
-```
-
-- Bouncing-ball spinner (⏺ ping-pong across 5 positions) with elapsed time display
-- Per-task status icons: `✔` done, `◼` in progress, `◻` pending, `✗` failed
-- Automatically pauses during text streaming and resumes during tool execution
-- Falls back to the static `/tasks` view when no live display is active
-
-### Sub-Agents
-
-Spawn parallel sub-agents for independent tasks:
-
-- Up to 5 agents run simultaneously with their own conversation contexts
-- File locking prevents concurrent writes to the same file (intra-process sub-agents)
-- Multi-progress display shows real-time status of each agent
-- Good for: reading multiple files, analyzing separate modules, independent research
+## Key Features
 
 ### Multi-Agent Orchestrator
 
-For complex tasks with multiple independent goals (e.g. "fix all TypeScript errors in auth/, add tests for utils/, and update the README"), the orchestrator decomposes the prompt into parallel sub-tasks, runs dedicated sub-agents on each, and synthesizes the results.
-
-**Auto-orchestration is on by default** for prompts with ≥3 goals.
+Multi-goal prompts auto-decompose into parallel sub-agents (up to 5 simultaneously, with file locking):
 
 ```bash
-# Just use it — multi-goal prompts auto-decompose into parallel agents
-nex-code --task "fix all type errors in src/, add JSDoc to utils/, update CHANGELOG"
-
-# Custom orchestrator model
-nex-code --orchestrator-model kimi-k2.5 --task "..."
-
-# Disable auto-orchestration
-NEX_AUTO_ORCHESTRATE=false nex-code
-
-# Lower the goal threshold (default: 3)
-NEX_ORCHESTRATE_THRESHOLD=2 nex-code
+nex-code --task "fix type errors in src/, add JSDoc to utils/, update CHANGELOG"
 ```
 
-**Interactive:** type `/orchestrate <task>` at the prompt.
+### Autoresearch
 
-**Example output:**
-
-```
-Orchestrator  model: kimi-k2.5 | workers: devstral-2:123b | max parallel: 3
-
-Phase 1: Decomposing prompt into sub-tasks...
-Decomposed into 3 sub-tasks:
-  t1: Fix TypeScript errors in src/auth/
-     scope: src/auth/
-  t2: Add JSDoc comments to src/utils/
-     scope: src/utils/
-  t3: Update CHANGELOG with recent changes
-     scope: CHANGELOG.md
-
-Phase 2: Running 3 sub-agents (max 3 parallel)...
-
-✓ Agent 1 [devstral-2:123b]: Fix TypeScript errors in src/auth/: fixed 4 type errors in login.ts, ...
-✓ Agent 2 [devstral-2:123b]: Add JSDoc comments to src/utils/: documented 12 functions across 3 files
-✓ Agent 3 [devstral-2:123b]: Update CHANGELOG: added entries for v1.2.0 changes
-
-Phase 3: Synthesizing results...
-
-Summary: Fixed 4 TS errors in auth module, added JSDoc to 12 utility functions, updated CHANGELOG.
-Suggested commit: fix: resolve auth type errors and add utility docs
-```
-
-**Env vars:**
-
-| Variable                    | Default | Description                                             |
-| --------------------------- | ------- | ------------------------------------------------------- |
-| `NEX_AUTO_ORCHESTRATE`      | `true`  | Set to `false` to disable auto-orchestration            |
-| `NEX_ORCHESTRATE_THRESHOLD` | `3`     | Minimum number of detected goals before auto-triggering |
-
-**Model roles in orchestration:**
-
-| Role         | Default model     | Purpose                                     |
-| ------------ | ----------------- | ------------------------------------------- |
-| Orchestrator | `kimi-k2.5`       | Decomposes prompt, synthesizes results      |
-| Worker       | `devstral-2:123b` | Executes each sub-task (one agent per task) |
-
-Override via `--orchestrator-model` (orchestrator) or `DEFAULT_MODEL` / `NEX_STANDARD_MODEL` (workers).
-
----
-
-### Parallel Sessions
-
-Running multiple nex-code instances in the same project directory is safe. All shared state files (`.nex/memory/memory.json`, `.nex/config.json`, `NEX.md`, brain index) use advisory inter-process locking (`O_EXCL` lock files with stale-lock reclaim) and atomic writes (temp file + `rename`). A session in Terminal A and a session in Terminal B can both call `/remember`, `/allow`, or `/learn` simultaneously without data corruption.
-
-**Multi-Model Routing** — Sub-agents auto-select the best model per task based on complexity:
-
-- **Read/search/list** tasks → fast models (essential tier)
-- **Edit/fix/analyze** tasks → capable models (standard tier)
-- **Refactor/implement/generate** tasks → most powerful models (full tier)
-
-The LLM can also explicitly override with `model: "provider:model"` in the agent definition. When multiple providers are configured, the system prompt includes a routing table showing all available models and their tiers.
-
-### Git Intelligence
+Autonomous optimization loops — edit → experiment → keep/revert, on a dedicated git branch:
 
 ```
-/commit              # analyze diff, suggest commit message
-/commit feat: add login
-/diff                # show current diff summary
-/branch my-feature   # create and switch to branch
+/autoresearch reduce test runtime while maintaining correctness
+/ar-self-improve          # uses nex-code's own benchmark as the fitness metric
 ```
 
-### Permissions
+### Plan Mode
 
-Control which tools the agent can use:
+Auto-activates for implementation tasks. Read-only analysis first, approve before writes. Hard-enforced tool restrictions during analysis phase.
 
-```
-/permissions         # show current settings
-/allow read_file     # auto-allow without asking
-/deny bash           # block completely
-```
+### Daemon / Watch Mode
 
-Persisted in `.nex/config.json`.
+Background process that fires tasks on file changes, git commits, or cron schedule. Configured via `.nex/daemon.json`. Desktop and Matrix notifications.
 
-### Cost Tracking
+### Session Trees
 
-Track token usage and costs per provider:
+Navigate conversation history like git branches — fork, switch, goto, delete branches without losing prior attempts.
 
-```
-/costs
-/costs reset
-```
+### Safety
 
-### Cost Limits
+| Layer | What it guards | Bypass? |
+|---|---|---|
+| **Forbidden patterns** | `rm -rf /`, fork bombs, reverse shells, `cat .env` | No |
+| **Protected paths** | Destructive ops on `.env`, `.ssh/`, `.aws/`, `.git/` | `NEX_UNPROTECT=1` |
+| **Sensitive file tools** | read/write/edit on `.env`, `.ssh/`, `.npmrc`, `.kube/` | No |
+| **Critical commands** | `rm -rf`, `sudo`, `git push --force`, `git reset --hard` | Explicit confirmation |
 
-Set per-provider spending limits. When a provider exceeds its budget, calls automatically fall back to the next provider in the fallback chain:
+Pre-push secret detection, audit logging (JSONL), persistent undo/redo, cost limits, auto plan mode.
 
-```
-/budget                    # show all limits + current spend
-/budget anthropic 5        # set $5 limit for Anthropic
-/budget openai 10          # set $10 limit for OpenAI
-/budget anthropic off      # remove limit
-```
-
-Limits are persisted in `.nex/config.json`. You can also set them directly:
-
-```json
-// .nex/config.json
-{
-  "costLimits": {
-    "anthropic": 5,
-    "openai": 10
-  }
-}
-```
+**Reporting vulnerabilities:** Email **security@schoensgibl.com** — not a public issue. 72h initial response.
 
 ### Open-Source Model Robustness
 
-Four features that make Nex Code significantly more reliable with open-source models:
+- **5-layer argument parsing** — JSON, trailing fix, extraction, key repair, fence stripping
+- **Tool call retry with schema hints** — malformed args get the expected schema for self-correction
+- **Auto-fix engine** — path resolution, edit fuzzy matching (Levenshtein), bash error hints
+- **Tool tiers** — essential (5) / standard (21) / full (45), auto-selected per model capability
+- **Stale stream recovery** — progressive retry with context compression on stall
 
-**Tool Call Retry with Schema Hints** — When a model sends malformed tool arguments, instead of a bare error, the agent sends back the expected JSON schema so the model can self-correct on the next loop iteration.
+### Visual Development Tools
 
-**Smart Argument Parsing** — 5 fallback strategies for parsing tool arguments: direct JSON, trailing comma/quote fixes, JSON extraction from surrounding text, unquoted key repair, and markdown code fence stripping (common with DeepSeek R1, Llama).
-
-**Tool Argument Validation** — Validates arguments against tool schemas before execution. Auto-corrects similar parameter names (Levenshtein distance), fixes type mismatches (string↔number↔boolean), and provides "did you mean?" suggestions.
-
-**Auto-Fix Engine** — Three layers of automatic error recovery that silently fix common tool failures:
-
-- **Path auto-fix**: Wrong extension? Finds the right one (`.js` → `.ts`). File moved? Globs for it by basename. Double slashes, missing extensions — all auto-resolved.
-- **Edit auto-fix**: Close match (≤5% Levenshtein distance) in `edit_file`/`patch_file` is auto-applied instead of erroring. Stacks with fuzzy whitespace matching.
-- **Bash error hints**: Enriches error output with actionable hints — "command not found" → install suggestion, `MODULE_NOT_FOUND` → `npm install <pkg>`, port in use, syntax errors, TypeScript errors, test failures, and more.
-
-**Stale Stream Recovery** — Progressive retry strategy when streams stall (common with large Ollama models after many agent steps):
-
-- 1st retry: 3s backoff delay, resend same context (handles transient stalls)
-- 2nd retry: force-compress conversation (~80k tokens freed), 5s delay, retry with smaller context
-- Last resort: if retries exhausted, one final force-compress + reset for fresh attempts
-- Broader context-too-long detection catches Ollama-specific error formats (`num_ctx`, `prompt`, `size`, `exceeds`)
-
-**Tool Tiers** — Dynamically reduces the tool set based on model capability:
-
-- **essential** (5 tools): bash, read_file, write_file, edit_file, list_directory
-- **standard** (21 tools): + search_files, glob, grep, ask_user, git_status, git_diff, git_log, task_list, ssh_exec, service_manage, service_logs, container_list, container_logs, container_exec, container_manage, deploy
-- **full** (45 tools): all tools
-
-Models are auto-classified, or override per-model in `.nex/config.json`:
-
-```json
-{
-  "toolTiers": {
-    "deepseek-r1": "essential",
-    "local:*": "essential",
-    "qwen3-coder": "full"
-  },
-  "maxIterations": 100
-}
-```
-
-`maxIterations` sets the agentic loop limit project-wide (default: 50). The `--max-turns <n>` CLI flag overrides it per run.
-
-Tiers are also used by sub-agent routing — when a sub-agent auto-selects a model, its tool set is filtered to match that model's tier.
+Pixel-level before/after diffs, responsive sweeps (320–1920px), annotation overlays, design token extraction, and live-reload diff watching. Pure image tools work standalone; browser tools need Playwright.
 
 ---
 
-## Skills
+## Extensibility
 
-Extend Nex Code with project-specific knowledge, commands, and tools via `.nex/skills/`.
+### Skills
 
-### Prompt Skills (`.md`)
+Drop `.md` or `.js` files in `.nex/skills/` for project-specific knowledge, commands, and tools. Global skills in `~/.nex-code/skills/`. Install from git: `/install-skill user/repo`.
 
-Drop a Markdown file and its content is injected into the system prompt:
+### Plugins
 
-```markdown
-<!-- .nex/skills/code-style.md -->
+Custom tools and lifecycle hooks via `.nex/plugins/`. Events: `onToolResult`, `onModelResponse`, `onSessionStart`, `onSessionEnd`, `onFileChange`, `beforeToolExec`, `afterToolExec`.
 
-# Code Style
+### MCP
 
-- Always use semicolons
-- Prefer const over let
-- Use TypeScript strict mode
-```
+Connect external tool servers via [Model Context Protocol](https://modelcontextprotocol.io). Configure in `.nex/mcp.json` with env var interpolation.
 
-### Script Skills (`.js`)
+### Hooks
 
-CommonJS modules that can provide instructions, slash commands, and tools:
-
-```javascript
-// .nex/skills/deploy.js
-module.exports = {
-  name: "deploy",
-  description: "Deployment helper",
-  instructions: "When deploying, always run tests first...",
-  commands: [
-    {
-      cmd: "/deploy",
-      desc: "Run deployment",
-      handler: (args) => {
-        /* ... */
-      },
-    },
-  ],
-  tools: [
-    {
-      type: "function",
-      function: {
-        name: "deploy_status",
-        description: "Check status",
-        parameters: { type: "object", properties: {} },
-      },
-      execute: async (args) => "deployed",
-    },
-  ],
-};
-```
-
-### Management
-
-```
-/skills                    # list loaded skills
-/skills enable code-style  # enable a skill
-/skills disable code-style # disable a skill
-```
-
-Skills are loaded on startup. All enabled by default. Disabled skills tracked in `.nex/config.json`.
-
-### Global Skills (`~/.nex-code/skills/`)
-
-Skills placed in `~/.nex-code/skills/` are loaded globally across all projects. Useful for cross-project workflows.
-
-**Example: `server-agent.md`** — instructs nex-code on your Mac to delegate tasks to a nex-code instance on a remote server using the `remote_agent` tool. Define a project→server mapping table in the skill so the agent knows which path to use for each project name.
-
-### Skill Marketplace
-
-Install community skills directly from git:
-
-```
-/install-skill https://github.com/user/nex-skill-deploy
-/install-skill user/nex-skill-deploy       # shorthand
-/search-skill kubernetes                    # search GitHub
-/remove-skill deploy                        # uninstall
-```
-
-Skills are cloned to `.nex/skills/{name}/` and validated (must contain `skill.json`, `.md`, or `.js` files).
-
-### Built-in Skills
-
-nex-code ships with built-in skills in `cli/skills/`:
-
-- **devops** — DevOps agent instructions for SSH, Docker, deploy, and infrastructure tools
-
-Built-in skills are loaded automatically. Project skills with the same name override built-ins.
+Run custom scripts on CLI events (`pre-tool`, `post-tool`, `pre-commit`, `post-response`, `session-start`, `session-end`). Configure in `.nex/config.json` or `.nex/hooks/`.
 
 ---
 
-## Plugins
+## VS Code Extension
 
-Extend nex-code with custom tools and lifecycle hooks via `.nex/plugins/`:
-
-```javascript
-// .nex/plugins/my-plugin.js
-module.exports = function setup(api) {
-  api.registerTool(
-    {
-      type: "function",
-      function: {
-        name: "my_tool",
-        description: "Custom tool",
-        parameters: { type: "object", properties: {} },
-      },
-    },
-    async (args) => {
-      return "result";
-    },
-  );
-
-  api.registerHook("onToolResult", (data) => {
-    console.log(`Tool ${data.tool} completed`);
-    return data;
-  });
-};
-```
-
-**Events:** `onToolResult`, `onModelResponse`, `onSessionStart`, `onSessionEnd`, `onFileChange`, `beforeToolExec`, `afterToolExec`
-
-Plugins are loaded automatically on startup. Hook handlers can modify event data (return the modified object).
-
----
-
-## Audit Logging
-
-When `NEX_AUDIT=1` is set, all tool executions are logged to `.nex/audit/YYYY-MM-DD.jsonl`:
-
-```
-/audit                # show summary (total calls, success rate, per-tool breakdown)
-```
-
-Arguments are automatically sanitized — keys matching `key`, `token`, `password`, `secret`, or `credential` are masked. Long values (>500 chars) are truncated.
-
----
-
-## Safety
-
-nex-code includes multi-layer protections to prevent accidental damage — even in `--auto` and `--yolo` mode:
-
-| Layer                    | What it guards                                                                                                                       | Bypass possible?               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| **Forbidden patterns**   | `rm -rf /`, fork bombs, reverse shells, `cat .env`                                                                                   | No                             |
-| **Protected paths**      | Destructive bash ops (`rm`, `mv`, `truncate`, …) on `.env`, `credentials/`, `venv/`, `.ssh/`, `.aws/`, `.sqlite3`, `.git/` internals | Only via `NEX_UNPROTECT=1`     |
-| **Sensitive file tools** | `read_file` / `write_file` / `edit_file` on `.env`, `.ssh/`, `.npmrc`, `.kube/config`, etc.                                          | No                             |
-| **Critical commands**    | `rm -rf`, `sudo`, `git push --force`, `git reset --hard`                                                                             | Requires explicit confirmation |
-
-**Override:** If you intentionally need to modify a protected path via bash (e.g. rotating credentials in a deploy script), set `NEX_UNPROTECT=1`:
+Built-in sidebar chat panel (`vscode/`) with streaming output, collapsible tool cards, and native theme support. Spawns `nex-code --server` over JSON-lines IPC.
 
 ```bash
-NEX_UNPROTECT=1 nex-code
-```
-
-This disables the protected-path check only — forbidden patterns and critical-command prompts remain active.
-
-### Reporting Vulnerabilities
-
-If you discover a security vulnerability, please report it responsibly:
-
-- **Do not** open a public GitHub issue
-- Email: **security@schoensgibl.com**
-- Include: description, reproduction steps, and potential impact
-- Allow up to 72 hours for initial response
-
----
-
-## Team Permissions
-
-Permission presets for team environments:
-
-| Preset      | Description                                        |
-| ----------- | -------------------------------------------------- |
-| `readonly`  | Search and read tools only — no writes, no deploys |
-| `developer` | All tools except deploy, ssh_exec, service_manage  |
-| `admin`     | Full access to all tools                           |
-
-Configure in `.nex/config.json`:
-
-```json
-{
-  "permissionPreset": "developer"
-}
-```
-
-Works alongside the existing per-tool `/allow` and `/deny` system.
-
----
-
-## MCP
-
-Connect external tool servers via the [Model Context Protocol](https://modelcontextprotocol.io):
-
-```json
-// .nex/config.json
-{
-  "mcpServers": {
-    "my-server": {
-      "command": "node",
-      "args": ["path/to/server.js"]
-    }
-  }
-}
-```
-
-```
-/mcp              # show servers and tools
-/mcp connect      # connect all configured servers
-/mcp disconnect   # disconnect all
-```
-
-MCP tools appear with the `mcp_` prefix and are available to the agent alongside built-in tools.
-
----
-
-## MCP Servers
-
-nex-code supports a dedicated `.nex/mcp.json` file (or `~/.nex/mcp.json` for global config) for
-connecting MCP tool servers. This format supports environment variable interpolation so you can keep
-API keys out of the config file.
-
-```json
-// .nex/mcp.json
-{
-  "servers": {
-    "brave-search": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "env": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
-
-**Search order for config:** `.nex/mcp.json` → `~/.nex/mcp.json`. Override with `--mcp-config <path>`.
-
-**Slash commands:**
-
-```
-/mcp list     — list connected MCP servers and their exposed tools
-/mcp status   — show which servers are running / stopped
-```
-
-**How it works:**
-
-1. nex-code spawns each server as a child process using stdio JSON-RPC transport.
-2. It sends `initialize` + `tools/list` to discover available tools.
-3. All discovered tools are merged into the nex-code tool registry under the name `mcp_<server>_<tool>`.
-4. The agent can call them transparently alongside built-in tools.
-5. All server processes are shut down cleanly when nex-code exits.
-
-**Env var interpolation:** `${VAR}` in the `env` block is replaced from `process.env` at startup so you
-can store the actual key in your shell environment or `.env` file:
-
-```bash
-export BRAVE_API_KEY=my-key
-nex-code --mcp-config .nex/mcp.json
-```
-
----
-
-## Hooks
-
-Run custom scripts on CLI events:
-
-```json
-// .nex/config.json
-{
-  "hooks": {
-    "pre-tool": ["echo 'before tool'"],
-    "post-tool": ["echo 'after tool'"],
-    "pre-commit": ["npm test"]
-  }
-}
-```
-
-Events: `pre-tool`, `post-tool`, `pre-commit`, `post-response`, `session-start`, `session-end`.
-
-Or place executable scripts in `.nex/hooks/`:
-
-```
-.nex/hooks/pre-tool
-.nex/hooks/post-tool
+cd vscode && npm install && npm run package
+# Cmd+Shift+P → Extensions: Install from VSIX...
 ```
 
 ---
@@ -1648,161 +345,43 @@ Or place executable scripts in `.nex/hooks/`:
 ## Architecture
 
 ```
-bin/nex-code.js          # Entrypoint (shebang, .env, startREPL)
+bin/nex-code.js          # Entrypoint
 cli/
-├── index.js             # REPL + ~45 slash commands + history persistence + AbortController
-├── agent.js             # Agentic loop + conversation state + compact output + résumé + abort handling
-├── providers/           # Multi-provider abstraction
-│   ├── base.js          # Abstract provider interface
-│   ├── ollama.js        # Ollama Cloud provider
-│   ├── openai.js        # OpenAI provider
-│   ├── anthropic.js     # Anthropic provider
-│   ├── gemini.js        # Google Gemini provider
-│   ├── local.js         # Local Ollama server
-│   └── registry.js      # Provider registry + model resolution + provider routing
-├── tools.js             # 45 tool definitions + implementations + auto-fix engine
-├── sub-agent.js         # Parallel sub-agent runner with file locking + model routing
-├── tasks.js             # Task list management (create, update, render, onChange callbacks)
-├── skills.js            # Skills system (prompt + script + marketplace)
-├── plugins.js           # Plugin API (registerTool, registerHook, event system)
-├── audit.js             # Tool execution audit logging (JSONL + sanitization)
-├── mcp.js               # MCP client (JSON-RPC over stdio)
-├── hooks.js             # Hook system (pre/post events)
-├── context.js           # Auto-context (package.json, git, README) + generateFileTree()
-├── context-engine.js    # Token management + relevance-based context compression
-├── session.js           # Session persistence (.nex/sessions/)
-├── memory.js            # Project memory (.nex/memory/ + NEX.md)
-├── filelock.js          # Inter-process file locking (atomicWrite + withFileLockSync)
-├── permissions.js       # Tool permission system + team presets (readonly/developer/admin)
-├── planner.js           # Plan mode, step extraction, step cursor, autonomy levels
-├── git.js               # Git intelligence (commit, diff, branch)
-├── render.js            # Markdown + syntax highlighting + StreamRenderer + EPIPE guard
-├── format.js            # Tool call formatting, result formatting, compact summaries
-├── spinner.js           # Spinner, MultiProgress, TaskProgress, ToolProgress display components
-├── diff.js              # LCS diff (Myers + Hirschberg) + colored output + side-by-side view
-├── fuzzy-match.js       # Fuzzy text matching for edit auto-fix (Levenshtein, whitespace normalization)
-├── file-history.js      # Persistent undo/redo + named git snapshots + blob storage
-├── picker.js            # Interactive terminal picker (model selection)
-├── costs.js             # Token cost tracking + per-provider budget limits
-├── safety.js            # Forbidden/dangerous pattern detection
-├── tool-validator.js    # Tool argument validation + auto-correction
-├── tool-tiers.js        # Dynamic tool set selection per model + model tier lookup + edit mode
-├── footer.js            # Sticky footer (scroll region, status bar, input row, resize, FOOTER_DEBUG)
-├── ui.js                # ANSI colors, banner + re-exports from format.js/spinner.js
-├── index-engine.js      # In-memory file index (ripgrep/fallback) + semantic content index
-├── skills/devops.md     # Built-in DevOps agent skill
-├── auto-fix.js          # Path resolution, edit matching, bash error hints
-├── tool-retry.js        # Malformed argument retry with schema hints
-└── ollama.js            # Backward-compatible wrapper
+  agent.js               # Agentic loop + conversation state + guards
+  providers/             # Ollama, OpenAI, Anthropic, Gemini, Local + wire protocols
+  tools/index.js         # 45 tool definitions + auto-fix engine
+  context-engine.js      # Token management + 5-phase compression
+  sub-agent.js           # Parallel sub-agents with file locking
+  orchestrator.js        # Multi-agent decompose → execute → synthesize
+  session-tree.js        # Session branching
+  visual.js              # Visual dev tools (pixelmatch-based)
+  browser.js             # Playwright browser agent
+  skills/                # Built-in + user skills
 ```
 
-### Agentic Loop
-
-```
-User Input --> [AbortController created]
-    |
-[System Prompt + Context + Memory + Skills + Conversation]
-    |
-[Filter tools by model tier (essential/standard/full)]
-    |
-Provider API (streaming + abort signal) --> Text tokens --> rendered to terminal
-    |                   \--> Tool calls --> parse args (5 strategies)
-    |                                       |
-    |                              [Validate against schema + auto-correct]
-    |                                       |
-    |                              Execute (skill / MCP / built-in)
-    |                                       |
-    |                              [Auto-fix: path resolution, edit matching, bash hints]
-    |
-[Tool results added to history]
-    |
-Loop until: no more tool calls OR 50 iterations OR Ctrl+C abort
-```
-
----
-
-## .nex/ Directory
-
-Project-local configuration and state (gitignored):
-
-```
-.nex/
-├── config.json        # Permissions, MCP servers, hooks, skills, cost limits
-├── sessions/          # Saved conversations
-├── memory/            # Persistent project knowledge
-├── plans/             # Saved plans
-├── hooks/             # Custom hook scripts
-├── skills/            # Skill files (.md and .js)
-└── push-allowlist     # False-positive allowlist for pre-push secret detection
-```
-
----
-
-## Performance
-
-Nex Code v0.3.45+ includes comprehensive performance optimizations:
-
-| Optimization                 | Improvement     | Impact                    |
-| ---------------------------- | --------------- | ------------------------- |
-| **System Prompt Caching**    | 4.3× faster     | 77µs → 18µs               |
-| **Token Estimation Caching** | 3.5× faster     | Cached after first call   |
-| **Context File Caching**     | 10-20× faster   | 50-200ms → 5-10ms         |
-| **Debounced Auto-Save**      | 0ms in hot path | Saves after 5s inactivity |
-| **Tool Filter Caching**      | 1.7× faster     | Cached per model          |
-| **Schema Cache**             | 3.4× faster     | 2.51µs → 0.73µs           |
-
-**Average speedup:** 2.7× (micro-benchmarks)  
-**Real-world improvement:** ~10× faster per turn
-
-Run benchmarks yourself:
-
-```bash
-node benchmark.js
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for full architecture details.
 
 ---
 
 ## Testing
 
 ```bash
-npm test              # Run all tests with coverage
-npm run test:watch    # Watch mode
+npm test                          # 97 suites, 3920 tests
+npm run typecheck                 # TypeScript noEmit check
+npm run benchmark:gate            # 7-task smoke test (blocks push on regression)
+npm run benchmark:reallife        # 35 real-world tasks across 7 categories
 ```
-
-91 test suites, 3719 tests, 83% statement / 74% branch coverage.
-
-CI runs on GitHub Actions (Node 20 LTS).
-
-**Type checking:** `npm run typecheck` runs TypeScript in `noEmit` mode with `allowJs`. Core type definitions live in `types/index.d.ts` (Message, ToolCall, IProvider, IWireProtocol, Session, Skill, etc.). The codebase uses incremental TypeScript adoption — new modules can be written in `.ts` while existing `.js` files are gradually migrated.
 
 ---
 
-## Dependencies
+## Security
 
-2 runtime dependencies:
-
-```json
-{
-  "axios": "^1.7.0",
-  "dotenv": "^16.4.0"
-}
-```
-
-Everything else is Node.js built-in.
-
-## Installation
-
-```bash
-npm install -g nex-code    # global install
-npx nex-code               # or run without installing
-```
-
-On first launch with no API keys configured, nex-code starts an **interactive setup wizard** that guides you through choosing a provider and entering credentials. You can re-run it anytime with `/setup`.
-
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for planned features — VS Code extension, browser agent, PTY support, and more.
-Community contributions are welcome on all roadmap items.
+- Pre-push secret detection (API keys, private keys, hardcoded credentials)
+- Audit logging with automatic argument sanitization
+- Sensitive path blocking (`.ssh/`, `.aws/`, `.env`, credentials)
+- Shell injection protection via `execFileSync` with argument arrays throughout
+- SSRF protection on `web_fetch`
+- MCP environment isolation
 
 ---
 
