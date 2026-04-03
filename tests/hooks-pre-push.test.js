@@ -32,7 +32,13 @@ function matchesPattern(pattern, text) {
 // Helper: create a temp dir with a minimal git repo and test the full hook
 function runHookWithDiff(diffContent, opts = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-hook-test-"));
-  const env = { ...process.env, ...(opts.env || {}) };
+  // Always skip tests and benchmark gate — integration tests only exercise secret detection
+  const env = {
+    ...process.env,
+    NEX_SKIP_TESTS: "1",
+    NEX_SKIP_BENCHMARK: "1",
+    ...(opts.env || {}),
+  };
 
   try {
     // Set up a git repo
