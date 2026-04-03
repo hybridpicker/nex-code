@@ -51,4 +51,13 @@ echo "════════════════════════�
 echo "  Finished at $(date) (exit: $EXIT_CODE)"            | tee -a "$LOG_FILE"
 echo "═══════════════════════════════════════════════════" | tee -a "$LOG_FILE"
 
+# Send notification with result summary
+LATEST=$(ls -t "$RESULTS_DIR"/reallife-*.json 2>/dev/null | head -1)
+if [ -n "$LATEST" ]; then
+  SCORE=$(node -e "try{const r=JSON.parse(require('fs').readFileSync('$LATEST','utf8'));console.log(Math.round(r.overall||r.score||0))}catch{console.log('?')}")
+  "$SCRIPT_DIR/notify.sh" "Overnight improvement done — score: ${SCORE}/100, exit: ${EXIT_CODE}" 2>/dev/null || true
+else
+  "$SCRIPT_DIR/notify.sh" "Overnight improvement done — exit: ${EXIT_CODE}" 2>/dev/null || true
+fi
+
 exit $EXIT_CODE

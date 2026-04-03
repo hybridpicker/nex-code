@@ -127,6 +127,28 @@ if [ "$VIOLATION_COUNT" -gt 0 ]; then
   exit 1
 fi
 
+# ─── Unit Tests ────────────────────────────────────────────────
+# Runs npm test before pushing. Bypass via: NEX_SKIP_TESTS=1 git push
+
+if [ "${NEX_SKIP_TESTS:-0}" = "1" ]; then
+  echo "[pre-push] Tests skipped (NEX_SKIP_TESTS=1)"
+else
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  echo "[pre-push] Running unit tests..."
+  if ! (cd "$REPO_ROOT" && npm test --silent 2>&1 | tail -5); then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  TESTS FAILED — push blocked                            ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Fix failing tests before pushing.                      ║"
+    echo "║  Bypass: NEX_SKIP_TESTS=1 git push                     ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    exit 1
+  fi
+  echo "[pre-push] Tests passed."
+fi
+
 # ─── Benchmark Gate ─────────────────────────────────────────────
 # Runs smoke-test benchmark and blocks push if quality/speed regressed.
 # Bypass via: NEX_SKIP_BENCHMARK=1 git push
