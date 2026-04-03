@@ -19,6 +19,24 @@ const { spawn } = require("child_process");
 const { TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
 
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
+
+// ─── Load Ollama cloud config if not set in environment ──────────
+// Needed when running from git hooks or non-interactive shells that
+// don't source ~/.zshrc where OLLAMA_HOST / OLLAMA_API_KEY are set.
+if (!process.env.OLLAMA_HOST) {
+  const modelsEnv = path.join(os.homedir(), ".nex-code", "models.env");
+  if (fs.existsSync(modelsEnv)) {
+    for (const line of fs.readFileSync(modelsEnv, "utf8").split("\n")) {
+      if (line.startsWith("#") || !line.includes("=")) continue;
+      const eqIdx = line.indexOf("=");
+      const key = line.slice(0, eqIdx).trim();
+      const val = line.slice(eqIdx + 1).split("#")[0].trim();
+      if ((key === "OLLAMA_HOST" || key === "OLLAMA_API_KEY") && val) {
+        process.env[key] = val;
+      }
+    }
+  }
+}
 const RESULTS_DIR = path.join(__dirname, "benchmark-results");
 
 // ─── Task Runner ────────────────────────────────────────────────
@@ -79,7 +97,7 @@ function runTask(task, model) {
     safeEnv.NEX_AUTO_ORCHESTRATE = "false";
     safeEnv.NEX_SKIP_COMPACTOR = "1";
 
-    const proc = spawn("node", args, {
+    const proc = spawn(process.execPath, args, {
       cwd: tmpDir,
       env: safeEnv,
     });

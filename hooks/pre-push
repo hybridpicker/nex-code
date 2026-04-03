@@ -5,6 +5,15 @@
 
 set -euo pipefail
 
+# ─── Load nvm so node/npm are available in non-interactive shells ──
+# Git hooks don't source ~/.zshrc, so the nvm wrapper function (_load_nvm)
+# is not defined. Loading nvm.sh directly puts the real node binary on PATH.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  \. "$NVM_DIR/nvm.sh" 2>/dev/null || true
+fi
+
 # Allow bypass
 if [ "${NEX_SKIP_SECRET_CHECK:-0}" = "1" ]; then
   echo "[pre-push] Secret check skipped (NEX_SKIP_SECRET_CHECK=1)"
