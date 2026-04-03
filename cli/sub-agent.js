@@ -349,6 +349,9 @@ ERROR RECOVERY:
   if (agentProvider) chatOptions.provider = agentProvider;
   if (agentModel) chatOptions.model = agentModel;
 
+  // Map-first: track files edited but not re-read — prevent stale-old_text edits
+  const _subEditedNotReread = new Set();
+
   try {
     for (let i = 0; i < maxIter; i++) {
       const result = await callWithRetry(messages, availableTools, chatOptions);
@@ -421,6 +424,8 @@ ERROR RECOVERY:
 
       // Execute tool calls in parallel — lock acquisition is synchronous so
       // write-tool locking stays atomic even with concurrent execution.
+      // Map-first: track which files are edited in this batch to block within-batch re-edits.
+      const _batchSubEditPaths = new Set();
       const toolResultPromises = tool_calls.map((tc) => {
         const fnName = tc.function.name;
         const args = parseToolArgs(tc.function.arguments);
@@ -434,6 +439,19 @@ ERROR RECOVERY:
             content: `ERROR: Malformed tool arguments for ${fnName}`,
             tool_call_id: callId,
           });
+        }
+
+        // Map-first gate: block edit to file that was already edited without a re-read.
+        // Also blocks multiple edits to same file within a single batch.
+        if (["edit_file", "patch_file"].includes(fnName) && args.path) {
+          if (_subEditedNotReread.has(args.path) || _batchSubEditPaths.has(args.path)) {
+            return Promise.resolve({
+              role: "tool",
+              content: `BLOCKED: "${args.path}" was already edited — re-read the changed section first (read_file with line_start/line_end) before making another edit. The file content has changed and your previous read is stale.`,
+              tool_call_id: callId,
+            });
+          }
+          _batchSubEditPaths.add(args.path);
         }
 
         // File locking for write tools (synchronous — runs before any await).
@@ -495,6 +513,14 @@ ERROR RECOVERY:
               locksHeld.delete(lockedFp);
             }
             const safeResult = String(toolResult ?? "");
+            // Map-first tracking: update stale-file set based on tool outcome
+            if (args && args.path) {
+              if (["edit_file", "patch_file", "write_file"].includes(fnName) && safeResult.startsWith("Edited:")) {
+                _subEditedNotReread.add(args.path); // file changed — re-read required before next edit
+              } else if (fnName === "read_file" && !safeResult.startsWith("ERROR")) {
+                _subEditedNotReread.delete(args.path); // re-read clears stale flag
+              }
+            }
             const truncated =
               safeResult.length > 20000
                 ? safeResult.substring(0, 20000) + `\n...(truncated)`
