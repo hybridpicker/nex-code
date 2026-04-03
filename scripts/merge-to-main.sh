@@ -19,6 +19,8 @@ fi
 # Require clean working tree
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "[merge-to-main] ERROR: Working tree is not clean. Commit or stash changes first."
+  echo ""
+  git status --short
   exit 1
 fi
 
