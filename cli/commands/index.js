@@ -18,6 +18,7 @@ const {
 } = require("../providers/registry");
 const { flushAutoSave } = require("../session");
 const { writeDreamLog, shouldConsolidate, consolidate } = require("../dream");
+const { isDebug } = require("../debug");
 const { getActiveModel, setActiveModel } = require("../ollama");
 const { printContext } = require("../context");
 const {
@@ -3445,7 +3446,7 @@ async function startREPL() {
     try {
       if (shouldConsolidate()) {
         const { insights } = consolidate();
-        if (insights.length > 0) {
+        if (insights.length > 0 && isDebug()) {
           process.stdout.write(
             `${C.dim}💭 Dream consolidated ${insights.length} insight(s) from recent sessions${C.reset}\n`,
           );
