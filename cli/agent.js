@@ -1402,9 +1402,16 @@ function _buildLanguagePrompt() {
   lines.push(
     "  • ALWAYS show actual code when explaining implementations — never describe without showing",
   );
-  lines.push(
-    "  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.",
-  );
+  if (getAutoConfirm()) {
+    // Headless/auto mode: files ARE the deliverable — always write to disk
+    lines.push(
+      "  • FILE CREATION TASKS (Makefile, Dockerfile, config files, documentation): ALWAYS use write_file to create the file on disk. In auto mode the user cannot see your text output — only files on disk matter.",
+    );
+  } else {
+    lines.push(
+      "  • FILE CREATION TASKS (Makefile, Dockerfile, config files): paste the COMPLETE file content in a fenced code block in your TEXT RESPONSE — writing a file with a tool does NOT make it visible. The fenced code block MUST appear in your response, not just via write_file.",
+    );
+  }
   lines.push(
     "  • Include complete examples with full context (imports, function signatures, error handling)",
   );
@@ -1551,7 +1558,7 @@ PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
 ${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone
-- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n\n` : ""}
+- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n- **File creation override**: In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
 # Plan Mode
