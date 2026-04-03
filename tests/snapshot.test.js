@@ -147,13 +147,12 @@ describe("snapshot functions", () => {
     });
 
     it("returns error when git stash apply fails", () => {
-      execSync
-        .mockReturnValueOnce(
-          Buffer.from("stash@{0}: On main: nex-snapshot-bad\n"),
-        )
-        .mockImplementationOnce(() => {
-          throw new Error("conflict");
-        });
+      execSync.mockReturnValueOnce(
+        Buffer.from("stash@{0}: On main: nex-snapshot-bad\n"),
+      );
+      execFileSync.mockImplementationOnce(() => {
+        throw new Error("conflict");
+      });
       const result = restoreSnapshot("last", "/tmp");
       expect(result.ok).toBe(false);
       expect(result.error).toContain("conflict");
