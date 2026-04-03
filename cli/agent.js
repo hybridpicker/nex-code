@@ -1743,6 +1743,7 @@ CODE DISPLAY RULE: Always show actual code examples, not just descriptions. When
 Response patterns by request type:
 - **Questions / analysis / "status" / "explain" / "what is"**: Gather data with tools, then respond with a clear, structured summary. NEVER just run tools and stop.
 - **Coding tasks (implement, fix, refactor)**: Brief confirmation of what you'll do, then use tools. After changes, summarize what you did and any important details. When diagnosing a bug (memory leak, race condition, logic error): always proceed from diagnosis to concrete fix — write the corrected code and apply it. Do not stop after identifying the root cause unless the user explicitly asked for analysis only.
+- **Edit protocol (map-first)**: Before editing, read the exact lines you will change using line_start/line_end. When making multiple changes to the same file, prefer a single patch_file call with all replacements. If you must make sequential edit_file calls to the same file, re-read the changed section after each successful edit before constructing the next old_text — the file content has changed and your previous read is stale. The system will block a second edit to the same file until you re-read it.
 - **Simple questions ("what does X do?")**: Answer directly without tools when you have enough context.
 - **Ambiguous requests**: When a request is vague AND lacks sufficient detail to act (e.g. just "optimize this" or "improve performance" with no further context), ask clarifying questions using ask_user. However, if the user's message already contains specific details — file names, concrete steps, exercises, numbers, examples — proceed directly without asking. Only block when you genuinely cannot determine what to do without more information. When the user's request is ambiguous or could be interpreted in multiple ways, call the ask_user tool BEFORE starting work. Provide 2-3 specific, actionable options that cover the most likely intents. Do NOT ask open-ended questions in chat — always use ask_user with concrete options.
 - **Server/SSH commands**: When the user asks about a server issue, crash, or status — your FIRST tool call must be ssh_exec. Combine commands with ; to get everything in one call. Example: ssh_exec("systemctl status svc --no-pager; echo '==='; journalctl -u svc -n 50 --no-pager; echo '==='; tail -30 /path/to/app.log"). Analyze the output, state the root cause, then fix it. Only read local files if you need to edit them for a fix.
@@ -2803,6 +2804,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const toolCounts = new Map();
   const filesModified = new Set();
   const filesRead = new Set();
+  const _editedFilesNotReread = new Set(); // files edited but not re-read — block second edit until re-read
   let _readOnlyToolStreak = 0;        // consecutive read-only tool iterations (no file writes)
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   const startTime = Date.now();
@@ -5242,6 +5244,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _incLoopCount(_sessionDupeToolCounts, fingerprint);
       }
 
+      // ─── Map-first gate: block second edit to same file without re-read ──────────
+      // After any successful edit, the file content changes. Constructing old_text
+      // for a second edit from the pre-edit read state produces "old_text not found".
+      // Block the edit and require the model to re-read the changed section first.
+      // Also catches multiple edits to the same file within a single batch.
+      {
+        const _batchEditPaths = new Set();
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (!["edit_file", "patch_file"].includes(prep.fnName)) continue;
+          const _mfPath = prep.args?.path;
+          if (!_mfPath) continue;
+          if (_editedFilesNotReread.has(_mfPath) || _batchEditPaths.has(_mfPath)) {
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: "tool",
+              content: `BLOCKED: "${_mfPath}" was already edited — re-read the changed section first (read_file with line_start/line_end) before making another edit. The file content has changed and your previous read is stale.`,
+              tool_call_id: prep.callId,
+            };
+            debugLog(
+              `${C.yellow}  ⚠ Map-first gate: blocked re-edit of "${_mfPath.split("/").slice(-1)[0]}" — re-read required${C.reset}`,
+            );
+          } else {
+            _batchEditPaths.add(_mfPath);
+          }
+        }
+      }
+
       // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
       const batchOpts = taskProgress
         ? { skipSpinner: true, skipSummaries: true }
@@ -5549,6 +5579,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             if (_editedPath) {
               _setLoopCount(_sessionFileReadCounts, _editedPath, 1);
               _sessionFileReadRanges.delete(_editedPath);
+              _editedFilesNotReread.add(_editedPath); // map-first: flag file as stale until re-read
             }
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
@@ -6139,6 +6170,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (isOk && prep.fnName === "read_file") {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
+            _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record the read range so overlap detection can catch duplicate reads.
             // Unbounded reads (no line_start) are stored as [1, 350] — the tool
