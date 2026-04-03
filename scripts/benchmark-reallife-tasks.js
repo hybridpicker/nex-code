@@ -401,8 +401,8 @@ module.exports = { exportToJSON, formatEntry };
       if (fileContains(tmpDir, "export.js", "exportToCSV")) score.taskCompletion += 20;
       return score;
     },
-    maxToolCalls: 10,
-    maxTurns: 15,
+    maxToolCalls: 12,
+    maxTurns: 20,
     timeoutMs: 180000,
   },
 

@@ -1,52 +1,53 @@
 {
-  "date": "2026-04-02T19:16:09.134Z",
-  "sha": "635cd0dd3472c6e69b35ed8c6d9cdedbe0fd2923",
-  "finalScore": 92,
+  "date": "2026-04-03T10:23:58.283Z",
+  "sha": "05f0c2ffd7a631e5019968649e67a2a377c77d54",
+  "finalScore": 99,
   "categoryScores": {
-    "bugfix": 94,
-    "feature": 86,
-    "understanding": 93,
-    "devops": 94,
-    "refactor": 95,
-    "testing": 91,
-    "docs": 84
+    "bugfix": 100,
+    "feature": 99,
+    "understanding": 96,
+    "devops": 96,
+    "refactor": 100,
+    "testing": 100,
+    "docs": 100
   },
-  "avgElapsed": 80969,
+  "avgElapsed": 108022,
+  "routingSignature": "agentic=rnj-1:8b,coding=devstral-2:123b,data=qwen3-coder-next,frontend=qwen3-coder-next,plan=qwen3-vl:235b,sysadmin=devstral-2:123b,verify=qwen3.5:397b",
   "perTask": [
     {
       "id": "bugfix-wrong-destructure",
-      "score": 94,
-      "elapsed": 54152
+      "score": 100,
+      "elapsed": 55521
     },
     {
       "id": "feat-add-export-csv",
-      "score": 86,
-      "elapsed": 123964
+      "score": 99,
+      "elapsed": 130470
     },
     {
       "id": "understand-project-structure",
-      "score": 93,
-      "elapsed": 61943
+      "score": 96,
+      "elapsed": 146274
     },
     {
       "id": "devops-nginx-reverse-proxy",
-      "score": 94,
-      "elapsed": 54795
+      "score": 96,
+      "elapsed": 145330
     },
     {
       "id": "refactor-fix-broken-import-paths",
-      "score": 95,
-      "elapsed": 41770
+      "score": 100,
+      "elapsed": 84655
     },
     {
       "id": "test-write-unit-tests",
-      "score": 91,
-      "elapsed": 84751
+      "score": 100,
+      "elapsed": 107515
     },
     {
       "id": "docs-write-setup-guide",
-      "score": 84,
-      "elapsed": 145405
+      "score": 100,
+      "elapsed": 86386
     }
   ]
 }
