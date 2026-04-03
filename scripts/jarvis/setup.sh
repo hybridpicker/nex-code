@@ -48,18 +48,23 @@ npm run build
 # Create results directory
 mkdir -p scripts/benchmark-results
 
-# Install systemd units (requires sudo)
-echo "[setup] Installing systemd units..."
-sudo cp "$JARVIS_DIR/nex-improve.service" "$SYSTEMD_DIR/"
-sudo cp "$JARVIS_DIR/nex-improve.timer" "$SYSTEMD_DIR/"
-sudo cp "$JARVIS_DIR/nex-weekly-bench.service" "$SYSTEMD_DIR/"
-sudo cp "$JARVIS_DIR/nex-weekly-bench.timer" "$SYSTEMD_DIR/"
-sudo systemctl daemon-reload
+# Install systemd user units (no sudo needed)
+USER_SYSTEMD="$HOME/.config/systemd/user"
+mkdir -p "$USER_SYSTEMD"
+echo "[setup] Installing systemd user units..."
+cp "$JARVIS_DIR/nex-improve.service" "$USER_SYSTEMD/"
+cp "$JARVIS_DIR/nex-improve.timer" "$USER_SYSTEMD/"
+cp "$JARVIS_DIR/nex-weekly-bench.service" "$USER_SYSTEMD/"
+cp "$JARVIS_DIR/nex-weekly-bench.timer" "$USER_SYSTEMD/"
+systemctl --user daemon-reload
+
+# Enable lingering so timers run without login
+loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
 # Enable and start timers
 echo "[setup] Enabling timers..."
-sudo systemctl enable --now nex-improve.timer
-sudo systemctl enable --now nex-weekly-bench.timer
+systemctl --user enable --now nex-improve.timer
+systemctl --user enable --now nex-weekly-bench.timer
 
 # Setup auto-pull (keep repo in sync with devel)
 CRON_LINE="*/30 * * * * cd $REPO_DIR && git fetch origin devel --quiet && git merge --ff-only origin/devel --quiet 2>/dev/null || true"
@@ -75,8 +80,8 @@ echo "    nex-weekly-bench.timer — Saturday at 04:00"
 echo "    cron: auto-pull devel  — every 30 min"
 echo ""
 echo "  Useful commands:"
-echo "    systemctl status nex-improve.timer"
-echo "    systemctl status nex-weekly-bench.timer"
-echo "    journalctl -u nex-improve -f"
-echo "    systemctl start nex-improve  # run manually now"
+echo "    systemctl --user status nex-improve.timer"
+echo "    systemctl --user status nex-weekly-bench.timer"
+echo "    journalctl --user -u nex-improve -f"
+echo "    systemctl --user start nex-improve  # run manually now"
 echo "═══════════════════════════════════════════════════"
