@@ -43,8 +43,8 @@ if [ -z "$LOCAL_REF" ]; then
   exit 0
 fi
 
-# Get the diff, excluding lock files, minified JS, and hook test fixtures
-DIFF=$(git diff "$RANGE" -- . ':!*.lock' ':!*.min.js' ':!*.min.css' ':!package-lock.json' ':!yarn.lock' ':!tests/hooks-pre-push.test.js' 2>/dev/null || true)
+# Get the diff, excluding lock files, minified JS, built dist, and hook test fixtures
+DIFF=$(git diff "$RANGE" -- . ':!*.lock' ':!*.min.js' ':!*.min.css' ':!package-lock.json' ':!yarn.lock' ':!dist/' ':!tests/hooks-pre-push.test.js' 2>/dev/null || true)
 
 if [ -z "$DIFF" ]; then
   exit 0
