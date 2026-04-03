@@ -855,6 +855,176 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  // ─── Visual Development Tools ────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "visual_diff",
+      description:
+        "Compare two screenshots pixel-by-pixel and compute a visual diff. Returns the percentage of changed pixels and which screen regions (top-left, center, bottom-right, etc.) were affected. Use after making CSS/HTML changes to quantify what changed. Example: take a before screenshot, make changes, take an after screenshot, then visual_diff both paths.",
+      parameters: {
+        type: "object",
+        properties: {
+          before: {
+            type: "string",
+            description: "Path to the 'before' screenshot (PNG)",
+          },
+          after: {
+            type: "string",
+            description: "Path to the 'after' screenshot (PNG)",
+          },
+          threshold: {
+            type: "number",
+            description: "Color distance threshold 0-1 (default: 0.1). Lower = more sensitive.",
+          },
+        },
+        required: ["before", "after"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "responsive_sweep",
+      description:
+        "Screenshot a URL at 5 viewport widths (320, 768, 1024, 1440, 1920) and return all screenshots for breakpoint analysis. Quickly identifies responsive layout issues across mobile, tablet, and desktop. Returns images for visual analysis.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL to screenshot at each viewport" },
+          viewports: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                width: { type: "number" },
+                label: { type: "string" },
+              },
+            },
+            description: "Custom viewport list (default: 320/768/1024/1440/1920)",
+          },
+          full_page: {
+            type: "boolean",
+            description: "Capture full scrollable page at each viewport (default: false)",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "visual_annotate",
+      description:
+        "Draw annotations (red boxes, arrows, circles) directly on a screenshot to mark problem areas. Returns the annotated image. Use instead of describing locations verbally — visual markers are unambiguous.",
+      parameters: {
+        type: "object",
+        properties: {
+          image: { type: "string", description: "Path to the screenshot (PNG) to annotate" },
+          annotations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  description: "box, arrow, or circle",
+                },
+                x: { type: "number", description: "X position (px)" },
+                y: { type: "number", description: "Y position (px)" },
+                width: { type: "number", description: "Width for box (px)" },
+                height: { type: "number", description: "Height for box (px)" },
+                toX: { type: "number", description: "Arrow end X (px)" },
+                toY: { type: "number", description: "Arrow end Y (px)" },
+                radius: { type: "number", description: "Circle radius (px)" },
+                label: { type: "string", description: "Text label for the annotation" },
+                color: { type: "string", description: "Hex color (default: #FF0000)" },
+              },
+              required: ["type", "x", "y"],
+            },
+            description: "List of annotations to draw",
+          },
+        },
+        required: ["image", "annotations"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "visual_watch",
+      description:
+        "Hot-reload visual feedback loop: watches source files for changes, waits for HMR to settle, takes a new screenshot, diffs it against the previous one, and reports what changed. Runs up to N iterations (default: 10). Requires a running dev server (Vite, Next, etc.) and chokidar. Use for autonomous visual polish loops.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Dev server URL to screenshot (e.g. http://localhost:5173)" },
+          watch: {
+            type: "array",
+            items: { type: "string" },
+            description: "File paths or directories to watch for changes (e.g. ['src/components', 'src/styles'])",
+          },
+          max_iterations: {
+            type: "number",
+            description: "Max number of change→screenshot→diff cycles (default: 10)",
+          },
+          hmr_delay: {
+            type: "number",
+            description: "Milliseconds to wait after file change for HMR to settle (default: 1500)",
+          },
+        },
+        required: ["url", "watch"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "design_tokens",
+      description:
+        "Extract design tokens from a screenshot: dominant colors (with hex/rgb/frequency/category), detected vertical spacing values, and image dimensions. Use to audit visual consistency, compare against a design system, or reverse-engineer CSS variables from a rendered page.",
+      parameters: {
+        type: "object",
+        properties: {
+          image: { type: "string", description: "Path to screenshot (PNG) to analyze" },
+          sample_rate: {
+            type: "number",
+            description: "Pixel sampling interval — lower = more accurate but slower (default: 4)",
+          },
+        },
+        required: ["image"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "design_compare",
+      description:
+        "Compare a live web page against a reference design (Figma export, mockup PNG). Screenshots the URL at the reference image's dimensions, computes pixel-level diff, and returns annotated images highlighting deviations. Use to verify implementation matches the design spec.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Live URL to compare against the reference" },
+          reference: { type: "string", description: "Path to reference design image (PNG)" },
+          width: {
+            type: "number",
+            description: "Override viewport width (default: match reference image width)",
+          },
+          height: {
+            type: "number",
+            description: "Override viewport height (default: 800)",
+          },
+          threshold: {
+            type: "number",
+            description: "Color distance threshold 0-1 (default: 0.1)",
+          },
+        },
+        required: ["url", "reference"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -2998,6 +3168,231 @@ async function _executeToolInner(name, args, options = {}) {
           value: args.value,
           submit: args.submit,
         });
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    // ─── Visual Development Tools ────────────────────────────
+
+    case "visual_diff": {
+      try {
+        const { pixelDiff } = require("../visual");
+        const result = pixelDiff(args.before, args.after, {
+          threshold: args.threshold,
+        });
+        const topRegions = result.regionSummary.slice(0, 5);
+        const regionText = topRegions.length
+          ? topRegions
+              .map((r) => `  ${r.name}: ${r.changedPercent}% changed`)
+              .join("\n")
+          : "  No significant regional changes";
+
+        return {
+          text:
+            `VISUAL DIFF — ${result.diffPercent}% of pixels changed\n` +
+            `Changed: ${result.changedPixels.toLocaleString()} / ${result.totalPixels.toLocaleString()} pixels\n` +
+            `Canvas: ${result.width}×${result.height}\n` +
+            `Diff image: ${result.diffPath}\n\n` +
+            `Regional breakdown:\n${regionText}\n\n` +
+            `[Diff image attached — red/magenta pixels indicate changes]`,
+          images: [
+            { path: result.diffPath, base64: fsSync.readFileSync(result.diffPath).toString("base64"), media_type: "image/png" },
+          ],
+        };
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "responsive_sweep": {
+      try {
+        const { responsiveSweep } = require("../visual");
+        const results = await responsiveSweep(args.url, {
+          viewports: args.viewports,
+          fullPage: args.full_page,
+        });
+
+        const summary = results
+          .map((r) => `  ${r.label} (${r.width}px): ${r.path}`)
+          .join("\n");
+
+        return {
+          text:
+            `RESPONSIVE SWEEP — ${results.length} viewports captured\n` +
+            `URL: ${args.url}\n\n` +
+            `Screenshots:\n${summary}\n\n` +
+            `[All ${results.length} screenshots attached for breakpoint analysis]\n\n` +
+            `Analyze these screenshots for:\n` +
+            `1. Layout breakpoint issues (overflow, collapse, stacking)\n` +
+            `2. Typography scaling (text too small on mobile, too large on desktop)\n` +
+            `3. Navigation pattern changes across viewports\n` +
+            `4. Image/media sizing and aspect ratio issues\n` +
+            `5. Touch target sizes on mobile viewports`,
+          images: results.map((r) => ({
+            path: r.path,
+            base64: r.base64,
+            media_type: r.media_type,
+          })),
+        };
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "visual_annotate": {
+      try {
+        const { annotateImage } = require("../visual");
+        const result = annotateImage(args.image, args.annotations);
+        const count = args.annotations.length;
+        const types = [...new Set(args.annotations.map((a) => a.type))].join(", ");
+
+        return {
+          text:
+            `ANNOTATED IMAGE — ${count} annotation(s) added (${types})\n` +
+            `Source: ${args.image}\n` +
+            `Output: ${result.path}\n\n` +
+            `[Annotated image attached with visual markers]`,
+          images: [{ path: result.path, base64: result.base64, media_type: result.media_type }],
+        };
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "visual_watch": {
+      try {
+        const { visualWatch } = require("../visual");
+        const gen = visualWatch(args.url, args.watch, {
+          maxIterations: args.max_iterations || 10,
+          hmrDelay: args.hmr_delay || 1500,
+        });
+
+        // Collect first result (baseline) and then wait for one change cycle
+        const baseline = await gen.next();
+        if (baseline.value?.type === "error") {
+          return `ERROR: ${baseline.value.message}`;
+        }
+
+        const output = [];
+        output.push(
+          `VISUAL WATCH — monitoring ${args.watch.length} path(s)`,
+          `URL: ${args.url}`,
+          `Baseline screenshot: ${baseline.value?.path}`,
+          "",
+          "Watching for file changes... (will capture up to " +
+            (args.max_iterations || 10) +
+            " iterations)",
+        );
+
+        // Wait for the first change
+        const first = await gen.next();
+        if (!first.done && first.value) {
+          const v = first.value;
+          output.push(
+            "",
+            `--- Iteration ${v.iteration} ---`,
+            `Screenshot: ${v.path}`,
+          );
+          if (v.diff) {
+            output.push(
+              `Diff: ${v.diff.diffPercent}% changed (${v.diff.changedPixels} pixels)`,
+              `Regions: ${v.diff.regions.map((r) => `${r.name}:${r.changedPercent}%`).join(", ")}`,
+            );
+          }
+
+          const images = [
+            { path: v.path, base64: v.base64, media_type: v.media_type },
+          ];
+          if (v.diff?.diffPath) {
+            images.push({
+              path: v.diff.diffPath,
+              base64: fsSync.readFileSync(v.diff.diffPath).toString("base64"),
+              media_type: "image/png",
+            });
+          }
+
+          return { text: output.join("\n"), images };
+        }
+
+        return {
+          text: output.join("\n") + "\n\nNo changes detected within timeout.",
+          images: baseline.value?.base64
+            ? [{ path: baseline.value.path, base64: baseline.value.base64, media_type: "image/png" }]
+            : [],
+        };
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "design_tokens": {
+      try {
+        const { extractDesignTokens } = require("../visual");
+        const tokens = extractDesignTokens(args.image, {
+          sampleRate: args.sample_rate,
+        });
+
+        const colorTable = tokens.colors
+          .slice(0, 12)
+          .map(
+            (c) =>
+              `  ${c.hex}  ${c.rgb.padEnd(20)} ${c.frequency.toString().padStart(5)}%  ${c.category}`,
+          )
+          .join("\n");
+
+        const spacingTable = tokens.spacing.length
+          ? tokens.spacing
+              .map((s) => `  ${s.px}px  (${s.occurrences} occurrences)`)
+              .join("\n")
+          : "  No clear spacing pattern detected";
+
+        return (
+          `DESIGN TOKENS — extracted from ${tokens.dimensions.width}×${tokens.dimensions.height} image\n` +
+          `Source: ${tokens.imagePath}\n\n` +
+          `Dominant Colors:\n${colorTable}\n\n` +
+          `Detected Vertical Spacing:\n${spacingTable}\n\n` +
+          `Use these values to:\n` +
+          `- Compare against CSS variables / design system tokens\n` +
+          `- Identify inconsistent colors or spacing\n` +
+          `- Generate a color palette from the rendered output`
+        );
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "design_compare": {
+      try {
+        const { designCompare } = require("../visual");
+        const result = await designCompare(args.url, args.reference, {
+          width: args.width,
+          height: args.height,
+          threshold: args.threshold,
+        });
+
+        const regionText = result.regions
+          .filter((r) => r.changedPercent > 0.5)
+          .slice(0, 6)
+          .map((r) => `  ${r.name}: ${r.changedPercent}% deviation`)
+          .join("\n") || "  All regions match within tolerance";
+
+        return {
+          text:
+            `DESIGN COMPARISON — ${result.diffPercent}% deviation from reference\n` +
+            `Reference: ${result.referencePath}\n` +
+            `Live: ${result.livePath}\n` +
+            `Diff: ${result.diffPath}\n` +
+            `Annotated: ${result.annotatedPath}\n\n` +
+            `Pixel deviation: ${result.changedPixels.toLocaleString()} / ${result.totalPixels.toLocaleString()}\n\n` +
+            `Regional breakdown:\n${regionText}\n\n` +
+            `[Three images attached: live screenshot, pixel diff, annotated deviation map]`,
+          images: [
+            { path: result.livePath, base64: result.liveBase64, media_type: "image/png" },
+            { path: result.diffPath, base64: result.diffBase64, media_type: "image/png" },
+            { path: result.annotatedPath, base64: result.annotatedBase64, media_type: "image/png" },
+          ],
+        };
       } catch (e) {
         return `ERROR: ${e.message}`;
       }
