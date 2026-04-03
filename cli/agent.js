@@ -201,6 +201,9 @@ function _emitMilestone(ms) {
 const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i;
 const IMAGE_PATH_RE =
   /(?:^|\s)((?:~|\.{1,2})?(?:\/[\w.\-@() ]+)+\.(?:png|jpe?g|gif|webp|bmp|tiff?))(?:\s|$)/gi;
+const IMAGE_URL_RE =
+  /(?:^|\s)(https?:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s]*)?)(?:\s|$)/gi;
+const CLIPBOARD_RE = /\b(?:clipboard|pasteboard|zwischenablage|screenshot aus clipboard)\b/i;
 
 function _detectImagePaths(text) {
   const paths = [];
@@ -214,6 +217,88 @@ function _detectImagePaths(text) {
     if (fsSync.existsSync(abs)) paths.push({ raw, abs });
   }
   return paths;
+}
+
+function _detectImageURLs(text) {
+  const urls = [];
+  let m;
+  IMAGE_URL_RE.lastIndex = 0;
+  while ((m = IMAGE_URL_RE.exec(text)) !== null) {
+    urls.push(m[1].trim());
+  }
+  return urls;
+}
+
+async function _downloadImageURL(url) {
+  try {
+    const axios = require("axios");
+    const resp = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 10000,
+      maxContentLength: 10 * 1024 * 1024, // 10 MB cap
+      headers: { "User-Agent": "nex-code/vision" },
+    });
+    const contentType = resp.headers["content-type"] || "";
+    const mediaType = contentType.startsWith("image/")
+      ? contentType.split(";")[0]
+      : _guessMediaType(url);
+    return {
+      data: Buffer.from(resp.data).toString("base64"),
+      media_type: mediaType,
+    };
+  } catch {
+    return null; // download failed — skip silently
+  }
+}
+
+function _guessMediaType(urlOrPath) {
+  const lower = urlOrPath.toLowerCase();
+  if (lower.includes(".jpg") || lower.includes(".jpeg")) return "image/jpeg";
+  if (lower.includes(".gif")) return "image/gif";
+  if (lower.includes(".webp")) return "image/webp";
+  return "image/png";
+}
+
+function _grabClipboardImage() {
+  if (process.platform !== "darwin") return null;
+  const { spawnSync } = require("child_process");
+  // Try pngpaste first (brew install pngpaste) — best for image data
+  const tmpPath = path.join(
+    require("os").tmpdir(),
+    `nex-clipboard-${Date.now()}.png`,
+  );
+  const pngpaste = spawnSync("pngpaste", [tmpPath], { timeout: 3000 });
+  if (pngpaste.status === 0 && fsSync.existsSync(tmpPath)) {
+    const buf = fsSync.readFileSync(tmpPath);
+    if (buf.length > 100) {
+      // valid image (not empty/error)
+      return { data: buf.toString("base64"), media_type: "image/png", path: tmpPath };
+    }
+    try { fsSync.unlinkSync(tmpPath); } catch {}
+  }
+  // Fallback: osascript clipboard check
+  const osascript = spawnSync("osascript", [
+    "-e",
+    'try\nset imgData to the clipboard as «class PNGf»\nreturn "has_image"\non error\nreturn "no_image"\nend try',
+  ], { timeout: 3000 });
+  if (osascript.stdout && osascript.stdout.toString().trim() === "has_image") {
+    // Use osascript to write clipboard image to file
+    const script = `
+      set imgData to the clipboard as «class PNGf»
+      set filePath to POSIX file "${tmpPath}"
+      set fRef to open for access filePath with write permission
+      write imgData to fRef
+      close access fRef
+    `;
+    const writeResult = spawnSync("osascript", ["-e", script], { timeout: 5000 });
+    if (writeResult.status === 0 && fsSync.existsSync(tmpPath)) {
+      const buf = fsSync.readFileSync(tmpPath);
+      if (buf.length > 100) {
+        return { data: buf.toString("base64"), media_type: "image/png", path: tmpPath };
+      }
+    }
+  }
+  return null;
 }
 
 function _imageToBase64(absPath) {
@@ -234,18 +319,61 @@ function _imageToBase64(absPath) {
 
 function buildUserContent(text) {
   const imagePaths = _detectImagePaths(text);
-  if (imagePaths.length === 0) return text; // No images → plain string (unchanged behaviour)
+  const imageURLs = _detectImageURLs(text);
+  const wantsClipboard = CLIPBOARD_RE.test(text);
+  const hasAsync = imageURLs.length > 0 || wantsClipboard;
 
-  const blocks = [{ type: "text", text }];
-  for (const img of imagePaths) {
-    try {
-      const { data, media_type } = _imageToBase64(img.abs);
-      blocks.push({ type: "image", media_type, data });
-    } catch {
-      // File unreadable — skip silently
+  // Fast path: no images at all
+  if (imagePaths.length === 0 && !hasAsync) return text;
+
+  // Sync-only path (local files, no URLs, no clipboard)
+  if (!hasAsync) {
+    const blocks = [{ type: "text", text }];
+    for (const img of imagePaths) {
+      try {
+        const { data, media_type } = _imageToBase64(img.abs);
+        blocks.push({ type: "image", media_type, data });
+      } catch {
+        // File unreadable — skip silently
+      }
     }
+    return blocks.length > 1 ? blocks : text;
   }
-  return blocks.length > 1 ? blocks : text;
+
+  // Async path: return a Promise (caller must await)
+  return (async () => {
+    const blocks = [{ type: "text", text }];
+
+    // Local files
+    for (const img of imagePaths) {
+      try {
+        const { data, media_type } = _imageToBase64(img.abs);
+        blocks.push({ type: "image", media_type, data });
+      } catch {}
+    }
+
+    // Remote URLs (parallel download)
+    if (imageURLs.length > 0) {
+      const results = await Promise.all(imageURLs.map(_downloadImageURL));
+      for (const r of results) {
+        if (r) blocks.push({ type: "image", media_type: r.media_type, data: r.data });
+      }
+    }
+
+    // Clipboard image
+    if (wantsClipboard) {
+      const clip = _grabClipboardImage();
+      if (clip) {
+        blocks.push({ type: "image", media_type: clip.media_type, data: clip.data });
+        // Append note so the model knows the image source
+        blocks[0].text += `\n[Clipboard image attached: ${clip.path}]`;
+      } else {
+        blocks[0].text += "\n[No image found in clipboard]";
+      }
+    }
+
+    return blocks.length > 1 ? blocks : text;
+  })();
 }
 
 // ─── Frustration Detector ────────────────────────────────────
@@ -966,7 +1094,18 @@ async function executeSingleTool(prep, quiet = false) {
     silent: true,
     autoConfirm: prep.confirmedByUser === true,
   });
-  const safeResult = String(toolResult ?? "");
+
+  // Vision tools (visual_review, clipboard_image) return { text, images }
+  let _visionImages = null;
+  let safeResult;
+  if (toolResult && typeof toolResult === "object" && toolResult.text) {
+    safeResult = String(toolResult.text);
+    if (Array.isArray(toolResult.images) && toolResult.images.length > 0) {
+      _visionImages = toolResult.images;
+    }
+  } else {
+    safeResult = String(toolResult ?? "");
+  }
   const truncated =
     safeResult.length > 50000
       ? safeResult.substring(0, 50000) +
@@ -1038,7 +1177,16 @@ async function executeSingleTool(prep, quiet = false) {
 
   const msg = {
     role: "tool",
-    content: finalContent,
+    content: _visionImages
+      ? [
+          { type: "text", text: finalContent },
+          ..._visionImages.map((img) => ({
+            type: "image",
+            media_type: img.media_type,
+            data: img.base64,
+          })),
+        ]
+      : finalContent,
     tool_call_id: prep.callId,
   };
   return { msg, summary };
@@ -2371,7 +2519,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _resolvedInput +=
       "\n\n[Note for assistant: the user appears frustrated — acknowledge their concern briefly and empathetically before proceeding]";
   }
-  const userContent = buildUserContent(_resolvedInput);
+  let userContent = buildUserContent(_resolvedInput);
+  // buildUserContent may return a Promise when remote URLs or clipboard are involved
+  if (userContent && typeof userContent.then === "function") {
+    userContent = await userContent;
+  }
   conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
 
@@ -6390,6 +6542,9 @@ module.exports = {
   getProjectContextHash,
   // Export for testing
   buildUserContent,
+  _detectImageURLs,
+  _downloadImageURL,
+  _grabClipboardImage,
   detectFrustration,
   // Export loop detection for testing and external use
   detectAndTruncateLoop,

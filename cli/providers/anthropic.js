@@ -174,13 +174,36 @@ class AnthropicProvider extends BaseProvider {
       // Anthropic tool results are sent as user messages with tool_result content blocks
       // Merge consecutive tool results into one user message
       const last = formatted[formatted.length - 1];
+
+      // Build content: support multimodal tool results (text + images from visual_review)
+      let toolContent;
+      if (Array.isArray(msg.content)) {
+        const blocks = [];
+        for (const block of msg.content) {
+          if (block.type === "text") {
+            blocks.push({ type: "text", text: block.text ?? "" });
+          } else if (block.type === "image" && block.data) {
+            blocks.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: block.media_type || "image/png",
+                data: block.data,
+              },
+            });
+          }
+        }
+        toolContent = blocks;
+      } else {
+        toolContent = typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content);
+      }
+
       const toolResult = {
         type: "tool_result",
         tool_use_id: msg.tool_call_id,
-        content:
-          typeof msg.content === "string"
-            ? msg.content
-            : JSON.stringify(msg.content),
+        content: toolContent,
       };
 
       if (

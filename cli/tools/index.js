@@ -759,6 +759,56 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "visual_review",
+      description:
+        "Screenshot a URL, analyze the visual result, and return structured feedback about layout, design, and usability issues. Use this to visually inspect web pages, check CSS changes, or verify UI fixes. Returns the screenshot path + analysis.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL to screenshot and analyze" },
+          focus: {
+            type: "string",
+            description:
+              "What to focus on: layout, colors, typography, spacing, responsiveness, accessibility, or a custom description (e.g. 'check the navbar alignment')",
+          },
+          width: {
+            type: "number",
+            description: "Viewport width in px (default: 1280)",
+          },
+          height: {
+            type: "number",
+            description: "Viewport height in px (default: 800)",
+          },
+          full_page: {
+            type: "boolean",
+            description: "Capture full scrollable page (default: false)",
+          },
+          compare_with: {
+            type: "string",
+            description:
+              "Path to a previous screenshot to compare against (optional). Enables before/after analysis.",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clipboard_image",
+      description:
+        "Grab the current image from the system clipboard (macOS). Returns the screenshot path for visual analysis. Use when the user says 'clipboard', 'pasteboard', or wants to analyze a copied screenshot.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "browser_click",
       description:
         "Click an element on a web page (by CSS selector or visible text). Returns the new URL after navigation. Requires playwright.",
@@ -2868,6 +2918,61 @@ async function _executeToolInner(name, args, options = {}) {
           fullPage: args.full_page,
         });
         return `Screenshot saved: ${result.path}\nTitle: ${result.title}\nURL: ${result.url}\n\nTo analyze visually, paste the path into your next message: ${result.path}`;
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "visual_review": {
+      const { browserScreenshot } = require("../browser");
+      try {
+        const result = await browserScreenshot(args.url, {
+          width: args.width || 1280,
+          height: args.height || 800,
+          fullPage: args.full_page || false,
+        });
+        const focus = args.focus || "general layout, spacing, typography, colors, and usability";
+        let output =
+          `VISUAL REVIEW — Screenshot captured\n` +
+          `URL: ${result.url}\n` +
+          `Title: ${result.title}\n` +
+          `Screenshot: ${result.path}\n` +
+          `Viewport: ${args.width || 1280}×${args.height || 800}${args.full_page ? " (full page)" : ""}\n\n` +
+          `Focus area: ${focus}\n\n` +
+          `[Screenshot image is attached for visual analysis]\n\n` +
+          `Analyze the screenshot above and provide structured feedback:\n` +
+          `1. Layout issues (alignment, spacing, overflow)\n` +
+          `2. Visual hierarchy (typography, contrast, colors)\n` +
+          `3. Consistency (margins, padding patterns)\n` +
+          `4. Responsiveness concerns at this viewport\n` +
+          `5. Specific issues related to: ${focus}`;
+
+        if (args.compare_with && fsSync.existsSync(args.compare_with)) {
+          output += `\n\nCOMPARISON: Previous screenshot at ${args.compare_with} — describe what changed.`;
+        }
+
+        // Return result with embedded image for vision-capable models
+        return {
+          text: output,
+          images: [{ path: result.path, base64: result.base64, media_type: "image/png" }],
+          compare_with: args.compare_with || null,
+        };
+      } catch (e) {
+        return `ERROR: ${e.message}`;
+      }
+    }
+
+    case "clipboard_image": {
+      try {
+        const { _grabClipboardImage } = require("../agent");
+        const clip = _grabClipboardImage();
+        if (!clip) {
+          return "No image found in clipboard. Copy a screenshot first (Cmd+Shift+4 on macOS), then try again.";
+        }
+        return {
+          text: `Clipboard image captured: ${clip.path}\nSize: ${Math.round(Buffer.from(clip.data, "base64").length / 1024)} KB\n\n[Clipboard image is attached for visual analysis]`,
+          images: [{ path: clip.path, base64: clip.data, media_type: clip.media_type }],
+        };
       } catch (e) {
         return `ERROR: ${e.message}`;
       }
