@@ -34,7 +34,7 @@
     "benchmark:report": "node scripts/benchmark-reallife-report.js",
     "improve:reallife": "node scripts/improve-reallife.js",
     "benchmark:gate": "node scripts/benchmark-gate.js",
-    "release": "npm version patch && git push --follow-tags && npm publish"
+    "release": "bash scripts/release.sh"
   },
   "keywords": [
     "ai",

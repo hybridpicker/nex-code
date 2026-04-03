@@ -1,0 +1,9 @@
+[Unit]
+Description=Run full nex-code benchmark weekly (Saturday 04:00)
+
+[Timer]
+OnCalendar=Sat *-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
