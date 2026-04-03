@@ -506,4 +506,197 @@ describe("OllamaProvider._formatMessages() with images", () => {
     const result = provider._formatMessages(msgs);
     expect(result).toEqual(msgs);
   });
+
+  it("handles multimodal tool results with images", () => {
+    const msgs = [
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        content: [
+          { type: "text", text: "Screenshot analysis result" },
+          { type: "image", media_type: "image/png", data: "screenshotdata==" },
+        ],
+      },
+    ];
+    const result = provider._formatMessages(msgs);
+    expect(result[0].role).toBe("tool");
+    expect(result[0].content).toBe("Screenshot analysis result");
+    expect(result[0].images).toEqual(["screenshotdata=="]);
+    expect(result[0].tool_call_id).toBe("call_1");
+  });
+});
+
+// ─── 7. Remote image URL detection ─────────────────────────────
+describe("_detectImageURLs()", () => {
+  let _detectImageURLs;
+
+  beforeAll(() => {
+    ({ _detectImageURLs } = require("../cli/agent"));
+  });
+
+  it("detects HTTPS image URLs", () => {
+    const urls = _detectImageURLs("look at https://example.com/photo.png please");
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toBe("https://example.com/photo.png");
+  });
+
+  it("detects HTTP image URLs", () => {
+    const urls = _detectImageURLs("check http://cdn.test.com/img.jpg here");
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toBe("http://cdn.test.com/img.jpg");
+  });
+
+  it("detects URLs with query parameters", () => {
+    const urls = _detectImageURLs("see https://img.host/pic.webp?w=800&h=600 now");
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("pic.webp?w=800");
+  });
+
+  it("detects multiple image URLs", () => {
+    const urls = _detectImageURLs(
+      "compare https://a.com/1.png and https://b.com/2.jpg",
+    );
+    expect(urls).toHaveLength(2);
+  });
+
+  it("ignores non-image URLs", () => {
+    const urls = _detectImageURLs("visit https://example.com/page.html");
+    expect(urls).toHaveLength(0);
+  });
+
+  it("returns empty for text without URLs", () => {
+    const urls = _detectImageURLs("no images here");
+    expect(urls).toHaveLength(0);
+  });
+});
+
+// ─── 8. Remote URL download ─────────────────────────────────────
+describe("_downloadImageURL()", () => {
+  let _downloadImageURL;
+  const axios = require("axios");
+
+  beforeAll(() => {
+    ({ _downloadImageURL } = require("../cli/agent"));
+  });
+
+  it("downloads and base64-encodes a remote image", async () => {
+    const fakeImage = Buffer.from("fake-png-data");
+    jest.spyOn(axios, "get").mockResolvedValueOnce({
+      data: fakeImage,
+      headers: { "content-type": "image/png" },
+    });
+    const result = await _downloadImageURL("https://example.com/test.png");
+    expect(result).not.toBeNull();
+    expect(result.data).toBe(fakeImage.toString("base64"));
+    expect(result.media_type).toBe("image/png");
+  });
+
+  it("returns null on network error", async () => {
+    jest.spyOn(axios, "get").mockRejectedValueOnce(new Error("timeout"));
+    const result = await _downloadImageURL("https://broken.com/img.png");
+    expect(result).toBeNull();
+  });
+
+  it("guesses media type from URL when content-type is missing", async () => {
+    jest.spyOn(axios, "get").mockResolvedValueOnce({
+      data: Buffer.from("data"),
+      headers: {},
+    });
+    const result = await _downloadImageURL("https://example.com/photo.jpg");
+    expect(result.media_type).toBe("image/jpeg");
+  });
+});
+
+// ─── 9. Clipboard detection in buildUserContent ─────────────────
+describe("buildUserContent() with clipboard keyword", () => {
+  let buildUserContent;
+
+  beforeAll(() => {
+    ({ buildUserContent } = require("../cli/agent"));
+  });
+
+  it("returns a Promise when clipboard keyword is detected", () => {
+    const result = buildUserContent("analyze clipboard image");
+    // Should return a Promise (async path)
+    expect(result && typeof result.then === "function").toBe(true);
+  });
+
+  it("returns a Promise when remote URL is detected", () => {
+    const result = buildUserContent("look at https://example.com/pic.png");
+    expect(result && typeof result.then === "function").toBe(true);
+  });
+});
+
+// ─── 10. Anthropic multimodal tool results ──────────────────────
+describe("Anthropic tool results with embedded images", () => {
+  const { AnthropicProvider } = require("../cli/providers/anthropic");
+  let provider;
+
+  beforeEach(() => {
+    provider = new AnthropicProvider();
+  });
+
+  it("formats tool message with image blocks", () => {
+    const formatted = [];
+    const msg = {
+      role: "tool",
+      tool_call_id: "call_123",
+      content: [
+        { type: "text", text: "Visual review result" },
+        { type: "image", media_type: "image/png", data: "imgdata==" },
+      ],
+    };
+    const result = provider._formatSingleMessage(msg, formatted);
+    expect(result.role).toBe("user");
+    expect(result.content[0].type).toBe("tool_result");
+    expect(Array.isArray(result.content[0].content)).toBe(true);
+    const blocks = result.content[0].content;
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toEqual({ type: "text", text: "Visual review result" });
+    expect(blocks[1]).toMatchObject({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "imgdata==" },
+    });
+  });
+
+  it("formats plain string tool results unchanged", () => {
+    const formatted = [];
+    const msg = {
+      role: "tool",
+      tool_call_id: "call_456",
+      content: "simple text result",
+    };
+    const result = provider._formatSingleMessage(msg, formatted);
+    expect(result.content[0].content).toBe("simple text result");
+  });
+});
+
+// ─── 11. OpenAI multimodal tool results ─────────────────────────
+describe("OpenAI tool results with embedded images", () => {
+  const { OpenAIProvider } = require("../cli/providers/openai");
+  let provider;
+
+  beforeEach(() => {
+    provider = new OpenAIProvider();
+    process.env.OPENAI_API_KEY = "sk-test";
+  });
+
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("extracts text from multimodal tool results", () => {
+    const msg = {
+      role: "tool",
+      tool_call_id: "call_789",
+      content: [
+        { type: "text", text: "Analysis output" },
+        { type: "image", media_type: "image/png", data: "base64==" },
+      ],
+    };
+    const result = provider._formatSingleMessage(msg);
+    expect(result.role).toBe("tool");
+    expect(result.content).toBe("Analysis output");
+    expect(result.tool_call_id).toBe("call_789");
+  });
 });
