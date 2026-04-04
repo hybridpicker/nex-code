@@ -2,7 +2,7 @@
   "name": "nex-code",
   "displayName": "Nex Code",
   "description": "Agentic AI coding assistant powered by nex-code",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "publisher": "hybridpicker",
   "repository": {
     "type": "git",
