@@ -96,6 +96,7 @@ function runTask(task, model) {
     safeEnv.NEX_SKIP_BUILTIN_SKILLS = "1";
     safeEnv.NEX_AUTO_ORCHESTRATE = "false";
     safeEnv.NEX_SKIP_COMPACTOR = "1";
+    safeEnv.NEX_TASK_TIMEOUT_MS = String(task.timeoutMs || 180000);
 
     const proc = spawn(process.execPath, args, {
       cwd: tmpDir,

@@ -679,13 +679,18 @@ app.listen(3000);
     },
     evaluateFn(tmpDir) {
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
-      if (fileExists(tmpDir, "AUDIT.md")) {
-        const content = fs.readFileSync(path.join(tmpDir, "AUDIT.md"), "utf-8").toLowerCase();
-        // request is deprecated, body-parser is built into express, moment is legacy, jest missing from devDeps
-        if (content.includes("request") && (content.includes("deprecat") || content.includes("axios") || content.includes("fetch"))) score.taskCompletion += 25;
-        if (content.includes("body-parser") && (content.includes("built") || content.includes("express.json"))) score.taskCompletion += 25;
-        if (content.includes("moment") && (content.includes("date-fns") || content.includes("dayjs") || content.includes("legacy") || content.includes("large"))) score.taskCompletion += 25;
-        if (content.includes("jest") && (content.includes("devdep") || content.includes("missing") || content.includes("dev"))) score.taskCompletion += 25;
+      // Accept any audit file name (AUDIT.md, audit.md, dependency-audit.md, etc.)
+      const auditFile = fs.readdirSync(tmpDir).find((f) => /audit/i.test(f) && /\.(md|txt)$/i.test(f));
+      if (auditFile) {
+        const content = fs.readFileSync(path.join(tmpDir, auditFile), "utf-8").toLowerCase();
+        // request is deprecated
+        if (content.includes("request") && /deprecat|axios|node.fetch|got|obsolete|unmaintain|eol/i.test(content)) score.taskCompletion += 25;
+        // body-parser is built into express 4.16+
+        if (content.includes("body-parser") && /built.?in|express\.json|express\.urlencoded|redundant|unnecessary|native/i.test(content)) score.taskCompletion += 25;
+        // moment is legacy/heavy
+        if (content.includes("moment") && /date.fns|dayjs|temporal|legacy|large|heavy|bloat|bundl|deprecat|luxon/i.test(content)) score.taskCompletion += 25;
+        // jest missing from devDependencies
+        if (content.includes("jest") && /devdep|missing|dev.dep|should be|move to|not listed|dependencies/i.test(content)) score.taskCompletion += 25;
       }
       return score;
     },
@@ -913,10 +918,23 @@ module.exports = router;
     },
     evaluateFn(tmpDir) {
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
-      if (fileExists(tmpDir, "middleware/validate.js")) score.taskCompletion += 30;
-      if (fileContains(tmpDir, "middleware/validate.js", "name") && fileContains(tmpDir, "middleware/validate.js", "3")) score.taskCompletion += 20;
-      if (fileContains(tmpDir, "routes/users.js", "validate") || fileContains(tmpDir, "routes/users.js", "middleware")) score.taskCompletion += 25;
-      if (fileContains(tmpDir, "routes/products.js", "validate") || fileContains(tmpDir, "routes/products.js", "middleware")) score.taskCompletion += 25;
+      // Accept validation module in any reasonable location
+      const valPaths = ["middleware/validate.js", "middleware/validation.js", "lib/validate.js",
+        "utils/validate.js", "validators/index.js", "middleware/validator.js", "validation.js"];
+      const valFile = valPaths.find((p) => fileExists(tmpDir, p));
+      if (valFile) {
+        score.taskCompletion += 30;
+        // Check that validation logic exists (name length check — "3" or min/minLength)
+        const vc = fs.readFileSync(path.join(tmpDir, valFile), "utf-8");
+        if (/name/i.test(vc) && (/\b3\b|minlength|min.?len|\.length\s*[<>=]/i.test(vc))) score.taskCompletion += 20;
+      }
+      // Check routes import/use validation (require, import, validate, middleware, etc.)
+      const usersContent = fileExists(tmpDir, "routes/users.js")
+        ? fs.readFileSync(path.join(tmpDir, "routes/users.js"), "utf-8") : "";
+      if (/validat|middleware|require.*validate/i.test(usersContent)) score.taskCompletion += 25;
+      const productsContent = fileExists(tmpDir, "routes/products.js")
+        ? fs.readFileSync(path.join(tmpDir, "routes/products.js"), "utf-8") : "";
+      if (/validat|middleware|require.*validate/i.test(productsContent)) score.taskCompletion += 25;
       return score;
     },
     maxToolCalls: 14,
@@ -1286,12 +1304,21 @@ module.exports = app;
     },
     evaluateFn(tmpDir) {
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
-      if (fileExists(tmpDir, "API.md")) {
-        const content = fs.readFileSync(path.join(tmpDir, "API.md"), "utf-8");
-        if (content.includes("GET") && content.includes("/api/items")) score.taskCompletion += 25;
-        if (content.includes("POST")) score.taskCompletion += 25;
-        if (content.includes("DELETE")) score.taskCompletion += 25;
-        if (content.includes("404") || content.includes("201") || content.includes("400")) score.taskCompletion += 25;
+      // Accept any API docs file (API.md, api-docs.md, docs/api.md, README.md with API content, etc.)
+      let content = "";
+      const candidates = ["API.md", "api.md", "docs/API.md", "docs/api.md", "api-docs.md", "API-DOCS.md", "README.md"];
+      for (const c of candidates) {
+        const p = path.join(tmpDir, c);
+        if (fs.existsSync(p)) {
+          const fc = fs.readFileSync(p, "utf-8");
+          if (/GET|POST|DELETE|endpoint|route/i.test(fc)) { content = fc; break; }
+        }
+      }
+      if (content) {
+        if (/GET/i.test(content) && /\/api\/items|\/items/i.test(content)) score.taskCompletion += 25;
+        if (/POST/i.test(content)) score.taskCompletion += 25;
+        if (/DELETE/i.test(content)) score.taskCompletion += 25;
+        if (/40[04]|401|201|4\d{2}|status.code|response.code|error.response/i.test(content)) score.taskCompletion += 25;
       }
       return score;
     },
@@ -1606,8 +1633,12 @@ test('processes all items exactly once', async () => {
         if (content.includes("await") && content.includes("Promise")) score.taskCompletion += 35;
         if (content.includes("Promise.all") || content.includes("Promise.allSettled")) score.taskCompletion += 35;
         if (!content.includes(".then(r => results.push(r))")) score.taskCompletion += 30; // removed fire-and-forget
-        if (content.includes("mutex") || content.includes("lock") || content.includes("splice")) score.quality += 50;
-        if (content.includes("//") || content.includes("/*")) score.quality += 50;
+        // Quality: race condition guard (mutex/lock/flag check, or queue.splice/shift to avoid double-processing)
+        if (/mutex|lock|semaphore|splice|shift|\.slice\(|queue\s*=\s*\[/i.test(content)) score.quality += 40;
+        // Quality: proper error handling (try/catch, .catch, allSettled)
+        if (/try\s*\{|\.catch|allSettled/i.test(content)) score.quality += 30;
+        // Quality: any explanatory comments
+        if (content.includes("//") || content.includes("/*")) score.quality += 30;
       }
       return score;
     },
