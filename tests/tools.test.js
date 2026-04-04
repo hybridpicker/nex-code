@@ -709,7 +709,7 @@ describe("tools.js", () => {
   describe('executeTool("bash") dangerous commands', () => {
     it("allows dangerous command when confirm returns true", async () => {
       const result = await executeTool("bash", {
-        command: "echo dangerous && git push",
+        command: "echo dangerous && exit 1",
       });
       // confirm is mocked to return true, so it should execute
       // The command will likely fail with exit code but won't be BLOCKED

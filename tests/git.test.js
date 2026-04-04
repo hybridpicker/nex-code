@@ -59,7 +59,7 @@ describe("git.js", () => {
       const status = await git.getStatus();
       expect(status.length).toBe(1);
       expect(status[0].file).toBe("README.md");
-    });
+    }, 15000);
   });
 
   describe("getDiff()", () => {

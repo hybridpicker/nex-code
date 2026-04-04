@@ -65,7 +65,7 @@ On first launch, an interactive setup wizard guides you through provider and cre
 
 **Phase-based execution.** Tasks run through Plan (analyze) -> Implement (code) -> Verify (test) phases, each with the optimal model. Auto-loops back on test failures.
 
-**45 built-in tools** across file ops, git, SSH, Docker, Kubernetes, deploy, browser, GitHub Actions, and visual review.
+**45 built-in tools** across file ops, git, SSH, Docker, Kubernetes, deploy, browser, GitHub Actions, and visual review. See [Tools](#tools) for the full list.
 
 **2 runtime dependencies** (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime.
 
@@ -111,7 +111,7 @@ OLLAMA_API_KEY=your-key       # Ollama Cloud
 OPENAI_API_KEY=your-key       # OpenAI
 ANTHROPIC_API_KEY=your-key    # Anthropic
 GEMINI_API_KEY=your-key       # Gemini
-PERPLEXITY_API_KEY=your-key   # optional — grounded web search
+PERPLEXITY_API_KEY=your-key   # optional — enables grounded web search
 
 DEFAULT_PROVIDER=ollama
 DEFAULT_MODEL=devstral-2:123b
@@ -136,18 +136,20 @@ cp .env.example .env && npm link && npm run install-hooks
 > the /users endpoint returns 500 — find the bug and fix it
 ```
 
-**YOLO mode** — skip all confirmations, auto-runs `caffeinate` on macOS:
+### YOLO Mode
+
+Skip all confirmations — file changes, dangerous commands, and tool permissions are auto-approved. Auto-runs `caffeinate` on macOS.
 
 ```bash
 nex-code -yolo
 ```
 
-**Headless / Programmatic:**
+### Headless / Programmatic Mode
 
 ```bash
 nex-code --task "refactor src/index.js to async/await" --yolo
 nex-code --prompt-file /tmp/task.txt --yolo --json
-nex-code --daemon          # background watcher (reads .nex/daemon.json)
+nex-code --daemon          # watch mode: fires tasks on file changes, git commits, or cron
 ```
 
 | Flag | Description |
@@ -156,33 +158,33 @@ nex-code --daemon          # background watcher (reads .nex/daemon.json)
 | `--prompt-file <path>` | Read prompt from file |
 | `--yolo` | Skip all confirmations |
 | `--server` | JSON-lines IPC server (VS Code extension) |
-| `--daemon` | Background watcher (file changes, git commits, cron) |
+| `--daemon` | Background watcher (reads `.nex/daemon.json`) |
 | `--flatrate` | 100 turns, 6 parallel agents, 5 retries |
 | `--json` | JSON output to stdout |
 | `--max-turns <n>` | Override agentic loop limit |
-| `--model <spec>` | e.g. `anthropic:claude-sonnet-4-6` |
+| `--model <spec>` | Use specific model (e.g. `anthropic:claude-sonnet-4-6`) |
 | `--debug` | Show diagnostic messages |
 
-**Vision / Screenshot:**
+### Vision / Screenshot
 
 ```
 > /path/to/screenshot.png implement this UI in React
 > analyze https://example.com/mockup.png and implement it
-> what's wrong with the layout in my clipboard    # macOS clipboard
+> what's wrong with the layout in my clipboard    # macOS clipboard capture
 > screenshot localhost:3000 and review the navbar spacing
 ```
 
-Formats: PNG, JPG, GIF, WebP, BMP. Works with all providers that support vision.
+Works with Anthropic, OpenAI, Gemini, and Ollama vision models. Formats: PNG, JPG, GIF, WebP, BMP.
 
 ---
 
 ## Providers & Models
 
 ```
-/model                      # interactive picker
-/model openai:gpt-4o        # switch directly
-/providers                  # list all
-/fallback anthropic,openai  # auto-switch on failure
+/model                         # interactive picker
+/model openai:gpt-4o           # switch directly
+/providers                     # list all
+/fallback anthropic,openai     # auto-switch on failure
 ```
 
 | Provider | Models | Env Variable |
@@ -197,12 +199,13 @@ Formats: PNG, JPG, GIF, WebP, BMP. Works with all providers that support vision.
 
 ## Commands
 
-Type `/` for inline suggestions. Tab completion for commands and file paths.
+Type `/` to see inline suggestions. Tab completion for slash commands and file paths.
 
 | Command | Description |
 |---|---|
 | `/help` | Full help |
-| `/model [spec]` / `/providers` | Switch model / list all |
+| `/model [spec]` | Show/switch model |
+| `/providers` | List providers |
 | `/clear` | Clear conversation |
 | `/save` / `/load` / `/sessions` / `/resume` | Session management |
 | `/branches` / `/fork` / `/switch-branch` / `/goto` | Session tree navigation |
@@ -227,7 +230,7 @@ Type `/` for inline suggestions. Tab completion for commands and file paths.
 
 ## Tools
 
-45 built-in tools:
+45 built-in tools organized by category:
 
 **Core:** `bash`, `read_file`, `write_file`, `edit_file`, `patch_file`, `list_directory`, `search_files`, `glob`, `grep`
 
@@ -245,7 +248,7 @@ Type `/` for inline suggestions. Tab completion for commands and file paths.
 
 **Deploy:** `deploy`, `deployment_status`
 
-**Frontend:** `frontend_recon` — scans design tokens, layout, and framework stack before any frontend work
+**Frontend:** `frontend_recon` — scans design tokens, layout, framework stack before any frontend work
 
 **Visual:** `visual_diff`, `responsive_sweep`, `visual_annotate`, `visual_watch`, `design_tokens`, `design_compare`
 
@@ -257,7 +260,7 @@ Additional tools via [MCP servers](#mcp) or [Skills](#skills).
 
 ### Multi-Agent Orchestrator
 
-Multi-goal prompts auto-decompose into parallel sub-agents (up to 5 simultaneously, with file locking):
+Multi-goal prompts auto-decompose into parallel sub-agents. Up to 5 agents run simultaneously with file locking.
 
 ```bash
 nex-code --task "fix type errors in src/, add JSDoc to utils/, update CHANGELOG"
@@ -265,16 +268,16 @@ nex-code --task "fix type errors in src/, add JSDoc to utils/, update CHANGELOG"
 
 ### Autoresearch
 
-Autonomous optimization loops — edit → experiment → keep/revert, on a dedicated git branch:
+Autonomous optimization loops: edit -> experiment -> keep/revert, on a dedicated branch.
 
 ```
 /autoresearch reduce test runtime while maintaining correctness
-/ar-self-improve          # uses nex-code's own benchmark as the fitness metric
+/ar-self-improve          # self-improvement using nex-code's benchmark
 ```
 
 ### Plan Mode
 
-Auto-activates for implementation tasks. Read-only analysis first, approve before writes. Hard-enforced tool restrictions during analysis phase.
+Auto-activates for implementation tasks. Read-only analysis first, approve before writes. Hard-enforced tool restrictions.
 
 ### Daemon / Watch Mode
 
@@ -282,7 +285,7 @@ Background process that fires tasks on file changes, git commits, or cron schedu
 
 ### Session Trees
 
-Navigate conversation history like git branches — fork, switch, goto, delete branches without losing prior attempts.
+Navigate conversation history like git branches — fork, switch, goto, delete branches.
 
 ### Safety
 
@@ -295,8 +298,6 @@ Navigate conversation history like git branches — fork, switch, goto, delete b
 
 Pre-push secret detection, audit logging (JSONL), persistent undo/redo, cost limits, auto plan mode.
 
-**Reporting vulnerabilities:** Email **security@schoensgibl.com** — not a public issue. 72h initial response.
-
 ### Open-Source Model Robustness
 
 - **5-layer argument parsing** — JSON, trailing fix, extraction, key repair, fence stripping
@@ -307,7 +308,7 @@ Pre-push secret detection, audit logging (JSONL), persistent undo/redo, cost lim
 
 ### Visual Development Tools
 
-Pixel-level before/after diffs, responsive sweeps (320–1920px), annotation overlays, design token extraction, and live-reload diff watching. Pure image tools work standalone; browser tools need Playwright.
+Pixel-level before/after comparison, responsive sweeps (320-1920px), annotation overlays, design token extraction, and live-reload diff watching. Pure image tools work standalone; browser-based tools need Playwright.
 
 ---
 
@@ -337,7 +338,7 @@ Built-in sidebar chat panel (`vscode/`) with streaming output, collapsible tool 
 
 ```bash
 cd vscode && npm install && npm run package
-# Cmd+Shift+P → Extensions: Install from VSIX...
+# Cmd+Shift+P -> Extensions: Install from VSIX...
 ```
 
 ---
@@ -352,7 +353,7 @@ cli/
   tools/index.js         # 45 tool definitions + auto-fix engine
   context-engine.js      # Token management + 5-phase compression
   sub-agent.js           # Parallel sub-agents with file locking
-  orchestrator.js        # Multi-agent decompose → execute → synthesize
+orchestrator.js        # Multi-agent decompose -> execute -> synthesize
   session-tree.js        # Session branching
   visual.js              # Visual dev tools (pixelmatch-based)
   browser.js             # Playwright browser agent
@@ -366,22 +367,23 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for full architecture details.
 ## Testing
 
 ```bash
-npm test                          # 97 suites, 3920 tests
-npm run typecheck                 # TypeScript noEmit check
-npm run benchmark:gate            # 7-task smoke test (blocks push on regression)
-npm run benchmark:reallife        # 35 real-world tasks across 7 categories
+npm test              # 97 suites, 3920 tests
+npm run typecheck     # TypeScript noEmit check
+npm run benchmark:gate        # 7-task smoke test (blocks push on regression)
+npm run benchmark:reallife    # 35 real-world tasks across 7 categories
 ```
 
 ---
 
 ## Security
-
 - Pre-push secret detection (API keys, private keys, hardcoded credentials)
 - Audit logging with automatic argument sanitization
 - Sensitive path blocking (`.ssh/`, `.aws/`, `.env`, credentials)
-- Shell injection protection via `execFileSync` with argument arrays throughout
+- Shell injection protection via `execFileSync` with argument arrays
 - SSRF protection on `web_fetch`
 - MCP environment isolation
+
+**Reporting vulnerabilities:** Email **security@schoensgibl.com** (not a public issue). Allow 72h for initial response.
 
 ---
 
