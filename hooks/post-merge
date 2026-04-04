@@ -47,7 +47,12 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
   echo "[post-merge] devel→main merge detected — bumping patch version..."
   npm version patch --no-git-tag-version
   NEW_VERSION=$(node -p "require('./package.json').version")
-  git add package.json package-lock.json 2>/dev/null || git add package.json
+
+  # Sync version to VS Code extension
+  echo "[post-merge] Syncing version to VS Code extension..."
+  (cd vscode && npm run sync-version 2>/dev/null)
+
+  git add package.json package-lock.json vscode/package.json 2>/dev/null || git add package.json vscode/package.json
   git commit -m "chore: bump version to ${NEW_VERSION}"
   echo "[post-merge] Version bumped to ${NEW_VERSION}"
 
