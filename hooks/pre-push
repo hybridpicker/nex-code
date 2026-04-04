@@ -7,6 +7,7 @@
 #   NEX_SKIP_SECRET_CHECK=1  — skip secret scan only
 #   NEX_SKIP_TESTS=1         — skip unit tests only
 #   NEX_SKIP_BENCHMARK=1     — skip benchmark gate only
+#   NEX_SLOW_TESTS=1         — run full suite incl. slow integration tests locally
 
 set -euo pipefail
 
@@ -148,20 +149,33 @@ if [ "$VIOLATION_COUNT" -gt 0 ]; then
 fi
 
 # ─── Unit Tests ────────────────────────────────────────────────
-# Runs npm test before pushing. Bypass via: NEX_SKIP_TESTS=1 git push
+# Locally: runs only fast unit tests (~15s). Slow integration tests
+# (git, ssh, hooks, tools) run in CI where NEX_SLOW_TESTS=1 or CI=true.
+# Bypass via: NEX_SKIP_TESTS=1 git push
 
 if [ "${NEX_SKIP_TESTS:-0}" = "1" ]; then
   echo "[pre-push] Tests skipped (NEX_SKIP_TESTS=1)"
 else
   REPO_ROOT="$(git rev-parse --show-toplevel)"
-  echo "[pre-push] Running unit tests..."
-  if ! (cd "$REPO_ROOT" && npm test --silent 2>&1 | tail -5); then
+
+  # In CI, run the full suite. Locally, skip known slow integration tests.
+  if [ "${CI:-0}" = "true" ] || [ "${NEX_SLOW_TESTS:-0}" = "1" ]; then
+    TEST_CMD="npm test --silent"
+    echo "[pre-push] Running full test suite..."
+  else
+    SLOW_PATTERN="git\.test|ssh\.test|ssh-tools\.test|hooks\.test|hooks-pre-push\.test|tools\.test"
+    TEST_CMD="npm test --silent -- --testPathIgnorePatterns='${SLOW_PATTERN}'"
+    echo "[pre-push] Running fast tests (slow integration tests run in CI)..."
+  fi
+
+  if ! (cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 | tail -5); then
     echo ""
     echo "╔══════════════════════════════════════════════════════════╗"
     echo "║  TESTS FAILED — push blocked                            ║"
     echo "╠══════════════════════════════════════════════════════════╣"
     echo "║  Fix failing tests before pushing.                      ║"
     echo "║  Bypass: NEX_SKIP_TESTS=1 git push                     ║"
+    echo "║  Full suite: NEX_SLOW_TESTS=1 git push                 ║"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo ""
     exit 1
