@@ -37,7 +37,7 @@ const CONCURRENCY = 3;
 // Smoke-test tasks: one fast, reliable task per category
 const SMOKE_TASK_IDS = [
   "bugfix-wrong-destructure",         // bugfix        ~69s, score 90
-  "feat-add-export-csv",              // feature       ~58s, score 90
+  "feat-add-volume-control",           // feature       single-file, clear spec
   "understand-project-structure",     // understanding ~68s, score 90
   "devops-nginx-reverse-proxy",       // devops        ~33s, score 90
   "refactor-fix-broken-import-paths", // refactor      ~70s, score 90

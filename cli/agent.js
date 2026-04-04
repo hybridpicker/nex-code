@@ -1397,6 +1397,7 @@ let _sshLastErrorFingerprint = ""; // first error line of the most recent failed
 let _sshConsecutiveSameErrors = 0; // count of consecutive SSH results with the same error (reset on success or different error)
 let _bashConsecutiveSameErrors = 0; // same, but for local bash commands
 let _bashLastErrorFingerprint = ""; // fingerprint of the last bash error line
+let _timeNudgeCount = 0; // how many time-based "stop reading" nudges have fired
 let _isCreationTask = false; // true when initial prompt is a build/create task — tighter investigation cap applies
 let _verificationInjected = false; // prevents re-triggering post-creation bootstrap check
 const _taskRegistry = new Map(); // taskId → description, populated from create_task tool calls
@@ -5617,6 +5618,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             (_rootCauseDetected ||
               (_isCreationTask && _editsMadeThisSession >= 1) ||
               _readsSinceCapFired >= INVESTIGATION_GRACE);
+          // Two-stage time-based nudge: soft at 40%, hard at 65% of task timeout
+          if (
+            _timeNudgeCount < 2 &&
+            !_investigationCapFired &&
+            _readOnlyCallsSinceEdit >= 3 &&
+            filesModified.size === 0
+          ) {
+            const _taskTimeout = parseInt(process.env.NEX_TASK_TIMEOUT_MS, 10) || 0;
+            const _elapsed = Date.now() - startTime;
+            const _threshold = _timeNudgeCount === 0 ? 0.4 : 0.65;
+            if (_taskTimeout > 0 && _elapsed > _taskTimeout * _threshold) {
+              _timeNudgeCount++;
+              const _mins = Math.round(_elapsed / 60000);
+              const _pct = Math.round((_elapsed / _taskTimeout) * 100);
+              debugLog(
+                `${C.yellow}  ⚠ Time nudge #${_timeNudgeCount}: ${_mins}m elapsed (${_pct}%), ${_readOnlyCallsSinceEdit} reads, 0 edits${C.reset}`,
+              );
+              const _timeMsg = {
+                role: "user",
+                content: _timeNudgeCount === 1
+                  ? `[SYSTEM] ${_pct}% of available time used and no files edited yet. Start implementing now using edit_file or write_file — you have enough context.`
+                  : `[SYSTEM] ${_pct}% of time used, still no edits. You MUST write code NOW. Use edit_file or write_file immediately — any further reading will be blocked.`,
+              };
+              conversationMessages.push(_timeMsg);
+              apiMessages.push(_timeMsg);
+            }
+          }
           if (_hardBlockActive && READ_ONLY_TOOLS.includes(prep.fnName)) {
             const _blockReason = _rootCauseDetected
               ? `root cause already identified (${_rootCauseSummary})`
