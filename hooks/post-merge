@@ -75,8 +75,8 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
   NEX_SKIP_TESTS=1 NEX_SKIP_BENCHMARK=1 NEX_SKIP_SECRET_CHECK=1 git push origin devel
   echo "[post-merge] dist/ committed and pushed."
 
-  git checkout main
-  echo "[post-merge] Done. v${NEW_VERSION} — devel synced, dist rebuilt, GitHub Actions publishing to npm."
+  git checkout devel
+  echo "[post-merge] Done. v${NEW_VERSION} — back on devel, GitHub Actions publishing to npm."
 fi
 
 # Run npm install if package.json changed in the merge
