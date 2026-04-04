@@ -280,9 +280,7 @@ Autonomous optimization loops: edit -> experiment -> keep/revert, on a dedicated
 Auto-activates for implementation tasks. Read-only analysis first, approve before writes. Hard-enforced tool restrictions.
 
 ### Daemon / Watch Mode
-
 Background process that fires tasks on file changes, git commits, or cron schedule. Configured via `.nex/daemon.json`. Desktop and Matrix notifications.
-
 ### Session Trees
 
 Navigate conversation history like git branches — fork, switch, goto, delete branches.
@@ -305,9 +303,7 @@ Pre-push secret detection, audit logging (JSONL), persistent undo/redo, cost lim
 - **Auto-fix engine** — path resolution, edit fuzzy matching (Levenshtein), bash error hints
 - **Tool tiers** — essential (5) / standard (21) / full (45), auto-selected per model capability
 - **Stale stream recovery** — progressive retry with context compression on stall
-
 ### Visual Development Tools
-
 Pixel-level before/after comparison, responsive sweeps (320-1920px), annotation overlays, design token extraction, and live-reload diff watching. Pure image tools work standalone; browser-based tools need Playwright.
 
 ---
@@ -376,6 +372,7 @@ npm run benchmark:reallife    # 35 real-world tasks across 7 categories
 ---
 
 ## Security
+
 - Pre-push secret detection (API keys, private keys, hardcoded credentials)
 - Audit logging with automatic argument sanitization
 - Sensitive path blocking (`.ssh/`, `.aws/`, `.env`, credentials)
