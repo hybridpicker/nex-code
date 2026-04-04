@@ -11,8 +11,9 @@ This document describes the automated release process for Nex Code.
    - Merges into main once CI is green
 3. **Automatic Version Bump**: The post-merge hook bumps the patch version and pushes main
 4. **Publish**: GitHub Actions Release workflow publishes to npm automatically
-5. **GitHub Release**: GitHub Actions creates a release with release notes
-6. **Sync**: The post-merge hook merges the version bump back to devel
+5. **GitHub Release**: GitHub Actions creates a release with release notes and attaches the VS Code extension `.vsix`
+6. **VS Code Extension**: Built and packaged automatically — `.vsix` attached to the GitHub Release for manual install; also published to the VS Code Marketplace if `VSCE_PAT` secret is set
+7. **Sync**: The post-merge hook merges the version bump back to devel (including `vscode/package.json` version sync)
 
 ## Merge Command
 
@@ -37,6 +38,16 @@ This command will:
 2. Create a git tag
 3. Push to GitHub
 4. Publish to npm
+
+## VS Code Extension
+
+The extension in `vscode/` is built and versioned automatically:
+
+- Version is synced from root `package.json` by the post-merge hook
+- `.vsix` is attached to every GitHub Release — install via `code --install-extension nex-code-x.y.z.vsix`
+- To also publish to the VS Code Marketplace, add a `VSCE_PAT` secret to the GitHub repo (Settings → Secrets → Actions)
+
+Stale `.vsix` files must never be committed — `vscode/*.vsix` is in `.gitignore`.
 
 ## Environment Variables
 
