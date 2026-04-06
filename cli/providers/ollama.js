@@ -232,6 +232,37 @@ const OLLAMA_MODELS = {
     maxTokens: 8192,
     contextWindow: 131072,
   },
+  // Gemma 4 family
+  "gemma4:e2b": {
+    id: "gemma4:e2b",
+    name: "Gemma 4 E2B",
+    maxTokens: 8192,
+    contextWindow: 131072,
+  },
+  "gemma4:e4b": {
+    id: "gemma4:e4b",
+    name: "Gemma 4 E4B",
+    maxTokens: 8192,
+    contextWindow: 131072,
+  },
+  "gemma4:26b-a4b": {
+    id: "gemma4:26b-a4b",
+    name: "Gemma 4 26B A4B",
+    maxTokens: 16384,
+    contextWindow: 262144,
+  },
+  "gemma4:31b": {
+    id: "gemma4:31b",
+    name: "Gemma 4 31B",
+    maxTokens: 16384,
+    contextWindow: 262144,
+  },
+  "gemma4:31b-cloud": {
+    id: "gemma4:31b-cloud",
+    name: "Gemma 4 31B Cloud",
+    maxTokens: 16384,
+    contextWindow: 262144,
+  },
   // Special
   "gemini-3-flash-preview": {
     id: "gemini-3-flash-preview",
