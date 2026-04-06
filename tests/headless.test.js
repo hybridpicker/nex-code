@@ -2,19 +2,20 @@ const { execFileSync } = require("child_process");
 const path = require("path");
 
 const BIN = path.join(__dirname, "..", "bin", "nex-code.js");
+const NODE = process.execPath;
 
 describe("headless mode (bin/nex-code.js)", () => {
   // ─── --version ──────────────────────────────────────────────
   describe("--version", () => {
     it("prints version and exits", () => {
-      const out = execFileSync("node", [BIN, "--version"], {
+      const out = execFileSync(NODE, [BIN, "--version"], {
         encoding: "utf-8",
       });
       expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
     });
 
     it("short flag -v works", () => {
-      const out = execFileSync("node", [BIN, "-v"], { encoding: "utf-8" });
+      const out = execFileSync(NODE, [BIN, "-v"], { encoding: "utf-8" });
       expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });
@@ -22,7 +23,7 @@ describe("headless mode (bin/nex-code.js)", () => {
   // ─── --help ─────────────────────────────────────────────────
   describe("--help", () => {
     it("prints usage text and exits", () => {
-      const out = execFileSync("node", [BIN, "--help"], { encoding: "utf-8" });
+      const out = execFileSync(NODE, [BIN, "--help"], { encoding: "utf-8" });
       expect(out).toContain("Usage:");
       expect(out).toContain("--task");
       expect(out).toContain("--auto");
@@ -31,7 +32,7 @@ describe("headless mode (bin/nex-code.js)", () => {
     });
 
     it("short flag -h works", () => {
-      const out = execFileSync("node", [BIN, "-h"], { encoding: "utf-8" });
+      const out = execFileSync(NODE, [BIN, "-h"], { encoding: "utf-8" });
       expect(out).toContain("Usage:");
     });
   });
@@ -39,7 +40,7 @@ describe("headless mode (bin/nex-code.js)", () => {
   // ─── --daemon in --help ─────────────────────────────────────
   describe("--daemon flag", () => {
     it("--help output mentions --daemon", () => {
-      const out = execFileSync("node", [BIN, "--help"], { encoding: "utf-8" });
+      const out = execFileSync(NODE, [BIN, "--help"], { encoding: "utf-8" });
       expect(out).toContain("--daemon");
     });
   });
@@ -48,7 +49,7 @@ describe("headless mode (bin/nex-code.js)", () => {
   describe("--task validation", () => {
     it("exits with error when --task has no prompt", () => {
       try {
-        execFileSync("node", [BIN, "--task"], {
+        execFileSync(NODE, [BIN, "--task"], {
           encoding: "utf-8",
           stdio: "pipe",
         });
@@ -61,7 +62,7 @@ describe("headless mode (bin/nex-code.js)", () => {
 
     it("exits with error when --task is followed by another flag", () => {
       try {
-        execFileSync("node", [BIN, "--task", "--json"], {
+        execFileSync(NODE, [BIN, "--task", "--json"], {
           encoding: "utf-8",
           stdio: "pipe",
         });
