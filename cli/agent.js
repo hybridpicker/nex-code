@@ -866,6 +866,15 @@ async function prepareToolCall(tc) {
     };
   }
 
+  // Normalize path if present so that duplicate detection works accurately
+  if (args && typeof args.path === "string") {
+    try {
+      const os = require("os");
+      const resolved = path.resolve(process.cwd(), args.path.replace(/^~/, os.homedir()));
+      args.path = path.relative(process.cwd(), resolved) || ".";
+    } catch {}
+  }
+
   // Validate
   const validation = validateToolArgs(fnName, args);
   if (!validation.valid) {
@@ -4778,8 +4787,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             //     [1,350] after [1,50]: 14% from new perspective but 100% from old). Blocking
             //     this prevents large-range "superread" that re-floods content already in context
             //     and wastes read budget. Block message guides model to skip the already-read part.
-            const newStart = prep.args.line_start || 1;
-            const newEnd = prep.args.line_end || newStart + 350;
+            const newStart = parseInt(prep.args.line_start, 10) || 1;
+            const newEnd = parseInt(prep.args.line_end, 10) || newStart + 350;
             const prevRanges = _sessionFileReadRanges.get(path) || [];
             let blocked = false;
             for (const [ps, pe] of prevRanges) {
@@ -6341,10 +6350,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // this, narrow targeted re-reads that fall within the first 350 lines
             // bypass overlap detection entirely because prevRanges is empty.
             {
-              const rs = prep.args.line_start != null ? prep.args.line_start || 1 : 1;
+              const rs = prep.args.line_start != null ? parseInt(prep.args.line_start, 10) || 1 : 1;
               const re =
                 prep.args.line_start != null
-                  ? prep.args.line_end || rs + 350
+                  ? parseInt(prep.args.line_end, 10) || rs + 350
                   : 350; // unbounded read — first 350 lines are now in context
               if (!_sessionFileReadRanges.has(prep.args.path))
                 _sessionFileReadRanges.set(prep.args.path, []);
