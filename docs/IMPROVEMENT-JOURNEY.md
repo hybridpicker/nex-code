@@ -674,6 +674,42 @@ Additional details:
 
 ---
 
+### 2026-04-07
+
+#### `e7f13e2` — Flatrate mode no longer corrupts headless benchmark runs
+
+**Problem:** The external clawbook benchmark (15 Q&A coding tasks, scored by
+claude-sonnet-4-6) produced an average of 5.67/10 despite the model giving
+technically correct answers. Almost every task was penalised for "irrelevant
+agentic tool-call output" — Glob, List, Write operations that had nothing to do
+with the question, plus content described as "completely unrelated task (fixing
+a request handler crash)" bleeding into multiple responses.
+
+Root cause: when `OLLAMA_API_KEY` is set, flatrate mode auto-activates.
+Inside `runHeadlessTask`, flatrate called `setMaxIterations(100)` **after**
+`--max-turns 8` had already been parsed and applied — silently replacing 8
+turns with 100. With 100 turns and verify-on, the model kept running long after
+answering correctly, began exploring the empty temp directory, and accumulated
+irrelevant context that ended up in the response text.
+
+**Fixes:**
+
+1. **`bin/nex-code.js`** — `runHeadlessTask` now skips flatrate's
+   `setMaxIterations(100)` when `--max-turns` was explicitly passed on the
+   command line. Explicit flag always wins.
+
+2. **`cli/commands/index.js`** — Interactive REPL no longer auto-resumes the
+   `_autosave` session when `autoConfirm` is active (yolo / auto mode).
+   Previously, `confirm("Previous session found. Resume?")` returned `true`
+   automatically in yolo mode, loading a stale session without any user
+   acknowledgement.
+
+3. **clawbook `run-benchmark.sh`** — Added `NEX_NO_FLATRATE=1` to the
+   `nex-code` invocation so flatrate never activates for benchmark tasks
+   regardless of which env vars are present in the cron environment.
+
+---
+
 #### `830f8c1` — Three pipeline robustness fixes
 
 1. **Tool-arg JSON repair (`wire-protocols.js`)** — `repairToolArgs()` normalises tool call arguments that devstral/qwen3 emit as a JSON string or with trailing commas.
