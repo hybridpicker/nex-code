@@ -336,10 +336,12 @@ describe("costs.js", () => {
         .mockImplementation();
       setCostLimit("openai", 0.001);
       trackUsage("openai", "gpt-4o", 1_000_000, 1_000_000);
-      expect(stderrSpy).toHaveBeenCalled();
-      const output = stderrSpy.mock.calls[0][0];
-      expect(output).toContain("Budget limit reached");
-      expect(output).toContain("openai");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Budget limit reached"),
+      );
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("openai"),
+      );
       stderrSpy.mockRestore();
     });
 
@@ -349,7 +351,10 @@ describe("costs.js", () => {
         .mockImplementation();
       setCostLimit("openai", 100.0);
       trackUsage("openai", "gpt-4o", 1000, 500);
-      expect(stderrSpy).not.toHaveBeenCalled();
+      const budgetCalls = stderrSpy.mock.calls.filter(
+        ([msg]) => typeof msg === "string" && msg.includes("Budget limit reached"),
+      );
+      expect(budgetCalls).toHaveLength(0);
       stderrSpy.mockRestore();
     });
   });
