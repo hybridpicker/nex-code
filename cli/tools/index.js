@@ -616,7 +616,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "grep",
       description:
-        "Search file CONTENTS with regex — use this when you need to find text inside files. Example: grep(pattern='callStream') finds files containing the text 'callStream'. Do NOT use glob for this — glob finds files by NAME pattern, grep searches file CONTENTS. Use output_mode='files_with_matches' for just file paths, output_mode='content' (default) for matching lines. Use include to filter by file type (e.g. '*.js'). Supports context lines, offset pagination, and multiline patterns.",
+        "Search file CONTENTS with regex — use this when you need to find text inside files. Example: grep(pattern='callStream') finds files containing the text 'callStream'. Do NOT use glob for this — glob finds files by NAME pattern, grep searches file CONTENTS. Use output_mode='files_with_matches' for just file paths, output_mode='content' (default) for matching lines. Optionally use include to filter by file type (e.g. '*.js') but OMIT it when first searching — code may live in .html, .vue, .py or other unexpected file types. Supports context lines, offset pagination, and multiline patterns.",
       parameters: {
         type: "object",
         properties: {
@@ -2881,7 +2881,15 @@ async function _executeToolInner(name, args, options = {}) {
       } catch (e) {
         grepProgress.stop();
         if (e.code === 2) {
-          return `ERROR: Invalid regex pattern: ${args.pattern}`;
+          // Exit code 2 = grep error (bad regex, missing dir, permission denied, etc.)
+          const stderr = (e.stderr || e.message || "").toString().trim();
+          if (stderr.includes("No such file or directory")) {
+            return `ERROR: Directory not found: ${searchPath}`;
+          }
+          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated")) {
+            return `ERROR: Invalid regex pattern: ${args.pattern}`;
+          }
+          return `ERROR: grep failed: ${stderr.slice(0, 200) || "exit code 2"}`;
         }
         return "(no matches)" + noMatchHint(args.path);
       }
