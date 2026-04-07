@@ -2928,6 +2928,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const _editedFilesNotReread = new Set(); // files edited but not re-read — block second edit until re-read
   let _readOnlyToolStreak = 0;        // consecutive read-only tool iterations (no file writes)
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
+  let _consecutiveEmptySearches = 0;  // consecutive grep/search/glob calls that returned no results
+  let _bashModifiedFiles = 0;         // successful bash/ssh_exec commands that likely wrote files
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
   // Loop detection: use session-level Maps so counters persist across REPL turns.
@@ -4168,9 +4170,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // When running in auto/headless mode (benchmarks, improvement loop), once
         // the model has edited files and produces a text-only response, the task
         // is done. Skip further verification/polish iterations to save time.
-        if (getAutoConfirm() && !opts.skillLoop && filesModified.size > 0 && hasText && totalSteps >= 2) {
+        // Skip early exit when phase routing is active — let implement→verify handle it.
+        if (getAutoConfirm() && !opts.skillLoop && !_phaseEnabled && (filesModified.size > 0 || _bashModifiedFiles > 0) && hasText && totalSteps >= 2) {
           debugLog(
-            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified, text response received${C.reset}`,
+            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), text response received${C.reset}`,
           );
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
           saveNow(conversationMessages);
@@ -4225,7 +4228,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               iterLimit = getPhaseBudget("implement");
               continue;
             }
-          } else if (_currentPhase === "implement" && filesModified.size > 0) {
+          } else if (_currentPhase === "implement" && (filesModified.size > 0 || _bashModifiedFiles > 0)) {
             const _firstUser = conversationMessages.find((m) => m.role === "user");
             const _origTask = typeof _firstUser?.content === "string"
               ? _firstUser.content : "";
@@ -6145,6 +6148,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
         }
+        // Consecutive empty-search nudge — if all local searches return no results,
+        // the target may be on a remote server; suggest SSH before stagnation kills the run.
+        {
+          const _isSearchTool = ["grep", "search_files", "glob", "glob_files"].includes(prep.fnName);
+          const _isEmpty =
+            _isSearchTool &&
+            isOk &&
+            res &&
+            (res.startsWith("(no matches)") ||
+              res.trim() === "" ||
+              /^No matches found/.test(res.trim()) ||
+              /^\(0 results\)/.test(res.trim()));
+          if (_isEmpty) {
+            _consecutiveEmptySearches++;
+            if (_consecutiveEmptySearches === 3) {
+              debugLog(
+                `${C.yellow}  ⚠ 3 consecutive empty local searches — injecting SSH pivot hint${C.reset}`,
+              );
+              const sshHint = {
+                role: "user",
+                content:
+                  "[SYSTEM NOTE] 3 consecutive local searches returned no results. " +
+                  "The target files may be on a remote server. " +
+                  "If you have an SSH profile configured for this project's server, use ssh_exec to search there (e.g. ssh_exec with grep). " +
+                  "Do not keep searching locally if the code does not exist on this machine.",
+              };
+              conversationMessages.push(sshHint);
+              apiMessages.push(sshHint);
+            }
+          } else if (_isSearchTool && isOk && res && res.trim().length > 0) {
+            _consecutiveEmptySearches = 0; // reset on any non-empty result
+          }
+        }
         // Grep pattern loop detection — repeated identical patterns waste context
         if (isOk && prep.fnName === "grep" && prep.args && prep.args.pattern) {
           const patKey = `${prep.args.pattern}|${prep.args.path || ""}`;
@@ -6331,6 +6367,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           console.log(
             `${C.cyan}  ✓ Health-check stop signal detected — injecting STOP instruction${C.reset}`,
           );
+        }
+        // Bash/ssh_exec file-write detection — track when shell commands modify files
+        // so phase transitions (implement→verify) and early exit work even when the
+        // model uses bash/sed/tee/cp instead of write_file/edit_file.
+        if (
+          isOk &&
+          (prep.fnName === "bash" || prep.fnName === "ssh_exec") &&
+          _cmdStr
+        ) {
+          const _bashWritePattern =
+            /\bsed\s+-[ie]\b|\btee\b|\bcp\b|\bmv\b|\bpatch\b|\bdd\b|>\s*\S|\becho\b.*>|\bcat\b.*>|\bprintf\b.*>|\bpython[23]?\b.*open\b.*['"'w]|\bnpm\b.*run\b|\byarn\b.*run\b/;
+          if (_bashWritePattern.test(_cmdStr)) {
+            _bashModifiedFiles++;
+            debugLog(
+              `${C.dim}  [bash write detected: _bashModifiedFiles=${_bashModifiedFiles}]${C.reset}`,
+            );
+          }
         }
         // Consecutive BLOCKED tool call detection — model ignoring block messages
         const wasBlocked = res.startsWith("BLOCKED:");
@@ -6678,8 +6731,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (_readOnlyToolStreak === 0) _filesModifiedAtStreakStart = filesModified.size;
           _readOnlyToolStreak++;
         }
-        // After 6+ read-only iterations with no new file writes, force exit
-        if (_readOnlyToolStreak >= 6 && totalSteps >= 4 && filesModified.size === _filesModifiedAtStreakStart) {
+        // After 9+ read-only iterations with no new file writes, force exit
+        if (_readOnlyToolStreak >= 9 && totalSteps >= 4 && filesModified.size === _filesModifiedAtStreakStart) {
           debugLog(
             `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
           );
