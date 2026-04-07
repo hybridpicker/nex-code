@@ -370,6 +370,7 @@ async function getRemoteIndex(profile, remoteCwd, { force = false } = {}) {
     return cached.files;
   }
 
+  // Use find with depth limit and common exclusions to keep it fast
   const cmd = `find ${remoteCwd} -maxdepth 6 -type f ` +
     `-not -path '*/node_modules/*' ` +
     `-not -path '*/.git/*' ` +
@@ -384,6 +385,7 @@ async function getRemoteIndex(profile, remoteCwd, { force = false } = {}) {
     return [];
   }
 
+  // Convert to relative paths
   const prefix = remoteCwd.endsWith("/") ? remoteCwd : remoteCwd + "/";
   const files = stdout.split("\n")
     .filter(Boolean)
@@ -432,13 +434,16 @@ async function remoteSmartSearch(profile, remoteCwd, query, { limit = 5, minScor
 async function remoteAutoFixPath(profile, remoteCwd, originalPath) {
   if (!originalPath) return { fixedPath: null, message: "" };
 
+  // Normalize: expand ~, fix double slashes
   let normalized = originalPath.replace(/\/+/g, "/");
   if (normalized.startsWith("~/")) {
+    // Resolve ~ on the remote side
     const { stdout } = await sshExec(profile, "echo $HOME", { timeout: 5000 });
     const home = stdout.trim();
     if (home) normalized = normalized.replace("~/", home + "/");
   }
 
+  // If path is absolute, check directly first
   if (normalized.startsWith("/")) {
     const { exitCode } = await sshExec(profile, `test -f ${JSON.stringify(normalized)}`, { timeout: 5000 });
     if (exitCode === 0) {
@@ -446,6 +451,7 @@ async function remoteAutoFixPath(profile, remoteCwd, originalPath) {
     }
   }
 
+  // Try smart search on remote index
   const results = await remoteSmartSearch(profile, remoteCwd, originalPath, { limit: 5, minScore: 15 });
   if (results.length > 0) {
     const prefix = remoteCwd.endsWith("/") ? remoteCwd : remoteCwd + "/";
