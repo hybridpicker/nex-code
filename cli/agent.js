@@ -2546,6 +2546,32 @@ async function _staleRecoveryPrompt() {
   });
 }
 
+function _extractUrlPaths(text) {
+  const URL_RE = /https?:\/\/[^\s/]+(\/[^\s?#]+)/g;
+  const paths = new Set();
+  let m;
+  while ((m = URL_RE.exec(text)) !== null) {
+    const p = m[1].replace(/\/$/, ''); // strip trailing slash
+    if (p.length > 1) {
+      // Split path segments, filter out short ones
+      const segments = p.split('/').filter(s => s.length > 2);
+      segments.forEach(s => paths.add(s));
+    }
+  }
+  return Array.from(paths);
+}
+
+function _extractTechHints(text) {
+  const hints = [];
+  if (text.includes("@click") || text.includes("x-data") || text.includes("v-if") || text.includes("v-model")) {
+    hints.push("Snippet contains Vue/Alpine.js directives (e.g., @click, v-model). Do not restrict your search to just .js/.ts/.vue files; also search .html and .py (templates) if appropriate.");
+  }
+  if (text.includes("className=") || text.includes("useEffect")) {
+    hints.push("Snippet appears to be React. Look in .jsx, .tsx, .js, .ts files.");
+  }
+  return hints;
+}
+
 // Module-level server hooks — set by processInput in server mode, null in normal CLI mode.
 let _serverHooks = null;
 
@@ -2570,6 +2596,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _resolvedInput = `${_lastCreationSummary}\n\n${userInput}`;
     _lastCreationSummary = null; // consume once
   }
+
+  // Inject heuristic hints for URLs and tech stack to guide the model's search
+  if (typeof _resolvedInput === "string") {
+    const urlPaths = _extractUrlPaths(_resolvedInput);
+    const techHints = _extractTechHints(_resolvedInput);
+    if (urlPaths.length > 0 || techHints.length > 0) {
+      _resolvedInput += "\n\n[System Note for Assistant: To resolve this task faster, consider these hints:\n";
+      if (urlPaths.length > 0) {
+        _resolvedInput += `- The user mentioned URLs containing the paths/folders: ${urlPaths.join(", ")}. Prioritize searching these folder names using glob or grep first.\n`;
+      }
+      if (techHints.length > 0) {
+        techHints.forEach(h => { _resolvedInput += `- ${h}\n`; });
+      }
+      _resolvedInput += "Always prefer parallel search execution if unsure.]";
+    }
+  }
+
   // Inject a soft empathy note when the user appears frustrated so the model
   // acknowledges the difficulty before proceeding with the task.
   if (
