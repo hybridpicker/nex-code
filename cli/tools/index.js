@@ -2353,9 +2353,9 @@ async function _executeToolInner(name, args, options = {}) {
         .join("\n");
 
       const truncationNote = isTruncated
-        ? `\n\n[File truncated: showing lines 1-${FULL_READ_CAP} of ${lineCount} total. Use line_start/line_end to read other sections, e.g. line_start=${FULL_READ_CAP + 1} line_end=${Math.min(FULL_READ_CAP * 2, lineCount)}]`
-        : !isFullRead && lineCount > FULL_READ_CAP
-          ? `\n[Large file (${lineCount} lines total) — use line_start/line_end for other sections]`
+        ? `\n\n[🚨 FILE TRUNCATED: You are only seeing lines 1-${FULL_READ_CAP} of ${lineCount} total lines. The rest of the file is HIDDEN. You MUST use line_start and line_end to read further down (e.g. line_start=${FULL_READ_CAP + 1}), or use grep_search to find specific keywords.]`
+        : !isFullRead && lineCount > end
+          ? `\n\n[🚨 FILE CONTINUES: This is only lines ${start + 1} to ${end} of ${lineCount} total. The rest is HIDDEN. Use line_start=${end + 1} to read the next section, or grep_search for keywords.]`
           : "";
       return `${summary}\n${numberedLines}${truncationNote}`;
     }
