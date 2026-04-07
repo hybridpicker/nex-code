@@ -371,9 +371,9 @@ describe("Content Index", () => {
     });
 
     test("returns correct distance for single edits", () => {
-      expect(pathLevenshtein("cat", "bat")).toBe(1);
-      expect(pathLevenshtein("cat", "cats")).toBe(1);
-      expect(pathLevenshtein("cats", "cat")).toBe(1);
+      expect(pathLevenshtein("cat", "bat")).toBe(1); // substitution
+      expect(pathLevenshtein("cat", "cats")).toBe(1); // insertion
+      expect(pathLevenshtein("cats", "cat")).toBe(1); // deletion
     });
 
     test("returns correct distance for multiple edits", () => {
@@ -392,6 +392,7 @@ describe("Content Index", () => {
     });
 
     test("trailing segment match scores high", () => {
+      // Query "components/Button.tsx" should strongly match "src/components/Button.tsx"
       const score = scorePathMatch("src/components/Button.tsx", "components/Button.tsx");
       expect(score).toBeGreaterThanOrEqual(500);
     });
@@ -402,6 +403,7 @@ describe("Content Index", () => {
     });
 
     test("similar basename scores via Levenshtein", () => {
+      // "Button.tsx" vs "Buttn.tsx" — typo
       const score = scorePathMatch("src/Button.tsx", "src/Buttn.tsx");
       expect(score).toBeGreaterThan(0);
     });
@@ -414,11 +416,13 @@ describe("Content Index", () => {
     test("path segment overlap adds bonus", () => {
       const a = scorePathMatch("src/components/Button.tsx", "src/views/Button.tsx");
       const b = scorePathMatch("lib/widgets/Button.tsx", "src/views/Button.tsx");
+      // "src" overlap should boost score of a
       expect(a).toBeGreaterThan(b);
     });
 
     test("substring containment adds bonus", () => {
       const score = scorePathMatch("src/components/Button.tsx", "Button.tsx");
+      // "Button.tsx" is contained as basename
       expect(score).toBeGreaterThanOrEqual(80);
     });
   });
@@ -439,6 +443,7 @@ describe("Content Index", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-smart-"));
       jest.spyOn(process, "cwd").mockReturnValue(tmpDir);
 
+      // Create test files
       fs.mkdirSync(path.join(tmpDir, "src", "components"), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, "app", "views"), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, "src", "components", "Button.tsx"), "");
@@ -448,14 +453,17 @@ describe("Content Index", () => {
 
       await ie.refreshIndex(tmpDir);
 
+      // Trailing segment match: "components/Button.tsx" → src/components/Button.tsx
       const res1 = ie.smartSearch("components/Button.tsx");
       expect(res1.length).toBeGreaterThan(0);
       expect(res1[0].file).toBe("src/components/Button.tsx");
       expect(res1[0].score).toBeGreaterThanOrEqual(500);
 
+      // Basename match: "Button.tsx" → finds both Buttons
       const res2 = ie.smartSearch("Button.tsx");
       expect(res2.length).toBe(2);
 
+      // Wrong parent: "views/Button.tsx" → app/views/Button.tsx
       const res3 = ie.smartSearch("views/Button.tsx");
       expect(res3.length).toBeGreaterThan(0);
       expect(res3[0].file).toBe("app/views/Button.tsx");
@@ -477,6 +485,7 @@ describe("Content Index", () => {
       fs.writeFileSync(path.join(tmpDir, "readme.md"), "");
       await ie.refreshIndex(tmpDir);
 
+      // Completely unrelated search should return nothing with high minScore
       const results = ie.smartSearch("xyzzy_nonexistent.java", { minScore: 100 });
       expect(results).toEqual([]);
 
