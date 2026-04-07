@@ -795,9 +795,9 @@ const PARALLEL_SAFE = new Set([
 // or require strict ordering. ALL other tools run in parallel when the
 // LLM returns them in the same response (parallel_tool_calls convention).
 const SEQUENTIAL_ONLY = new Set(["spawn_agents"]);
-const MAX_RATE_LIMIT_RETRIES = 5;
-const MAX_NETWORK_RETRIES = 3;
-const MAX_STALE_RETRIES = 2;
+const MAX_RATE_LIMIT_RETRIES = 10;
+const MAX_NETWORK_RETRIES = 10;
+const MAX_STALE_RETRIES = 5;
 // Stale thresholds: resolved per-session from model profile (ENV overrides via getModelProfile)
 let STALE_WARN_MS = 60000;
 let STALE_ABORT_MS = 120000;
@@ -1363,6 +1363,7 @@ function _setLoopCount(map, key, count) {
 const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
+const _sessionGrepFoundFiles = new Set(); // files that appeared in grep results (not just searched)
 const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
 const _sessionGlobCoreTerms = new Map(); // coreToken → Set<pattern> — detect varied patterns targeting the same term
 const _sessionFileReadCounts = new Map();
@@ -1460,15 +1461,16 @@ function _drainMidRunBuffer() {
 
 /**
  * Extract structured TODO items from the plan text by matching file paths
- * that were actually read during the plan phase. Returns an array of
- * {file, action, done} objects for the implement phase to work through.
+ * that were read OR found via grep during the plan phase. Returns an array
+ * of {file, action, done} objects for the implement phase to work through.
  */
 function _extractPlanTodos(planText, filesReadMap) {
   const todos = [];
-  const knownFiles = [...filesReadMap.keys()];
-  if (!knownFiles.length || !planText) return todos;
+  // Combine files from read_file and grep results
+  const knownFiles = new Set([...filesReadMap.keys(), ..._sessionGrepFoundFiles]);
+  if (!knownFiles.size || !planText) return todos;
 
-  // For each file that was read in plan phase, check if the plan mentions it
+  // For each file that was read or found via grep, check if the plan mentions it
   for (const filePath of knownFiles) {
     const basename = filePath.split("/").pop();
     if (!basename) continue;
@@ -2166,6 +2168,7 @@ function _resetSessionTracking() {
   _sessionBashCmdCounts.clear();
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
+  _sessionGrepFoundFiles.clear();
   _sessionGlobSearchCounts.clear();
   _sessionGlobCoreTerms.clear();
   _sessionFileReadCounts.clear();
@@ -2896,13 +2899,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const GLOB_CORE_WARN = 3 * _sk;
   const GLOB_CORE_BLOCK = 4 * _sk;
   const fileReadCounts = _sessionFileReadCounts;
-  const LOOP_WARN_READS = (_phaseEnabled ? 3 : 2) * _sk;
-  const LOOP_ABORT_READS = (_phaseEnabled ? 5 : 3) * _sk;
-  const TARGETED_READ_HARD_CAP = (_phaseEnabled ? 6 : 4) * _sk;
+  const LOOP_WARN_READS = (_phaseEnabled ? 6 : 4) * _sk;
+  const LOOP_ABORT_READS = (_phaseEnabled ? 10 : 8) * _sk;
+  const TARGETED_READ_HARD_CAP = (_phaseEnabled ? 12 : 10) * _sk;
   const NARROW_READ_PASS_THROUGH = 25;
   let consecutiveErrors = 0;
-  const LOOP_WARN_ERRORS = 6 * _sk;
-  const LOOP_ABORT_ERRORS = 10 * _sk;
+  const LOOP_WARN_ERRORS = 10 * _sk;
+  const LOOP_ABORT_ERRORS = 15 * _sk;
   let consecutiveBlocks = 0;
   const LOOP_ABORT_BLOCKS = 5 * _sk;
   let truncatedSwarmCount = 0;
@@ -4141,9 +4144,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (_currentPhase === "plan") {
             // If the plan found nothing actionable, exit gracefully instead of
             // blindly entering implement phase where the model will just loop.
+            // But don't exit if grep found files — the model discovered targets
+            // even if the assistant text says "not found" about something else.
             const _notFoundSignals = /\b(no match|not found|couldn'?t find|does not exist|no results|nothing found|no files|keine|nicht gefunden)\b/i;
             const _hasNoTodos = _extractPlanTodos(_assistantText, _sessionFileReadCounts).length === 0;
-            if (getAutoConfirm() && _hasNoTodos && _notFoundSignals.test(_assistantText)) {
+            const _grepFoundTargets = _sessionGrepFoundFiles.size > 0;
+            if (getAutoConfirm() && _hasNoTodos && !_grepFoundTargets && _notFoundSignals.test(_assistantText)) {
               debugLog(
                 `${C.yellow}  ⚠ Plan phase: nothing actionable found — exiting gracefully${C.reset}`,
               );
@@ -4185,13 +4191,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
             const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
 
-            if (_hasFailed && _verifyLoopBack < 1) {
+            if (_hasFailed && _verifyLoopBack < 3) {
               _verifyLoopBack++;
               const loopMsg = {
                 role: "user",
                 content:
                   `[PHASE: RE-IMPLEMENTATION] Verification found issues:\n${_assistantText.slice(0, 400)}\n\n` +
-                  `Fix the identified issues. This is the final attempt.`,
+                  `Fix the identified issues. This is attempt ${_verifyLoopBack}/3.`,
               };
               _currentPhase = "implement";
               _phaseModelOverride = getModelForPhase("implement", _detectedCategoryId);
@@ -5712,24 +5718,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // to 6 (instead of 12) to prevent broad re-investigation.
           const _phaseAwareCap =
             _phaseEnabled && _currentPhase === "implement"
-              ? Math.min(INVESTIGATION_CAP, 6)
+              ? Math.min(INVESTIGATION_CAP, 10)
               : INVESTIGATION_CAP;
           const _effectiveCap = _rootCauseDetected
-            ? 3
+            ? 8
             : _isCreationTask
-              ? (_editsMadeThisSession > 0 ? 2 : 4)
+              ? (_editsMadeThisSession > 0 ? 6 : 10)
               : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : _phaseAwareCap);
           // After the cap has already fired, hard-block further reads when:
           // 1. Root cause detected — one nudge is not enough when the issue is already pinpointed
           // 2. Creation task with edits already made — agent should be building, not reading
-          // 3. Grace period exhausted (3 reads after cap) — prevents infinite investigation spirals
+          // 3. Grace period exhausted (6 reads after cap) — prevents infinite investigation spirals
           //    where the model ignores the soft cap warning and reads until context/timeout
-          const INVESTIGATION_GRACE = 3; // reads allowed after cap fires before hard-block
+          const INVESTIGATION_GRACE = 6; // reads allowed after cap fires before hard-block
           const _hardBlockActive =
             !_phaseEnabled &&
             _investigationCapFired &&
-            (_rootCauseDetected ||
-              (_isCreationTask && _editsMadeThisSession >= 1) ||
+            ((_rootCauseDetected && _readsSinceCapFired >= INVESTIGATION_GRACE) ||
+              (_isCreationTask && _editsMadeThisSession >= 3 && _readsSinceCapFired >= INVESTIGATION_GRACE) ||
               _readsSinceCapFired >= INVESTIGATION_GRACE);
           // Two-stage time-based nudge: soft at 40%, hard at 65% of task timeout
           if (
@@ -6065,6 +6071,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               };
               conversationMessages.push(gitBlockMsg);
               apiMessages.push(gitBlockMsg);
+            }
+          }
+        }
+        // Track files found in grep results for cross-project awareness.
+        // When grep finds matches, extract file paths so _extractPlanTodos and
+        // the graceful-exit check know that actionable targets were discovered.
+        if (isOk && prep.fnName === "grep" && res && !res.startsWith("(no matches)")) {
+          const lines = res.split("\n");
+          for (const line of lines) {
+            // Grep output format: "filepath:linenum:content" or just "filepath"
+            const colonIdx = line.indexOf(":");
+            if (colonIdx > 0) {
+              const fp = line.substring(0, colonIdx);
+              if (fp.startsWith("/") && !fp.includes(" ")) _sessionGrepFoundFiles.add(fp);
+            } else if (line.startsWith("/") && !line.includes(" ")) {
+              _sessionGrepFoundFiles.add(line.trim());
             }
           }
         }
