@@ -155,7 +155,7 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
     const a = t.args || {};
     const label = TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, " ");
     let arg = "";
-    if (a.path) arg = a.path;
+    if (a.path) arg = a._originalPath || a.path;
     else if (a.command) arg = String(a.command).substring(0, 80);
     else if (a.query) arg = String(a.query).substring(0, 60);
     else if (a.pattern) arg = String(a.pattern).substring(0, 60);

@@ -866,11 +866,13 @@ async function prepareToolCall(tc) {
     };
   }
 
-  // Normalize path if present so that duplicate detection works accurately
+  // Normalize path if present so that duplicate detection works accurately.
+  // Keep the original for display (_originalPath) so section headers remain readable.
   if (args && typeof args.path === "string") {
     try {
       const os = require("os");
       const resolved = path.resolve(process.cwd(), args.path.replace(/^~/, os.homedir()));
+      args._originalPath = args.path;
       args.path = path.relative(process.cwd(), resolved) || ".";
     } catch {}
   }
@@ -1043,7 +1045,7 @@ function _argPreview(name, args) {
     case "edit_file":
     case "patch_file":
     case "list_directory":
-      return args.path || "";
+      return (args._originalPath || args.path) || "";
     case "bash":
       return (args.command || "").substring(0, 60);
     case "grep":
