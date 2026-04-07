@@ -52,6 +52,42 @@ async function fileExists(fp) {
     .catch(() => false);
 }
 
+// ─── Sibling Project Discovery ───────────────────────────────
+// When grep/glob find nothing in the current directory, hint the model
+// about sibling project directories so it can broaden its search.
+
+let _siblingCache = null;
+let _siblingCacheTime = 0;
+const SIBLING_TTL = 120_000; // 2 minutes
+
+function getSiblingProjects() {
+  const now = Date.now();
+  if (_siblingCache && now - _siblingCacheTime < SIBLING_TTL) return _siblingCache;
+  const parent = path.dirname(process.cwd());
+  try {
+    const entries = fsSync.readdirSync(parent, { withFileTypes: true });
+    const cwd = path.basename(process.cwd());
+    const siblings = entries
+      .filter((e) => e.isDirectory() && e.name !== cwd && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort();
+    _siblingCache = siblings.length > 0 ? siblings : null;
+    _siblingCacheTime = now;
+    return _siblingCache;
+  } catch {
+    return null;
+  }
+}
+
+function noMatchHint(searchPath) {
+  // Only hint when searching in the current project (not an explicit external path)
+  if (searchPath && path.resolve(searchPath) !== process.cwd()) return "";
+  const siblings = getSiblingProjects();
+  if (!siblings) return "";
+  const parent = path.dirname(process.cwd());
+  return `\nHint: no matches in current project. Sibling directories in ${parent}/:\n  ${siblings.join(", ")}\nYou can search there with: grep pattern --path ${parent}/<dir>`;
+}
+
 // ─── Auto-Fix Helpers ─────────────────────────────────────────
 
 /**
@@ -2626,7 +2662,7 @@ async function _executeToolInner(name, args, options = {}) {
 
       if (matches.length === 0) {
         gProgress.stop();
-        return "(no matches)";
+        return "(no matches)" + noMatchHint(args.path);
       }
 
       // Sort by modification time (most recent first)
@@ -2840,13 +2876,14 @@ async function _executeToolInner(name, args, options = {}) {
           detail: `in ${searchPath}`,
         });
         grepProgress.stop();
-        return results.join("\n").trim() || "(no matches)";
+        const joined = results.join("\n").trim();
+        return joined || ("(no matches)" + noMatchHint(args.path));
       } catch (e) {
         grepProgress.stop();
         if (e.code === 2) {
           return `ERROR: Invalid regex pattern: ${args.pattern}`;
         }
-        return "(no matches)";
+        return "(no matches)" + noMatchHint(args.path);
       }
     }
 
