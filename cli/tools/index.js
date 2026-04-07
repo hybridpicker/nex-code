@@ -158,6 +158,26 @@ async function autoFixPath(originalPath) {
           message: `File not found. Did you mean one of:\n${relative.map((r) => `  - ${r}`).join("\n")}`,
         };
       }
+      
+      // Strategy 4: Fuzzy search the entire path in the index
+      if (found.length === 0) {
+          const { searchIndex } = require("../index-engine");
+          // Search for the full original path as a query
+          const fuzzyMatches = searchIndex(originalPath).map((f) => resolvePath(f));
+          if (fuzzyMatches.length === 1) {
+             return {
+               fixedPath: fuzzyMatches[0],
+               message: `(auto-fixed: fuzzy matched ${originalPath} to ${path.relative(process.cwd(), fuzzyMatches[0])})`,
+             };
+          } else if (fuzzyMatches.length > 1 && fuzzyMatches.length <= 5) {
+             const relative = fuzzyMatches.map((f) => path.relative(process.cwd(), f));
+             return {
+               fixedPath: null,
+               message: `File not found. Did you mean one of:\n${relative.map((r) => `  - ${r}`).join("\n")}`,
+             };
+          }
+      }
+      
     } catch {
       /* index search failed, skip */
     }
