@@ -3838,7 +3838,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               startTime,
             );
             saveNow(conversationMessages);
-            break;
+            break outer;
           }
           const delay = Math.min(
             10000 * Math.pow(2, rateLimitRetries - 1),
@@ -3894,7 +3894,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               startTime,
             );
             saveNow(conversationMessages);
-            break;
+            break outer;
           }
           const delay = Math.min(2000 * Math.pow(2, networkRetries - 1), 30000);
           const waitSpinner = new Spinner(
