@@ -129,12 +129,21 @@ function pathLevenshtein(a, b) {
  *
  * Scoring dimensions:
  * 1. Exact full-path match → 1000
+<<<<<<< Updated upstream
  * 2. Trailing segment match (last N path segments identical) → 500 + 100*N
  * 3. Basename exact match (case-insensitive) → 80
  * 4. Basename Levenshtein similarity (≥60%) → 0-50
  * 5. Substring containment bonus → 20
  * 6. Path segment overlap bonus → 10 * overlapping segments
  * 7. Trailing segment partial bonus → 30 * N
+=======
+ * 2. Trailing segment match (last N path segments identical) → 100 * N
+ * 3. Basename exact match → 80
+ * 4. Basename case-insensitive match → 60
+ * 5. Basename Levenshtein similarity → 0-50 (proportional)
+ * 6. Substring containment bonus → 20
+ * 7. Path segment overlap bonus → 10 * overlapping segments
+>>>>>>> Stashed changes
  *
  * @param {string} candidate - File path from index (relative)
  * @param {string} query - User-provided path
