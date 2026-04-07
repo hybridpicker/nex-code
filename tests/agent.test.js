@@ -881,7 +881,7 @@ describe("agent.js", () => {
     });
 
     it("429 exhausts MAX_RATE_LIMIT_RETRIES", async () => {
-      for (let i = 0; i < 6; i++)
+      for (let i = 0; i < 11; i++)
         callStream.mockRejectedValueOnce(new Error("429"));
       await processInput("test");
       expect(logOutput()).toContain("max retries");
@@ -937,7 +937,7 @@ describe("agent.js", () => {
     });
 
     it("network retries exhaust MAX_NETWORK_RETRIES", async () => {
-      for (let i = 0; i < 4; i++)
+      for (let i = 0; i < 11; i++)
         callStream.mockRejectedValueOnce(new Error("socket disconnected"));
       await processInput("test");
       expect(logOutput()).toContain("Network error: max retries");
@@ -1906,11 +1906,14 @@ describe("agent.js", () => {
 
     it("warns after consecutive tool errors", async () => {
       process.env.NEX_DEBUG = "true";
-      // 6 consecutive errors to trigger warning
-      for (let i = 0; i < 6; i++) {
+      // 10 consecutive errors to trigger warning (LOOP_WARN_ERRORS = 10)
+      // Alternate tool names to avoid same-command loop detection
+      const tools = ["grep", "read_file", "glob", "search_files", "list_directory",
+                     "find_files", "grep", "read_file", "glob", "search_files"];
+      for (let i = 0; i < 10; i++) {
         mockStream("", [
           {
-            function: { name: "bash", arguments: { command: "fail" } },
+            function: { name: tools[i], arguments: { path: `/tmp/t${i}` } },
             id: `c${i}`,
           },
         ]);
@@ -1924,11 +1927,15 @@ describe("agent.js", () => {
 
     it("aborts after many consecutive tool errors", async () => {
       process.env.NEX_DEBUG = "true";
-      // 10 consecutive errors to trigger abort
-      for (let i = 0; i < 10; i++) {
+      // 15 consecutive errors to trigger abort (LOOP_ABORT_ERRORS = 15)
+      // Alternate tool names to avoid same-command loop detection
+      const tools = ["grep", "read_file", "glob", "search_files", "list_directory",
+                     "find_files", "grep", "read_file", "glob", "search_files",
+                     "list_directory", "find_files", "grep", "read_file", "glob"];
+      for (let i = 0; i < 15; i++) {
         mockStream("", [
           {
-            function: { name: "bash", arguments: { command: "fail" } },
+            function: { name: tools[i], arguments: { path: `/tmp/t${i}` } },
             id: `c${i}`,
           },
         ]);
@@ -2436,14 +2443,11 @@ describe("agent.js", () => {
       };
     }
 
-    it("fires investigation-cap message after 4 reads for a creation prompt", async () => {
-      // 4 reads in one batch hits the creation pre-edit cap (4)
-      mockStream("checking structure", [
-        readCall(1),
-        readCall(2),
-        readCall(3),
-        readCall(4),
-      ]);
+    it("fires investigation-cap message after 10 reads for a creation prompt", async () => {
+      // 10 reads hits the creation pre-edit cap (10)
+      const reads = [];
+      for (let i = 1; i <= 10; i++) reads.push(readCall(i));
+      mockStream("checking structure", reads);
       executeTool.mockResolvedValue("file content");
       // After cap fires, model receives injected message + results → responds
       mockStream("I will implement now");
@@ -2485,17 +2489,20 @@ describe("agent.js", () => {
     });
 
     it("hard-blocks reads after cap fires and a file has been written", async () => {
-      // Turn 1: 2 reads (under pre-edit cap of 4 — no message yet)
+      // Turn 1: 2 reads (under pre-edit cap of 10 — no message yet)
       mockStream("reading", [readCall(1), readCall(2)]);
       executeTool.mockResolvedValue("content");
-      // Turn 2: 1 write → resets counter + _investigationCapFired
+      // Turn 2: 1 write → resets counter + _investigationCapFired, _editsMadeThisSession=1
       mockStream("writing", [writeCall(1)]);
       executeTool.mockResolvedValueOnce("written: /src/out1.js");
-      // Turn 3: 2 reads → post-edit cap = 2, fires cap message on 2nd read
-      mockStream("checking again", [readCall(3), readCall(4)]);
+      // Turn 3: 6 reads → post-edit cap = 6, fires cap message on 6th read
+      mockStream("checking again", [
+        readCall(3), readCall(4), readCall(5),
+        readCall(6), readCall(7), readCall(8),
+      ]);
       executeTool.mockResolvedValue("content");
       // Turn 4: 1 more read → hard-blocked (cap fired + creation + edits >= 1)
-      mockStream("reading more", [readCall(5)]);
+      mockStream("reading more", [readCall(9)]);
       // Model receives BLOCKED result and wraps up
       mockStream("ok done");
 
@@ -2509,11 +2516,11 @@ describe("agent.js", () => {
           typeof m.content === "string" && m.content.startsWith("BLOCKED:"),
       );
       expect(blocked).toBe(true);
-      // executeTool should NOT have been called for the blocked read (r5)
+      // executeTool should NOT have been called for the blocked read (r9)
       const readCalls = executeTool.mock.calls.filter(
         (c) => c[0] === "read_file",
       );
-      expect(readCalls.length).toBe(4); // r1, r2, r3, r4 — r5 blocked
+      expect(readCalls.length).toBe(8); // r1-r8 executed, r9 blocked
     });
 
     it("task registry populates from create_task result and matches write_file", async () => {
