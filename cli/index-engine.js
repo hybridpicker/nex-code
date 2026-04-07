@@ -95,6 +95,129 @@ function searchIndex(query) {
   return _fileIndex.filter((f) => f.toLowerCase().includes(q)).slice(0, 20);
 }
 
+// ─── Smart Fuzzy Search ──────────────────────────────────────
+
+/**
+ * Lightweight Levenshtein distance for short strings (file/path segments).
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function pathLevenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let corner = i - 1;
+    prev[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cur = a[i - 1] === b[j - 1]
+        ? corner
+        : 1 + Math.min(prev[j], prev[j - 1], corner);
+      corner = prev[j];
+      prev[j] = cur;
+    }
+  }
+  return prev[n];
+}
+
+/**
+ * Score how well a candidate file path matches a query path.
+ * Higher = better match. Returns 0 for no meaningful match.
+ *
+ * Scoring dimensions:
+ * 1. Exact full-path match → 1000
+ * 2. Trailing segment match (last N path segments identical) → 500 + 100*N
+ * 3. Basename exact match (case-insensitive) → 80
+ * 4. Basename Levenshtein similarity (≥60%) → 0-50
+ * 5. Substring containment bonus → 20
+ * 6. Path segment overlap bonus → 10 * overlapping segments
+ * 7. Trailing segment partial bonus → 30 * N
+ *
+ * @param {string} candidate - File path from index (relative)
+ * @param {string} query - User-provided path
+ * @returns {number} Score (0 = no match)
+ */
+function scorePathMatch(candidate, query) {
+  const cLower = candidate.toLowerCase();
+  const qLower = query.toLowerCase();
+
+  if (cLower === qLower) return 1000;
+
+  const cSegs = cLower.split("/").filter(Boolean);
+  const qSegs = qLower.split("/").filter(Boolean);
+  let trailingMatch = 0;
+  for (let i = 1; i <= Math.min(cSegs.length, qSegs.length); i++) {
+    if (cSegs[cSegs.length - i] === qSegs[qSegs.length - i]) {
+      trailingMatch = i;
+    } else break;
+  }
+  if (trailingMatch > 0 && trailingMatch === qSegs.length) {
+    return 500 + trailingMatch * 100;
+  }
+
+  const cBase = path.basename(candidate).toLowerCase();
+  const qBase = path.basename(query).toLowerCase();
+
+  let score = 0;
+
+  if (cBase === qBase) {
+    score += 80;
+  } else {
+    const maxLen = Math.max(cBase.length, qBase.length);
+    if (maxLen > 0 && maxLen < 100) {
+      const dist = pathLevenshtein(cBase, qBase);
+      const similarity = 1 - dist / maxLen;
+      if (similarity >= 0.6) {
+        score += Math.round(similarity * 50);
+      }
+    }
+  }
+
+  if (cLower.includes(qLower) || qLower.includes(cLower)) {
+    score += 20;
+  }
+
+  if (qSegs.length > 1) {
+    const cSegSet = new Set(cSegs);
+    let overlap = 0;
+    for (const seg of qSegs) {
+      if (cSegSet.has(seg)) overlap++;
+    }
+    score += overlap * 10;
+  }
+
+  if (trailingMatch > 0) {
+    score += trailingMatch * 30;
+  }
+
+  return score;
+}
+
+/**
+ * Smart search: find files matching a query path with fuzzy scoring.
+ * Handles typos, wrong parent directories, missing extensions, case mismatches.
+ *
+ * @param {string} query - Path or filename to search for
+ * @param {Object} [opts]
+ * @param {number} [opts.limit=10] - Max results
+ * @param {number} [opts.minScore=15] - Minimum score threshold
+ * @returns {Array<{ file: string, score: number }>} Sorted by score descending
+ */
+function smartSearch(query, { limit = 10, minScore = 15 } = {}) {
+  if (!query || _fileIndex.length === 0) return [];
+
+  const scored = [];
+  for (const f of _fileIndex) {
+    const s = scorePathMatch(f, query);
+    if (s >= minScore) scored.push({ file: f, score: s });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
 // ─── Content Index ─────────────────────────────────────────────
 // Extracts function/class/import definitions from source files
 
@@ -323,4 +446,7 @@ module.exports = {
   buildContentIndex,
   searchContentIndex,
   extractDefinitions,
+  smartSearch,
+  scorePathMatch,
+  pathLevenshtein,
 };

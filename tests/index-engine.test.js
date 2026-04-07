@@ -4,6 +4,9 @@ const {
   searchIndex,
   getFileIndex,
   findFileInIndex,
+  smartSearch,
+  scorePathMatch,
+  pathLevenshtein,
 } = require("../cli/index-engine");
 
 describe("Content Index", () => {
@@ -353,6 +356,137 @@ describe("Content Index", () => {
       if (fooIdx >= 0 && fooBarIdx >= 0) {
         expect(fooIdx).toBeLessThan(fooBarIdx);
       }
+    });
+  });
+
+  // ─── pathLevenshtein ──────────────────────────────────────────
+  describe("pathLevenshtein", () => {
+    test("returns 0 for identical strings", () => {
+      expect(pathLevenshtein("hello", "hello")).toBe(0);
+    });
+
+    test("returns length of other string when one is empty", () => {
+      expect(pathLevenshtein("", "abc")).toBe(3);
+      expect(pathLevenshtein("abc", "")).toBe(3);
+    });
+
+    test("returns correct distance for single edits", () => {
+      expect(pathLevenshtein("cat", "bat")).toBe(1);
+      expect(pathLevenshtein("cat", "cats")).toBe(1);
+      expect(pathLevenshtein("cats", "cat")).toBe(1);
+    });
+
+    test("returns correct distance for multiple edits", () => {
+      expect(pathLevenshtein("kitten", "sitting")).toBe(3);
+    });
+  });
+
+  // ─── scorePathMatch ─────────────────────────────────────────
+  describe("scorePathMatch", () => {
+    test("exact match returns 1000", () => {
+      expect(scorePathMatch("src/app.js", "src/app.js")).toBe(1000);
+    });
+
+    test("case-insensitive exact match returns 1000", () => {
+      expect(scorePathMatch("src/App.js", "src/app.js")).toBe(1000);
+    });
+
+    test("trailing segment match scores high", () => {
+      const score = scorePathMatch("src/components/Button.tsx", "components/Button.tsx");
+      expect(score).toBeGreaterThanOrEqual(500);
+    });
+
+    test("basename exact match scores well", () => {
+      const score = scorePathMatch("app/views/index.html", "templates/index.html");
+      expect(score).toBeGreaterThanOrEqual(80);
+    });
+
+    test("similar basename scores via Levenshtein", () => {
+      const score = scorePathMatch("src/Button.tsx", "src/Buttn.tsx");
+      expect(score).toBeGreaterThan(0);
+    });
+
+    test("completely different paths return 0", () => {
+      const score = scorePathMatch("src/utils/math.js", "templates/layout.html");
+      expect(score).toBe(0);
+    });
+
+    test("path segment overlap adds bonus", () => {
+      const a = scorePathMatch("src/components/Button.tsx", "src/views/Button.tsx");
+      const b = scorePathMatch("lib/widgets/Button.tsx", "src/views/Button.tsx");
+      expect(a).toBeGreaterThan(b);
+    });
+
+    test("substring containment adds bonus", () => {
+      const score = scorePathMatch("src/components/Button.tsx", "Button.tsx");
+      expect(score).toBeGreaterThanOrEqual(80);
+    });
+  });
+
+  // ─── smartSearch ──────────────────────────────────────────────
+  describe("smartSearch", () => {
+    test("returns empty when index is empty", () => {
+      expect(smartSearch("test")).toEqual([]);
+    });
+
+    test("finds files with populated index", async () => {
+      jest.resetModules();
+      const ie = require("../cli/index-engine");
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-smart-"));
+      jest.spyOn(process, "cwd").mockReturnValue(tmpDir);
+
+      fs.mkdirSync(path.join(tmpDir, "src", "components"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "app", "views"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "src", "components", "Button.tsx"), "");
+      fs.writeFileSync(path.join(tmpDir, "src", "components", "Modal.tsx"), "");
+      fs.writeFileSync(path.join(tmpDir, "app", "views", "index.html"), "");
+      fs.writeFileSync(path.join(tmpDir, "app", "views", "Button.tsx"), "");
+
+      await ie.refreshIndex(tmpDir);
+
+      const res1 = ie.smartSearch("components/Button.tsx");
+      expect(res1.length).toBeGreaterThan(0);
+      expect(res1[0].file).toBe("src/components/Button.tsx");
+      expect(res1[0].score).toBeGreaterThanOrEqual(500);
+
+      const res2 = ie.smartSearch("Button.tsx");
+      expect(res2.length).toBe(2);
+
+      const res3 = ie.smartSearch("views/Button.tsx");
+      expect(res3.length).toBeGreaterThan(0);
+      expect(res3[0].file).toBe("app/views/Button.tsx");
+
+      jest.restoreAllMocks();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test("respects minScore threshold", async () => {
+      jest.resetModules();
+      const ie = require("../cli/index-engine");
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-smart2-"));
+      jest.spyOn(process, "cwd").mockReturnValue(tmpDir);
+
+      fs.writeFileSync(path.join(tmpDir, "readme.md"), "");
+      await ie.refreshIndex(tmpDir);
+
+      const results = ie.smartSearch("xyzzy_nonexistent.java", { minScore: 100 });
+      expect(results).toEqual([]);
+
+      jest.restoreAllMocks();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test("limits results", () => {
+      const results = smartSearch("test", { limit: 3 });
+      expect(results.length).toBeLessThanOrEqual(3);
     });
   });
 });

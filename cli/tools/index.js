@@ -140,7 +140,7 @@ async function autoFixPath(originalPath) {
     }
   }
 
-  // Strategy 3: search for basename in index
+  // Strategy 3: search for basename in index (exact match)
   const basename = path.basename(originalPath);
   if (basename && basename.length > 2) {
     try {
@@ -158,29 +158,68 @@ async function autoFixPath(originalPath) {
           message: `File not found. Did you mean one of:\n${relative.map((r) => `  - ${r}`).join("\n")}`,
         };
       }
-      
-      // Strategy 4: Fuzzy search the entire path in the index
-      if (found.length === 0) {
-          const { searchIndex } = require("../index-engine");
-          // Search for the full original path as a query
-          const fuzzyMatches = searchIndex(originalPath).map((f) => resolvePath(f));
-          if (fuzzyMatches.length === 1) {
-             return {
-               fixedPath: fuzzyMatches[0],
-               message: `(auto-fixed: fuzzy matched ${originalPath} to ${path.relative(process.cwd(), fuzzyMatches[0])})`,
-             };
-          } else if (fuzzyMatches.length > 1 && fuzzyMatches.length <= 5) {
-             const relative = fuzzyMatches.map((f) => path.relative(process.cwd(), f));
-             return {
-               fixedPath: null,
-               message: `File not found. Did you mean one of:\n${relative.map((r) => `  - ${r}`).join("\n")}`,
-             };
-          }
-      }
-      
     } catch {
       /* index search failed, skip */
     }
+  }
+
+  // Strategy 4: case-insensitive basename search
+  if (basename && basename.length > 2) {
+    try {
+      const baseLower = basename.toLowerCase();
+      const { getFileIndex } = require("../index-engine");
+      const caseMatches = getFileIndex()
+        .filter((f) => path.basename(f).toLowerCase() === baseLower)
+        .map((f) => resolvePath(f));
+      if (caseMatches.length === 1) {
+        return {
+          fixedPath: caseMatches[0],
+          message: `(auto-fixed: case-insensitive match → ${path.relative(process.cwd(), caseMatches[0])})`,
+        };
+      }
+      if (caseMatches.length > 1 && caseMatches.length <= 5) {
+        const relative = caseMatches.map((f) => path.relative(process.cwd(), f));
+        return {
+          fixedPath: null,
+          message: `File not found. Did you mean one of:\n${relative.map((r) => `  - ${r}`).join("\n")}`,
+        };
+      }
+    } catch {
+      /* skip */
+    }
+  }
+
+  // Strategy 5: smart fuzzy search (Levenshtein + segment matching + scoring)
+  try {
+    const { smartSearch } = require("../index-engine");
+    const results = smartSearch(originalPath, { limit: 5, minScore: 15 });
+    if (results.length > 0) {
+      const topResult = resolvePath(results[0].file);
+      // High-confidence auto-fix: single strong result or score >= 200
+      if (results[0].score >= 200 || (results.length === 1 && results[0].score >= 50)) {
+        return {
+          fixedPath: topResult,
+          message: `(auto-fixed: smart matched ${originalPath} → ${path.relative(process.cwd(), topResult)})`,
+        };
+      }
+      // Multiple candidates: if top result is significantly better, auto-fix
+      if (results.length >= 2 && results[0].score >= 80 && results[0].score >= results[1].score * 1.5) {
+        return {
+          fixedPath: topResult,
+          message: `(auto-fixed: best match ${originalPath} → ${path.relative(process.cwd(), topResult)})`,
+        };
+      }
+      // Show suggestions
+      if (results.length <= 5) {
+        const suggestions = results.map((r) => path.relative(process.cwd(), resolvePath(r.file)));
+        return {
+          fixedPath: null,
+          message: `File not found. Did you mean one of:\n${suggestions.map((r) => `  - ${r}`).join("\n")}`,
+        };
+      }
+    }
+  } catch {
+    /* smart search failed, skip */
   }
 
   return { fixedPath: null, message: "" };
@@ -2906,7 +2945,7 @@ async function _executeToolInner(name, args, options = {}) {
           if (stderr.includes("No such file or directory")) {
             return `ERROR: Directory not found: ${searchPath}`;
           }
-          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated")) {
+          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated") || stderr.includes("not balanced")) {
             return `ERROR: Invalid regex pattern: ${args.pattern}`;
           }
           return `ERROR: grep failed: ${stderr.slice(0, 200) || "exit code 2"}`;
@@ -3959,6 +3998,36 @@ async function _executeToolInner(name, args, options = {}) {
 
       const output = [stdout, stderr].filter(Boolean).join("\n").trim();
       if (exitCode !== 0) {
+        // Auto-fix: detect "No such file or directory" and try remote path resolution
+        const noSuchFile = /no such file or directory/i.test(output);
+        if (noSuchFile) {
+          const pathFromError = output.match(/['"]?([/\w._-]+\.\w+)['"]?:\s*No such file/i);
+          const pathFromCmd = cmd.match(/(?:cat|head|tail|less|grep\s+\S+\s+|ls\s+|stat\s+|wc\s+|file\s+)['"]?([/\w._-]+)['"]?/);
+          const failedPath = (pathFromError && pathFromError[1]) || (pathFromCmd && pathFromCmd[1]);
+
+          if (failedPath) {
+            try {
+              const { remoteAutoFixPath } = require("../ssh");
+              const remoteCwd = failedPath.startsWith("/")
+                ? failedPath.split("/").slice(0, -1).join("/").replace(/\/[^/]+$/, "") || "/"
+                : "/home/" + (profile.user || "root");
+              const fix = await remoteAutoFixPath(profile, remoteCwd, failedPath);
+              if (fix.fixedPath) {
+                const fixedCmd = cmd.replace(failedPath, fix.fixedPath);
+                console.log(`${C.dim}  ✓ remote auto-fix: ${failedPath} → ${fix.fixedPath}${C.reset}`);
+                const retry = await sshExec(profile, fixedCmd, { timeout: timeoutMs, sudo: useSudo });
+                const retryOutput = [retry.stdout, retry.stderr].filter(Boolean).join("\n").trim();
+                if (retry.exitCode === 0) {
+                  return `${fix.message}\n${retryOutput}` || "(command completed, no output)";
+                }
+              } else if (fix.message) {
+                return `EXIT ${exitCode}\n${error || output}\n\n${fix.message}`;
+              }
+            } catch {
+              /* remote auto-fix failed, fall through */
+            }
+          }
+        }
         return `EXIT ${exitCode}\n${error || output || "(no output)"}`;
       }
       // For grep commands with large -B or -A context: remove '--' separator lines (they
@@ -4034,6 +4103,8 @@ async function _executeToolInner(name, args, options = {}) {
           args.local_path,
           args.remote_path,
         );
+        // Invalidate remote index — filesystem changed
+        try { require("../ssh").clearRemoteIndex(); } catch { /* ok */ }
         return result;
       } catch (e) {
         return `ERROR: ${e.message}`;
@@ -4060,6 +4131,20 @@ async function _executeToolInner(name, args, options = {}) {
         );
         return result;
       } catch (e) {
+        // Auto-fix: if download fails with "not found", try remote path resolution
+        if (/no such file|not found/i.test(e.message)) {
+          try {
+            const { remoteAutoFixPath } = require("../ssh");
+            const remoteCwd = args.remote_path.split("/").slice(0, -1).join("/") || "/";
+            const fix = await remoteAutoFixPath(profile, remoteCwd, args.remote_path);
+            if (fix.fixedPath) {
+              console.log(`${C.dim}  ✓ remote auto-fix: ${args.remote_path} → ${fix.fixedPath}${C.reset}`);
+              const retryResult = await scpDownload(profile, fix.fixedPath, args.local_path);
+              return `${fix.message}\n${retryResult}`;
+            }
+            if (fix.message) return `ERROR: ${e.message}\n\n${fix.message}`;
+          } catch { /* fall through */ }
+        }
         return `ERROR: ${e.message}`;
       }
     }

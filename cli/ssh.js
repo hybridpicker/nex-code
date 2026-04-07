@@ -345,6 +345,147 @@ function formatProfile(name, profile) {
   return `${name}: ${target}${portStr}${osStr}${keyStr}${sudoStr}`;
 }
 
+// ─── Remote File Index ───────────────────────────────────────
+// Cached file listings for remote servers, enabling path auto-fix over SSH.
+
+const _remoteIndexes = new Map(); // key: "user@host:path" → { files: string[], time: number }
+const REMOTE_INDEX_TTL_MS = 120000; // 2 minutes
+
+/**
+ * Build or return cached file index for a remote server path.
+ * Uses `find` over SSH with depth limits and common exclusions.
+ *
+ * @param {ServerProfile} profile - Resolved server profile
+ * @param {string} remoteCwd - Remote working directory to index
+ * @param {Object} [opts]
+ * @param {boolean} [opts.force=false] - Force refresh even if cached
+ * @returns {Promise<string[]>} Array of relative file paths
+ */
+async function getRemoteIndex(profile, remoteCwd, { force = false } = {}) {
+  const target = profile.user ? `${profile.user}@${profile.host}` : profile.host;
+  const key = `${target}:${remoteCwd}`;
+
+  const cached = _remoteIndexes.get(key);
+  if (!force && cached && Date.now() - cached.time < REMOTE_INDEX_TTL_MS) {
+    return cached.files;
+  }
+
+  const cmd = `find ${remoteCwd} -maxdepth 6 -type f ` +
+    `-not -path '*/node_modules/*' ` +
+    `-not -path '*/.git/*' ` +
+    `-not -path '*/venv/*' ` +
+    `-not -path '*/__pycache__/*' ` +
+    `-not -path '*/dist/*' ` +
+    `-not -name '*.pyc' ` +
+    `2>/dev/null | head -5000`;
+
+  const { stdout, exitCode } = await sshExec(profile, cmd, { timeout: 15000 });
+  if (exitCode !== 0 || !stdout.trim()) {
+    return [];
+  }
+
+  const prefix = remoteCwd.endsWith("/") ? remoteCwd : remoteCwd + "/";
+  const files = stdout.split("\n")
+    .filter(Boolean)
+    .map((f) => f.startsWith(prefix) ? f.slice(prefix.length) : f);
+
+  _remoteIndexes.set(key, { files, time: Date.now() });
+  return files;
+}
+
+/**
+ * Smart search on a remote server's file index.
+ * Uses the same scoring logic as the local smartSearch but on remote files.
+ *
+ * @param {ServerProfile} profile - Resolved server profile
+ * @param {string} remoteCwd - Remote working directory
+ * @param {string} query - Path to search for
+ * @param {Object} [opts]
+ * @param {number} [opts.limit=5] - Max results
+ * @param {number} [opts.minScore=15] - Minimum score
+ * @returns {Promise<Array<{ file: string, score: number }>>}
+ */
+async function remoteSmartSearch(profile, remoteCwd, query, { limit = 5, minScore = 15 } = {}) {
+  const files = await getRemoteIndex(profile, remoteCwd);
+  if (files.length === 0) return [];
+
+  const { scorePathMatch } = require("./index-engine");
+  const scored = [];
+  for (const f of files) {
+    const s = scorePathMatch(f, query);
+    if (s >= minScore) scored.push({ file: f, score: s });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+/**
+ * Auto-fix a remote path that wasn't found.
+ * Mirrors the local autoFixPath logic but works over SSH.
+ *
+ * @param {ServerProfile} profile - Resolved server profile
+ * @param {string} remoteCwd - Remote working directory
+ * @param {string} originalPath - Path that wasn't found
+ * @returns {Promise<{ fixedPath: string|null, message: string }>}
+ */
+async function remoteAutoFixPath(profile, remoteCwd, originalPath) {
+  if (!originalPath) return { fixedPath: null, message: "" };
+
+  let normalized = originalPath.replace(/\/+/g, "/");
+  if (normalized.startsWith("~/")) {
+    const { stdout } = await sshExec(profile, "echo $HOME", { timeout: 5000 });
+    const home = stdout.trim();
+    if (home) normalized = normalized.replace("~/", home + "/");
+  }
+
+  if (normalized.startsWith("/")) {
+    const { exitCode } = await sshExec(profile, `test -f ${JSON.stringify(normalized)}`, { timeout: 5000 });
+    if (exitCode === 0) {
+      return { fixedPath: normalized, message: `(auto-fixed: normalized path)` };
+    }
+  }
+
+  const results = await remoteSmartSearch(profile, remoteCwd, originalPath, { limit: 5, minScore: 15 });
+  if (results.length > 0) {
+    const prefix = remoteCwd.endsWith("/") ? remoteCwd : remoteCwd + "/";
+    const topPath = prefix + results[0].file;
+
+    if (results[0].score >= 200 || (results.length === 1 && results[0].score >= 50)) {
+      return {
+        fixedPath: topPath,
+        message: `(auto-fixed: remote smart match → ${results[0].file})`,
+      };
+    }
+    if (results.length >= 2 && results[0].score >= 80 && results[0].score >= results[1].score * 1.5) {
+      return {
+        fixedPath: topPath,
+        message: `(auto-fixed: remote best match → ${results[0].file})`,
+      };
+    }
+    if (results.length <= 5) {
+      return {
+        fixedPath: null,
+        message: `File not found on remote. Did you mean:\n${results.map((r) => `  - ${r.file}`).join("\n")}`,
+      };
+    }
+  }
+
+  return { fixedPath: null, message: "" };
+}
+
+/**
+ * Clear the remote index cache (e.g. after file modifications).
+ * @param {string} [key] - Specific cache key to clear, or all if omitted
+ */
+function clearRemoteIndex(key) {
+  if (key) {
+    _remoteIndexes.delete(key);
+  } else {
+    _remoteIndexes.clear();
+  }
+}
+
 module.exports = {
   loadServerProfiles,
   resolveProfile,
@@ -355,4 +496,8 @@ module.exports = {
   enrichSSHError,
   formatProfile,
   SSH_SOCKET_DIR,
+  getRemoteIndex,
+  remoteSmartSearch,
+  remoteAutoFixPath,
+  clearRemoteIndex,
 };
