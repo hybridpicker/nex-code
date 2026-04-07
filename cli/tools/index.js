@@ -2945,7 +2945,7 @@ async function _executeToolInner(name, args, options = {}) {
           if (stderr.includes("No such file or directory")) {
             return `ERROR: Directory not found: ${searchPath}`;
           }
-          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated") || stderr.includes("not balanced")) {
+          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated") || stderr.includes("unclosed") || stderr.includes("parse error") || stderr.includes("brackets") || stderr.includes("not balanced")) {
             return `ERROR: Invalid regex pattern: ${args.pattern}`;
           }
           return `ERROR: grep failed: ${stderr.slice(0, 200) || "exit code 2"}`;
@@ -4001,6 +4001,7 @@ async function _executeToolInner(name, args, options = {}) {
         // Auto-fix: detect "No such file or directory" and try remote path resolution
         const noSuchFile = /no such file or directory/i.test(output);
         if (noSuchFile) {
+          // Extract the failed path from the error or the command
           const pathFromError = output.match(/['"]?([/\w._-]+\.\w+)['"]?:\s*No such file/i);
           const pathFromCmd = cmd.match(/(?:cat|head|tail|less|grep\s+\S+\s+|ls\s+|stat\s+|wc\s+|file\s+)['"]?([/\w._-]+)['"]?/);
           const failedPath = (pathFromError && pathFromError[1]) || (pathFromCmd && pathFromCmd[1]);
@@ -4008,23 +4009,26 @@ async function _executeToolInner(name, args, options = {}) {
           if (failedPath) {
             try {
               const { remoteAutoFixPath } = require("../ssh");
+              // Determine remote cwd from the failed path or use home
               const remoteCwd = failedPath.startsWith("/")
                 ? failedPath.split("/").slice(0, -1).join("/").replace(/\/[^/]+$/, "") || "/"
                 : "/home/" + (profile.user || "root");
               const fix = await remoteAutoFixPath(profile, remoteCwd, failedPath);
               if (fix.fixedPath) {
+                // Re-run the command with the fixed path
                 const fixedCmd = cmd.replace(failedPath, fix.fixedPath);
                 console.log(`${C.dim}  ✓ remote auto-fix: ${failedPath} → ${fix.fixedPath}${C.reset}`);
                 const retry = await sshExec(profile, fixedCmd, { timeout: timeoutMs, sudo: useSudo });
                 const retryOutput = [retry.stdout, retry.stderr].filter(Boolean).join("\n").trim();
                 if (retry.exitCode === 0) {
+                  // Continue to output processing below with the retried output
                   return `${fix.message}\n${retryOutput}` || "(command completed, no output)";
                 }
               } else if (fix.message) {
                 return `EXIT ${exitCode}\n${error || output}\n\n${fix.message}`;
               }
             } catch {
-              /* remote auto-fix failed, fall through */
+              /* remote auto-fix failed, fall through to normal error */
             }
           }
         }

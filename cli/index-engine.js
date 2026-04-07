@@ -107,6 +107,7 @@ function pathLevenshtein(a, b) {
   const m = a.length, n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
+  // Optimisation: single-row DP
   let prev = Array.from({ length: n + 1 }, (_, i) => i);
   for (let i = 1; i <= m; i++) {
     let corner = i - 1;
@@ -143,8 +144,10 @@ function scorePathMatch(candidate, query) {
   const cLower = candidate.toLowerCase();
   const qLower = query.toLowerCase();
 
+  // Exact match
   if (cLower === qLower) return 1000;
 
+  // Trailing segment match: check if last N segments of query match candidate's tail
   const cSegs = cLower.split("/").filter(Boolean);
   const qSegs = qLower.split("/").filter(Boolean);
   let trailingMatch = 0;
@@ -154,6 +157,7 @@ function scorePathMatch(candidate, query) {
     } else break;
   }
   if (trailingMatch > 0 && trailingMatch === qSegs.length) {
+    // Full query is a trailing portion of candidate — strong match
     return 500 + trailingMatch * 100;
   }
 
@@ -162,9 +166,11 @@ function scorePathMatch(candidate, query) {
 
   let score = 0;
 
+  // Basename exact match (case-insensitive)
   if (cBase === qBase) {
     score += 80;
   } else {
+    // Basename Levenshtein (only for reasonably similar names)
     const maxLen = Math.max(cBase.length, qBase.length);
     if (maxLen > 0 && maxLen < 100) {
       const dist = pathLevenshtein(cBase, qBase);
@@ -175,10 +181,12 @@ function scorePathMatch(candidate, query) {
     }
   }
 
+  // Substring containment
   if (cLower.includes(qLower) || qLower.includes(cLower)) {
     score += 20;
   }
 
+  // Path segment overlap (how many directory segments match)
   if (qSegs.length > 1) {
     const cSegSet = new Set(cSegs);
     let overlap = 0;
@@ -188,6 +196,7 @@ function scorePathMatch(candidate, query) {
     score += overlap * 10;
   }
 
+  // Trailing segment partial bonus
   if (trailingMatch > 0) {
     score += trailingMatch * 30;
   }
