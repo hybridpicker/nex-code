@@ -2945,7 +2945,11 @@ async function _executeToolInner(name, args, options = {}) {
           if (stderr.includes("No such file or directory")) {
             return `ERROR: Directory not found: ${searchPath}`;
           }
+<<<<<<< Updated upstream
           if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated") || stderr.includes("unclosed") || stderr.includes("parse error") || stderr.includes("brackets") || stderr.includes("not balanced")) {
+=======
+          if (stderr.includes("Invalid") || stderr.includes("Unmatched") || stderr.includes("unterminated") || stderr.includes("unclosed") || stderr.includes("parse error")) {
+>>>>>>> Stashed changes
             return `ERROR: Invalid regex pattern: ${args.pattern}`;
           }
           return `ERROR: grep failed: ${stderr.slice(0, 200) || "exit code 2"}`;
