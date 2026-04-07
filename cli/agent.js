@@ -1375,6 +1375,7 @@ const _sessionGrepFileCounts = new Map(); // per-file grep count (different patt
 const _sessionGrepFoundFiles = new Set(); // files that appeared in grep results (not just searched)
 const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
 const _sessionGlobCoreTerms = new Map(); // coreToken → Set<pattern> — detect varied patterns targeting the same term
+const _sessionGlobFoundFiles = new Set(); // files that appeared in glob results
 const _sessionFileReadCounts = new Map();
 const _sessionFileReadRanges = new Map(); // path → Array<[start, end]> of targeted reads so far
 const _sessionFileEditCounts = new Map();
@@ -1475,8 +1476,8 @@ function _drainMidRunBuffer() {
  */
 function _extractPlanTodos(planText, filesReadMap) {
   const todos = [];
-  // Combine files from read_file and grep results
-  const knownFiles = new Set([...filesReadMap.keys(), ..._sessionGrepFoundFiles]);
+  // Combine files from read_file, glob and grep results
+  const knownFiles = new Set([...filesReadMap.keys(), ..._sessionGrepFoundFiles, ..._sessionGlobFoundFiles]);
   if (!knownFiles.size || !planText) return todos;
 
   // For each file that was read or found via grep, check if the plan mentions it
@@ -2180,6 +2181,7 @@ function _resetSessionTracking() {
   _sessionGrepFoundFiles.clear();
   _sessionGlobSearchCounts.clear();
   _sessionGlobCoreTerms.clear();
+  _sessionGlobFoundFiles.clear();
   _sessionFileReadCounts.clear();
   _sessionFileReadRanges.clear();
   _sessionFileEditCounts.clear();
@@ -4158,7 +4160,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const _notFoundSignals = /\b(no match|not found|couldn'?t find|does not exist|no results|nothing found|no files|keine|nicht gefunden)\b/i;
             const _hasNoTodos = _extractPlanTodos(_assistantText, _sessionFileReadCounts).length === 0;
             const _grepFoundTargets = _sessionGrepFoundFiles.size > 0;
-            if (getAutoConfirm() && _hasNoTodos && !_grepFoundTargets && _notFoundSignals.test(_assistantText)) {
+            const _globFoundTargets = _sessionGlobFoundFiles.size > 0;
+            if (getAutoConfirm() && _hasNoTodos && !_grepFoundTargets && !_globFoundTargets && _notFoundSignals.test(_assistantText)) {
               debugLog(
                 `${C.yellow}  ⚠ Plan phase: nothing actionable found — exiting gracefully${C.reset}`,
               );
@@ -6160,6 +6163,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         // Glob/search_files loop detection — repeated identical patterns waste context
         if (isOk && (prep.fnName === "glob" || prep.fnName === "glob_files" || prep.fnName === "search_files") && prep.args) {
+          if (res && !res.startsWith("(no matches)")) {
+            const lines = res.split("\n");
+            for (const line of lines) {
+              if (line.startsWith("/") && !line.includes(" ")) {
+                _sessionGlobFoundFiles.add(line.trim());
+              } else if (!line.includes(":") && !line.startsWith("[")) { // handles relative paths returned by glob
+                 _sessionGlobFoundFiles.add(line.trim());
+              }
+            }
+          }
+          
           const patKey = prep.args.pattern || prep.args.query || prep.args.path || "";
           const globCount = _incLoopCount(globSearchCounts, patKey);
           if (globCount === LOOP_WARN_GLOB) {
