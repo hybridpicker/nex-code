@@ -176,8 +176,9 @@ function runHeadlessTask(task) {
     const { setAutoConfirm } = require("../cli/safety");
     setAutoConfirm(true);
   }
-  // Flatrate: raise the iteration cap after agent.js is loaded
-  if (flatrateMode) {
+  // Flatrate: raise the iteration cap after agent.js is loaded.
+  // Skip if --max-turns was explicitly passed — explicit flag takes priority.
+  if (flatrateMode && maxTurnsIdx === -1) {
     const { setMaxIterations } = require("../cli/agent");
     setMaxIterations(100);
   }

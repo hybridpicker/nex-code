@@ -3835,10 +3835,12 @@ async function startREPL() {
       .trim();
   }
 
-  // Check for an autosave from the previous session before starting
+  // Check for an autosave from the previous session before starting.
+  // Skip in yolo/headless mode: auto-confirming "resume" would contaminate
+  // each headless task with context from the previous session.
   const { loadSession } = require("../session");
   const { setConversationMessages } = require("../agent");
-  if (getConversationLength() === 0) {
+  if (getConversationLength() === 0 && !getAutoConfirm()) {
     const lastSession = loadSession("_autosave");
     if (
       lastSession &&
