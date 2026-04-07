@@ -35,6 +35,7 @@ Options:
   --orchestrate            Use multi-agent orchestrator (with --task)
   --no-auto-orchestrate    Disable auto-orchestration for multi-goal prompts (on by default)
   --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
+  --resume                 Resume last session (explicit only — no auto-resume)
   --debug                  Show internal diagnostic messages (compression, loop detection, guards)
   --json                   Output result as JSON (for CI parsing)
   --mcp-config <path>      Path to MCP server config (default: .nex/mcp.json)
@@ -337,13 +338,38 @@ if (promptFileIdx !== -1) {
     }
   } else {
     // Normal REPL mode — run interactive setup if needed, then start REPL
-    checkSetup().then(() => {
+    checkSetup().then(async () => {
       preventSleep();
       // Flatrate: apply iteration cap for interactive sessions too
       if (flatrateMode) {
         const { setMaxIterations } = require("../cli/agent");
         setMaxIterations(100);
       }
+
+      // ─── --resume: load last autosave session explicitly ──────
+      if (args.includes("--resume")) {
+        const { loadSession } = require("../cli/session");
+        const { setConversationMessages } = require("../cli/agent");
+        const lastSession = loadSession("_autosave");
+        if (lastSession && lastSession.messages && lastSession.messages.length > 0) {
+          const MAX_RESTORE = 20;
+          const msgs = lastSession.messages;
+          const trimmed = msgs.length > MAX_RESTORE ? msgs.slice(-MAX_RESTORE) : msgs;
+          setConversationMessages(trimmed);
+          const { getUsage, forceCompress } = require("../cli/context-engine");
+          const usage = getUsage(trimmed, []);
+          if (usage.percentage >= 30) {
+            const { messages: compressed } = forceCompress(trimmed, []);
+            setConversationMessages(compressed);
+          }
+          const { C } = require("../cli/ui");
+          process.stdout.write(`${C.dim}Session restored (${trimmed.length} messages)${C.reset}\n`);
+        } else {
+          const { C } = require("../cli/ui");
+          process.stdout.write(`${C.yellow}No previous session found.${C.reset}\n`);
+        }
+      }
+
       const { startREPL } = require("../cli/index");
       startREPL();
       // Background: check for new Ollama Cloud models once per week (non-blocking)

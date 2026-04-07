@@ -3835,46 +3835,6 @@ async function startREPL() {
       .trim();
   }
 
-  // Check for an autosave from the previous session before starting.
-  // Skip in yolo/headless mode: auto-confirming "resume" would contaminate
-  // each headless task with context from the previous session.
-  const { loadSession } = require("../session");
-  const { setConversationMessages } = require("../agent");
-  if (getConversationLength() === 0 && !getAutoConfirm()) {
-    const lastSession = loadSession("_autosave");
-    if (
-      lastSession &&
-      lastSession.messages &&
-      lastSession.messages.length > 0
-    ) {
-      const ageMs = Date.now() - new Date(lastSession.updatedAt).getTime();
-      // Only prompt if the session is younger than 24 hours
-      if (ageMs < 24 * 60 * 60 * 1000) {
-        const { confirm } = require("../safety");
-        const resume = await confirm(`Previous session found. Resume?`);
-        if (resume) {
-          // Option 2: cap restored messages to last 20 to avoid flooding context
-          const MAX_RESTORE = 20;
-          const msgs = lastSession.messages;
-          const trimmed =
-            msgs.length > MAX_RESTORE ? msgs.slice(-MAX_RESTORE) : msgs;
-          setConversationMessages(trimmed);
-
-          // Option 1: auto-compress if restored session already fills >30% context.
-          // Threshold lowered from 50% → 30%: SSH-heavy sessions can hit 50%+ before
-          // the first new LLM call, causing an immediate 400 on session resume.
-          const { getUsage, forceCompress } = require("../context-engine");
-          const usage = getUsage(trimmed, []);
-          if (usage.percentage >= 30) {
-            const { messages: compressed } = forceCompress(trimmed, []);
-            setConversationMessages(compressed);
-          }
-          // suppressed: session restored message
-        }
-      }
-    }
-  }
-
   rl.setPrompt(getPrompt());
   rl.prompt();
 
