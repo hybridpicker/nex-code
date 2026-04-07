@@ -675,6 +675,8 @@ npm install
       stderrSpy = jest
         .spyOn(process.stderr, "write")
         .mockImplementation(() => {});
+      // Clear any stderr writes from module-level side effects (e.g. daemon.json warning)
+      stderrSpy.mockClear();
     });
 
     afterEach(() => {

@@ -1417,6 +1417,7 @@ let _planSummary = null; // compressed summary from plan phase
 let _implementSummary = null; // summary of changes from implement phase
 let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _detectedCategoryId = null; // task category detected on first user message
+let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -1458,8 +1459,39 @@ function _drainMidRunBuffer() {
 }
 
 /**
+ * Extract structured TODO items from the plan text by matching file paths
+ * that were actually read during the plan phase. Returns an array of
+ * {file, action, done} objects for the implement phase to work through.
+ */
+function _extractPlanTodos(planText, filesReadMap) {
+  const todos = [];
+  const knownFiles = [...filesReadMap.keys()];
+  if (!knownFiles.length || !planText) return todos;
+
+  // For each file that was read in plan phase, check if the plan mentions it
+  for (const filePath of knownFiles) {
+    const basename = filePath.split("/").pop();
+    if (!basename) continue;
+    // Check if plan text references this file (by basename or full path)
+    if (planText.includes(basename) || planText.includes(filePath)) {
+      // Extract the sentence/line that mentions this file as the action
+      const lines = planText.split("\n");
+      const actionLine = lines.find(
+        (l) => l.includes(basename) || l.includes(filePath),
+      );
+      todos.push({
+        file: filePath,
+        action: (actionLine || "edit this file").trim().slice(0, 200),
+        done: false,
+      });
+    }
+  }
+  return todos;
+}
+
+/**
  * Transition to the next phase in the plan → implement → verify pipeline.
- * Resets all guards so the new phase starts with a clean slate.
+ * Preserves read-tracking counters across phases to prevent re-investigation.
  */
 function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   if (!_phaseEnabled) return null;
@@ -1469,29 +1501,40 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   _phaseIterations = 0;
   _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
 
-  // Reset ALL guards so the new phase starts with a clean slate.
+  // Reset investigation/edit guards but PRESERVE read-tracking counters.
+  // Clearing read/grep/glob counters causes the model to re-investigate files
+  // it already found in the plan phase, wasting the entire implement budget.
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
   _readsSinceCapFired = 0;
   _editsMadeThisSession = 0;
-  _sessionFileReadCounts.clear();
-  _sessionFileReadRanges.clear();
+  // Keep: _sessionFileReadCounts, _sessionFileReadRanges (prevent re-reads)
+  // Keep: _sessionDupeToolCounts (prevent duplicate tool calls)
+  // Keep: _sessionGrepPatternCounts, _sessionGrepFileCounts (prevent re-greps)
+  // Keep: _sessionGlobSearchCounts, _sessionGlobCoreTerms (prevent re-globs)
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
-  _sessionDupeToolCounts.clear();
-  _sessionGrepPatternCounts.clear();
-  _sessionGrepFileCounts.clear();
-  _sessionGlobSearchCounts.clear();
-  _sessionGlobCoreTerms.clear();
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
 
+  // Extract structured TODOs from plan findings + files already read.
+  if (targetPhase === "implement") {
+    _planTodos = _extractPlanTodos(summary || "", _sessionFileReadCounts);
+  }
+
+  // Build TODO checklist for the implement prompt.
+  const _todoChecklist = _planTodos.length > 0
+    ? `\n\nACTION ITEMS (execute these in order, do NOT re-read these files):\n` +
+      _planTodos.map((t, i) => `${i + 1}. ${t.file} — ${t.action}`).join("\n")
+    : "";
+
   let content;
   if (targetPhase === "implement") {
-    _planSummary = summary?.slice(0, 800) || "";
+    _planSummary = summary?.slice(0, 2000) || "";
     content =
       `[PHASE: IMPLEMENTATION] Analysis complete. Based on the analysis:\n${_planSummary}\n\n` +
-      `Now implement the fix/changes. Do not investigate further — edit files directly.`;
+      `Now implement the fix/changes. Do not investigate further — edit files directly.` +
+      _todoChecklist;
   } else if (targetPhase === "verify") {
     _implementSummary = summary?.slice(0, 500) || "";
     const fileList = filesModified ? [...filesModified].join(", ") : "none";
@@ -2160,6 +2203,7 @@ function _resetSessionTracking() {
   _phaseModelOverride = null;
   _planSummary = null;
   _implementSummary = null;
+  _planTodos = [];
   _verifyLoopBack = 0;
   _planPhaseBlockedCount = 0;
   _detectedCategoryId = null;
@@ -4095,6 +4139,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const _assistantText = (content || streamedText || "").trim();
 
           if (_currentPhase === "plan") {
+            // If the plan found nothing actionable, exit gracefully instead of
+            // blindly entering implement phase where the model will just loop.
+            const _notFoundSignals = /\b(no match|not found|couldn'?t find|does not exist|no results|nothing found|no files|keine|nicht gefunden)\b/i;
+            const _hasNoTodos = _extractPlanTodos(_assistantText, _sessionFileReadCounts).length === 0;
+            if (getAutoConfirm() && _hasNoTodos && _notFoundSignals.test(_assistantText)) {
+              debugLog(
+                `${C.yellow}  ⚠ Plan phase: nothing actionable found — exiting gracefully${C.reset}`,
+              );
+              if (process.stdout.isTTY) {
+                process.stderr.write(
+                  `${C.yellow}  ⚠ Could not find the target in this project. The plan phase found no actionable items.${C.reset}\n`,
+                );
+              }
+              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+              saveNow(conversationMessages);
+              break outer;
+            }
             const phaseMsg = _transitionPhase("implement", _assistantText);
             if (phaseMsg) {
               conversationMessages.push(phaseMsg);
@@ -5543,6 +5604,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (prep.args && prep.args.path) {
             _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
             filesModified.add(prep.args.path);
+            // TODO observer: mark plan items as done when their file gets edited
+            for (const todo of _planTodos) {
+              if (!todo.done && prep.args.path.endsWith(todo.file.split("/").pop())) {
+                todo.done = true;
+                debugLog(`${C.green}  ✓ TODO done: ${todo.file}${C.reset}`);
+              }
+            }
             const count = _incLoopCount(fileEditCounts, prep.args.path);
             const shortPath = prep.args.path.split("/").slice(-2).join("/");
             if (count === LOOP_WARN_EDITS) {
@@ -5604,6 +5672,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
             if (_investigationCapFired) _readsSinceCapFired++;
+            // TODO observer: nudge model to edit (not re-read) files from the plan
+            if (
+              _phaseEnabled &&
+              _currentPhase === "implement" &&
+              prep.fnName === "read_file" &&
+              _planTodos.length > 0
+            ) {
+              const _readPath = prep.args?.path || prep.args?.file_path || "";
+              const _matchingTodo = _planTodos.find(
+                (t) => !t.done && _readPath.endsWith(t.file.split("/").pop()),
+              );
+              if (_matchingTodo) {
+                const nudge = {
+                  role: "user",
+                  content:
+                    `[TODO OBSERVER] You already analyzed "${_matchingTodo.file}" in the plan phase. ` +
+                    `Action: ${_matchingTodo.action}\n` +
+                    `Do NOT re-read — apply the edit directly with edit_file.`,
+                };
+                conversationMessages.push(nudge);
+                apiMessages.push(nudge);
+                debugLog(
+                  `${C.yellow}  ⚠ TODO nudge: ${_matchingTodo.file} — already analyzed, edit directly${C.reset}`,
+                );
+              }
+            }
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
@@ -6496,11 +6590,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (_readOnlyToolStreak === 0) _filesModifiedAtStreakStart = filesModified.size;
           _readOnlyToolStreak++;
         }
-        // After 8+ read-only iterations with no new file writes, force exit
-        if (_readOnlyToolStreak >= 8 && totalSteps >= 4 && filesModified.size === _filesModifiedAtStreakStart) {
+        // After 6+ read-only iterations with no new file writes, force exit
+        if (_readOnlyToolStreak >= 6 && totalSteps >= 4 && filesModified.size === _filesModifiedAtStreakStart) {
           debugLog(
             `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
           );
+          if (process.stdout.isTTY) {
+            process.stderr.write(
+              `${C.yellow}  ⚠ Stagnation detected: ${_readOnlyToolStreak} iterations without edits — exiting. ` +
+              `The model investigated but did not apply changes.${C.reset}\n`,
+            );
+          }
           if (taskProgress) { taskProgress.stop(); taskProgress = null; }
           setOnChange(null);
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
