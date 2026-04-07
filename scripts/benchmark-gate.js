@@ -26,7 +26,7 @@ const { execSync } = require("child_process");
 const { runTask } = require("./benchmark-reallife");
 const { TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
 
-const BASELINE_PATH = path.join(__dirname, "..", ".nex", "benchmark-baseline.json");
+const BASELINE_PATH = path.join(os.homedir(), ".nex-code", "benchmark-baseline.json");
 const CACHE_DIR = path.join(__dirname, "..", ".nex", "gate-cache");
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
 const ROUTING_PATH = path.join(os.homedir(), ".nex-code", "model-routing.json");
