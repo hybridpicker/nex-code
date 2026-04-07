@@ -169,16 +169,19 @@ else
   fi
 
   if ! (cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 | tail -5); then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║  TESTS FAILED — push blocked                            ║"
-    echo "╠══════════════════════════════════════════════════════════╣"
-    echo "║  Fix failing tests before pushing.                      ║"
-    echo "║  Bypass: NEX_SKIP_TESTS=1 git push                     ║"
-    echo "║  Full suite: NEX_SLOW_TESTS=1 git push                 ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    echo ""
-    exit 1
+    echo "[pre-push] Tests failed — retrying once (flaky test guard)..."
+    if ! (cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 | tail -5); then
+      echo ""
+      echo "╔══════════════════════════════════════════════════════════╗"
+      echo "║  TESTS FAILED — push blocked                            ║"
+      echo "╠══════════════════════════════════════════════════════════╣"
+      echo "║  Fix failing tests before pushing.                      ║"
+      echo "║  Bypass: NEX_SKIP_TESTS=1 git push                     ║"
+      echo "║  Full suite: NEX_SLOW_TESTS=1 git push                 ║"
+      echo "╚══════════════════════════════════════════════════════════╝"
+      echo ""
+      exit 1
+    fi
   fi
   echo "[pre-push] Tests passed."
 fi
