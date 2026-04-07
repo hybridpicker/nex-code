@@ -71,8 +71,8 @@ let costLimits = {};
  * @param {number} inputTokens
  * @param {number} outputTokens
  */
-function trackUsage(provider, model, inputTokens, outputTokens) {
-  usageLog.push({ provider, model, input: inputTokens, output: outputTokens });
+function trackUsage(provider, model, inputTokens, outputTokens, cacheReadTokens = 0) {
+  usageLog.push({ provider, model, input: inputTokens, output: outputTokens, cacheRead: cacheReadTokens });
 
   // Check budget after tracking
   if (costLimits[provider] !== undefined) {
@@ -118,12 +118,16 @@ function getSessionCosts() {
       byKey[key] = {
         provider: entry.provider,
         model: entry.model,
+        requests: 0,
         input: 0,
         output: 0,
+        cacheRead: 0,
       };
     }
+    byKey[key].requests++;
     byKey[key].input += entry.input;
     byKey[key].output += entry.output;
+    byKey[key].cacheRead += entry.cacheRead || 0;
   }
 
   const breakdown = Object.values(byKey).map((b) => ({
@@ -134,8 +138,9 @@ function getSessionCosts() {
   const totalCost = breakdown.reduce((sum, b) => sum + b.cost, 0);
   const totalInput = breakdown.reduce((sum, b) => sum + b.input, 0);
   const totalOutput = breakdown.reduce((sum, b) => sum + b.output, 0);
+  const totalCacheRead = breakdown.reduce((sum, b) => sum + (b.cacheRead || 0), 0);
 
-  return { totalCost, totalInput, totalOutput, breakdown };
+  return { totalCost, totalInput, totalOutput, totalCacheRead, breakdown };
 }
 
 /**
