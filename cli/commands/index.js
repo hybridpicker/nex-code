@@ -43,6 +43,10 @@ let _sessionTree = null;
 // ─── Abort Controller (for Ctrl+C cancellation) ─────────────
 let _abortController = null;
 
+// ─── Session timing + identity ──────────────────────────────
+let _replStartTime = null;
+let _replSessionId = null;
+
 function getAbortSignal() {
   return _abortController?.signal ?? null;
 }
@@ -3248,6 +3252,15 @@ async function checkLocalOllama() {
 }
 
 async function startREPL() {
+  // Record session start time and generate a short random session ID
+  _replStartTime = Date.now();
+  try {
+    const { randomBytes } = require("crypto");
+    _replSessionId = randomBytes(4).toString("hex");
+  } catch {
+    _replSessionId = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
+  }
+
   const {
     setAbortSignalGetter,
     getConversationLength,
@@ -3465,15 +3478,27 @@ async function startREPL() {
   function gracefulShutdown() {
     // Flush any pending auto-save
     flushAutoSave();
+    let conversationMessages = [];
     // Write dream log for session consolidation on next startup
     try {
       const { getConversationMessages } = require("../agent");
-      writeDreamLog(getConversationMessages());
+      conversationMessages = getConversationMessages();
+      writeDreamLog(conversationMessages);
     } catch { /* non-critical — never block exit */ }
     footer.deactivate();
     cleanupTerminal();
     if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l");
-    process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
+    // Show goodbye screen (replaces the plain terminal clear)
+    try {
+      const { showGoodbyeScreen } = require("../goodbye");
+      showGoodbyeScreen({
+        startTime: _replStartTime,
+        sessionId: _replSessionId || "--------",
+        messages: conversationMessages,
+      });
+    } catch { /* non-critical — fall back to plain clear */
+      process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
+    }
     process.exit(0);
   }
 
