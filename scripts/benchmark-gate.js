@@ -24,6 +24,31 @@ const os = require("os");
 const { execSync } = require("child_process");
 
 const { runTask } = require("./benchmark-reallife");
+
+// Returns true if Ollama is reachable and has at least one model loaded
+async function ollamaHasModels() {
+  try {
+    const http = require("http");
+    return await new Promise((resolve) => {
+      const req = http.get("http://localhost:11434/api/tags", { timeout: 3000 }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(Array.isArray(json.models) && json.models.length > 0);
+          } catch {
+            resolve(false);
+          }
+        });
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+    });
+  } catch {
+    return false;
+  }
+}
 const { TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
 
 const BASELINE_PATH = path.join(os.homedir(), ".nex-code", "benchmark-baseline.json");
@@ -223,6 +248,14 @@ async function main() {
     process.exit(1);
   }
 
+  // Pre-flight: skip gate if Ollama has no models loaded (avoids false regressions
+  // from instant-fail runs that return default scores in ~0.1s)
+  if (!updateBaseline && !(await ollamaHasModels())) {
+    console.log("\n  \x1b[33m⚠ Gate skipped: Ollama has no models loaded.\x1b[0m");
+    console.log("  Start Ollama and pull a model to enable quality checks.\n");
+    process.exit(0);
+  }
+
   const sha = getCurrentCommit();
   const currentBaselineHash = hashBaseline();
 
@@ -338,6 +371,15 @@ async function main() {
     });
     cachePass();
     console.log("\n  \x1b[32mBaseline updated.\x1b[0m\n");
+    process.exit(0);
+  }
+
+  // Sanity check: if all tasks finished in <2s the model never ran (instant failures)
+  // Don't let fake scores block a push — skip instead.
+  if (current.validCount > 0 && current.avgElapsed < 2000) {
+    console.log("\n  \x1b[33m⚠ Gate skipped: tasks completed too fast (avg " +
+      (current.avgElapsed / 1000).toFixed(2) + "s) — model likely unreachable.\x1b[0m");
+    console.log("  Scores are unreliable; skipping gate to avoid false regressions.\n");
     process.exit(0);
   }
 
