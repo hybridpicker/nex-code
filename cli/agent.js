@@ -872,8 +872,9 @@ async function prepareToolCall(tc) {
     try {
       const os = require("os");
       const resolved = path.resolve(process.cwd(), args.path.replace(/^~/, os.homedir()));
-      args._originalPath = args.path;
+      const originalPath = args.path;
       args.path = path.relative(process.cwd(), resolved) || ".";
+      Object.defineProperty(args, "_originalPath", { value: originalPath, enumerable: false });
     } catch {}
   }
 
