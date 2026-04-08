@@ -1,0 +1,36 @@
+#!/bin/bash
+# pre-commit hook — auto-rebuild dist/ when source files change.
+# Install via: npm run install-hooks
+
+set -euo pipefail
+
+# ─── Load nvm so node/npm are available in non-interactive shells ──
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  \. "$NVM_DIR/nvm.sh" 2>/dev/null || true
+fi
+
+# Check if any source files that affect the bundle are staged
+STAGED_SOURCE=$(git diff --cached --name-only | grep -E '^cli/|^scripts/build\.js' || true)
+
+if [ -z "$STAGED_SOURCE" ]; then
+  exit 0
+fi
+
+echo "[pre-commit] Source files changed — rebuilding dist/..."
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if ! (cd "$REPO_ROOT" && npm run build 2>&1 | tail -3); then
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════╗"
+  echo "║  BUILD FAILED — commit blocked                          ║"
+  echo "╠══════════════════════════════════════════════════════════╣"
+  echo "║  Fix the build error and try again.                     ║"
+  echo "╚══════════════════════════════════════════════════════════╝"
+  echo ""
+  exit 1
+fi
+
+git add dist/nex-code.js dist/benchmark.js
+echo "[pre-commit] dist/ rebuilt and staged — source + dist will land in one commit."
