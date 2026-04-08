@@ -24,7 +24,7 @@
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "install-hooks": "ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && ln -sf ../../hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge && echo 'Hooks installed (pre-push, post-merge).'",
+    "install-hooks": "ln -sf ../../hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && ln -sf ../../hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push && ln -sf ../../hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge && echo 'Hooks installed (pre-commit, pre-push, post-merge).'",
     "prepublishOnly": "npm run build && npm test",
     "merge-to-main": "bash scripts/merge-to-main.sh",
     "improve": "node scripts/improve.js",
