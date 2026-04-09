@@ -48,7 +48,10 @@ process.on("exit", () => {
   if (_browser) {
     try {
       _browser.close();
-    } catch {}
+    } catch (err) {
+      // Log error on exit but don't throw — process is already terminating
+      console.error("Error closing browser on exit:", err.message);
+    }
   }
 });
 
