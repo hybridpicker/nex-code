@@ -180,7 +180,7 @@ const TASKS = [
   {
     id: "search-todos",
     category: "search",
-    prompt: "Find all TODO comments in the source code.",
+    prompt: "Use grep to find all lines containing 'TODO' in the source code.",
     expectedTool: ["grep", "search_files", "bash"],
     validateArgs: (args) => JSON.stringify(args).toUpperCase().includes("TODO"),
   },
