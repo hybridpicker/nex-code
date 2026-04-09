@@ -38,7 +38,7 @@ async function closeBrowser() {
   if (_browser) {
     try {
       await _browser.close();
-    } catch {}
+    } catch (e) { console.error("closeBrowser failed:", e.message); }
     _browser = null;
   }
 }
@@ -48,7 +48,10 @@ process.on("exit", () => {
   if (_browser) {
     try {
       _browser.close();
-    } catch {}
+    } catch (err) {
+      // Log error on exit but don't throw — process is already terminating
+      console.error("Error closing browser on exit:", err.message);
+    }
   }
 });
 

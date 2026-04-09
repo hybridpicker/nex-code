@@ -349,7 +349,9 @@ function buildUserContent(text) {
       try {
         const { data, media_type } = _imageToBase64(img.abs);
         blocks.push({ type: "image", media_type, data });
-      } catch {}
+      } catch (err) {
+      debugLog(`${C.yellow}  ⚠ Path resolution failed: ${err.message}${C.reset}`);
+    }
     }
 
     // Remote URLs (parallel download)
@@ -1537,7 +1539,7 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
     _planTodos = _extractPlanTodos(summary || "", _sessionFileReadCounts);
   }
 
-  // Build TODO checklist for the implement prompt.
+  // Generate ordered action items from extracted plan todos for implementation phase
   const _todoChecklist = _planTodos.length > 0
     ? `\n\nACTION ITEMS (execute these in order, do NOT re-read these files):\n` +
       _planTodos.map((t, i) => `${i + 1}. ${t.file} — ${t.action}`).join("\n")
