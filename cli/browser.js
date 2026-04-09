@@ -38,7 +38,7 @@ async function closeBrowser() {
   if (_browser) {
     try {
       await _browser.close();
-    } catch {}
+    } catch (e) { console.error("closeBrowser failed:", e.message); }
     _browser = null;
   }
 }
