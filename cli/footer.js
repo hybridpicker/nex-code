@@ -35,7 +35,7 @@ function _dbg(...args) {
   fs.writeSync(_dbgFd, args.join(" ") + "\n");
 }
 function _dbgAnsi(label, data) {
-  if (!DEBUG_ANSI) return;
+  if (!DEBUG_ANSI || typeof data !== "string") return;
   if (!_dbgFd) _dbgFd = fs.openSync("/tmp/footer-debug.log", "w", 0o600);
   const readable = data
     .replace(/\x1b\[([^a-zA-Z]*)([a-zA-Z])/g, (_, p, cmd) => `<ESC[${p}${cmd}>`)
