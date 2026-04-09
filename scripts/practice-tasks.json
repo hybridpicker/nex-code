@@ -1,0 +1,186 @@
+{
+  "pro-tuner": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Find and fix any accessibility issues in the tuner UI — missing aria labels, keyboard navigation, color contrast."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the audio processing / pitch detection logic. Cover edge cases like silence, noise, and out-of-range frequencies."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add input validation to ensure the reference frequency (A4) is within a reasonable range (400-480 Hz) and show a warning if out of range."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "easy",
+      "description": "Review the main tuner component for code duplication. Extract repeated logic into helper functions without changing behavior."
+    }
+  ],
+
+  "games-project": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Check the Django views for proper error handling — missing try/except, unvalidated user input, or missing CSRF protection."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write Django unit tests for the main game models. Test model creation, validation, and any custom methods."
+    },
+    {
+      "category": "feature",
+      "difficulty": "easy",
+      "description": "Add proper Django model field validators (MinValueValidator, MaxValueValidator) where numeric fields are used without bounds."
+    },
+    {
+      "category": "docs",
+      "difficulty": "easy",
+      "description": "Add docstrings to all Django views that are missing them. Include purpose, parameters, and return values."
+    }
+  ],
+
+  "homemusic": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Review the Django settings for security issues — DEBUG mode, ALLOWED_HOSTS, SECRET_KEY exposure, missing security middleware."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write tests for the API endpoints. Test both valid requests and error cases (404, 400, invalid data)."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "medium",
+      "description": "Find any Django views using raw SQL queries and convert them to use the ORM properly. Ensure no SQL injection risk."
+    }
+  ],
+
+  "chord-library": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Check for any unhandled promise rejections or missing error handling in async functions."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add JSON schema validation for chord data input. Ensure all required fields are present and have correct types."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the chord transposition logic. Cover all 12 keys and both sharp/flat notation."
+    }
+  ],
+
+  "cookbook": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Check all Django forms for proper input sanitization. Ensure no XSS vulnerabilities in user-submitted content."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add pagination to any list views that don't have it. Use Django's built-in Paginator with 20 items per page."
+    },
+    {
+      "category": "test",
+      "difficulty": "easy",
+      "description": "Write tests for the recipe model — creation, required fields, string representation, and any custom methods."
+    }
+  ],
+
+  "vocabulary": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Review the API views for proper authentication checks. Ensure unauthenticated users cannot access protected endpoints."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "medium",
+      "description": "Find any repeated database queries in views (N+1 problem) and optimize with select_related or prefetch_related."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write integration tests for the vocabulary quiz/practice flow — creating a session, answering questions, scoring."
+    }
+  ],
+
+  "jarvis-agent": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Check error handling in the agent's tool execution pipeline. Ensure tool failures are caught, logged, and don't crash the agent."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the message parsing and routing logic. Test with various message formats and edge cases."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "hard",
+      "description": "Review the agent's main loop for memory leaks — unclosed event listeners, growing arrays, unreferenced timers."
+    }
+  ],
+
+  "nex-code": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Review cli/providers/ollama.js for HTTP error handling gaps. Ensure status codes are preserved and meaningful error messages are returned."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write tests for the autoFixPath function in cli/tools/index.js. Cover all 5 strategies with various path formats."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "hard",
+      "description": "Review cli/context-engine.js compression phases. Find any inefficiencies where cheap compression could save more tokens before hitting LLM compactor."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add better error messages when Ollama Cloud returns rate limit errors (429). Include retry-after header info if available."
+    }
+  ],
+
+  "biohonig": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Check all Django templates for proper escaping of user-generated content. Fix any XSS vulnerabilities."
+    },
+    {
+      "category": "feature",
+      "difficulty": "easy",
+      "description": "Add meta tags (description, og:image, og:title) to the main pages for better SEO and social sharing."
+    }
+  ],
+
+  "schoensgibl": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Check the responsive CSS — find any layout breaks on mobile (320px viewport) and fix them."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write Django tests for the contact form — valid submission, invalid email, missing required fields, CSRF token."
+    }
+  ]
+}
