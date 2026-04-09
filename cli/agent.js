@@ -349,7 +349,9 @@ function buildUserContent(text) {
       try {
         const { data, media_type } = _imageToBase64(img.abs);
         blocks.push({ type: "image", media_type, data });
-      } catch {}
+      } catch (err) {
+      debugLog(`${C.yellow}  ⚠ Path resolution failed: ${err.message}${C.reset}`);
+    }
     }
 
     // Remote URLs (parallel download)
