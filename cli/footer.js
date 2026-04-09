@@ -26,7 +26,7 @@ const _noScrollRegion = !isDark;
 
 // ── Debug logger ────────────────────────────────────────────────────────────
 const DEBUG =
-  process.env.FOOTER_DEBUG && process.env.FOOTER_DEBUG !== "0";
+  process.env.FOOTER_DEBUG === "1" || process.env.FOOTER_DEBUG === "2";
 const DEBUG_ANSI = process.env.FOOTER_DEBUG === "2"; // full ANSI trace
 let _dbgFd = null;
 function _dbg(...args) {
