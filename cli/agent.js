@@ -274,7 +274,7 @@ function _grabClipboardImage() {
       // valid image (not empty/error)
       return { data: buf.toString("base64"), media_type: "image/png", path: tmpPath };
     }
-    try { fsSync.unlinkSync(tmpPath); } catch {}
+    try { fsSync.unlinkSync(tmpPath); } catch (err) { console.error("Failed to unlink temp file:", err); }
   }
   // Fallback: osascript clipboard check
   const osascript = spawnSync("osascript", [
