@@ -28,6 +28,7 @@ const _noScrollRegion = !isDark;
 const DEBUG =
   process.env.FOOTER_DEBUG === "1" || process.env.FOOTER_DEBUG === "2";
 const DEBUG_ANSI = process.env.FOOTER_DEBUG === "2"; // full ANSI trace
+const DEBUG_RAW = process.env.FOOTER_DEBUG === "3"; // raw buffer trace (level 3)
 let _dbgFd = null;
 function _dbg(...args) {
   if (!DEBUG) return;
