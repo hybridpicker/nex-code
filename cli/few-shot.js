@@ -116,6 +116,19 @@ function getFewShotForInput(userInput) {
   const category = detectCategory(userInput);
   if (!category) return null;
 
+  // The "coding" category is a catch-all fallback — its example is a
+  // bug-fix scenario, which actively confuses small plan models when the
+  // real prompt is exploration ("analyze", "explain", "list", "summarize").
+  // Only inject it when the user's prompt actually looks like a code change
+  // request.
+  if (category.id === "coding") {
+    const looksLikeCodeTask =
+      /\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port)\b/i.test(
+        userInput,
+      );
+    if (!looksLikeCodeTask) return null;
+  }
+
   return loadExampleForCategory(category.id);
 }
 
