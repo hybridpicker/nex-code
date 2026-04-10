@@ -543,7 +543,7 @@ async function installSkill(url, options = {}) {
     // Clean up invalid skill
     try {
       fs.rmSync(targetDir, { recursive: true, force: true });
-    } catch {}
+    } catch (e) { console.error("skills.js line 562 failed:", e.message); }
     return {
       ok: false,
       name,
