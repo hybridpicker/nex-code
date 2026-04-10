@@ -1534,7 +1534,7 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
 
-  
+  // Extract structured TODOs from plan findings + files already read.
   if (targetPhase === "implement") {
     _planTodos = _extractPlanTodos(summary || "", _sessionFileReadCounts);
   }
