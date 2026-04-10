@@ -12,9 +12,26 @@ if [ "$BRANCH" != "main" ]; then
   exit 0
 fi
 
-# Check if the merge came from devel
-MERGE_MSG=$(git log --merges -1 --format=%s 2>/dev/null || true)
-if echo "$MERGE_MSG" | grep -qi "devel"; then
+# Detect a devel→main merge. Primary signal: a marker file dropped by
+# scripts/merge-to-main.sh just before `git merge devel`. This works for
+# fast-forward merges, which produce no merge commit. Fallback: scan the
+# most recent merge commit's subject for "devel" — covers manual
+# `git merge devel` invocations that did create a real merge commit.
+GIT_DIR=$(git rev-parse --git-dir)
+MERGE_MARKER="$GIT_DIR/MERGE_FROM_DEVEL"
+IS_DEVEL_MERGE=false
+if [ -f "$MERGE_MARKER" ]; then
+  IS_DEVEL_MERGE=true
+  rm -f "$MERGE_MARKER"
+fi
+if [ "$IS_DEVEL_MERGE" = "false" ]; then
+  MERGE_MSG=$(git log --merges -1 --format=%s 2>/dev/null || true)
+  if echo "$MERGE_MSG" | grep -qi "devel"; then
+    IS_DEVEL_MERGE=true
+  fi
+fi
+
+if [ "$IS_DEVEL_MERGE" = "true" ]; then
   # Safety net: verify CI passed for the devel commit that was merged.
   # The second parent of a merge commit is the branch tip that was merged in.
   DEVEL_SHA=$(git log --merges -1 --format="%P" 2>/dev/null | awk '{print $2}')
