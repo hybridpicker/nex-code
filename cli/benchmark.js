@@ -634,7 +634,7 @@ const TASKS = [
     id: "agentic-read-then-act",
     category: "agentic",
     prompt:
-      "Read the project README.md, find the TODO section, and list which items are completed.",
+      "Read the project README.md, find the Quickstart section, and list the commands shown.",
     expectedTool: "read_file",
     validateArgs: (args) =>
       typeof args.path === "string" && args.path.includes("README"),
