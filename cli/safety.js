@@ -266,6 +266,16 @@ const CRITICAL_BASH = [
   /git\s+clean\s+-[a-z]*f/, // git clean -f, -fd, -ffd, etc.
   /git\s+checkout\s+--\s/, // git checkout -- <path> (discard changes)
   /git\s+push\s+(?:--force\b|-f\b)/, // force push (overwrites remote history)
+  // Remote-code-execution / exfil chains: download-and-run is a hallmark of
+  // prompt-injection payloads. Always prompt, even in --auto mode.
+  /\b(?:curl|wget|fetch)\b[^|;&`$()]*\|\s*(?:sh|bash|zsh|ksh|dash|python|python3|perl|ruby|node)\b/,
+  /\b(?:curl|wget)\b[^;&`$()]*\$\([^)]*\)/, // curl ... $(...) command substitution
+  /\bbase64\s+(?:-d|--decode|-D)\b[^|;&`$()]*\|\s*(?:sh|bash|zsh|python|python3|perl|ruby|node)\b/,
+  /\beval\s+["'`]?\$\(\s*(?:curl|wget|fetch)\b/,
+  // Reverse-shell primitives
+  /\bbash\s+-i\s*>&?\s*\/dev\/tcp\//,
+  /\bnc\s+(?:-[a-z]*e|-[a-z]*c)\b/, // nc -e, nc -c (gnu netcat exec)
+  /\bmkfifo\b[^;&`]*;\s*(?:nc|ncat|telnet)\b/,
 ];
 
 // Show in first-confirmation preview only — no second blocking prompt
