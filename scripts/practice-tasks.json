@@ -1,0 +1,181 @@
+{
+  "pro-tuner": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Find and fix accessibility issues in the tuner UI — missing aria labels, keyboard navigation, color contrast.",
+      "hints": "Start with: grep -rn 'aria-' src/ | head -20. Check <button> and <input> elements without aria-label. Look in src/components/ for the main tuner component."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the audio processing / pitch detection logic.",
+      "hints": "Find the pitch detection module: find src/ -name '*pitch*' -o -name '*audio*' -o -name '*tuner*'. Create a test file next to it. Test: silence input, known frequency (440Hz = A4), out-of-range values."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add input validation to ensure the reference frequency (A4) is within a reasonable range (400-480 Hz) and show a warning.",
+      "hints": "grep -rn '440\\|A4\\|reference' src/ --include='*.js' --include='*.jsx' --include='*.ts' --include='*.tsx' | head -10. Find where the user can change the reference frequency and add bounds checking."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "easy",
+      "description": "Extract duplicated logic in the main tuner component into helper functions without changing behavior.",
+      "hints": "Find the largest component: wc -l src/components/*.{js,jsx,ts,tsx} 2>/dev/null | sort -n | tail -5. Look for repeated code blocks (copy-paste patterns)."
+    }
+  ],
+
+  "games-project": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Fix Django views that are missing try/except or CSRF protection.",
+      "hints": "grep -rn 'def.*request' */views.py | head -15. Then check each view: does it have @csrf_protect or CsrfViewMiddleware? Does it handle DoesNotExist?"
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write Django unit tests for the main game models — creation, validation, custom methods.",
+      "hints": "Find models: grep -rn 'class.*Model' */models.py | head -10. Create tests in the same app directory as tests.py. Use django.test.TestCase."
+    },
+    {
+      "category": "feature",
+      "difficulty": "easy",
+      "description": "Add Django model field validators (MinValueValidator, MaxValueValidator) where numeric fields lack bounds.",
+      "hints": "grep -rn 'IntegerField\\|FloatField\\|DecimalField' */models.py | head -15. Check which ones lack validators=[]. Import from django.core.validators."
+    }
+  ],
+
+  "homemusic": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Fix Django settings security issues — DEBUG=True in production, missing ALLOWED_HOSTS, exposed SECRET_KEY.",
+      "hints": "cat */settings.py | head -60. Check: DEBUG should read from env, SECRET_KEY should read from env, ALLOWED_HOSTS should not be ['*']."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write tests for the API endpoints — valid requests, 404s, 400s, invalid data.",
+      "hints": "grep -rn 'path\\|url' */urls.py | head -15. Pick 2-3 endpoints. Use django.test.Client to GET/POST them."
+    }
+  ],
+
+  "chord-library": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Fix unhandled promise rejections or missing error handling in async functions.",
+      "hints": "grep -rn 'async\\s' src/ --include='*.js' | head -15. Then check each: does the await have a try/catch? Are .then() chains missing .catch()?"
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the chord transposition logic — all 12 keys, sharp and flat notation.",
+      "hints": "grep -rn 'transpos\\|semitone\\|interval' src/ --include='*.js' | head -10. Find the function, create a test file, test C->D (2 semitones), edge cases at B->C wrap."
+    }
+  ],
+
+  "cookbook": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Fix XSS vulnerabilities in Django templates — user content rendered without escaping.",
+      "hints": "grep -rn '|safe\\|mark_safe\\|{{.*}}' templates/ --include='*.html' | head -15. Any {{ user_input|safe }} is a potential XSS. Remove |safe or use bleach."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add pagination to list views that don't have it, using Django's Paginator with 20 items per page.",
+      "hints": "grep -rn 'def.*list\\|ListView\\|all()' */views.py | head -10. Check if Paginator is imported and used. Add it where .all() is returned directly."
+    }
+  ],
+
+  "vocabulary": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Fix missing authentication checks — unauthenticated users can access protected API endpoints.",
+      "hints": "grep -rn 'def.*request' */views.py | head -15. Check: is @login_required or IsAuthenticated used? Find views without auth decorators that modify data."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "medium",
+      "description": "Fix N+1 query problems — add select_related or prefetch_related where needed.",
+      "hints": "grep -rn '\\.objects\\.' */views.py | head -15. Any .all() or .filter() followed by accessing related objects in a loop is an N+1. Add select_related('field')."
+    }
+  ],
+
+  "jarvis-agent": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Fix error handling in the agent's tool execution pipeline — uncaught errors that crash the agent.",
+      "hints": "grep -rn 'catch\\|throw\\|reject' src/ --include='*.js' | head -15. Also: grep -rn 'process.exit' src/ | head -5. Find try/catch blocks with empty catch bodies."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write unit tests for the message parsing and routing logic.",
+      "hints": "grep -rn 'parse\\|route\\|dispatch' src/ --include='*.js' | head -10. Find the parser function, write tests with valid messages, malformed JSON, empty strings."
+    }
+  ],
+
+  "nex-code": [
+    {
+      "category": "bugfix",
+      "difficulty": "medium",
+      "description": "Fix HTTP error handling in cli/providers/ollama.js — status codes are lost in error wrapping.",
+      "hints": "Read cli/providers/ollama.js lines 200-300. Find where HTTP errors are caught and re-thrown. The status code from the response should be preserved in the error object."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write tests for the autoFixPath function in cli/tools/index.js — cover all 5 strategies.",
+      "hints": "Read cli/tools/index.js and search for 'autoFixPath'. It has 5 strategies: normalize, ext variants, basename, case-insensitive, smartSearch. Create tests/tools-autofix.test.js."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "hard",
+      "description": "Improve token estimation accuracy in cli/context-engine.js compression phases.",
+      "hints": "Read cli/context-engine.js and find estimateTokens(). Check if it uses a simple chars/4 heuristic. Compare with actual tiktoken counts. Fix any systematic over/under-estimation."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "Add better error messages for Ollama Cloud 429 rate limit errors — include retry-after header info.",
+      "hints": "grep -n '429\\|rate.limit\\|retry.after' cli/providers/ollama.js. Find where HTTP status is checked. Add: if (status === 429) { extract Retry-After header, format user-friendly message }."
+    }
+  ],
+
+  "biohonig": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Fix XSS in Django templates — user-generated content rendered with |safe filter.",
+      "hints": "grep -rn '|safe\\|mark_safe' templates/ --include='*.html' | head -10. Remove |safe from user-controlled content."
+    },
+    {
+      "category": "feature",
+      "difficulty": "easy",
+      "description": "Add meta tags (og:image, og:title, description) to main pages for SEO.",
+      "hints": "Find base template: find templates/ -name 'base*' -o -name 'layout*'. Add <meta> tags inside <head>. Use Django template variables for page-specific values."
+    }
+  ],
+
+  "schoensgibl": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "Fix mobile layout breaks at 320px viewport — overflowing elements, broken flex layouts.",
+      "hints": "Find CSS files: find . -name '*.css' -not -path '*/node_modules/*' | head -10. Search for fixed widths: grep -n 'width:.*px' *.css | head -15. Replace with max-width or percentages."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "Write Django tests for the contact form — valid submission, invalid email, missing required fields.",
+      "hints": "grep -rn 'contact\\|ContactForm\\|contact_view' */forms.py */views.py */urls.py | head -10. Use django.test.TestCase + self.client.post('/contact/', data)."
+    }
+  ]
+}
