@@ -58,6 +58,14 @@ async function build() {
     minify: !isDev,
   });
 
+  // Background worker bundle (forked as a separate process by background-jobs.js)
+  await esbuild.build({
+    ...commonOpts,
+    entryPoints: ["cli/background-worker.js"],
+    outfile: "dist/background-worker.js",
+    minify: !isDev,
+  });
+
   // Copy skills (not bundled — contain dynamic tool definitions)
   const skillsSrc = path.join(__dirname, "..", "cli", "skills");
   const skillsDst = path.join(__dirname, "..", "dist", "skills");

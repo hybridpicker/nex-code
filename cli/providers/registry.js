@@ -454,11 +454,20 @@ async function _tryProviders(callFn) {
  */
 async function callStream(messages, tools, options = {}) {
   initDefaults();
+  // Strip provider prefix from model spec (e.g. "ollama:qwen3-coder:480b" → "qwen3-coder:480b")
+  // so providers only receive the bare model ID they expect.
+  const _rawModel = options.model;
+  const _strippedModel = _rawModel
+    ? (() => { const { model: m } = parseModelSpec(_rawModel); return m || _rawModel; })()
+    : undefined;
+  const _cleanOpts = _strippedModel !== _rawModel
+    ? { ...options, model: _strippedModel }
+    : options;
   return _tryProviders((provider, _provName, model) =>
     provider.stream(messages, tools, {
       model,
-      signal: options.signal,
-      ...options,
+      signal: _cleanOpts.signal,
+      ..._cleanOpts,
     }),
   );
 }

@@ -946,7 +946,14 @@ async function prepareToolCall(tc) {
     "read_file", "list_directory", "glob", "grep", "bash",
     "git_status", "git_diff", "git_log", "ssh_exec",
   ]);
-  if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName) && !fnName.startsWith("skill_")) {
+  // spawn_agents with all-background agents is allowed in plan phase — they run non-blocking
+  // and don't interfere with the read-only analysis.
+  const _isAllBackgroundSpawn =
+    fnName === "spawn_agents" &&
+    Array.isArray(finalArgs?.agents) &&
+    finalArgs.agents.length > 0 &&
+    finalArgs.agents.every((a) => a.background === true);
+  if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName) && !fnName.startsWith("skill_") && !_isAllBackgroundSpawn) {
     _planPhaseBlockedCount++;
     debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only, block #${_planPhaseBlockedCount})${C.reset}`);
     return {
@@ -1475,6 +1482,59 @@ function _drainMidRunBuffer() {
 }
 
 /**
+ * Format a completed background job result for injection into the conversation.
+ * @param {{ jobId: string, agentDef: object, result: object, finishedAt: number, _startedAt?: number }} job
+ * @returns {string}
+ */
+function _formatBackgroundJobResult(job) {
+  const durationSec = job._startedAt
+    ? Math.round((job.finishedAt - job._startedAt) / 1000)
+    : null;
+  const durationStr = durationSec !== null ? `\nDuration: ${durationSec}s` : "";
+  const resultText =
+    typeof job.result.result === "string"
+      ? job.result.result.slice(0, 4000)
+      : JSON.stringify(job.result.result || "").slice(0, 4000);
+  const filesStr =
+    job.result.filesModified && job.result.filesModified.length > 0
+      ? `\nFiles modified: ${job.result.filesModified.join(", ")}`
+      : "";
+  return (
+    `[BACKGROUND AGENT COMPLETED]\n` +
+    `Job: ${job.jobId}\n` +
+    `Task: "${job.agentDef.task}"` +
+    durationStr +
+    `\nStatus: ${job.result.status || "done"}` +
+    filesStr +
+    `\nResult: ${resultText}`
+  );
+}
+
+/**
+ * Check for completed background agents and inject their results as user messages.
+ * Called at two points in the main loop: top of each iteration and after tool results.
+ * @param {Array} conversationMessages
+ * @param {Array} apiMessages
+ */
+function _drainCompletedBackgroundJobs(conversationMessages, apiMessages) {
+  const { getCompletedJobs } = require("./background-jobs");
+  const completed = getCompletedJobs();
+  for (const job of completed) {
+    const msg = {
+      role: "user",
+      content: _formatBackgroundJobResult(job),
+    };
+    conversationMessages.push(msg);
+    apiMessages.push(msg);
+    const _bgStatus = job.result?.status || "done";
+    const _bgIcon = _bgStatus === "failed" ? C.red + "  ✗" : C.cyan + "  ✓";
+    process.stderr.write(
+      `${_bgIcon} Background agent ${_bgStatus}: ${job.agentDef.task.slice(0, 50)} — ${String(job.result?.result || "").slice(0, 80)}${C.reset}\n`,
+    );
+  }
+}
+
+/**
  * Extract structured TODO items from the plan text by matching file paths
  * that were read OR found via grep during the plan phase. Returns an array
  * of {file, action, done} objects for the implement phase to work through.
@@ -1954,6 +2014,10 @@ This applies to bash output, SSH output, grep results, and all other tool output
   - Good for: reading multiple files, analyzing separate modules, running independent searches.
   - Bad for: tasks that depend on each other or modify the same file.
   - Max 5 parallel agents.
+  - Background agents: if a task can run in parallel while you do something else (e.g. "analyze X while explaining Y", "run linter in background"), use spawn_agents and set background: true on the parallel task. You decide when this is appropriate — no explicit user instruction needed.
+    Example: spawn_agents({"agents": [{"task": "analyze package.json", "background": true}, {"task": "explain routing system"}]})
+    The background agent starts immediately; its result arrives as a [BACKGROUND AGENT COMPLETED] user message automatically.
+    There is NO separate "background-agent" tool — use spawn_agents with background: true on the relevant agents.
 
 # Parallel Tool Calls (Critical for Efficiency)
 
@@ -2239,6 +2303,11 @@ function clearConversation() {
   try {
     const { resetCompactionFailures } = require("./compactor");
     resetCompactionFailures();
+  } catch { /* ignore */ }
+  // Cancel any running background agents so they don't inject into the new session
+  try {
+    const { cancelAllJobs } = require("./background-jobs");
+    cancelAllJobs();
   } catch { /* ignore */ }
 }
 
@@ -2865,6 +2934,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let totalContextRetries = 0; // lifetime cap across all auto-extend cycles
   const MAX_TOTAL_CONTEXT_RETRIES = 9; // 3 retries × 3 auto-extensions max
   let staleCompressUsed = 0; // separate budget for stale-retry compress (doesn't consume contextRetries)
+  const _unavailableModels = new Set(); // models that returned 404 — skip on fallback
 
   // ─── Server-local guard: detect if this task is server debugging ───
   // If the first user message mentions server error keywords, flag so we can
@@ -2989,6 +3059,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
   const INVESTIGATION_CAP = opts.skillLoop ? 999 : _profile.investigationCap;
 
+  // ─── Background job drain helper (closure over conversationMessages/apiMessages) ─
+  // Called from every exit point of processInput so results are never lost.
+  const _awaitAndDrainBackgroundJobs = async () => {
+    const { hasPendingOrCompletedJobs, getPendingJobSummary } = require("./background-jobs");
+    if (!hasPendingOrCompletedJobs()) return;
+    if (getPendingJobSummary()) {
+      const _bgEnd = Date.now() + 45000;
+      process.stderr.write(`${C.cyan}  ⏳ Waiting for background agents to finish…${C.reset}\n`);
+      while (getPendingJobSummary() && Date.now() < _bgEnd) {
+        await new Promise((r) => setTimeout(r, 500).unref());
+        _drainCompletedBackgroundJobs(conversationMessages, apiMessages);
+      }
+    }
+    _drainCompletedBackgroundJobs(conversationMessages, apiMessages);
+    if (conversationMessages.length > 0) saveNow(conversationMessages);
+  };
+
   // ─── Detect analysis-only prompts ──────────────────────────────────────────
   // For pure analysis/explanation tasks the model should produce ONE substantive
   // text response and stop. Without a hard cap, big models (qwen3-vl, deepseek)
@@ -3025,6 +3112,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // Check if aborted (Ctrl+C) at start of each iteration
       const loopSignal = _getAbortSignal();
       if (loopSignal?.aborted) break;
+
+      // ─── Background agent results: drain completed jobs before LLM call ──────
+      _drainCompletedBackgroundJobs(conversationMessages, apiMessages);
 
       // ─── Proactive auto-compress before LLM call ─────────────────────────────
       // Compress proactively to avoid 400 errors. Use a lower threshold on the first
@@ -3139,6 +3229,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               ? `${getThinkingVerb()} (step ${totalSteps + 1})`
               : getThinkingVerb();
         }
+        const { getPendingJobSummary } = require("./background-jobs");
+        const _bgSummary = getPendingJobSummary();
+        if (_bgSummary) spinnerText += `  [${_bgSummary}]`;
         spinner = new Spinner(spinnerText);
         spinner.start();
       }
@@ -3480,9 +3573,38 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           userMessage =
             "Access denied — your API key may not have permission for this model";
         } else if (err.message.includes("404")) {
-          // 404 = model not found on Ollama/OpenAI-compat provider — fatal, don't retry
-          const modelId = getActiveModelId ? getActiveModelId() : "unknown";
-          userMessage = `Model not found (404): ${modelId} — check your .env MODEL setting or run /models to list available models`;
+          // 404 = model not found — walk a fallback chain before giving up.
+          // Chain: NEX_FALLBACK_MODEL → all unique models in routing config (agentic first).
+          const unavailableModel = getActiveModelId ? getActiveModelId() : "unknown";
+          // Track by model ID only (strip optional provider prefix for dedup)
+          const _modelIdOnly = (spec) => spec.includes(":") && spec.split(":")[0].match(/^[a-z]+$/) && !spec.split(":")[1].includes(":") ? spec.split(":").slice(1).join(":") : spec;
+          _unavailableModels.add(_modelIdOnly(unavailableModel));
+          const _getFallbackChain = () => {
+            const chain = [];
+            if (process.env.NEX_FALLBACK_MODEL) chain.push(process.env.NEX_FALLBACK_MODEL);
+            try {
+              const { getModelForCategory } = require("./task-router");
+              const categories = ["agentic", "coding", "plan", "verify", "sysadmin", "data", "frontend"];
+              for (const cat of categories) {
+                const m = getModelForCategory(cat);
+                if (m && !chain.includes(m)) chain.push(m);
+              }
+            } catch { /* ignore */ }
+            // Filter out unavailable models (compare by model ID part only)
+            return chain.filter((m) => !_unavailableModels.has(_modelIdOnly(m)));
+          };
+          const _nextModelSpec = _getFallbackChain()[0]; // already has provider:model format from routing config
+          if (_nextModelSpec) {
+            console.log(
+              `${C.yellow}  ⚠ Model ${unavailableModel} unavailable (404) — switching to ${_nextModelSpec}${C.reset}`,
+            );
+            setActiveModel(_nextModelSpec);
+            setActiveModelForSpinner(_nextModelSpec);
+            i--; // retry this iteration with the new model
+            continue;
+          }
+          // Exhausted all fallbacks — stop with a clear message
+          userMessage = `Model not found (404): ${unavailableModel} — no fallback available. Set NEX_FALLBACK_MODEL or run /models to list available models`;
           console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
           if (taskProgress) {
             taskProgress.stop();
@@ -4708,6 +4830,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         saveNow(conversationMessages);
         _scoreAndPrint(conversationMessages);
+        await _awaitAndDrainBackgroundJobs();
         return;
       }
 
@@ -6678,6 +6801,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         apiMessages.push(toolMsg);
       }
 
+      // ─── Background agent results: drain completed jobs after tool execution ──
+      _drainCompletedBackgroundJobs(conversationMessages, apiMessages);
+
       // ─── Root-cause detection: investigation → fix phase transition ──────────
       // Scan SSH output for unambiguous error signatures. On first match, inject
       // a focus message and tighten the read-only budget so the model goes straight
@@ -6908,6 +7034,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     }
     break outer;
   } // end outer while
+
+  // ─── Background job drain (post-loop) ───────────────────────────────────────
+  // break outer always falls through here; the early return at the no-tool-calls
+  // path also calls this helper before returning.
+  await _awaitAndDrainBackgroundJobs();
 }
 
 module.exports = {

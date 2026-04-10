@@ -1368,6 +1368,11 @@ const TOOL_DEFINITIONS = [
                   description:
                     'Override model for this agent (provider:model, e.g. "anthropic:claude-haiku"). Auto-selected if omitted.',
                 },
+                background: {
+                  type: "boolean",
+                  description:
+                    "Run this agent non-blocking in the background. The main session continues immediately; results are injected as [BACKGROUND AGENT COMPLETED] user messages when the agent finishes. Use for tasks that can run in parallel to your main work.",
+                },
               },
               required: ["task"],
             },
@@ -3641,7 +3646,10 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case "spawn_agents": {
-      const { executeSpawnAgents } = require("../sub-agent");
+      const { executeSpawnAgents, executeSpawnAgentsBackground } = require("../sub-agent");
+      if (args.agents?.some((a) => a.background)) {
+        return executeSpawnAgentsBackground(args);
+      }
       return executeSpawnAgents(args);
     }
 
