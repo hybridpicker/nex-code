@@ -103,7 +103,7 @@ function _writeCache(key, value) {
     let obj = {};
     try {
       obj = JSON.parse(fs.readFileSync(file, "utf8"));
-    } catch (e) {}
+    } catch (e) { console.error("theme cache failed:", e.message); }
     obj[key] = value;
     // Keep the cache small — drop oldest entries when > 50 keys
     const keys = Object.keys(obj);
