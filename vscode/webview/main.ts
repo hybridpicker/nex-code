@@ -1,5 +1,6 @@
 import { marked } from "marked";
 import hljs from "highlight.js";
+import DOMPurify from "dompurify";
 import { ToolCard } from "./ToolCard";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -114,7 +115,15 @@ function handleEvent(msg: any) {
     case "token":
       if (currentMsgEl) {
         currentAccum += msg.text;
-        currentMsgEl.innerHTML = marked(currentAccum) as string;
+        // LLM output is untrusted: prompt-injection payloads can hide raw HTML
+        // (img onerror, iframe, object, etc.) inside markdown. Sanitize before
+        // assigning to innerHTML — CSP nonce blocks <script> but not other vectors.
+        const rendered = marked(currentAccum) as string;
+        currentMsgEl.innerHTML = DOMPurify.sanitize(rendered, {
+          USE_PROFILES: { html: true },
+          FORBID_TAGS: ["style", "iframe", "object", "embed", "form"],
+          FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
+        });
         scrollToBottom();
       }
       break;
