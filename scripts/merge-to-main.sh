@@ -30,6 +30,16 @@ if ! command -v gh &>/dev/null; then
   exit 1
 fi
 
+# Drop a marker file so the post-merge hook can reliably detect that this
+# merge was a devel→main merge it should bump for. The hook's old check
+# (`git log --merges -1 --format=%s | grep devel`) is unreliable because
+# fast-forward merges produce no merge commit, so the grep matches some
+# unrelated older merge instead. EXIT trap guarantees cleanup even if the
+# script fails before `git merge` is reached.
+GIT_DIR=$(git rev-parse --git-dir)
+MERGE_MARKER="$GIT_DIR/MERGE_FROM_DEVEL"
+trap 'rm -f "$MERGE_MARKER"' EXIT
+
 # Fetch latest remote state so CI status is up to date
 echo "[merge-to-main] Fetching remote..."
 git fetch origin devel --quiet
@@ -64,6 +74,7 @@ while true; do
     success)
       echo "[merge-to-main] CI passed. Merging devel → main..."
       git checkout main
+      touch "$MERGE_MARKER"
       git merge devel --no-edit
       echo "[merge-to-main] Merge complete. post-merge hook will handle version bump and publish."
       exit 0
