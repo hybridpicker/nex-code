@@ -877,7 +877,7 @@ async function prepareToolCall(tc) {
       const originalPath = args.path;
       args.path = path.relative(process.cwd(), resolved) || ".";
       Object.defineProperty(args, "_originalPath", { value: originalPath, enumerable: false });
-    } catch {}
+    } catch (e) { console.error("path resolution failed:", e.message); }
   }
 
   // Validate
