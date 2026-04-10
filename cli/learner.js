@@ -201,6 +201,10 @@ async function learnFromSession(messages) {
   if (result.error)
     return { applied: [], nexAdded: [], summary: null, error: result.error };
 
+  if (!Array.isArray(result.memories)) {
+    return { applied: [], nexAdded: [], summary: null, error: 'Invalid memories format' };
+  }
+
   const applied = applyMemories(result.memories);
   const nexAdded = applyNexAdditions(result.nex_additions);
 
