@@ -713,6 +713,13 @@ function formatToolSummary(name, args, result, isError) {
       summary = "Done";
       break;
     case "spawn_agents": {
+      // Background agents: result is a "started" confirmation, not a completion summary
+      if (r.includes("Background agents started")) {
+        const bgMatch = r.match(/\bbg-[\w-]+/g);
+        const bgCount = bgMatch ? bgMatch.length : 0;
+        summary = `${bgCount} bg agent${bgCount !== 1 ? "s" : ""} started`;
+        break;
+      }
       const doneCount = (r.match(/✓ Agent/g) || []).length;
       const failCount = (r.match(/✗ Agent/g) || []).length;
       summary =

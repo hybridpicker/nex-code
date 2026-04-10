@@ -736,9 +736,51 @@ async function executeSpawnAgents(args, _depth = 0) {
   }
 }
 
+/**
+ * Execute spawn_agents with background: true on any agents.
+ * Background agents are forked immediately and return a job ID. The caller
+ * continues without blocking; results are injected into the conversation
+ * when the agent completes (see agent.js _drainCompletedBackgroundJobs).
+ * Synchronous agents (background: false/undefined) fall through to
+ * executeSpawnAgents as normal.
+ *
+ * @param {{ agents: Array<{ task: string, context?: string, background?: boolean }> }} args
+ * @returns {string} Confirmation string for the parent LLM
+ */
+async function executeSpawnAgentsBackground(args) {
+  const { createJob } = require("./background-jobs");
+  const bgAgents = (args.agents || []).filter((a) => a.background);
+  const syncAgents = (args.agents || []).filter((a) => !a.background);
+
+  const jobIds = bgAgents.map((agentDef) => {
+    const r = resolveSubAgentModel(agentDef);
+    const defWithRouting = r.model
+      ? { ...agentDef, model: `${r.provider}:${r.model}`, _skipLog: true }
+      : { ...agentDef, _skipLog: true };
+    return createJob(defWithRouting);
+  });
+
+  const parts = [];
+  if (jobIds.length > 0) {
+    parts.push(
+      `Background agents started: [${jobIds.join(", ")}]\n` +
+        bgAgents.map((a, i) => `  ${jobIds[i]}: ${a.task}`).join("\n") +
+        "\nResults will be injected into the conversation when each agent completes.",
+    );
+  }
+
+  if (syncAgents.length > 0) {
+    const syncResult = await executeSpawnAgents({ agents: syncAgents });
+    parts.push(syncResult);
+  }
+
+  return parts.join("\n\n") || "No agents specified.";
+}
+
 module.exports = {
   runSubAgent,
   executeSpawnAgents,
+  executeSpawnAgentsBackground,
   clearAllLocks,
   classifyTask,
   pickModelForTier,
