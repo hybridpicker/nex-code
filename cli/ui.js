@@ -61,11 +61,12 @@ function banner(modelName, cwd, opts = {}) {
 
   const dogLines = renderDog(DOG_MATRIX, T.banner_logo);
   const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : "";
+  const geminiTag = opts.gemini ? `  ${B}${T.banner_gemini}✦ GEMINI${r}` : "";
   const version = require("../package.json").version;
 
   const subtitles = [
     `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
-    `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${yoloTag}`,
+    `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${geminiTag}${yoloTag}`,
     "",
   ];
 

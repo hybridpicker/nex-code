@@ -187,6 +187,7 @@ const DARK = {
   banner_version: DIM,
   banner_model: DIM,
   banner_yolo: rgb(245, 175, 50),
+  banner_gemini: rgb(138, 180, 248),
 
   // Footer status bar
   footer_sep: DIM,
@@ -252,6 +253,7 @@ const LIGHT = {
   banner_version: rgb(100, 100, 118),
   banner_model: rgb(100, 100, 118),
   banner_yolo: rgb(168, 62, 0),
+  banner_gemini: rgb(26, 115, 232),
 
   footer_sep: rgb(168, 168, 178),
   footer_model: rgb(0, 102, 175),
