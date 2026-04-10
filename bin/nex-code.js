@@ -27,6 +27,9 @@ Options:
   --auto                   Skip all confirmations (implies --task / --prompt-file)
   --flatrate               Flatrate mode: 100 turns, 6 parallel agents, 5 retries (auto on with OLLAMA_API_KEY)
   --yolo, -yolo            Skip all confirmations (interactive YOLO mode)
+  --gemini, -gemini        Local Gemini test mode — uses Google Gemini provider
+                           (default model: gemini-3.1-pro-preview, requires GEMINI_API_KEY)
+  --gemini-model <id>      Override the Gemini model (implies --gemini)
   --server                 Start JSON-lines IPC server (used by VS Code extension)
   --daemon [config]        Run as background watcher (reads .nex/daemon.json)
   --watch [config]         Alias for --daemon
@@ -76,13 +79,22 @@ if (!yoloMode) {
   }
 }
 
+// ─── Detect --gemini early so other modes can skip Ollama-specific tuning ──
+const _geminiModelIdxEarly = args.indexOf("--gemini-model");
+const _geminiModeEarly =
+  args.includes("--gemini") ||
+  args.includes("-gemini") ||
+  _geminiModelIdxEarly !== -1;
+
 // ─── Flatrate mode ────────────────────────────────────────────
 // Auto-activates when OLLAMA_API_KEY is set (Ollama Cloud flatrate plan)
 // or via explicit --flatrate flag. Shifts optimization from "minimize tokens"
 // to "maximize correctness": more iterations, more parallel agents, more retries.
+// Skipped under --gemini since flatrate is an Ollama-Cloud-specific plan.
 const flatrateMode =
-  args.includes("--flatrate") ||
-  (!!process.env.OLLAMA_API_KEY && !process.env.NEX_NO_FLATRATE);
+  !_geminiModeEarly &&
+  (args.includes("--flatrate") ||
+    (!!process.env.OLLAMA_API_KEY && !process.env.NEX_NO_FLATRATE));
 if (flatrateMode) {
   // Set env vars before any module loads — sub-agent.js and orchestrator.js
   // read these at require-time to configure their constants.
@@ -104,6 +116,61 @@ const modelIdx = args.indexOf("--model");
 if (modelIdx !== -1 && args[modelIdx + 1]) {
   const { setActiveModel } = require("../cli/providers/registry");
   setActiveModel(args[modelIdx + 1]);
+}
+
+// ─── --gemini / -gemini (local Gemini test mode) ─────────────
+// Switches the active provider to Google Gemini and uses the latest preview
+// model by default. Intended for trying the newest Gemini on this machine
+// without touching the project's normal model routing.
+const geminiModelIdx = args.indexOf("--gemini-model");
+const geminiMode =
+  args.includes("--gemini") ||
+  args.includes("-gemini") ||
+  geminiModelIdx !== -1;
+if (geminiMode) {
+  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+    console.error(
+      "\x1b[31mError:\x1b[0m --gemini requires GEMINI_API_KEY (or GOOGLE_API_KEY) to be set.",
+    );
+    process.exit(1);
+  }
+  const geminiModel =
+    geminiModelIdx !== -1 && args[geminiModelIdx + 1]
+      ? args[geminiModelIdx + 1]
+      : "gemini-3.1-pro-preview";
+  // Hard-override every routing source so the agent cannot fall back to an
+  // Ollama-only model ID and POST it against Gemini's endpoint (would 404).
+  // task-router.js short-circuits getModelForCategory/Phase on NEX_FORCE_MODEL.
+  process.env.NEX_FORCE_MODEL = geminiModel;
+  process.env.NEX_PHASE_ROUTING = "0";
+  process.env.DEFAULT_PROVIDER = "gemini";
+  process.env.DEFAULT_MODEL = geminiModel;
+  process.env.NEX_FALLBACK_MODEL = geminiModel;
+  // Drop conflicting per-category env vars inherited from ~/.nex-code/.env
+  for (const k of [
+    "NEX_ROUTE_CODING",
+    "NEX_ROUTE_FRONTEND",
+    "NEX_ROUTE_SYSADMIN",
+    "NEX_ROUTE_DATA",
+    "NEX_ROUTE_AGENTIC",
+    "NEX_PHASE_PLAN_MODEL",
+    "NEX_PHASE_IMPLEMENT_MODEL",
+    "NEX_PHASE_VERIFY_MODEL",
+    "OLLAMA_FALLBACK_CHAIN",
+  ]) {
+    delete process.env[k];
+  }
+  const { setActiveModel } = require("../cli/providers/registry");
+  const ok = setActiveModel(`gemini:${geminiModel}`);
+  if (!ok) {
+    console.error(
+      `\x1b[31mError:\x1b[0m Unknown Gemini model '${geminiModel}'.`,
+    );
+    process.exit(1);
+  }
+  process.stderr.write(
+    `\x1b[38;2;138;180;248m◆\x1b[0m \x1b[1mGemini mode\x1b[0m\x1b[2m — provider=gemini · model=${geminiModel} · routing locked\x1b[0m\n`,
+  );
 }
 
 // ─── --max-turns (flag or .nex/config.json) ──────────────────
@@ -183,8 +250,9 @@ function runHeadlessTask(task) {
     const { setMaxIterations } = require("../cli/agent");
     setMaxIterations(100);
   }
-  // In headless mode, default to a fast model unless --model was explicitly set
-  const hasExplicitModel = args.includes("--model");
+  // In headless mode, default to a fast model unless --model (or --gemini)
+  // was explicitly set — both count as an explicit choice the user made.
+  const hasExplicitModel = args.includes("--model") || geminiMode;
   if (!hasExplicitModel) {
     const { setActiveModel } = require("../cli/providers/registry");
     const fastHeadlessModel =
