@@ -13,9 +13,24 @@ nex-code injects a short "correct approach" example at the start of each session
 | Category | Trigger keywords | Correct pattern shown |
 |----------|-----------------|----------------------|
 | `sysadmin` | nginx, docker, systemctl, deploy, server config | Check remote logs → identify → fix on server → restart |
-| `coding` | (fallback) | Read file → targeted edit → run tests |
+| `coding` | (fallback, see exclusion below) | Read file → targeted edit → run tests |
 | `frontend` | react, vue, css, component, dom | Read component → targeted fix |
 | `data` | sql, postgres, sqlite, query, database | Read query → fix → EXPLAIN |
+
+**Coding category exclusion.** Because `coding` is the catch-all fallback,
+its bug-fix example was being injected for pure exploration prompts
+("analyze X", "explain Y", "list Z") and small plan models like
+`ministral-3:3b` were treating the example as the real task. The example is
+now only injected when the prompt contains an implementation verb
+(`fix`, `bug`, `crash`, `error`, `implement`, `add`, `create`, `change`,
+`update`, `refactor`, `rewrite`, `broken`, `fail`, `patch`, `migrate`,
+`port`). Exploration prompts get no few-shot injection at all.
+
+**Example markers.** Injected examples are wrapped with explicit
+`[EXAMPLE — illustrative only, not the real task]` and
+`[END EXAMPLE — wait for the real user request below]` markers in the
+synthetic user/assistant exchange so small plan models cannot mistake the
+example task for the user's actual request.
 
 ## Customizing examples
 
