@@ -182,7 +182,7 @@ const TASKS = [
     category: "search",
     prompt: "Find all TODO comments in the source code.",
     expectedTool: ["grep", "search_files", "bash"],
-    validateArgs: (args) => JSON.stringify(args).toUpperCase().includes("TODO"),
+    validateArgs: (args) => args.pattern && args.pattern.toUpperCase() === "TODO",
   },
 
   // ── Shell / bash ─────────────────────────────────────────────────────────
