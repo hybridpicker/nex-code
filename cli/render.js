@@ -48,7 +48,25 @@ function renderMarkdown(text) {
       continue;
     }
 
-    // Headers
+    // Headers (check longer prefixes first)
+    if (line.startsWith("###### ")) {
+      rendered.push(
+        `${C.bold}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}`,
+      );
+      continue;
+    }
+    if (line.startsWith("##### ")) {
+      rendered.push(
+        `${C.bold}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}`,
+      );
+      continue;
+    }
+    if (line.startsWith("#### ")) {
+      rendered.push(
+        `${C.bold}${C.cyan}    ${stripHeadingMarkers(line.substring(5))}${C.reset}`,
+      );
+      continue;
+    }
     if (line.startsWith("### ")) {
       rendered.push(
         `${C.bold}${C.cyan}   ${stripHeadingMarkers(line.substring(4))}${C.reset}`,
@@ -571,7 +589,25 @@ class StreamRenderer {
       return;
     }
 
-    // Headers
+    // Headers (check longer prefixes first)
+    if (line.startsWith("###### ")) {
+      this._safeWrite(
+        `${C.bold}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}\n`,
+      );
+      return;
+    }
+    if (line.startsWith("##### ")) {
+      this._safeWrite(
+        `${C.bold}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}\n`,
+      );
+      return;
+    }
+    if (line.startsWith("#### ")) {
+      this._safeWrite(
+        `${C.bold}${C.cyan}    ${stripHeadingMarkers(line.substring(5))}${C.reset}\n`,
+      );
+      return;
+    }
     if (line.startsWith("### ")) {
       this._safeWrite(
         `${C.bold}${C.cyan}   ${stripHeadingMarkers(line.substring(4))}${C.reset}\n`,
