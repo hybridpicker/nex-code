@@ -60,7 +60,6 @@ On first launch, an interactive setup wizard guides you through provider and cre
 | Startup time | ~100ms | 1-4s |
 | Runtime deps | 2 | heavy |
 | Infra tools | SSH, Docker, K8s built-in | no |
-<<<<<<< Updated upstream
 
 **Smart model routing.** The built-in `/benchmark` tests all configured models across 62 tool-calling tasks in 5 categories and auto-routes to the best model per task type.
 
@@ -68,15 +67,6 @@ On first launch, an interactive setup wizard guides you through provider and cre
 
 **45 built-in tools** across file ops, git, SSH, Docker, Kubernetes, deploy, browser, GitHub Actions, and visual review. See [Tools](#tools) for the full list.
 
-=======
-
-**Smart model routing.** The built-in `/benchmark` tests all configured models across 62 tool-calling tasks in 5 categories and auto-routes to the best model per task type.
-
-**Phase-based execution.** Tasks run through Plan (analyze) -> Implement (code) -> Verify (test) phases, each with the optimal model. Auto-loops back on test failures.
-
-**45 built-in tools** across file ops, git, SSH, Docker, Kubernetes, deploy, browser, GitHub Actions, and visual review. See [Tools](#tools) for the full list.
-
->>>>>>> Stashed changes
 **2 runtime dependencies** (`axios`, `dotenv`). Starts in ~100ms. No Python, no heavy runtime.
 
 ---
@@ -197,15 +187,9 @@ nex-code --daemon          # watch mode: fires tasks on file changes, git commit
 | `--max-turns <n>` | Override agentic loop limit |
 | `--model <spec>` | Use specific model (e.g. `anthropic:claude-sonnet-4-6`) |
 | `--debug` | Show diagnostic messages |
-<<<<<<< Updated upstream
 
 ### Vision / Screenshot
 
-=======
-
-### Vision / Screenshot
-
->>>>>>> Stashed changes
 ```
 > /path/to/screenshot.png implement this UI in React
 > analyze https://example.com/mockup.png and implement it
@@ -319,13 +303,9 @@ Autonomous optimization loops: edit -> experiment -> keep/revert, on a dedicated
 Auto-activates for implementation tasks. Read-only analysis first, approve before writes. Hard-enforced tool restrictions.
 
 ### Daemon / Watch Mode
-<<<<<<< Updated upstream
-Background process that fires tasks on file changes, git commits, or cron schedule. Configured via `.nex/daemon.json`. Desktop and Matrix notifications.
-=======
 
 Background process that fires tasks on file changes, git commits, or cron schedule. Configured via `.nex/daemon.json`. Desktop and Matrix notifications.
 
->>>>>>> Stashed changes
 ### Session Trees
 
 Navigate conversation history like git branches — fork, switch, goto, delete branches.
@@ -348,33 +328,6 @@ Pre-push secret detection, audit logging (JSONL), persistent undo/redo, cost lim
 - **Auto-fix engine** — path resolution, edit fuzzy matching (Levenshtein), bash error hints
 - **Tool tiers** — essential (5) / standard (21) / full (45), auto-selected per model capability
 - **Stale stream recovery** — progressive retry with context compression on stall
-<<<<<<< Updated upstream
-### Visual Development Tools
-Pixel-level before/after comparison, responsive sweeps (320-1920px), annotation overlays, design token extraction, and live-reload diff watching. Pure image tools work standalone; browser-based tools need Playwright.
-
----
-
-## Extensibility
-
-### Skills
-
-Drop `.md` or `.js` files in `.nex/skills/` for project-specific knowledge, commands, and tools. Global skills in `~/.nex-code/skills/`. Install from git: `/install-skill user/repo`.
-
-### Plugins
-
-Custom tools and lifecycle hooks via `.nex/plugins/`. Events: `onToolResult`, `onModelResponse`, `onSessionStart`, `onSessionEnd`, `onFileChange`, `beforeToolExec`, `afterToolExec`.
-
-### MCP
-
-Connect external tool servers via [Model Context Protocol](https://modelcontextprotocol.io). Configure in `.nex/mcp.json` with env var interpolation.
-
-### Hooks
-
-Run custom scripts on CLI events (`pre-tool`, `post-tool`, `pre-commit`, `post-response`, `session-start`, `session-end`). Configure in `.nex/config.json` or `.nex/hooks/`.
-
----
-
-=======
 
 ### Visual Development Tools
 
@@ -402,7 +355,6 @@ Run custom scripts on CLI events (`pre-tool`, `post-tool`, `pre-commit`, `post-r
 
 ---
 
->>>>>>> Stashed changes
 ## VS Code Extension
 
 Built-in sidebar chat panel (`vscode/`) with streaming output, collapsible tool cards, and native theme support. Spawns `nex-code --server` over JSON-lines IPC.
@@ -424,11 +376,7 @@ cli/
   tools/index.js         # 45 tool definitions + auto-fix engine
   context-engine.js      # Token management + 5-phase compression
   sub-agent.js           # Parallel sub-agents with file locking
-<<<<<<< Updated upstream
-orchestrator.js        # Multi-agent decompose -> execute -> synthesize
-=======
   orchestrator.js        # Multi-agent decompose -> execute -> synthesize
->>>>>>> Stashed changes
   session-tree.js        # Session branching
   visual.js              # Visual dev tools (pixelmatch-based)
   browser.js             # Playwright browser agent
