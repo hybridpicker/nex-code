@@ -3,6 +3,7 @@ vscode/node_modules/
 vscode/out/
 vscode/*.vsix
 .env
+.env.bak*
 .nex/
 !.nex/brain/
 !.nex/brain/*.md
