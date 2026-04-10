@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Ollama_Cloud-supported-brightgreen.svg" alt="Ollama Cloud: supported">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node >= 18">
   <img src="https://img.shields.io/badge/dependencies-2-green.svg" alt="Dependencies: 2">
-  <img src="https://img.shields.io/badge/tests-3920-blue.svg" alt="Tests: 3920">
+  <img src="https://img.shields.io/badge/tests-3929-blue.svg" alt="Tests: 3920">
   <img src="https://img.shields.io/badge/VS_Code-extension-007ACC.svg" alt="VS Code extension">
 </p>
 
@@ -290,6 +290,21 @@ Multi-goal prompts auto-decompose into parallel sub-agents. Up to 5 agents run s
 ```bash
 nex-code --task "fix type errors in src/, add JSDoc to utils/, update CHANGELOG"
 ```
+
+### Background Agents
+
+Sub-agents can run non-blocking in isolated forked processes. The main agent continues working while background workers complete, then results are automatically injected into the conversation.
+
+```
+# The model decides when to use background:true — no extra syntax needed.
+# Example: the model might run the linter in background while explaining code.
+spawn_agents([
+  { task: "run the linter and report errors", background: true },
+  { task: "explain the auth module" }   ← main agent answers this immediately
+])
+```
+
+Background agents are shown in the spinner: `● Thinking [1 bg agent running]`. Results appear as `✓ Background agent done: …` when workers finish.
 
 ### Autoresearch
 
