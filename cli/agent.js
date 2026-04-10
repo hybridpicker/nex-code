@@ -1766,8 +1766,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
-${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- When you have enough information, implement the fix immediately — do not propose or ask\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone
-- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n- **File creation override**: In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
+${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Soll ich...?", "Möchtest du...?", "Shall I...?"\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n## Match the task type — do NOT escalate analysis into edits\n- **Analysis / explanation / exploration tasks** ("analyze", "explain", "describe", "list", "summarize", "what is", "how does", "review", "audit", "analysiere", "erkläre", "beschreibe", "zusammenfassen") → produce the analysis/answer as text and STOP. Do NOT then start editing files. Do NOT invent a follow-up "implementation phase" that the user did not ask for. The analysis IS the deliverable.\n- **Implementation tasks** ("fix", "add", "create", "change", "refactor", "implement", "rewrite", "update", "migrate") → execute immediately, no proposals, no questions.\n- The user's ORIGINAL prompt determines the mode. Do not escalate from analysis to implementation in the same turn unless the user explicitly says so in a NEW message.\n\n- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH on a FIX request: IMMEDIATELY fix it (edit file + restart service). Do NOT write "Empfohlene Lösungen" or ask "Möchten Sie...?" — just execute the fix now.\n- **File creation override** (only for implementation tasks): In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
 # Plan Mode
@@ -2815,6 +2814,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Inject few-shot example: 1 synthetic user/assistant exchange showing correct approach.
   // Category is detected from the user's prompt (sysadmin, coding, frontend, data).
   // Private examples from ~/.nex-code/examples/ take priority over bundled generics.
+  // Each example is wrapped with explicit "EXAMPLE START/END" markers so small
+  // plan models (e.g. ministral-3:3b) don't mistake the example task for the
+  // user's actual request.
   if (isFirstMessage) {
     const fewShot = getFewShotForInput(
       typeof userInput === "string" ? userInput : "",
@@ -2822,8 +2824,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     if (fewShot) {
       apiMessages = [
         apiMessages[0], // system prompt
-        { role: "user", content: fewShot.user },
-        { role: "assistant", content: fewShot.assistant },
+        {
+          role: "user",
+          content:
+            "[EXAMPLE — illustrative only, not the real task]\n" +
+            fewShot.user,
+        },
+        {
+          role: "assistant",
+          content:
+            fewShot.assistant +
+            "\n[END EXAMPLE — wait for the real user request below]",
+        },
         ...apiMessages.slice(1),
       ];
     }
@@ -2977,8 +2989,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
   const INVESTIGATION_CAP = opts.skillLoop ? 999 : _profile.investigationCap;
 
+  // ─── Detect analysis-only prompts ──────────────────────────────────────────
+  // For pure analysis/explanation tasks the model should produce ONE substantive
+  // text response and stop. Without a hard cap, big models (qwen3-vl, deepseek)
+  // tend to loop: re-list directories, re-read files, re-summarize. Detect and
+  // limit aggressively. Implementation tasks ("fix", "add", "create", etc.) are
+  // unaffected.
+  const _rawUserText = typeof userInput === "string" ? userInput.trim() : "";
+  const _isAnalysisOnlyPrompt =
+    _rawUserText.length > 0 &&
+    /^\s*(analyze|analyse|analysiere|explain|erkläre|describe|beschreib|review|audit|summari[sz]e|zusammenfass|list|liste|what is|what does|wie funktioniert|wie geht|how does|show me|zeig|show the|show all|tell me about|erzähl)/i.test(
+      _rawUserText,
+    ) &&
+    !/\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|edit|write|delete|remove|install|setup|deploy|run)\b/i.test(
+      _rawUserText,
+    );
+
   let i;
   let iterLimit = opts.maxIterations || (_phaseEnabled ? getPhaseBudget(_currentPhase) : MAX_ITERATIONS);
+  if (_isAnalysisOnlyPrompt) {
+    // Analysis: max 4 iterations — 1 to read context, 1 for analysis, 2 buffer
+    iterLimit = Math.min(iterLimit, 4);
+    debugLog(
+      `${C.dim}  ↳ Analysis-only prompt detected — iter cap=${iterLimit}${C.reset}`,
+    );
+  }
   let autoExtensions = 0;
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
@@ -4026,6 +4061,27 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       conversationMessages.push(assistantMsg);
       apiMessages.push(assistantMsg);
 
+      // ─── Analysis-only hard exit ─────────────────────────────────────────
+      // For pure analysis prompts, after the first substantive text response
+      // (>1500 chars) with no file modifications anywhere, end the loop. Some
+      // big models (qwen3-vl) ignore the system-prompt "STOP" instruction and
+      // keep iterating with redundant re-reads. This is a hard backstop.
+      if (
+        _isAnalysisOnlyPrompt &&
+        (content || "").trim().length > 1500 &&
+        filesModified.size === 0 &&
+        _bashModifiedFiles === 0
+      ) {
+        debugLog(
+          `${C.green}  ✓ Analysis-only early exit: ${(content || "").length} chars produced, no file changes${C.reset}`,
+        );
+        // Drop any planned tool calls — they'd just trigger another analysis loop.
+        if (assistantMsg.tool_calls) delete assistantMsg.tool_calls;
+        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+        saveNow(conversationMessages);
+        break outer;
+      }
+
       // ─── Root-cause scan: model's own analysis text ──────────────────────
       // When the model identifies a root cause in its reasoning (e.g. writes
       // "TypeError: checkAllAppsWithRetry is not a function"), treat that as a
@@ -4208,11 +4264,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // blindly entering implement phase where the model will just loop.
             // But don't exit if grep found files — the model discovered targets
             // even if the assistant text says "not found" about something else.
-            const _notFoundSignals = /\b(no match|not found|couldn'?t find|does not exist|no results|nothing found|no files|keine|nicht gefunden)\b/i;
+            // Use specific phrases only — bare "keine" matches incidental usage
+            // like "keine API-Key nötig" in analysis output.
+            const _notFoundSignals = /\b(no match(es)?|not found|couldn'?t find|does not exist|no results|nothing found|no files|keine (Ergebnisse|Treffer|Übereinstimmung|Funde|passenden)|nicht gefunden|nichts gefunden)\b/i;
             const _hasNoTodos = _extractPlanTodos(_assistantText, _sessionFileReadCounts).length === 0;
             const _grepFoundTargets = _sessionGrepFoundFiles.size > 0;
             const _globFoundTargets = _sessionGlobFoundFiles.size > 0;
-            if (getAutoConfirm() && _hasNoTodos && !_grepFoundTargets && !_globFoundTargets && _notFoundSignals.test(_assistantText)) {
+            // Long structured output is clearly a successful response — never
+            // surface a "nothing found" warning for it, even if a stray match
+            // hits the regex.
+            const _looksLikeRealOutput = _assistantText.length > 1500;
+            if (getAutoConfirm() && _hasNoTodos && !_grepFoundTargets && !_globFoundTargets && !_looksLikeRealOutput && _notFoundSignals.test(_assistantText)) {
               debugLog(
                 `${C.yellow}  ⚠ Plan phase: nothing actionable found — exiting gracefully${C.reset}`,
               );
