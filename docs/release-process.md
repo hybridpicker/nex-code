@@ -12,6 +12,7 @@ This document describes the automated release process for Nex Code.
 3. **Automatic Version Bump**: The post-merge hook bumps the patch version
    - Syncs version to `vscode/package.json` automatically
    - Pushes main — triggers GitHub Actions
+   - Detection works for fast-forward merges via a marker file (see below)
 4. **npm Publish**: GitHub Actions Release workflow publishes to npm
 5. **GitHub Release**: Release notes generated from commit log
 6. **VS Code Extension**: Built and packaged by GitHub Actions
@@ -27,6 +28,19 @@ npm run merge-to-main
 
 Must be run from the `devel` branch with a clean working tree. Requires the
 `gh` CLI to be installed and authenticated (`gh auth login`).
+
+### How devel→main is detected (FF safe)
+
+Most `devel → main` merges fast-forward, which leaves no merge commit and no
+trailing "Merge branch 'devel'" subject line. To make sure the post-merge hook
+still runs the version bump in that case, `scripts/merge-to-main.sh` drops a
+marker file at `.git/MERGE_FROM_DEVEL` immediately before the
+`git merge devel` call. The hook checks for that marker first and deletes it
+on hit; the older "scan the latest merge commit subject for `devel`" check is
+kept as a fallback for manual `git merge devel` invocations that did create a
+real merge commit. An `EXIT` trap in the script removes the marker if the
+merge fails, so a stale marker can never cause a phantom bump on the next
+unrelated merge.
 
 ## Pre-Push Checks
 
