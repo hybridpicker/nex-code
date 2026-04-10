@@ -100,9 +100,16 @@ function loadRoutingConfig() {
 
 /**
  * Get the configured model for a category.
- * Priority: model-routing.json > NEX_ROUTE_* env var > null (use DEFAULT_MODEL)
+ * Priority: NEX_FORCE_MODEL > NEX_ROUTE_* env var > model-routing.json > null
+ *
+ * NEX_FORCE_MODEL is a hard override used by --gemini and similar single-provider
+ * flags: when set, every category resolves to the same model so no per-category
+ * routing can leak Ollama-only model IDs into a different provider's endpoint.
  */
 function getModelForCategory(categoryId) {
+  // 0. Hard override (e.g. --gemini): always use the forced model
+  if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
+
   // 1. Per-session env override
   const cat = CATEGORIES[categoryId];
   if (cat?.envVar && process.env[cat.envVar]) return process.env[cat.envVar];
@@ -161,6 +168,8 @@ function _resolvePhaseConfig() {
  * @param {string} [categoryId] — fallback category if no phase config
  */
 function getModelForPhase(phase, categoryId) {
+  // Hard override (e.g. --gemini): always use the forced model
+  if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
   const phases = _resolvePhaseConfig();
   if (phases?.[phase]) return phases[phase];
   // null in builtin defaults means "use active model" — fall through to category
@@ -187,6 +196,7 @@ function getPhaseBudget(phase) {
  */
 function isPhaseRoutingEnabled() {
   if (process.env.NEX_PHASE_ROUTING === "0") return false;
+  if (process.env.NEX_FORCE_MODEL) return false;
   return _resolvePhaseConfig() !== null;
 }
 

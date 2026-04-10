@@ -187,6 +187,8 @@ nex-code --daemon          # watch mode: fires tasks on file changes, git commit
 | `--max-turns <n>` | Override agentic loop limit |
 | `--model <spec>` | Use specific model (e.g. `anthropic:claude-sonnet-4-6`) |
 | `--debug` | Show diagnostic messages |
+| `--gemini` | Local Gemini test mode (`gemini-3.1-pro-preview` by default, requires `GEMINI_API_KEY`) |
+| `--gemini-model <id>` | Pin a specific Gemini model (implies `--gemini`) |
 
 ### Vision / Screenshot
 

@@ -3417,7 +3417,10 @@ async function startREPL() {
     loadInfo.providerName === "ollama"
       ? loadInfo.model.id
       : `${loadInfo.providerName}:${loadInfo.model.id}`;
-  banner(bannerModel, CWD, { yolo: getAutoConfirm() });
+  banner(bannerModel, CWD, {
+    yolo: getAutoConfirm(),
+    gemini: !!process.env.NEX_FORCE_MODEL && loadInfo.providerName === "gemini",
+  });
 
   // Populate the status bar with model + git branch + project name
   {
