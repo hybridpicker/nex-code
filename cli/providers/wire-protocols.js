@@ -149,14 +149,27 @@ class OpenAIStreamParser extends StreamParser {
 
     if (delta.tool_calls) {
       for (const tc of delta.tool_calls) {
-        const idx = tc.index ?? 0;
-        if (!this.toolCallsMap[idx]) {
-          this.toolCallsMap[idx] = { id: tc.id || "", name: "", arguments: "" };
+        // OpenAI streams associate fragments via `tc.index`. Gemini's
+        // OpenAI-compat layer ships complete tool calls in a single delta with
+        // an `id` but no `index`, so multiple distinct tool calls in the same
+        // delta would otherwise collide on slot 0 and concatenate into a
+        // bogus name like "read_filelist_directory". Use the id as the slot
+        // key when no index is present.
+        let slot;
+        if (tc.index !== undefined && tc.index !== null) {
+          slot = tc.index;
+        } else if (tc.id) {
+          slot = `id:${tc.id}`;
+        } else {
+          slot = 0;
         }
-        if (tc.id) this.toolCallsMap[idx].id = tc.id;
-        if (tc.function?.name) this.toolCallsMap[idx].name += tc.function.name;
+        if (!this.toolCallsMap[slot]) {
+          this.toolCallsMap[slot] = { id: tc.id || "", name: "", arguments: "" };
+        }
+        if (tc.id) this.toolCallsMap[slot].id = tc.id;
+        if (tc.function?.name) this.toolCallsMap[slot].name += tc.function.name;
         if (tc.function?.arguments)
-          this.toolCallsMap[idx].arguments += tc.function.arguments;
+          this.toolCallsMap[slot].arguments += tc.function.arguments;
       }
     }
 
