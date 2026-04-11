@@ -2785,5 +2785,56 @@ describe("agent.js", () => {
       const msgs = getConversationMessages();
       expect(msgs.length).toBeGreaterThan(0);
     });
+
+    it("does not complete verify phase without a verification tool call and PASS", async () => {
+      clearConversation();
+      process.env.NEX_PHASE_ROUTING = "1";
+      callStream.mockImplementation(async () => ({
+        content:
+          "Verification finished. I re-read the modified file, confirmed the change, and the task is complete.",
+        tool_calls: [],
+      }));
+
+      mockStream("Plan: update /fix.js");
+      mockStream("Implemented the fix", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Looks good now.");
+      mockStream("PASS: Verified by reading the modified file.", [
+        {
+          function: { name: "read_file", arguments: { path: "/fix.js" } },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("updated file");
+      mockStream("PASS: Verified by reading the modified file.");
+      mockStream(
+        "Verification finished. I re-read the modified file, confirmed the change, and the task is complete.",
+      );
+
+      await processInput("Fix the bug in fix.js");
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification is incomplete"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("PASS: Verified by reading the modified file."),
+        ),
+      ).toBe(true);
+    });
   });
 });

@@ -1439,6 +1439,8 @@ let _phaseModelOverride = null; // model ID string for current phase (null = use
 let _planSummary = null; // compressed summary from plan phase
 let _implementSummary = null; // summary of changes from implement phase
 let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
+let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
+let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 
@@ -1577,6 +1579,10 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   _currentPhase = targetPhase;
   _phaseIterations = 0;
   _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
+  if (targetPhase === "verify") {
+    _verifyToolCalls = 0;
+    _verifyCompletionNudges = 0;
+  }
 
   // Reset investigation/edit guards but PRESERVE read-tracking counters.
   // Clearing read/grep/glob counters causes the model to re-investigate files
@@ -2291,6 +2297,8 @@ function _resetSessionTracking() {
   _implementSummary = null;
   _planTodos = [];
   _verifyLoopBack = 0;
+  _verifyToolCalls = 0;
+  _verifyCompletionNudges = 0;
   _planPhaseBlockedCount = 0;
   _detectedCategoryId = null;
   _taskRegistry.clear();
@@ -4439,6 +4447,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               continue;
             }
           } else if (_currentPhase === "verify") {
+            const _hasPass = /\bPASS\b/i.test(_assistantText.slice(0, 500));
             const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
             const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
 
@@ -4460,6 +4469,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 `${C.yellow}  ↳ Verify → implement loop-back #${_verifyLoopBack} (issues found)${C.reset}`,
               );
               continue;
+            }
+            if (!_hasFailed && (!_hasPass || _verifyToolCalls === 0)) {
+              if (_verifyCompletionNudges < 2) {
+                _verifyCompletionNudges++;
+                const need = [];
+                if (_verifyToolCalls === 0) need.push("run at least one verification tool");
+                if (!_hasPass) need.push("end your report with PASS or FAIL");
+                const verifyNudge = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] Verification is incomplete: ${need.join(" and ")}. ` +
+                    "Do not stop yet. Re-read the modified files and/or run tests or linters, then respond with PASS or FAIL.",
+                };
+                conversationMessages.push(verifyNudge);
+                apiMessages.push(verifyNudge);
+                debugLog(
+                  `${C.yellow}  ⚠ Verify phase incomplete — nudging for evidence (${_verifyCompletionNudges}/2)${C.reset}`,
+                );
+                continue;
+              }
+              debugLog(
+                `${C.yellow}  ⚠ Verify phase completion accepted without full markers after ${_verifyCompletionNudges} nudges${C.reset}`,
+              );
             }
             debugLog(
               `${C.green}  ✓ Verification phase complete${_hasFailed ? " (loop-back exhausted)" : " (PASS)"}${C.reset}`,
@@ -5956,6 +5988,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 );
               }
             }
+          }
+          if (_phaseEnabled && _currentPhase === "verify") {
+            _verifyToolCalls++;
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
