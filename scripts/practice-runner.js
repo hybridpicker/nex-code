@@ -207,6 +207,33 @@ function setupEnvironment(worktreePath, projectType) {
   }
 }
 
+// ── Preflight: verify OLLAMA_API_KEY before wasting a practice slot ───────
+let _preflightCache = null;
+function checkOllamaAuth() {
+  if (_preflightCache !== null) return _preflightCache;
+  const key = process.env.OLLAMA_API_KEY;
+  if (!key || key.length < 20) {
+    _preflightCache = { ok: false, reason: "OLLAMA_API_KEY missing or too short in practice-runner env" };
+    return _preflightCache;
+  }
+  try {
+    // HEAD/GET against ollama.com /api/tags — fails fast on 401 without running the agent
+    const out = execSync(
+      `curl -sS -o /dev/null -w "%{http_code}" -m 10 ` +
+        `-H "Authorization: Bearer $OLLAMA_API_KEY" https://ollama.com/api/tags`,
+      { encoding: "utf8", timeout: 15_000, env: process.env },
+    ).trim();
+    if (out === "200") {
+      _preflightCache = { ok: true };
+    } else {
+      _preflightCache = { ok: false, reason: `Ollama Cloud returned HTTP ${out} for /api/tags` };
+    }
+  } catch (e) {
+    _preflightCache = { ok: false, reason: `Ollama Cloud preflight failed: ${e.message.slice(0, 120)}` };
+  }
+  return _preflightCache;
+}
+
 // ── Run task ──────────────────────────────────────────────────────────────
 function runTask(worktreePath, task, projectType) {
   const safetyBlock = BLOCKED_PATTERNS.map((p) => `- NEVER run: ${p}`).join("\n");
@@ -252,19 +279,31 @@ ${safetyBlock}
 - Work ONLY within: ${worktreePath}
 - Do NOT touch system config, DBs, or external services.`;
 
+  // Preflight: don't burn a practice slot if the key is dead
+  const pre = checkOllamaAuth();
+  if (!pre.ok) {
+    log(`Preflight failed: ${pre.reason}`);
+    return { exitCode: 99, elapsed: 0, envError: pre.reason };
+  }
+
   const tmpFile = `/tmp/nex-practice-${Date.now()}.txt`;
   fs.writeFileSync(tmpFile, prompt);
 
   log(`Running task: ${task.description.slice(0, 80)}...`);
   const startTime = Date.now();
 
+  // Capture stdout/stderr so we can detect runtime auth failures that slipped
+  // past the preflight (key revoked mid-run, rate-limit masquerading as 401, …)
+  // while still streaming to the terminal for live observation.
   const res = spawnSync(
     NEX_CODE_BIN,
     ["--prompt-file", tmpFile, "--auto", "--no-auto-orchestrate"],
     {
       cwd: worktreePath,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: TASK_TIMEOUT_MS,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
       env: {
         ...process.env,
         HOME,
@@ -275,15 +314,44 @@ ${safetyBlock}
     },
   );
 
+  const combined = (res.stdout || "") + (res.stderr || "");
+  // Tee to the worker log so we still see what happened
+  process.stdout.write(combined);
+
   try { fs.unlinkSync(tmpFile); } catch {}
 
   const elapsed = Math.round((Date.now() - startTime) / 1000);
-  return { exitCode: res.status, elapsed };
+
+  // Detect auth / network failures that exhausted nex-code's retry budget
+  // without a single tool call ever running.
+  let envError = null;
+  if (/Authentication failed/.test(combined)) {
+    envError = "nex-code reported Authentication failed (Ollama Cloud 401)";
+  } else if (/max retries .* exceeded/.test(combined) && !/tool/.test(combined)) {
+    envError = "nex-code exhausted retries before making any tool calls";
+  }
+
+  return { exitCode: res.status, elapsed, envError };
 }
 
 // ── Score result ──────────────────────────────────────────────────────────
 function scoreResult(worktreePath, task, projectType, runResult) {
   const score = { total: 0, max: 10, breakdown: {} };
+
+  // Env error (auth / network) — do not score; flag the run as broken.
+  // Without this, an untouched worktree whose baseline tests pass would
+  // silently earn 5+ points for "work" the agent never actually did.
+  if (runResult.envError) {
+    score.breakdown.env_error = runResult.envError;
+    score.breakdown.clean_exit = 0;
+    score.breakdown.files_changed = 0;
+    score.breakdown.build = 0;
+    score.breakdown.tests = 0;
+    score.breakdown.diff_quality = 0;
+    score.total = 0;
+    score.grade = "ENV";
+    return score;
+  }
 
   // 1. Did nex-code exit cleanly? (1 point)
   score.breakdown.clean_exit = runResult.exitCode === 0 ? 1 : 0;
@@ -420,6 +488,17 @@ function scoreResult(worktreePath, task, projectType, runResult) {
   }
   score.total += score.breakdown.diff_quality || 0;
 
+  // Guard: baseline tests pass on an untouched worktree even when the agent
+  // did literally nothing — if there are zero file changes, only clean_exit
+  // may count. Everything else would be attributing pre-existing repo health
+  // to the agent.
+  if (!score.breakdown.files_changed) {
+    score.breakdown.build = 0;
+    score.breakdown.tests = 0;
+    score.breakdown.diff_quality = 0;
+    score.total = score.breakdown.clean_exit;
+  }
+
   // Grade
   if (score.total >= 9) score.grade = "A";
   else if (score.total >= 7) score.grade = "B";
@@ -462,6 +541,10 @@ function saveResult(result) {
 // ── Extract insights for worker config ────────────────────────────────────
 function extractInsights(result) {
   const insights = [];
+
+  // Env errors are infrastructure problems, not signal about agent capability.
+  // Don't poison the worker config with them.
+  if (result.score.grade === "ENV") return insights;
 
   if (result.score.total <= 3) {
     insights.push(`nex-code scored ${result.score.total}/10 on ${result.project} (${result.task.category})`);
@@ -543,8 +626,12 @@ function run(args) {
 
   // Score
   const score = scoreResult(worktreePath, task, info.type, runResult);
-  log(`Score: ${score.total}/${score.max} (${score.grade})`);
-  log(`Breakdown: ${JSON.stringify(score.breakdown)}`);
+  if (score.grade === "ENV") {
+    log(`ENV ERROR: ${runResult.envError} — run NOT counted toward practice stats`);
+  } else {
+    log(`Score: ${score.total}/${score.max} (${score.grade})`);
+    log(`Breakdown: ${JSON.stringify(score.breakdown)}`);
+  }
 
   // Save result
   const result = {
@@ -554,6 +641,7 @@ function run(args) {
     task: { description: task.description, category: task.category, difficulty: task.difficulty },
     score,
     elapsed_s: runResult.elapsed,
+    envError: runResult.envError || undefined,
   };
   saveResult(result);
 
