@@ -7,8 +7,9 @@
 #
 #   1. Sync OLLAMA_API_KEY from ~/.nex-code/.env into models-systemd.env
 #      and models.env so a worker restart picks up the rotated key.
-#   2. Pull the latest devel branch so the new practice-runner guards
-#      and the bin/nex-code.js override:true fix are in place.
+#   2. Merge origin/devel into auto-improve so infrastructure fixes
+#      (practice-runner guards, bin/nex-code.js override:true) reach
+#      the running worker without discarding its own commits.
 #   3. Restart nex-worker.service.
 #   4. Verify Ollama Cloud auth with a quiet HTTP code probe.
 #   5. Tail the worker log for the next practice run.
@@ -70,35 +71,36 @@ sync_key_into() {
 sync_key_into "$ENV_SYSTEMD"
 sync_key_into "$ENV_MODELS"
 
-# ── 2. pull latest devel ──────────────────────────────────────────────────
-step "git pull devel in $REPO_DIR"
+# ── 2. merge latest devel into auto-improve ──────────────────────────────
+step "merge origin/devel into auto-improve in $REPO_DIR"
 [[ -d "$REPO_DIR/.git" ]] || die "$REPO_DIR is not a git repo"
 pushd "$REPO_DIR" >/dev/null
 
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
-if [[ "$cur_branch" != "devel" ]]; then
-  warn "current branch is $cur_branch — switching to devel"
-  git checkout devel
+if [[ "$cur_branch" != "auto-improve" ]]; then
+  warn "current branch is $cur_branch — switching to auto-improve"
+  git checkout auto-improve
 fi
 
 dirty=$(git status --porcelain)
 if [[ -n "$dirty" ]]; then
-  warn "worktree dirty — stashing before pull"
+  warn "worktree dirty — stashing before merge"
   git stash push -u -m "fix-auth-and-redeploy $(date +%s)"
   STASHED=1
 else
   STASHED=0
 fi
 
-git fetch origin devel
+git fetch origin devel auto-improve
 before=$(git rev-parse HEAD)
-git reset --hard origin/devel
+git merge --no-edit origin/devel || die "merge conflict — resolve manually in $REPO_DIR"
+git push origin auto-improve
 after=$(git rev-parse HEAD)
 
 if [[ "$before" == "$after" ]]; then
-  ok "already at $after — no new commits"
+  ok "already up to date with origin/devel"
 else
-  ok "updated $before → $after"
+  ok "merged origin/devel: $before → $after"
   git log --oneline "$before..$after"
 fi
 
