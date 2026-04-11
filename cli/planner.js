@@ -355,6 +355,13 @@ Thoroughly investigate before writing a plan:
 - Architecture: How does the current code work? What patterns does it follow?
 - Dependencies: What depends on the code being changed? What might break?
 - Tests: What test coverage exists? What new tests are needed?
+- Retrieval: Which 2-5 files are the highest-confidence targets? Start there instead of broad scans.
+
+# Precision Rules
+- Use the repo map, package scripts, and symbol/definition hints from context before searching blindly.
+- Prefer one focused glob/grep/search followed by narrow reads over many overlapping reads.
+- Each step must name a concrete verification action when applicable (test, lint, typecheck, benchmark, or a specific manual check).
+- If the task is a bug fix, identify the current failing path first and include the smallest safe verification loop.
 
 # Required Plan Format
 After analysis, output a plan in this exact markdown format:
@@ -367,6 +374,7 @@ Numbered list. Each step:
 - **What**: Clear description of the change
 - **Where**: Specific file(s) and line ranges
 - **How**: Implementation approach (edit, create, delete)
+- **Verify**: Exact command or check that proves the step worked
 
 ## Files Affected
 Bullet list of all files that will be modified or created.
