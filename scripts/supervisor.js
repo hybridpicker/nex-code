@@ -293,6 +293,19 @@ function run() {
       `${summary.slice(0, 300)}`,
   );
 
+  // Always sync devel back into auto-improve so the worker stays current.
+  // Claude's prompt asks it to do this, but it sometimes skips the step.
+  log("Syncing devel → auto-improve on server...");
+  const syncResult = ssh(
+    `cd ${SERVER_NEX_DIR} && git fetch origin devel -q && git checkout auto-improve -q && git merge origin/devel --no-edit -q && git push origin auto-improve -q && echo "synced"`,
+    60_000,
+  );
+  if (syncResult.includes("synced")) {
+    log("auto-improve synced with devel.");
+  } else {
+    log(`auto-improve sync skipped or failed: ${syncResult.slice(0, 100)}`);
+  }
+
   log("Done.");
 }
 
