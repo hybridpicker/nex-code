@@ -108,6 +108,15 @@ Every 45 minutes:
 - Tracks which targets have been fixed (avoids re-visiting)
 - Feeds unfixed discoveries back into target selection
 
+**Phantom-target failure mode:** A remembered target is a `file:line` pointer plus a short description captured during an earlier discovery pass. The file may have been edited since then — the line pointer may no longer point at what the description claims. When the agent reads the file and finds "nothing matching the description at that line," it sometimes **invents a plausible rewrite** instead of admitting the target is stale, resulting in a commit that has nothing to do with the remembered finding.
+
+This is mitigated (not prevented) by:
+- The **supervisor's daily review** — Claude Sonnet reads the commit against the original target description and is expected to revert commits that don't match their stated intent.
+- The **whitelist enforcement** (only `cli/**/*.js` edits allowed) and the **additive-only + diff guard** rules, which bound the blast radius to "noise in `cli/`" rather than "arbitrary code anywhere."
+- The **branch separation** — phantom-target commits land on `auto-improve` and cannot reach `devel` until the supervisor validates them.
+
+**What this means for operators:** If you see a worker commit on `auto-improve` whose description doesn't match its diff, or whose commit message reads `fix: improve <file>` with a diff that's a pure addition rather than a fix, treat it as a phantom-target hallucination and either revert it on `auto-improve` or wait for the supervisor to judge it. Observed example: a worker pass on 2026-04-11 had a remembered target `todo in cli/agent.js:1478`, but the agent worked on line 1719 and added a brand-new Express error-handling guideline to `_buildLanguagePrompt()` — an edit with no relation to the recorded target or any actual TODO in the code.
+
 **Safety guards:**
 - Max 20 commits/day (configurable)
 - 5 consecutive failures → pause until supervisor resets
