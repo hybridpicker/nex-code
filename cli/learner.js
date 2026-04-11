@@ -201,6 +201,10 @@ async function learnFromSession(messages) {
   if (result.error)
     return { applied: [], nexAdded: [], summary: null, error: result.error };
 
+  if (!Array.isArray(result.memories)) {
+    return { applied: [], nexAdded: [], summary: null, error: 'Invalid memories format' };
+  }
+
   const applied = applyMemories(result.memories);
   const nexAdded = applyNexAdditions(result.nex_additions);
 
@@ -290,7 +294,7 @@ async function reflectBrain(messages) {
 
 /**
  * Full brain learn cycle: reflect → write documents to .nex/brain/.
- * Only writes documents that don't already exist (no overwrite without user intent).
+ * Appends updates to existing documents with dated sections; creates new documents if they don't exist.
  * @param {Array} messages
  * @returns {Promise<{ written: Array<{name, reason}>, skipped: Array<string>, skip_reason?: string, error?: string }>}
  */
