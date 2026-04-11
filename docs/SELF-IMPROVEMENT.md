@@ -224,6 +224,41 @@ StandardError=append:/home/jarvis/.nex-code/worker.log
 WantedBy=default.target
 ```
 
+### Key Rotation & Auth Recovery
+
+`OLLAMA_API_KEY` lives in **three** files on the worker host, and rotating it is a two-location + one-restart problem:
+
+| File | Read by | When re-read |
+|---|---|---|
+| `~/.nex-code/.env` | `bin/nex-code.js` via dotenv **with `override: true`** — authoritative | On every `nex-code` subprocess launch |
+| `~/.nex-code/models-systemd.env` | `nex-worker.service` via `EnvironmentFile=` | **Only when systemd restarts the service** |
+| `~/.nex-code/models.env` | Non-daemon one-off scripts | On each invocation |
+
+**Precedence inside a spawned `nex-code` subprocess:**
+
+1. Install-dir `.env` (loaded first, non-override — fills blanks only)
+2. `~/.nex-code/.env` (loaded with `override: true` — **wins over ambient `process.env`**)
+3. Cwd `.env` (loaded last, non-override — a user's project `.env` cannot clobber the global config)
+
+The `override: true` on `~/.nex-code/.env` is load-bearing. Without it, a stale `OLLAMA_API_KEY` inherited from the daemon's captured `process.env` silently wins over a freshly-rotated key in the config file, and nex-code subprocesses send the old key forever. That was the root cause of the 2026-04-10 outage.
+
+**Rotation runbook:**
+
+1. Paste the rotated key into `~/.nex-code/.env` on the server. (This is the only file you touch by hand.)
+2. Run `bash scripts/fix-auth-and-redeploy.sh` on the worker host. The script:
+   - Syncs `models-systemd.env` and `models.env` from `~/.nex-code/.env` (never prints the key; uses `umask 077` + tmp files cleaned up on exit)
+   - Pulls latest `devel` / `auto-improve` depending on current branch
+   - `systemctl --user restart nex-worker`
+   - Reads `/proc/<pid>/environ` of the new worker process to confirm the key **length** matches the source (never prints the value)
+   - Probes `https://ollama.com/api/tags` with a silent `curl -o /dev/null -w '%{http_code}'` — expects HTTP 200
+3. If the probe returns 401, the value in `~/.nex-code/.env` is wrong — regenerate at ollama.com/settings/keys and rerun the script.
+4. `tail -f ~/.nex-code/worker.log` — the next pass should make real tool calls. If the practice-runner's preflight trips, you'll see a loud `Preflight failed: Ollama Cloud returned HTTP 401 for /api/tags` followed by `ENV ERROR: ... — run NOT counted toward practice stats` instead of a silent fake score.
+
+**Do not:**
+- Paste the key into `models-systemd.env` or `models.env` directly — let the script be the single source of truth so you can't get them out of sync again.
+- Skip the `systemctl --user restart` — a running daemon does **not** re-read its `EnvironmentFile`, and the `override: true` fix only helps the subprocesses it spawns, not its own `process.env`.
+- Skip the `/api/tags` probe — it distinguishes "key wrong" from "network flaky" without waiting 45 min for the next practice pass.
+
 ### MacBook Setup
 
 ```
@@ -390,16 +425,26 @@ Every 5th worker pass is a **practice run** instead of a self-improvement pass:
 1. **Pick** a random project + task from `scripts/practice-tasks.json`
 2. **Isolate** via git worktree in `~/playground/<project>-<timestamp>`
 3. **Setup** environment (npm install / pip venv)
-4. **Run** `nex-code --auto --no-auto-orchestrate` with `NEX_MODEL=gemma4:31b` (single agent, no decomposition)
-5. **Score** the result (0-10):
+4. **Preflight** Ollama Cloud `/api/tags` — if it doesn't return HTTP 200, skip the run entirely with grade `ENV` (see "Scoring Guards" below). Prevents burning a practice slot on a dead API key.
+5. **Run** `nex-code --auto --no-auto-orchestrate` with `NEX_MODEL=gemma4:31b` (single agent, no decomposition). stdout/stderr is captured and scanned for `Authentication failed` / `max retries exceeded` as a second-line defense against a key revoked mid-run.
+6. **Score** the result (0-10):
    - Clean exit: 1pt
    - Relevant files changed: 2pt (2 if files match task keywords, 1 if any files changed)
    - Build/syntax OK: 2pt
    - Tests pass: 3pt (partial credit: 2pt if more pass than fail, 1pt if some pass)
    - Diff quality: 2pt (checks for substantive changes, not just logs/comments)
-6. **Log** results to `~/.nex-code/practice-results.json`
-7. **Cleanup** worktree (production untouched)
-8. **Feedback** weak areas to improvement config
+7. **Log** results to `~/.nex-code/practice-results.json`
+8. **Cleanup** worktree (production untouched)
+9. **Feedback** weak areas to improvement config — `ENV` runs are excluded so infrastructure failures don't poison worker config
+
+### Scoring Guards
+
+Two guards prevent silent failure modes where the agent does no real work but still earns points from pre-existing repo state:
+
+- **`files_changed == 0` → total capped at `clean_exit`.** Baseline tests pass on an untouched worktree. Without this guard, an agent that never made a single tool call could score 5-6/10 just from the unchanged repo's existing test health. Any run with zero diff gets at most 1pt (for clean exit), graded F. The `build`, `tests`, and `diff_quality` sub-scores are zeroed.
+- **Env error → grade `ENV`, total `0`, `envError` field saved.** If the preflight fails or the captured output shows `Authentication failed` / `max retries exceeded`, the run is flagged as broken infrastructure rather than scored. These runs appear in `practice-results.json` with `score.grade: "ENV"` and a short `score.breakdown.env_error` string, and they are **not** counted toward averages or fed into the worker's "weak areas" config.
+
+**Why this matters:** On 2026-04-10, a rotated Ollama Cloud key was written to `~/.nex-code/.env` but not propagated to `models-systemd.env`. The running `nex-worker` daemon kept its pre-rotation snapshot and every practice run hit 401 for 24 hours. Baseline Django tests on untouched worktrees passed, so the old scoreResult handed out `6/10 C` grades for runs where nex-code never made a tool call. Both guards landed on 2026-04-11 to make that failure mode impossible to hide.
 
 **Why solo agent (no orchestrator):** Earlier runs used the orchestrator which decomposed each task into 5 sub-agents. Result: every sub-agent assumed another would do the edit, and `files_changed = 0` on every Django run. Solo mode forces ONE agent to take full responsibility for the edit.
 
