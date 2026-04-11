@@ -514,6 +514,38 @@ const SENSITIVE_PATHS = [
   /\.kube\/config/,
 ];
 
+function getWorkspaceRoot() {
+  const cwd = process.cwd();
+  try {
+    return fsSync.realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
+  }
+}
+
+function isWithinRoot(candidate, root) {
+  const rel = path.relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function getCanonicalPathForPolicy(resolved) {
+  if (fsSync.existsSync(resolved)) {
+    return fsSync.realpathSync(resolved);
+  }
+
+  let current = path.dirname(resolved);
+  while (current && current !== path.dirname(current)) {
+    if (fsSync.existsSync(current)) {
+      const realParent = fsSync.realpathSync(current);
+      const suffix = path.relative(current, resolved);
+      return path.resolve(realParent, suffix);
+    }
+    current = path.dirname(current);
+  }
+
+  return resolved;
+}
+
 function resolvePath(p) {
   const resolved = path.isAbsolute(p)
     ? path.resolve(p)
@@ -522,7 +554,55 @@ function resolvePath(p) {
   for (const pat of SENSITIVE_PATHS) {
     if (pat.test(resolved)) return null;
   }
-  return resolved;
+
+  const canonical = getCanonicalPathForPolicy(resolved);
+  if (!isWithinRoot(canonical, getWorkspaceRoot())) return null;
+
+  return canonical;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function isSafeUnixUserOrGroup(value) {
+  return typeof value === "string" && /^[a-z_][a-z0-9_-]{0,31}\$?$/i.test(value);
+}
+
+function isSafeSystemdUnit(value) {
+  return (
+    typeof value === "string" &&
+    /^[a-zA-Z0-9@_.:-]+(?:\.service)?$/.test(value)
+  );
+}
+
+function isSafePackageName(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9+_.:@/-]+$/.test(value);
+}
+
+function isSafePortSpec(value) {
+  return typeof value === "string" && /^\d{1,5}(?:\/(?:tcp|udp))?$/i.test(value);
+}
+
+function isSafeSignal(value) {
+  return (
+    typeof value === "string" &&
+    /^(?:SIG[A-Z0-9]+|[A-Z0-9]+|\d{1,2})$/.test(value)
+  );
+}
+
+function validateUnixUser(value, label = "user") {
+  if (!isSafeUnixUserOrGroup(value)) {
+    return `ERROR: ${label} contains unsafe characters`;
+  }
+  return null;
+}
+
+function validateSystemdUnit(value, label = "service") {
+  if (!isSafeSystemdUnit(value)) {
+    return `ERROR: ${label} contains unsafe characters`;
+  }
+  return null;
 }
 
 // ─── Tool Definitions (Ollama format) ─────────────────────────
@@ -4206,7 +4286,7 @@ async function _executeToolInner(name, args, options = {}) {
         [
           ...sshKey,
           "-o",
-          "StrictHostKeyChecking=accept-new",
+          "StrictHostKeyChecking=yes",
           "-o",
           "ConnectTimeout=10",
           target,
@@ -4226,6 +4306,8 @@ async function _executeToolInner(name, args, options = {}) {
     case "service_manage": {
       if (!args.service) return "ERROR: service is required";
       if (!args.action) return "ERROR: action is required";
+      const serviceValidation = validateSystemdUnit(args.service);
+      if (serviceValidation) return serviceValidation;
 
       const validActions = [
         "status",
@@ -4267,7 +4349,10 @@ async function _executeToolInner(name, args, options = {}) {
         if (!ok) return "CANCELLED: User declined service action.";
       }
 
-      const cmd = `systemctl ${args.action} ${args.service}`;
+      const serviceUnit = args.service.includes(".")
+        ? args.service
+        : `${args.service}.service`;
+      const cmd = `systemctl ${args.action} ${shellQuote(serviceUnit)}`;
 
       if (isLocal) {
         // Local execution
@@ -4306,14 +4391,19 @@ async function _executeToolInner(name, args, options = {}) {
 
     case "service_logs": {
       if (!args.service) return "ERROR: service is required";
+      const serviceValidation = validateSystemdUnit(args.service);
+      if (serviceValidation) return serviceValidation;
 
       const isLocal =
         !args.server || args.server === "local" || args.server === "localhost";
       const lines = args.lines || 50;
-      const sinceFlag = args.since ? `--since "${args.since}"` : "";
+      const serviceUnit = args.service.includes(".")
+        ? args.service
+        : `${args.service}.service`;
+      const sinceFlag = args.since ? `--since ${shellQuote(args.since)}` : "";
       const followFlag = args.follow ? "-f" : "";
       const cmd =
-        `journalctl -u ${args.service} -n ${lines} ${sinceFlag} ${followFlag} --no-pager`
+        `journalctl -u ${shellQuote(serviceUnit)} -n ${lines} ${sinceFlag} ${followFlag} --no-pager`
           .trim()
           .replace(/\s+/g, " ");
 
@@ -5152,8 +5242,9 @@ async function _executeToolInner(name, args, options = {}) {
 
         case "disk_usage": {
           const p = args.path || "/";
+          const quotedPath = shellQuote(p);
           // Use --max-depth=1 via du -d1 for safety on large filesystems; -x to stay on same fs
-          const cmd = `df -h ${p}; echo '--- Top subdirs ---'; du -d1 -x -h ${p} 2>/dev/null | sort -rh | head -20`;
+          const cmd = `df -h ${quotedPath}; echo '--- Top subdirs ---'; du -d1 -x -h ${quotedPath} 2>/dev/null | sort -rh | head -20`;
           const { out, exitCode } = await sysRun(cmd, 30000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
         }
@@ -5186,7 +5277,11 @@ async function _executeToolInner(name, args, options = {}) {
               ? "apt"
               : null;
           if (!pm) return "ERROR: No supported package manager found (dnf/apt)";
-          const pkgList = (args.packages || []).join(" ");
+          const packages = args.packages || [];
+          if (!packages.every(isSafePackageName)) {
+            return "ERROR: package names contain unsafe characters";
+          }
+          const pkgList = packages.map(shellQuote).join(" ");
           let pkgCmd;
           switch (args.package_action) {
             case "list":
@@ -5257,24 +5352,36 @@ async function _executeToolInner(name, args, options = {}) {
             case "info": {
               if (!args.user)
                 return "ERROR: user is required for user_action=info";
-              const cmd = `id ${args.user} && echo '--- Groups ---' && groups ${args.user} && echo '--- Last login ---' && lastlog -u ${args.user} 2>/dev/null`;
+              const userValidation = validateUnixUser(args.user);
+              if (userValidation) return userValidation;
+              const quotedUser = shellQuote(args.user);
+              const cmd = `id ${quotedUser} && echo '--- Groups ---' && groups ${quotedUser} && echo '--- Last login ---' && lastlog -u ${quotedUser} 2>/dev/null`;
               const { out, exitCode } = await sysRun(cmd, 10000);
               return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
             }
             case "create": {
               if (!args.user)
                 return "ERROR: user is required for user_action=create";
+              const userValidation = validateUnixUser(args.user);
+              if (userValidation) return userValidation;
+              if (!(args.groups || []).every(isSafeUnixUserOrGroup)) {
+                return "ERROR: groups contain unsafe characters";
+              }
               const groupFlags = (args.groups || [])
-                .map((g) => `-G ${g}`)
+                .map((g) => `-G ${shellQuote(g)}`)
                 .join(" ");
-              const cmd = `useradd -m ${groupFlags} ${args.user} && echo "User ${args.user} created"`;
+              const quotedUser = shellQuote(args.user);
+              const cmd = `useradd -m ${groupFlags} ${quotedUser} && echo "User ${args.user} created"`;
               const { out, exitCode } = await sysRun(cmd, 15000);
               return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
             }
             case "delete": {
               if (!args.user)
                 return "ERROR: user is required for user_action=delete";
-              const cmd = `userdel -r ${args.user} && echo "User ${args.user} deleted"`;
+              const userValidation = validateUnixUser(args.user);
+              if (userValidation) return userValidation;
+              const quotedUser = shellQuote(args.user);
+              const cmd = `userdel -r ${quotedUser} && echo "User ${args.user} deleted"`;
               const { out, exitCode } = await sysRun(cmd, 15000);
               return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
             }
@@ -5283,8 +5390,13 @@ async function _executeToolInner(name, args, options = {}) {
                 return "ERROR: user is required for user_action=add_ssh_key";
               if (!args.ssh_key)
                 return "ERROR: ssh_key is required for user_action=add_ssh_key";
-              const escapedKey = args.ssh_key.replace(/'/g, "'\\''");
-              const cmd = `mkdir -p /home/${args.user}/.ssh && chmod 700 /home/${args.user}/.ssh && echo '${escapedKey}' >> /home/${args.user}/.ssh/authorized_keys && chmod 600 /home/${args.user}/.ssh/authorized_keys && chown -R ${args.user}:${args.user} /home/${args.user}/.ssh && echo "SSH key added for ${args.user}"`;
+              const userValidation = validateUnixUser(args.user);
+              if (userValidation) return userValidation;
+              const homeDir = `/home/${args.user}`;
+              const sshDir = `${homeDir}/.ssh`;
+              const authKeys = `${sshDir}/authorized_keys`;
+              const quotedUser = shellQuote(args.user);
+              const cmd = `mkdir -p ${shellQuote(sshDir)} && chmod 700 ${shellQuote(sshDir)} && printf '%s\n' ${shellQuote(args.ssh_key)} >> ${shellQuote(authKeys)} && chmod 600 ${shellQuote(authKeys)} && chown -R ${shellQuote(`${args.user}:${args.user}`)} ${shellQuote(sshDir)} && echo "SSH key added for ${args.user}"`;
               const { out, exitCode } = await sysRun(cmd, 15000);
               return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
             }
@@ -5318,31 +5430,37 @@ async function _executeToolInner(name, args, options = {}) {
             case "allow":
               if (!args.port)
                 return 'ERROR: port is required for firewall allow (e.g. "80/tcp")';
+              if (!isSafePortSpec(args.port))
+                return "ERROR: port contains unsafe characters";
               fwCmd =
                 fw === "firewalld"
                   ? `firewall-cmd --permanent --add-port=${args.port} && firewall-cmd --reload`
                   : fw === "ufw"
-                    ? `ufw allow ${args.port}`
+                    ? `ufw allow ${shellQuote(args.port)}`
                     : `iptables -A INPUT -p ${args.port.includes("/") ? args.port.split("/")[1] : "tcp"} --dport ${args.port.split("/")[0]} -j ACCEPT`;
               break;
             case "deny":
               if (!args.port)
                 return "ERROR: port is required for firewall deny";
+              if (!isSafePortSpec(args.port))
+                return "ERROR: port contains unsafe characters";
               fwCmd =
                 fw === "firewalld"
                   ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
                   : fw === "ufw"
-                    ? `ufw deny ${args.port}`
+                    ? `ufw deny ${shellQuote(args.port)}`
                     : `iptables -A INPUT -p ${args.port.includes("/") ? args.port.split("/")[1] : "tcp"} --dport ${args.port.split("/")[0]} -j DROP`;
               break;
             case "remove":
               if (!args.port)
                 return "ERROR: port is required for firewall remove";
+              if (!isSafePortSpec(args.port))
+                return "ERROR: port contains unsafe characters";
               fwCmd =
                 fw === "firewalld"
                   ? `firewall-cmd --permanent --remove-port=${args.port} && firewall-cmd --reload`
                   : fw === "ufw"
-                    ? `ufw delete allow ${args.port}`
+                    ? `ufw delete allow ${shellQuote(args.port)}`
                     : `iptables -D INPUT -p ${args.port.includes("/") ? args.port.split("/")[1] : "tcp"} --dport ${args.port.split("/")[0]} -j ACCEPT 2>/dev/null || true`;
               break;
             case "reload":
@@ -5365,7 +5483,11 @@ async function _executeToolInner(name, args, options = {}) {
         case "cron": {
           if (!args.cron_action)
             return "ERROR: cron_action is required for action=cron";
-          const cronFlag = args.user ? `-u ${args.user}` : "";
+          if (args.user) {
+            const userValidation = validateUnixUser(args.user);
+            if (userValidation) return userValidation;
+          }
+          const cronFlag = args.user ? `-u ${shellQuote(args.user)}` : "";
           switch (args.cron_action) {
             case "list": {
               const cmd = `crontab ${cronFlag} -l 2>/dev/null || echo '(no crontab for ${args.user || "current user"})'`;
@@ -5378,7 +5500,7 @@ async function _executeToolInner(name, args, options = {}) {
               if (!args.command)
                 return "ERROR: command is required for cron add";
               const entry = `${args.schedule} ${args.command}`;
-              const cmd = `(crontab ${cronFlag} -l 2>/dev/null; echo "${entry}") | crontab ${cronFlag} - && echo "Cron entry added: ${entry}"`;
+              const cmd = `(crontab ${cronFlag} -l 2>/dev/null; printf '%s\n' ${shellQuote(entry)}) | crontab ${cronFlag} - && echo "Cron entry added: ${entry}"`;
               const { out, exitCode } = await sysRun(cmd, 15000);
               return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;
             }
@@ -5404,19 +5526,20 @@ async function _executeToolInner(name, args, options = {}) {
           // Build a script that: 1) reads the cert (file or live TLS), 2) extracts dates, 3) calculates days remaining
           let sslCmd;
           if (args.cert_path) {
+            const quotedCertPath = shellQuote(args.cert_path);
             sslCmd = `
-CERT="${args.cert_path}"
+CERT=${quotedCertPath}
 openssl x509 -in "$CERT" -noout -subject -issuer -startdate -enddate -ext subjectAltName 2>&1 && \
 EXPIRY=$(openssl x509 -in "$CERT" -noout -enddate 2>/dev/null | cut -d= -f2) && \
 DAYS=$(( ( $(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %T %Y %Z" "$EXPIRY" +%s 2>/dev/null) - $(date +%s) ) / 86400 )) && \
 echo "Days until expiry: $DAYS"
 `.trim();
           } else {
-            const domain = args.domain;
+            const domain = shellQuote(args.domain);
             // 1st try: read cert directly from Let's Encrypt path on server
             // 2nd try: live TLS probe via openssl s_client
             sslCmd = `
-DOMAIN="${domain}"
+DOMAIN=${domain}
 LECP="/etc/letsencrypt/live/$DOMAIN/cert.pem"
 if [ -f "$LECP" ]; then
   echo "Source: Let's Encrypt $LECP"
@@ -5451,7 +5574,7 @@ fi
         case "log_tail": {
           if (!args.path) return "ERROR: path is required for log_tail";
           const lines = args.lines || 100;
-          const cmd = `tail -n ${lines} ${args.path} 2>&1`;
+          const cmd = `tail -n ${lines} ${shellQuote(args.path)} 2>&1`;
           const { out, exitCode } = await sysRun(cmd, 15000);
           return exitCode !== 0
             ? `EXIT ${exitCode}\n${out}`
@@ -5462,7 +5585,7 @@ fi
           const p = args.path || "/";
           const limit = args.limit || 20;
           const minSize = args.min_size || "100M";
-          const cmd = `find ${p} -xdev -type f -size +${minSize} 2>/dev/null | xargs du -sh 2>/dev/null | sort -rh | head -${limit}`;
+          const cmd = `find ${shellQuote(p)} -xdev -type f -size +${shellQuote(minSize)} 2>/dev/null | xargs du -sh 2>/dev/null | sort -rh | head -${limit}`;
           const { out, exitCode } = await sysRun(cmd, 60000);
           return exitCode !== 0
             ? `EXIT ${exitCode}\n${out}`
@@ -5474,6 +5597,13 @@ fi
             return "ERROR: service_action is required for action=service";
           if (args.service_action !== "list_failed" && !args.service_name)
             return "ERROR: service_name is required (except for list_failed)";
+          if (args.service_name) {
+            const serviceValidation = validateSystemdUnit(
+              args.service_name,
+              "service_name",
+            );
+            if (serviceValidation) return serviceValidation;
+          }
           const unit = args.service_name
             ? args.service_name.includes(".")
               ? args.service_name
@@ -5525,13 +5655,16 @@ fi
           if (!args.pid && !args.process_name)
             return "ERROR: pid or process_name is required for kill_process";
           const sig = args.signal || "SIGTERM";
+          if (!isSafeSignal(sig)) return "ERROR: signal contains unsafe characters";
           let killCmd;
           if (args.pid) {
             // Kill by PID — show process info first for context
+            if (!/^\d+$/.test(String(args.pid)))
+              return "ERROR: pid must be numeric";
             killCmd = `ps -p ${args.pid} -o pid,user,%cpu,%mem,etime,cmd 2>/dev/null && kill -${sig} ${args.pid} && echo "Sent ${sig} to PID ${args.pid}"`;
           } else {
             // Kill by name via pkill
-            killCmd = `pgrep -a "${args.process_name}" 2>/dev/null | head -5 && pkill -${sig} "${args.process_name}" && echo "Sent ${sig} to all '${args.process_name}' processes"`;
+            killCmd = `pgrep -a ${shellQuote(args.process_name)} 2>/dev/null | head -5 && pkill -${sig} ${shellQuote(args.process_name)} && echo "Sent ${sig} to all '${args.process_name}' processes"`;
           }
           const { out, exitCode } = await sysRun(killCmd, 15000);
           return exitCode !== 0 ? `EXIT ${exitCode}\n${out}` : out;

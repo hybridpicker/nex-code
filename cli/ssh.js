@@ -111,7 +111,7 @@ function buildSSHArgs(profile) {
     "-o",
     "ConnectTimeout=15",
     "-o",
-    "StrictHostKeyChecking=accept-new",
+    "StrictHostKeyChecking=yes",
     "-o",
     "ServerAliveInterval=30",
   ];
@@ -155,7 +155,7 @@ function buildSCPArgs(profile) {
     "-o",
     "ConnectTimeout=15",
     "-o",
-    "StrictHostKeyChecking=accept-new",
+    "StrictHostKeyChecking=yes",
     "-r", // recursive by default (handles files + dirs)
   ];
 

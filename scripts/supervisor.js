@@ -41,7 +41,7 @@ function ssh(cmd, timeout = 30_000, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return execSync(
-        `ssh -o ConnectTimeout=15 -o BatchMode=yes -o ServerAliveInterval=10 ${SERVER} "${cmd.replace(/"/g, '\\"')}"`,
+        `ssh -o ConnectTimeout=15 -o BatchMode=yes -o ServerAliveInterval=10 ${SERVER} "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$')}"`,
         { encoding: "utf8", timeout },
       ).trim();
     } catch (e) {
