@@ -451,6 +451,24 @@ describe("tools.js", () => {
       expect(result).not.toContain("node_modules");
       expect(result).not.toContain(".git");
     });
+
+    it("prioritizes stronger path matches over newer files", async () => {
+      const exact = path.join(tmpDir, "agent.js");
+      const noisyDir = path.join(tmpDir, "nested");
+      const noisy = path.join(noisyDir, "agent-helper.js");
+      fs.mkdirSync(noisyDir);
+      fs.writeFileSync(exact, "");
+      fs.writeFileSync(noisy, "");
+      const oldTime = new Date(2020, 0, 1);
+      fs.utimesSync(exact, oldTime, oldTime);
+
+      const result = await executeTool("glob", {
+        pattern: "agent.js",
+        path: tmpDir,
+      });
+      const lines = result.split("\n");
+      expect(lines[0]).toContain("agent.js");
+    });
   });
 
   // ─── grep tool ──────────────────────────────────────────────
@@ -503,6 +521,24 @@ describe("tools.js", () => {
         path: tmpDir,
       });
       expect(result).toContain("nex-code");
+    });
+
+    it("prioritizes definition-like matches over incidental string matches", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "defs.js"),
+        "function runApp() {\n  return true;\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "notes.js"),
+        'const msg = "runApp should maybe exist";\n',
+      );
+
+      const result = await executeTool("grep", {
+        pattern: "runApp",
+        path: tmpDir,
+      });
+      const lines = result.split("\n");
+      expect(lines[0]).toContain("defs.js");
     });
   });
 

@@ -289,6 +289,10 @@ const {
   setConversationMessages,
   setAbortSignalGetter,
   setMaxIterations,
+  _inferVerificationCommands,
+  _inferRelevantTests,
+  _inferSymbolTargets,
+  _buildSymbolHintBlock,
 } = require("../cli/agent");
 const {
   callStream,
@@ -2154,6 +2158,137 @@ describe("agent.js", () => {
       const prompt = await agent.buildSystemPrompt();
       expect(prompt).toContain("Nex Code");
       expect(prompt).toContain("WORKING DIRECTORY");
+    });
+  });
+
+  describe("_inferVerificationCommands", () => {
+    it("prefers package scripts and ts-focused checks for TS edits", () => {
+      const fs = require("fs");
+      const path = require("path");
+      const pkgPath = path.join(process.cwd(), "package.json");
+      const existsSpy = jest.spyOn(fs, "existsSync").mockImplementation((candidate) => {
+        if (candidate === pkgPath) return true;
+        return false;
+      });
+      const readSpy = jest.spyOn(fs, "readFileSync").mockImplementation((candidate) => {
+        if (candidate === pkgPath) {
+          return JSON.stringify({
+            name: "agent-test",
+            scripts: {
+              test: "jest",
+              lint: "eslint .",
+              typecheck: "tsc --noEmit",
+            },
+          });
+        }
+        throw new Error(`unexpected read: ${candidate}`);
+      });
+
+      try {
+        const commands = _inferVerificationCommands(new Set(["src/app.ts"]));
+        expect(commands).toContain("npm test");
+        expect(commands).toContain("npm run lint");
+        expect(commands).toContain("npm run typecheck");
+      } finally {
+        existsSpy.mockRestore();
+        readSpy.mockRestore();
+      }
+    });
+
+    it("adds targeted jest commands for related tests", () => {
+      const fs = require("fs");
+      const path = require("path");
+      const pkgPath = path.join(process.cwd(), "package.json");
+      const existsSpy = jest.spyOn(fs, "existsSync").mockImplementation((candidate) => {
+        if (candidate === pkgPath) return true;
+        if (String(candidate).includes("jest.config")) return true;
+        return false;
+      });
+      const readSpy = jest.spyOn(fs, "readFileSync").mockImplementation((candidate) => {
+        if (candidate === pkgPath) {
+          return JSON.stringify({
+            name: "agent-test",
+            scripts: { test: "jest", lint: "eslint ." },
+          });
+        }
+        throw new Error(`unexpected read: ${candidate}`);
+      });
+      const indexEngine = require("../cli/index-engine");
+      const indexSpy = jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
+        "src/app.ts",
+        "tests/app.test.js",
+      ]);
+
+      try {
+        const commands = _inferVerificationCommands(new Set(["src/app.ts"]));
+        expect(commands.some((cmd) => cmd.includes("npx jest --runInBand tests/app.test.js"))).toBe(true);
+      } finally {
+        existsSpy.mockRestore();
+        readSpy.mockRestore();
+        indexSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("_inferRelevantTests", () => {
+    it("maps modified files to matching tests by basename", () => {
+      const indexEngine = require("../cli/index-engine");
+      jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
+        "src/app.ts",
+        "tests/app.test.js",
+        "tests/other.test.js",
+      ]);
+
+      const tests = _inferRelevantTests(new Set(["src/app.ts"]));
+      expect(tests).toContain("tests/app.test.js");
+      indexEngine.getFileIndex.mockRestore();
+    });
+  });
+
+  describe("_inferSymbolTargets", () => {
+    it("returns likely definitions for task identifiers", async () => {
+      const indexEngine = require("../cli/index-engine");
+      const spy = jest.spyOn(indexEngine, "searchContentIndex").mockResolvedValue([
+        { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
+      ]);
+
+      const hits = await _inferSymbolTargets("fix runApp timeout handling");
+      expect(hits[0]).toEqual(
+        expect.objectContaining({ file: "cli/app.js", name: "runApp", line: 12 }),
+      );
+      spy.mockRestore();
+    });
+  });
+
+  describe("_buildSymbolHintBlock", () => {
+    it("includes related follow-up files when import graph neighbors exist", async () => {
+      const indexEngine = require("../cli/index-engine");
+      const searchSpy = jest.spyOn(indexEngine, "searchContentIndex").mockResolvedValue([
+        { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
+      ]);
+      const relatedSpy = jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue([
+        "cli/router.js",
+        "tests/app.test.js",
+      ]);
+
+      try {
+        const block = await _buildSymbolHintBlock("fix runApp timeout handling");
+        expect(block).toContain("Likely symbol targets:");
+        expect(block).toContain("read_file(path='cli/app.js'");
+        expect(block).toContain("Follow-up files: cli/router.js, tests/app.test.js");
+      } finally {
+        searchSpy.mockRestore();
+        relatedSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("symbol hint formatting", () => {
+    it("buildSystemPrompt path remains stable with symbol-aware additions", async () => {
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      const prompt = await agent.buildSystemPrompt();
+      expect(prompt).toContain("Prefer symbol-aware, high-signal retrieval");
     });
   });
 
