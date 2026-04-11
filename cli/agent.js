@@ -2098,6 +2098,7 @@ When a tool call returns ERROR — follow these exact recovery sequences:
 **After 2 consecutive failures at the same operation** → stop and explain the issue to the user.
 
 # Git Workflow
+- Always verify current branch before committing
 
 - Before committing, review changes with git_diff. Write messages that explain WHY, not WHAT.
 - Stage specific files rather than git add -A to avoid committing unrelated changes.
