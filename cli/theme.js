@@ -90,7 +90,7 @@ function _readCache(key) {
     const raw = fs.readFileSync(_cacheFile(), "utf8");
     const obj = JSON.parse(raw);
     if (obj && typeof obj[key] === "boolean") return obj[key];
-  } catch (e) {}
+  } catch (e) { console.error("readThemeCache failed:", e.message); }
   return null;
 }
 
