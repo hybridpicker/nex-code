@@ -140,6 +140,14 @@ DEFAULT_PROVIDER=ollama
 DEFAULT_MODEL=devstral-2:123b
 ```
 
+**Env file precedence.** nex-code loads `.env` from three places in this order:
+
+1. Install directory `.env` — non-override, fills blanks only
+2. `~/.nex-code/.env` — **override**, wins over ambient `process.env`
+3. Current working directory `.env` — non-override, cannot clobber the global config
+
+`~/.nex-code/.env` is the authoritative location for long-lived config like `OLLAMA_API_KEY`. The `override:true` on that file exists so that a rotated key written there takes effect on the next `nex-code` launch, even when nex-code is spawned by a long-running parent process (systemd daemon, supervisor agent, test runner) whose own environment was captured earlier and is now stale. If you rotate an API key, update `~/.nex-code/.env` **and** restart any long-running daemon that spawns nex-code — the `override:true` fixes subprocess launches but cannot refresh the parent's own captured `process.env`.
+
 **Install from source:**
 
 ```bash
