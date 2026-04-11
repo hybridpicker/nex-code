@@ -1248,7 +1248,7 @@ class MyListView(ListAPIView):
 \`\`\`python
 # \u2705 CORRECT - Fail immediately if environment variable missing
 SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = os.environ['DEBUG'] == 'True'
 
 # \u274C WRONG - Insecure defaults allow production deployment with dev settings
 SECRET_KEY = os.getenv('SECRET_KEY', 'insecure-dev-key')
@@ -1479,7 +1479,7 @@ ${n}`}];try{let i=((await C0(s,[],{temperature:0,maxTokens:800})).content||"").t
 `)?o+i:o+`
 `+i:i)}return s.length>0&&(o.endsWith(`
 `)||(o+=`
-`),OA(e,o)),s})}async function IA(t){let e=await O0(t);if(e.skipped)return{applied:[],nexAdded:[],summary:null,skipped:!0};if(e.error)return{applied:[],nexAdded:[],summary:null,error:e.error};let n=M0(e.memories),s=N0(e.nex_additions);return{applied:n,nexAdded:s,summary:e.summary}}var DA=`You are a knowledge base agent for an AI coding assistant called nex-code.
+`),OA(e,o)),s})}async function IA(t){let e=await O0(t);if(e.skipped)return{applied:[],nexAdded:[],summary:null,skipped:!0};if(e.error)return{applied:[],nexAdded:[],summary:null,error:e.error};if(!Array.isArray(e.memories))return{applied:[],nexAdded:[],summary:null,error:"Invalid memories format"};let n=M0(e.memories),s=N0(e.nex_additions);return{applied:n,nexAdded:s,summary:e.summary}}var DA=`You are a knowledge base agent for an AI coding assistant called nex-code.
 Analyze this conversation and extract knowledge worth persisting in the project knowledge base (.nex/brain/).
 
 Return ONLY valid JSON in this exact format:
@@ -1895,7 +1895,7 @@ press Ctrl+C to stop
 `);let a=[];for(let u of o.triggers){let d=null;switch(u.on){case"file-change":d=bM(u,o,n);break;case"git-commit":d=_M(u,o,n);break;case"schedule":d=xM(u,o);break;default:process.stderr.write(`[daemon] unknown trigger type: ${u.on}
 `)}d&&a.push(d)}let c=()=>{process.stdout.write(`
 [daemon] shutting down...
-`);for(let u of a)try{u&&typeof u.close=="function"?u.close():u&&clearInterval(u)}catch{}process.exit(0)};return process.on("SIGINT",c),process.on("SIGTERM",c),new Promise(()=>{})}Dw.exports={startDaemon:SM,parseCronToMs:Pw,expandTemplate:af,appendLog:Lw,notifyMatrix:Iw}});var Fw=X((DP,qw)=>{qw.exports=sf()});var Pc=require("path"),kM=require("os");require("dotenv").config({path:Pc.join(__dirname,"..",".env")});require("dotenv").config({path:Pc.join(kM.homedir(),".nex-code",".env")});require("dotenv").config();var $e=process.argv.slice(2);($e.includes("--help")||$e.includes("-h"))&&(console.log(`Usage: nex-code [options]
+`);for(let u of a)try{u&&typeof u.close=="function"?u.close():u&&clearInterval(u)}catch{}process.exit(0)};return process.on("SIGINT",c),process.on("SIGTERM",c),new Promise(()=>{})}Dw.exports={startDaemon:SM,parseCronToMs:Pw,expandTemplate:af,appendLog:Lw,notifyMatrix:Iw}});var Fw=X((DP,qw)=>{qw.exports=sf()});var Pc=require("path"),kM=require("os");require("dotenv").config({path:Pc.join(__dirname,"..",".env")});require("dotenv").config({path:Pc.join(kM.homedir(),".nex-code",".env"),override:!0});require("dotenv").config();var $e=process.argv.slice(2);($e.includes("--help")||$e.includes("-h"))&&(console.log(`Usage: nex-code [options]
 
 Options:
   --task <prompt>          Run a single task and exit (headless mode)
