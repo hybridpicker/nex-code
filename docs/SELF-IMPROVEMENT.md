@@ -151,6 +151,7 @@ Daily at 10:00:
    - **Stuck worker** → updates config with specific instructions
 4. Updates `improvement-config.json` on the server (with `updated_at` timestamp — worker uses this to detect staleness)
 5. Sends Matrix notification with summary
+6. **Auto-syncs devel → auto-improve** (unconditional, in `supervisor.js` after Claude exits): merges `origin/devel` into `auto-improve` and pushes so the worker always runs on current devel without manual intervention
 
 **CLI invocation note:** Earlier versions used `--prompt-file` which doesn't exist in Claude Code CLI. Fixed 2026-04-09 to pipe the prompt via stdin with `-p` (print mode). Without this fix the supervisor would silently fail every day.
 
