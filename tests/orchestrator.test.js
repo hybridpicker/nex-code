@@ -58,6 +58,8 @@ const {
   DEFAULT_MAX_SUBTASKS,
   runOrchestrated,
   withRetry,
+  _shouldRunFollowUpReview,
+  _hasMaterialReviewFindings,
 } = require("../cli/orchestrator");
 
 // Suppress console output during tests
@@ -639,7 +641,9 @@ describe("runOrchestrated", () => {
     ]);
     // 2. Each sub-agent runs and finishes immediately
     mockAgentDone("Fixed login");
+    mockAgentDone("No material findings\nResidual risk: broader integration coverage");
     mockAgentDone("Fixed search");
+    mockAgentDone("No material findings\nResidual risk: search ranking edge cases");
     // 3. Synthesize
     mockSynthesize({
       summary: "Fixed both bugs",
@@ -705,6 +709,7 @@ describe("runOrchestrated", () => {
       { id: "t1", task: "Task 1", scope: [], estimatedCalls: 3, priority: 1 },
     ]);
     mockAgentDone("Done");
+    mockAgentDone("No material findings\nResidual risk: none");
     mockSynthesize({
       summary: "Done",
       conflicts: [],
@@ -723,6 +728,7 @@ describe("runOrchestrated", () => {
       { id: "t1", task: "Task 1", scope: [], estimatedCalls: 3, priority: 1 },
     ]);
     mockAgentDone("Done");
+    mockAgentDone("No material findings\nResidual risk: none");
     // Synthesize fails
     callStream.mockRejectedValueOnce(new Error("synthesis timeout"));
 
@@ -1016,7 +1022,11 @@ describe("_classifyWorkerType", () => {
     expect(_classifyWorkerType("Research the current auth flow")).toBe("explore");
     expect(_classifyWorkerType("Analyze the performance bottleneck")).toBe("explore");
     expect(_classifyWorkerType("Check if nginx is configured correctly")).toBe("explore");
-    expect(_classifyWorkerType("Review the error logs")).toBe("explore");
+  });
+
+  test("classifies pure review tasks as review", () => {
+    expect(_classifyWorkerType("Review the error logs")).toBe("review");
+    expect(_classifyWorkerType("Audit the config changes")).toBe("review");
   });
 
   test("classifies implementation tasks as implement", () => {
@@ -1035,5 +1045,39 @@ describe("_classifyWorkerType", () => {
     expect(_classifyWorkerType("Handle the edge case")).toBe("implement");
     expect(_classifyWorkerType("")).toBe("implement");
     expect(_classifyWorkerType(null)).toBe("implement");
+  });
+});
+
+describe("review helpers", () => {
+  test("_hasMaterialReviewFindings detects real findings", () => {
+    expect(_hasMaterialReviewFindings("Finding: Missing check | Severity: high | File: a.js:1 | Why: breaks auth")).toBe(true);
+    expect(_hasMaterialReviewFindings("No material findings\nResidual risk: integration coverage")).toBe(false);
+  });
+
+  test("_shouldRunFollowUpReview only reviews successful implementation tasks with owned scope", () => {
+    expect(
+      _shouldRunFollowUpReview(
+        "implement",
+        { status: "done", filesModified: ["src/app.js"] },
+        { scope: [] },
+        [],
+      ),
+    ).toBe(true);
+    expect(
+      _shouldRunFollowUpReview(
+        "review",
+        { status: "done", filesModified: ["src/app.js"] },
+        { scope: ["src/app.js"] },
+        ["src/app.js"],
+      ),
+    ).toBe(false);
+    expect(
+      _shouldRunFollowUpReview(
+        "implement",
+        { status: "failed", filesModified: ["src/app.js"] },
+        { scope: ["src/app.js"] },
+        ["src/app.js"],
+      ),
+    ).toBe(false);
   });
 });

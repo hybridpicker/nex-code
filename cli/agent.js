@@ -1439,6 +1439,8 @@ let _phaseModelOverride = null; // model ID string for current phase (null = use
 let _planSummary = null; // compressed summary from plan phase
 let _implementSummary = null; // summary of changes from implement phase
 let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
+let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
+let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 
@@ -1566,17 +1568,155 @@ function _extractPlanTodos(planText, filesReadMap) {
   return todos;
 }
 
+function _extractTaskKeywords(text) {
+  if (!text || typeof text !== "string") return [];
+  const tokens = text.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) || [];
+  const stop = new Set([
+    "the", "and", "for", "with", "from", "into", "that", "this", "when",
+    "then", "have", "your", "just", "read", "write", "edit", "file",
+    "files", "test", "tests", "verify", "phase", "implement", "summary",
+    "report", "pass", "fail", "changes", "change", "address", "original",
+    "task", "user", "request", "code", "module", "function", "class",
+  ]);
+  const seen = new Set();
+  const ranked = [];
+  for (const token of tokens) {
+    const lower = token.toLowerCase();
+    if (stop.has(lower) || seen.has(lower)) continue;
+    seen.add(lower);
+    ranked.push(token);
+  }
+  ranked.sort((a, b) => b.length - a.length);
+  return ranked.slice(0, 6);
+}
+
+function _detectPackageManager() {
+  if (fsSync.existsSync(path.join(process.cwd(), "pnpm-lock.yaml"))) return "pnpm";
+  if (fsSync.existsSync(path.join(process.cwd(), "yarn.lock"))) return "yarn";
+  return "npm";
+}
+
+function _commandForScript(scriptName) {
+  const pm = _detectPackageManager();
+  if (scriptName === "test") {
+    if (pm === "yarn") return "yarn test";
+    if (pm === "pnpm") return "pnpm test";
+    return "npm test";
+  }
+  if (pm === "yarn") return `yarn ${scriptName}`;
+  if (pm === "pnpm") return `pnpm run ${scriptName}`;
+  return `npm run ${scriptName}`;
+}
+
+async function _inferSymbolTargets(taskText) {
+  const keywords = _extractTaskKeywords(taskText);
+  if (keywords.length === 0) return [];
+  const { searchContentIndex } = require("./index-engine");
+  const hits = [];
+  const seen = new Set();
+  for (const keyword of keywords) {
+    try {
+      const results = await searchContentIndex(keyword, undefined, process.cwd());
+      for (const hit of results.slice(0, 3)) {
+        const key = `${hit.file}:${hit.name}:${hit.line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        hits.push(hit);
+        if (hits.length >= 5) return hits;
+      }
+    } catch {
+      /* optional hint only */
+    }
+  }
+  return hits;
+}
+
+async function _buildSymbolHintBlock(taskText) {
+  const hits = await _inferSymbolTargets(taskText);
+  if (hits.length === 0) return "";
+  const { getRelatedFiles } = require("./index-engine");
+  const lines = ["Likely symbol targets:"];
+
+  for (let idx = 0; idx < hits.length; idx++) {
+    const hit = hits[idx];
+    const start = Math.max(1, hit.line - 20);
+    const end = hit.line + 40;
+    lines.push(
+      `${idx + 1}. ${hit.name} (${hit.type}) in ${hit.file}:${hit.line} -> read_file(path='${hit.file}', line_start=${start}, line_end=${end})`,
+    );
+
+    try {
+      const related = await getRelatedFiles(hit.file, process.cwd(), 3);
+      if (related.length > 0) {
+        lines.push(
+          `   Follow-up files: ${related.join(", ")} (read only if the primary symbol points into one of these modules)`,
+        );
+      }
+    } catch {
+      /* optional hint only */
+    }
+  }
+  return `${lines.join("\n")}\nUse these exact targeted reads before broader searching.\n\n`;
+}
+
+function _inferRelevantTests(filesModified) {
+  const { getFileIndex } = require("./index-engine");
+  const files = getFileIndex();
+  const testFiles = files.filter(
+    (f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f),
+  );
+  if (testFiles.length === 0) return [];
+
+  const related = new Set();
+  for (const modifiedFile of filesModified || []) {
+    const base = path.basename(String(modifiedFile)).replace(/\.[^.]+$/, "");
+    if (base.length < 3) continue;
+    for (const testFile of testFiles) {
+      if (testFile.includes(base)) related.add(testFile);
+      if (related.size >= 4) return [...related];
+    }
+  }
+  return [...related];
+}
+
+function _inferTargetedTestCommands(relatedTests, scripts = {}) {
+  if (!Array.isArray(relatedTests) || relatedTests.length === 0) return [];
+  const joined = relatedTests.slice(0, 4).join(" ");
+  const commands = [];
+  const testScript = String(scripts.test || "");
+
+  if (/vitest/.test(testScript) || fsSync.existsSync(path.join(process.cwd(), "vitest.config.ts")) || fsSync.existsSync(path.join(process.cwd(), "vitest.config.js"))) {
+    commands.push(`npx vitest run ${joined}`);
+  } else if (/jest/.test(testScript) || fsSync.existsSync(path.join(process.cwd(), "jest.config.js")) || fsSync.existsSync(path.join(process.cwd(), "jest.config.cjs")) || fsSync.existsSync(path.join(process.cwd(), "jest.config.mjs"))) {
+    commands.push(`npx jest --runInBand ${joined}`);
+  }
+
+  if (
+    (fsSync.existsSync(path.join(process.cwd(), "pytest.ini")) ||
+      fsSync.existsSync(path.join(process.cwd(), "pyproject.toml"))) &&
+    relatedTests.some((f) => /\.py$/i.test(f))
+  ) {
+    commands.push(`pytest ${relatedTests.filter((f) => /\.py$/i.test(f)).slice(0, 4).join(" ")}`);
+  }
+
+  return commands;
+}
+
 /**
  * Transition to the next phase in the plan → implement → verify pipeline.
  * Preserves read-tracking counters across phases to prevent re-investigation.
  */
-function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
+async function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   if (!_phaseEnabled) return null;
 
   const prevPhase = _currentPhase;
   _currentPhase = targetPhase;
   _phaseIterations = 0;
   _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
+  if (targetPhase === "verify") {
+    _verifyToolCalls = 0;
+    _verifyCompletionNudges = 0;
+  }
 
   // Reset investigation/edit guards but PRESERVE read-tracking counters.
   // Clearing read/grep/glob counters causes the model to re-investigate files
@@ -1605,24 +1745,40 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
       _planTodos.map((t, i) => `${i + 1}. ${t.file} — ${t.action}`).join("\n")
     : "";
 
+  const symbolHints = await _buildSymbolHintBlock(targetPhase === "verify" ? originalTask : summary || originalTask || "");
   let content;
   if (targetPhase === "implement") {
     _planSummary = summary?.slice(0, 2000) || "";
     content =
       `[PHASE: IMPLEMENTATION] Analysis complete. Based on the analysis:\n${_planSummary}\n\n` +
+      `${symbolHints}` +
       `Now implement the fix/changes. Do not investigate further — edit files directly.` +
       _todoChecklist;
   } else if (targetPhase === "verify") {
     _implementSummary = summary?.slice(0, 500) || "";
     const fileList = filesModified ? [...filesModified].join(", ") : "none";
+    const suggestedChecks = _inferVerificationCommands(filesModified);
+    const relatedTests = _inferRelevantTests(filesModified);
+    const checksBlock =
+      suggestedChecks.length > 0
+        ? `Suggested checks (run the narrowest ones that fit the change):\n${suggestedChecks.map((cmd, i) => `${i + 1}. ${cmd}`).join("\n")}\n\n`
+        : "";
+    const relatedTestsBlock =
+      relatedTests.length > 0
+        ? `Likely related tests:\n${relatedTests.map((file, i) => `${i + 1}. ${file}`).join("\n")}\nPrefer these before broader suites when a targeted run is possible.\n\n`
+        : "";
     content =
       `[PHASE: VERIFICATION] Implementation complete. Verify the changes:\n` +
-      `1. Read each modified file and confirm changes are correct\n` +
-      `2. If test command exists (npm test / pytest): run it\n` +
-      `3. If linter exists: run it\n` +
+      `1. Read only the modified sections/files and confirm the final code matches intent\n` +
+      `2. Run the smallest relevant verification command(s)\n` +
+      `3. If one check fails, explain the failure precisely and loop back with a focused fix\n` +
       `4. Does the implementation address: "${(originalTask || "").slice(0, 200)}"?\n` +
       `Report PASS (all good) or FAIL (list specific issues).\n\n` +
-      `Files modified: ${fileList}\nSummary: ${_implementSummary}`;
+      `Files modified: ${fileList}\n` +
+      `${symbolHints}` +
+      `${checksBlock}` +
+      `${relatedTestsBlock}` +
+      `Summary: ${_implementSummary}`;
   }
 
   debugLog(
@@ -1630,6 +1786,50 @@ function _transitionPhase(targetPhase, summary, filesModified, originalTask) {
   );
 
   return content ? { role: "user", content } : null;
+}
+
+function _inferVerificationCommands(filesModified) {
+  const commands = [];
+  const modified = [...(filesModified || [])];
+  const lowerFiles = modified.map((f) => String(f).toLowerCase());
+  let scripts = {};
+
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    if (fsSync.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf-8"));
+      scripts = pkg.scripts || {};
+      const preferredScripts = [
+        ["test", _commandForScript("test")],
+        ["lint", _commandForScript("lint")],
+        ["typecheck", _commandForScript("typecheck")],
+        ["check", _commandForScript("check")],
+        ["build", _commandForScript("build")],
+      ];
+      for (const [name, cmd] of preferredScripts) {
+        if (scripts[name]) commands.push(cmd);
+      }
+    }
+  } catch {
+    /* package.json absent or invalid */
+  }
+
+  if (commands.length === 0) {
+    if (fsSync.existsSync(path.join(process.cwd(), "package.json"))) commands.push(_commandForScript("test"));
+    if (fsSync.existsSync(path.join(process.cwd(), "pytest.ini")) || fsSync.existsSync(path.join(process.cwd(), "pyproject.toml"))) {
+      commands.push("pytest");
+    }
+  }
+
+  const targetedTests = _inferRelevantTests(filesModified);
+  commands.unshift(..._inferTargetedTestCommands(targetedTests, scripts));
+
+  const hasTsEdits = lowerFiles.some((f) => /\.(ts|tsx)$/.test(f));
+  const hasJsEdits = lowerFiles.some((f) => /\.(js|jsx|ts|tsx)$/.test(f));
+  if (hasTsEdits && !commands.includes(_commandForScript("typecheck"))) commands.push(_commandForScript("typecheck"));
+  if (hasJsEdits && !commands.includes(_commandForScript("lint"))) commands.push(_commandForScript("lint"));
+
+  return [...new Set(commands)].slice(0, 4);
 }
 
 /**
@@ -1716,6 +1916,9 @@ function _buildLanguagePrompt() {
   );
   lines.push(
     "  • FORBIDDEN: when refactoring callbacks to async/await, NEVER write try { ... } catch(e) { throw e } — this is an explicit anti-pattern. WRONG: async function f() { try { const d = await readFile(..); await writeFile(.., d); } catch(e) { throw e; } } — RIGHT: async function f() { const d = await readFile(..); await writeFile(.., d); } — omit the try-catch entirely, let rejections propagate.",
+  );
+  lines.push(
+    '  • Express/fetch error handling: When adding error handling to an Express route that fetches by ID: (1) validate the ID parameter first (check it exists and is a valid format), (2) wrap fetch in try-catch, (3) check response.ok and handle 404 specifically, (4) call next(error) to pass errors to Express error‑handling middleware — do not just send a raw 500 response.'
   );
   lines.push(
     '  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.',
@@ -1840,6 +2043,9 @@ Plan mode is ONLY active when explicitly activated via the /plan command or show
 - Be concise but complete. Keep responses focused while ensuring the user gets the information they asked for.
 - When referencing code, include file:line (e.g. src/app.js:42) so the user can navigate.
 - Do not make up file paths or URLs. Use tools to discover them.
+- Treat the repo map in PROJECT CONTEXT as your first navigation aid. Start with the most likely 2-5 files or symbols, not a repo-wide wander.
+- Prefer symbol-aware, high-signal retrieval: first locate the owning file/module, then read the exact function/class/section you need, then edit.
+- For implementation tasks, keep the loop tight: diagnose -> edit the smallest viable surface -> run the narrowest meaningful verification -> continue only if still failing.
 
 # Response Quality (Critical)
 
@@ -2095,6 +2301,7 @@ When a tool call returns ERROR — follow these exact recovery sequences:
 **After 2 consecutive failures at the same operation** → stop and explain the issue to the user.
 
 # Git Workflow
+- Always verify current branch before committing
 
 - Before committing, review changes with git_diff. Write messages that explain WHY, not WHAT.
 - Stage specific files rather than git add -A to avoid committing unrelated changes.
@@ -2287,6 +2494,8 @@ function _resetSessionTracking() {
   _implementSummary = null;
   _planTodos = [];
   _verifyLoopBack = 0;
+  _verifyToolCalls = 0;
+  _verifyCompletionNudges = 0;
   _planPhaseBlockedCount = 0;
   _detectedCategoryId = null;
   _taskRegistry.clear();
@@ -4369,7 +4578,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (_phaseEnabled && _currentPhase === "plan" && _planPhaseBlockedCount >= 2) {
           debugLog(`${C.cyan}  ↳ Plan phase: ${_planPhaseBlockedCount} consecutive blocks — auto-advancing to implement${C.reset}`);
           _planPhaseBlockedCount = 0;
-          const phaseMsg = _transitionPhase("implement", "[auto-advance: task only requires direct action]");
+          const phaseMsg = await _transitionPhase("implement", "[auto-advance: task only requires direct action]");
           if (phaseMsg) {
             conversationMessages.push(phaseMsg);
             apiMessages.push(phaseMsg);
@@ -4409,7 +4618,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               saveNow(conversationMessages);
               break outer;
             }
-            const phaseMsg = _transitionPhase("implement", _assistantText);
+            const phaseMsg = await _transitionPhase("implement", _assistantText);
             if (phaseMsg) {
               conversationMessages.push(phaseMsg);
               apiMessages.push(phaseMsg);
@@ -4421,7 +4630,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const _firstUser = conversationMessages.find((m) => m.role === "user");
             const _origTask = typeof _firstUser?.content === "string"
               ? _firstUser.content : "";
-            const phaseMsg = _transitionPhase(
+            const phaseMsg = await _transitionPhase(
               "verify", _assistantText, filesModified, _origTask,
             );
             if (phaseMsg) {
@@ -4435,6 +4644,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               continue;
             }
           } else if (_currentPhase === "verify") {
+            const _hasPass = /\bPASS\b/i.test(_assistantText.slice(0, 500));
             const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
             const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
 
@@ -4456,6 +4666,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 `${C.yellow}  ↳ Verify → implement loop-back #${_verifyLoopBack} (issues found)${C.reset}`,
               );
               continue;
+            }
+            if (!_hasFailed && (!_hasPass || _verifyToolCalls === 0)) {
+              if (_verifyCompletionNudges < 2) {
+                _verifyCompletionNudges++;
+                const need = [];
+                if (_verifyToolCalls === 0) need.push("run at least one verification tool");
+                if (!_hasPass) need.push("end your report with PASS or FAIL");
+                const verifyNudge = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] Verification is incomplete: ${need.join(" and ")}. ` +
+                    "Do not stop yet. Re-read the modified files and/or run tests or linters, then respond with PASS or FAIL.",
+                };
+                conversationMessages.push(verifyNudge);
+                apiMessages.push(verifyNudge);
+                debugLog(
+                  `${C.yellow}  ⚠ Verify phase incomplete — nudging for evidence (${_verifyCompletionNudges}/2)${C.reset}`,
+                );
+                continue;
+              }
+              debugLog(
+                `${C.yellow}  ⚠ Verify phase completion accepted without full markers after ${_verifyCompletionNudges} nudges${C.reset}`,
+              );
             }
             debugLog(
               `${C.green}  ✓ Verification phase complete${_hasFailed ? " (loop-back exhausted)" : " (PASS)"}${C.reset}`,
@@ -5953,6 +6186,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
             }
           }
+          if (_phaseEnabled && _currentPhase === "verify") {
+            _verifyToolCalls++;
+          }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
           // after already making changes — it should verify the edit and move on.
@@ -6043,7 +6279,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               const _lastAssistant = [...apiMessages].reverse().find((m) => m.role === "assistant");
               const _summary = typeof _lastAssistant?.content === "string"
                 ? _lastAssistant.content : "";
-              const phaseMsg = _transitionPhase("implement", _summary);
+              const phaseMsg = await _transitionPhase("implement", _summary);
               if (phaseMsg) {
                 conversationMessages.push(phaseMsg);
                 apiMessages.push(phaseMsg);
@@ -6975,7 +7211,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           .find((m) => m.role === "assistant");
         const _summary = typeof _lastAssistant?.content === "string"
           ? _lastAssistant.content : "";
-        const phaseMsg = _transitionPhase("implement", _summary);
+          const phaseMsg = await _transitionPhase("implement", _summary);
         if (phaseMsg) {
           conversationMessages.push(phaseMsg);
           const sysPrompt = await buildSystemPrompt();
@@ -7058,6 +7294,10 @@ module.exports = {
   splitSystemPrompt,
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   getProjectContextHash,
+  _inferVerificationCommands,
+  _inferRelevantTests,
+  _inferSymbolTargets,
+  _buildSymbolHintBlock,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

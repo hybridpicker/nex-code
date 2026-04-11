@@ -9,6 +9,12 @@ const exec = require("util").promisify(require("child_process").exec);
 const { C } = require("./ui");
 const { getMergeConflicts } = require("./git");
 const { getServerContext } = require("./server-context");
+const {
+  refreshIndex,
+  getFileIndex,
+  buildContentIndex,
+  summarizeModuleHubs,
+} = require("./index-engine");
 
 // Directories/files always excluded from the file tree
 const TREE_EXCLUDE = new Set([
@@ -29,6 +35,180 @@ const TREE_EXCLUDE = new Set([
   "tmp",
   "temp",
 ]);
+
+const FRAMEWORK_SIGNALS = [
+  { file: "tsconfig.json", label: "TypeScript" },
+  { file: "jest.config.js", label: "Jest" },
+  { file: "jest.config.cjs", label: "Jest" },
+  { file: "jest.config.mjs", label: "Jest" },
+  { file: "vitest.config.js", label: "Vitest" },
+  { file: "vitest.config.ts", label: "Vitest" },
+  { file: "vite.config.js", label: "Vite" },
+  { file: "vite.config.ts", label: "Vite" },
+  { file: "next.config.js", label: "Next.js" },
+  { file: "next.config.mjs", label: "Next.js" },
+  { file: "tailwind.config.js", label: "Tailwind" },
+  { file: "tailwind.config.ts", label: "Tailwind" },
+  { file: "docker-compose.yml", label: "Docker Compose" },
+  { file: "docker-compose.yaml", label: "Docker Compose" },
+  { file: ".github/workflows", label: "GitHub Actions" },
+];
+
+function summarizeTopDirectories(files, limit = 6) {
+  const counts = new Map();
+  for (const relPath of files) {
+    const seg = relPath.includes("/") ? relPath.split("/")[0] : "(root)";
+    if (!seg || seg.startsWith(".")) continue;
+    counts.set(seg, (counts.get(seg) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([dir, count]) => `${dir} (${count})`);
+}
+
+function detectFrameworks(files) {
+  const fileSet = new Set(files);
+  const frameworks = new Set();
+  for (const signal of FRAMEWORK_SIGNALS) {
+    if (fileSet.has(signal.file) || [...fileSet].some((f) => f.startsWith(`${signal.file}/`))) {
+      frameworks.add(signal.label);
+    }
+  }
+
+  if (fileSet.has("package.json")) frameworks.add("Node.js");
+  if ([...fileSet].some((f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f))) {
+    frameworks.add("Tests");
+  }
+  if ([...fileSet].some((f) => f.startsWith("vscode/"))) frameworks.add("VS Code Extension");
+
+  return [...frameworks];
+}
+
+function guessEntryPoints(files) {
+  const priorities = [
+    "package.json",
+    "cli/index.js",
+    "src/index.ts",
+    "src/index.js",
+    "index.ts",
+    "index.js",
+    "bin/nex-code.js",
+    "dist/nex-code.js",
+    "README.md",
+  ];
+  const picks = [];
+  for (const candidate of priorities) {
+    if (files.includes(candidate)) picks.push(candidate);
+    if (picks.length >= 5) break;
+  }
+  return picks;
+}
+
+function buildTestMap(files, limit = 6) {
+  const testFiles = files.filter(
+    (f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f),
+  );
+  if (testFiles.length === 0) return [];
+
+  const sourceFiles = files.filter(
+    (f) =>
+      !/^tests?\//.test(f) &&
+      !/\.test\./.test(f) &&
+      !/\.spec\./.test(f) &&
+      /\.(js|jsx|ts|tsx|py|go|rs|java)$/.test(f),
+  );
+
+  const mapped = [];
+  for (const src of sourceFiles) {
+    const base = path.basename(src).replace(/\.[^.]+$/, "");
+    if (base.length < 3) continue;
+    const matches = testFiles.filter((testFile) => testFile.includes(base));
+    if (matches.length > 0) {
+      mapped.push(`${src} -> ${matches.slice(0, 2).join(", ")}`);
+    }
+    if (mapped.length >= limit) break;
+  }
+  return mapped;
+}
+
+function detectWorkspaces(pkg) {
+  if (!pkg || !pkg.workspaces) return [];
+  if (Array.isArray(pkg.workspaces)) return pkg.workspaces;
+  if (Array.isArray(pkg.workspaces.packages)) return pkg.workspaces.packages;
+  return [];
+}
+
+async function buildRepoIntelligence(cwd) {
+  try {
+    await refreshIndex(cwd);
+    const files = getFileIndex();
+    if (!files || files.length === 0) return "";
+
+    const frameworks = detectFrameworks(files);
+    const topDirs = summarizeTopDirectories(files);
+    const entryPoints = guessEntryPoints(files);
+    const testCount = files.filter(
+      (f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f),
+    ).length;
+    const testMap = buildTestMap(files);
+    let workspaces = [];
+    try {
+      const pkgPath = path.join(cwd, "package.json");
+      if (fsSync.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf-8"));
+        workspaces = detectWorkspaces(pkg);
+      }
+    } catch {
+      /* optional */
+    }
+
+    let hotspotLine = "";
+    let moduleHubLine = "";
+    try {
+      const contentIndex = await buildContentIndex(cwd);
+      const hotspots = Object.entries(contentIndex.files || {})
+        .map(([file, data]) => ({
+          file,
+          defs: Array.isArray(data.defs) ? data.defs.length : 0,
+        }))
+        .filter((entry) => entry.defs > 0)
+        .sort((a, b) => b.defs - a.defs || a.file.localeCompare(b.file))
+        .slice(0, 4)
+        .map((entry) => `${entry.file} (${entry.defs} defs)`);
+      if (hotspots.length > 0) {
+        hotspotLine = `CODE HOTSPOTS: ${hotspots.join(", ")}`;
+      }
+    } catch {
+      /* content index is optional */
+    }
+    try {
+      const hubs = await summarizeModuleHubs(cwd, 4);
+      if (hubs.length > 0) {
+        moduleHubLine = `MODULE HUBS: ${hubs.join(", ")}`;
+      }
+    } catch {
+      /* import graph is optional */
+    }
+
+    const lines = [
+      `REPO MAP: ${files.length} indexed files${frameworks.length ? ` | stack: ${frameworks.join(", ")}` : ""}`,
+    ];
+    if (topDirs.length > 0) lines.push(`WORK AREAS: ${topDirs.join(", ")}`);
+    if (entryPoints.length > 0) lines.push(`LIKELY ENTRY POINTS: ${entryPoints.join(", ")}`);
+    if (workspaces.length > 0) lines.push(`WORKSPACES: ${workspaces.join(", ")}`);
+    if (testCount > 0) lines.push(`TEST FOOTPRINT: ${testCount} test files detected`);
+    if (testMap.length > 0) lines.push(`TEST MAP: ${testMap.join(" | ")}`);
+    if (hotspotLine) lines.push(hotspotLine);
+    if (moduleHubLine) lines.push(moduleHubLine);
+    lines.push(
+      "RETRIEVAL RULE: Prefer the smallest verified path set first — identify likely files, then read only the exact symbols/sections you need before editing.",
+    );
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Parse a .gitignore file and return a list of simple pattern strings.
@@ -309,6 +489,9 @@ async function gatherProjectContext(cwd) {
           `PRIVATE PROJECT INSTRUCTIONS (.nex/CLAUDE.md):\n${content.trim()}`,
         );
     }
+
+    const repoIntelligence = await buildRepoIntelligence(cwd);
+    if (repoIntelligence) parts.push(repoIntelligence);
 
     fileContext = parts.join("\n\n");
     contextCache.set(fileContextCacheKey, fileContext);

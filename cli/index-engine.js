@@ -232,7 +232,11 @@ function smartSearch(query, { limit = 10, minScore = 15 } = {}) {
 
 let _contentIndex = null;
 let _contentIndexTime = 0;
+let _contentIndexCwd = null;
 const CONTENT_INDEX_TTL_MS = 120000; // 2 minutes
+let _importGraph = null;
+let _importGraphTime = 0;
+let _importGraphCwd = null;
 
 const INDEXABLE_EXTENSIONS = new Set([
   ".js",
@@ -354,7 +358,11 @@ async function buildContentIndex(cwd) {
 
   // Load existing index if valid
   let existing = {};
-  if (_contentIndex && Date.now() - _contentIndexTime < CONTENT_INDEX_TTL_MS) {
+  if (
+    _contentIndex &&
+    _contentIndexCwd === cwd &&
+    Date.now() - _contentIndexTime < CONTENT_INDEX_TTL_MS
+  ) {
     return _contentIndex;
   }
 
@@ -366,9 +374,10 @@ async function buildContentIndex(cwd) {
   }
 
   // Get all files
-  const allFiles = getFileIndex();
-  if (allFiles.length === 0) {
+  let allFiles = getFileIndex();
+  if (!isIndexValid(cwd) || allFiles.length === 0) {
     await refreshIndex(cwd);
+    allFiles = getFileIndex();
   }
 
   const updated = { files: {} };
@@ -408,6 +417,7 @@ async function buildContentIndex(cwd) {
 
   _contentIndex = updated;
   _contentIndexTime = Date.now();
+  _contentIndexCwd = cwd;
   return updated;
 }
 
@@ -417,8 +427,8 @@ async function buildContentIndex(cwd) {
  * @param {string} [type] - Optional type filter ('function', 'class', 'import', 'export')
  * @returns {Promise<Array<{ file: string, type: string, name: string, line: number }>>}
  */
-async function searchContentIndex(query, type) {
-  const index = await buildContentIndex();
+async function searchContentIndex(query, type, cwd) {
+  const index = await buildContentIndex(cwd);
   const results = [];
   const q = query.toLowerCase();
 
@@ -445,6 +455,105 @@ async function searchContentIndex(query, type) {
   return results.slice(0, 50);
 }
 
+function _resolveRelativeImport(fromFile, specifier, fileSet) {
+  if (!specifier || !specifier.startsWith(".")) return null;
+
+  const fromDir = path.posix.dirname(fromFile.replace(/\\/g, "/"));
+  const normalizedBase = path.posix.normalize(
+    path.posix.join(fromDir === "." ? "" : fromDir, specifier),
+  );
+  const candidates = [];
+  const ext = path.posix.extname(normalizedBase);
+
+  if (ext) {
+    candidates.push(normalizedBase);
+  } else {
+    for (const candidateExt of INDEXABLE_EXTENSIONS) {
+      candidates.push(`${normalizedBase}${candidateExt}`);
+      candidates.push(path.posix.join(normalizedBase, `index${candidateExt}`));
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (fileSet.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function buildImportGraph(cwd) {
+  cwd = cwd || process.cwd();
+  if (
+    _importGraph &&
+    _importGraphCwd === cwd &&
+    Date.now() - _importGraphTime < CONTENT_INDEX_TTL_MS
+  ) {
+    return _importGraph;
+  }
+
+  const index = await buildContentIndex(cwd);
+  const allFiles = getFileIndex();
+  const fileSet = new Set(allFiles.map((file) => file.replace(/\\/g, "/")));
+  const importsByFile = {};
+  const importedByFile = {};
+
+  for (const file of Object.keys(index.files || {})) {
+    const relFile = file.replace(/\\/g, "/");
+    const defs = Array.isArray(index.files[file]?.defs) ? index.files[file].defs : [];
+    const resolved = [];
+    const seen = new Set();
+
+    for (const def of defs) {
+      if (def.type !== "import") continue;
+      const target = _resolveRelativeImport(relFile, def.name, fileSet);
+      if (!target || target === relFile || seen.has(target)) continue;
+      seen.add(target);
+      resolved.push(target);
+      if (!importedByFile[target]) importedByFile[target] = [];
+      importedByFile[target].push(relFile);
+    }
+
+    importsByFile[relFile] = resolved;
+  }
+
+  for (const [file, importers] of Object.entries(importedByFile)) {
+    importedByFile[file] = [...new Set(importers)].sort();
+  }
+
+  _importGraph = { importsByFile, importedByFile };
+  _importGraphTime = Date.now();
+  _importGraphCwd = cwd;
+  return _importGraph;
+}
+
+async function getRelatedFiles(file, cwd, limit = 6) {
+  if (!file) return [];
+  const graph = await buildImportGraph(cwd);
+  const relFile = String(file).replace(/\\/g, "/");
+  const neighbors = [
+    ...(graph.importsByFile[relFile] || []),
+    ...(graph.importedByFile[relFile] || []),
+  ];
+  return [...new Set(neighbors)].filter((entry) => entry !== relFile).slice(0, limit);
+}
+
+async function summarizeModuleHubs(cwd, limit = 4) {
+  const graph = await buildImportGraph(cwd);
+  const degree = new Map();
+
+  for (const [file, imports] of Object.entries(graph.importsByFile || {})) {
+    degree.set(file, (degree.get(file) || 0) + imports.length);
+  }
+  for (const [file, importers] of Object.entries(graph.importedByFile || {})) {
+    degree.set(file, (degree.get(file) || 0) + importers.length);
+  }
+
+  return [...degree.entries()]
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([file, count]) => `${file} (${count} links)`);
+}
+
 module.exports = {
   refreshIndex,
   getFileIndex,
@@ -455,6 +564,9 @@ module.exports = {
   buildContentIndex,
   searchContentIndex,
   extractDefinitions,
+  buildImportGraph,
+  getRelatedFiles,
+  summarizeModuleHubs,
   smartSearch,
   scorePathMatch,
   pathLevenshtein,

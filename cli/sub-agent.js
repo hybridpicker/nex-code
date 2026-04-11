@@ -145,7 +145,7 @@ const SUB_AGENT_TYPES = {
   },
   review: {
     allowedTools: new Set(['read_file', 'list_directory', 'glob', 'grep', 'search_files']),
-    systemSuffix: 'You are a code review agent. Read code and report findings. Do NOT make changes.',
+    systemSuffix: 'You are a code review agent. Read code and report findings only. Do NOT make changes. Output findings first, ordered by severity, using this format: "Finding: <title> | Severity: <high|medium|low> | File: <path[:line]> | Why: <impact>". After findings, add one short "Residual risk:" line. If there are no findings, say "No material findings" and still mention the main residual risk/test gap.',
   },
   implement: {
     allowedTools: null, // all tools
@@ -292,11 +292,15 @@ RULES:
 - When done, respond with a clear summary of what you did and the result.
 - Do not ask questions — make reasonable decisions.
 - Use relative paths when possible.
+- You are not alone in the codebase. Do NOT revert or overwrite work that may belong to another agent.
+- Treat any files mentioned in your context/scope as your ownership boundary. Stay inside it unless you are only reading for context.
 
 TOOL STRATEGY:
 - Use read_file to read files (not bash cat). Use edit_file/patch_file to modify (not bash sed).
 - Use glob to find files by name. Use grep to search contents. Only use bash for shell operations.
 - ALWAYS read a file with read_file before editing it. edit_file old_text must match exactly.
+- Prefer symbol-first retrieval: identify the owning file/function, then read the exact section you need.
+- After making a change, verify with the smallest relevant check before doing more exploration.
 
 ERROR RECOVERY:
 - If edit_file fails with "old_text not found": read the file again, compare, and retry with exact text.
