@@ -78,6 +78,26 @@ describe("context.js", () => {
       expect(ctx).toContain("lint");
     });
 
+    it("includes workspaces when package.json declares them", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({
+          name: "mono",
+          workspaces: ["packages/*", "apps/*"],
+        }),
+      );
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        cb(new Error("no git"));
+      });
+
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("WORKSPACES:");
+      expect(ctx).toContain("packages/*");
+      expect(ctx).toContain("apps/*");
+    });
+
     it("skips package.json when missing", async () => {
       execSync.mockImplementation(() => {
         throw new Error("no git");
@@ -172,6 +192,44 @@ describe("context.js", () => {
 
       const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toBeDefined();
+    });
+
+    it("includes repo intelligence summary for stack, work areas, and hotspots", async () => {
+      fs.mkdirSync(path.join(tmpDir, "cli"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "tests"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({ name: "test-proj", version: "1.0.0" }),
+      );
+      fs.writeFileSync(path.join(tmpDir, "tsconfig.json"), "{}");
+      fs.writeFileSync(
+        path.join(tmpDir, "cli", "index.js"),
+        "const { bootApp } = require('../app');\nfunction runApp() { return bootApp(); }\nclass Runner {}\nmodule.exports = { runApp };\n",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "app.js"),
+        "function bootApp() {}\nmodule.exports = { bootApp };\n",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "tests", "app.test.js"),
+        "test('works', () => {});\n",
+      );
+
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        cb(new Error("no git"));
+      });
+
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("REPO MAP:");
+      expect(ctx).toContain("TypeScript");
+      expect(ctx).toContain("WORK AREAS:");
+      expect(ctx).toContain("LIKELY ENTRY POINTS:");
+      expect(ctx).toContain("TEST FOOTPRINT:");
+      expect(ctx).toContain("TEST MAP:");
+      expect(ctx).toContain("MODULE HUBS:");
+      expect(ctx).toContain("RETRIEVAL RULE:");
     });
   });
 

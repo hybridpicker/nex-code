@@ -67,7 +67,7 @@ describe("tools.js", () => {
   let tmpDir;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jc-tools-"));
+    tmpDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-jc-tools-"));
     confirmFileChange.mockResolvedValue(true);
     // Default: resolveProfile throws (server not found), overridden in specific tests
     mockResolveProfile.mockReset();
@@ -120,14 +120,29 @@ describe("tools.js", () => {
 
   // ─── resolvePath ──────────────────────────────────────────
   describe("resolvePath()", () => {
-    it("returns absolute path unchanged", () => {
-      expect(resolvePath("/tmp/test.js")).toBe("/tmp/test.js");
+    it("blocks absolute paths outside the workspace", () => {
+      expect(resolvePath("/tmp/test.js")).toBeNull();
     });
 
     it("resolves relative path from CWD", () => {
       const result = resolvePath("test.js");
       expect(path.isAbsolute(result)).toBe(true);
       expect(result).toContain("test.js");
+    });
+
+    it("blocks symlinks that escape the workspace", () => {
+      const sandboxDir = fs.mkdtempSync(
+        path.join(process.cwd(), ".tmp-resolve-path-"),
+      );
+      const outsideFile = path.join(os.tmpdir(), `outside-${Date.now()}.txt`);
+      const symlinkPath = path.join(sandboxDir, "escape.txt");
+      fs.writeFileSync(outsideFile, "secret");
+      fs.symlinkSync(outsideFile, symlinkPath);
+
+      expect(resolvePath(symlinkPath)).toBeNull();
+
+      fs.rmSync(outsideFile, { force: true });
+      fs.rmSync(sandboxDir, { recursive: true, force: true });
     });
 
     it("blocks sensitive paths", () => {
@@ -188,7 +203,7 @@ describe("tools.js", () => {
 
     it("returns error for missing file", async () => {
       const result = await executeTool("read_file", {
-        path: "/nonexistent/file.txt",
+        path: path.join(tmpDir, "missing-read.txt"),
       });
       expect(result).toContain("ERROR");
       expect(result).toContain("not found");
@@ -267,7 +282,7 @@ describe("tools.js", () => {
 
     it("returns error for missing file", async () => {
       const result = await executeTool("edit_file", {
-        path: "/nonexistent/file.txt",
+        path: path.join(tmpDir, "missing-edit.txt"),
         old_text: "a",
         new_text: "b",
       });
@@ -322,7 +337,7 @@ describe("tools.js", () => {
 
     it("returns error for missing directory", async () => {
       const result = await executeTool("list_directory", {
-        path: "/nonexistent/dir",
+        path: path.join(tmpDir, "missing-dir"),
       });
       expect(result).toContain("ERROR");
     });
@@ -436,6 +451,24 @@ describe("tools.js", () => {
       expect(result).not.toContain("node_modules");
       expect(result).not.toContain(".git");
     });
+
+    it("prioritizes stronger path matches over newer files", async () => {
+      const exact = path.join(tmpDir, "agent.js");
+      const noisyDir = path.join(tmpDir, "nested");
+      const noisy = path.join(noisyDir, "agent-helper.js");
+      fs.mkdirSync(noisyDir);
+      fs.writeFileSync(exact, "");
+      fs.writeFileSync(noisy, "");
+      const oldTime = new Date(2020, 0, 1);
+      fs.utimesSync(exact, oldTime, oldTime);
+
+      const result = await executeTool("glob", {
+        pattern: "agent.js",
+        path: tmpDir,
+      });
+      const lines = result.split("\n");
+      expect(lines[0]).toContain("agent.js");
+    });
   });
 
   // ─── grep tool ──────────────────────────────────────────────
@@ -489,6 +522,24 @@ describe("tools.js", () => {
       });
       expect(result).toContain("nex-code");
     });
+
+    it("prioritizes definition-like matches over incidental string matches", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "defs.js"),
+        "function runApp() {\n  return true;\n}\n",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "notes.js"),
+        'const msg = "runApp should maybe exist";\n',
+      );
+
+      const result = await executeTool("grep", {
+        pattern: "runApp",
+        path: tmpDir,
+      });
+      const lines = result.split("\n");
+      expect(lines[0]).toContain("defs.js");
+    });
   });
 
   // ─── patch_file tool ───────────────────────────────────────
@@ -512,7 +563,7 @@ describe("tools.js", () => {
 
     it("returns error for missing file", async () => {
       const result = await executeTool("patch_file", {
-        path: "/nonexistent/file.txt",
+        path: path.join(tmpDir, "missing-patch.txt"),
         patches: [{ old_text: "a", new_text: "b" }],
       });
       expect(result).toContain("ERROR");
@@ -1803,6 +1854,14 @@ describe("tools.js", () => {
       });
       expect(result).toContain("ERROR");
       expect(result).toContain("invalid action");
+    });
+
+    it("rejects unsafe service names", async () => {
+      const result = await executeTool("service_manage", {
+        service: "nginx; reboot",
+        action: "status",
+      });
+      expect(result).toContain("unsafe characters");
     });
   });
 
@@ -3990,7 +4049,7 @@ describe("tools.js", () => {
 
     it("returns error for nonexistent directory", async () => {
       const result = await executeTool("list_directory", {
-        path: "/nonexistent-dir-xyz-123",
+        path: path.join(tmpDir, "nonexistent-dir-xyz-123"),
       });
       expect(result).toContain("ERROR");
     });
@@ -4047,9 +4106,9 @@ describe("tools.js", () => {
       expect(result).toBeNull();
     });
 
-    it("resolves normal absolute path", () => {
+    it("blocks normal absolute paths outside the workspace", () => {
       const result = resolvePath("/tmp/test-file.txt");
-      expect(result).toBe("/tmp/test-file.txt");
+      expect(result).toBeNull();
     });
 
     it("resolves relative path to cwd", () => {
@@ -5354,6 +5413,21 @@ describe("tools.js", () => {
         server: "server1",
       });
       expect(result).toContain("SSH key added");
+    });
+
+    it("rejects unsafe usernames before remote execution", async () => {
+      mockResolveProfile.mockReturnValue({
+        host: "server1.example.com",
+        user: "root",
+      });
+      const result = await executeTool("sysadmin", {
+        action: "user_manage",
+        user_action: "create",
+        user: "testuser; touch /tmp/pwned",
+        server: "server1",
+      });
+      expect(result).toContain("unsafe characters");
+      expect(mockSshExec).not.toHaveBeenCalled();
     });
 
     it("runs user_manage info on remote", async () => {

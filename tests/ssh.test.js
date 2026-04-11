@@ -100,12 +100,12 @@ describe("resolveProfile", () => {
 // ─── buildSSHArgs ─────────────────────────────────────────────
 
 describe("buildSSHArgs", () => {
-  it("includes BatchMode, ConnectTimeout, StrictHostKeyChecking", () => {
+  it("includes BatchMode, ConnectTimeout, and strict host key checks", () => {
     const { buildSSHArgs } = require("../cli/ssh");
     const { args } = buildSSHArgs({ host: "1.2.3.4", user: "deploy" });
     expect(args).toContain("BatchMode=yes");
     expect(args.some((a) => a.includes("ConnectTimeout"))).toBe(true);
-    expect(args.some((a) => a.includes("StrictHostKeyChecking"))).toBe(true);
+    expect(args).toContain("StrictHostKeyChecking=yes");
   });
 
   it("includes identity file when key is set", () => {

@@ -18,7 +18,7 @@ This document describes the automated release process for Nex Code.
 6. **VS Code Extension**: Built and packaged by GitHub Actions
    - `.vsix` attached to the GitHub Release as a downloadable asset
    - Also published to VS Code Marketplace if `VSCE_PAT` secret is set
-7. **Sync**: Version bump merged back to devel, dist rebuilt and committed
+7. **Sync**: Version files checked out from main into devel, dist rebuilt, both committed as a single new SHA — avoids pushing the same commit SHA to both branches (see "SHA isolation" below)
 
 ## Merge Command
 
@@ -41,6 +41,17 @@ kept as a fallback for manual `git merge devel` invocations that did create a
 real merge commit. An `EXIT` trap in the script removes the marker if the
 merge fails, so a stale marker can never cause a phantom bump on the next
 unrelated merge.
+
+### SHA isolation between main and devel
+
+The post-merge hook syncs the version bump back to devel using
+`git checkout main -- package.json package-lock.json vscode/package.json`
+rather than `git merge main`. The merge approach pushed the same commit SHA to
+both branches. GitHub associates CI check-runs by SHA across all branches, so the
+cancelled devel CI run (cancelled when devel advanced to the dist-rebuild commit)
+appeared as a failing "CI Passed" check on the main commit. Using file-checkout
+instead of merge gives the devel sync a new SHA, keeping CI check histories
+cleanly separated.
 
 ## Pre-Push Checks
 
