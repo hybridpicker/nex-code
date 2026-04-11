@@ -731,7 +731,7 @@ log(`Interval:  ${config.proactive_interval_min} min`);
 log(`Daily cap: ${config.max_commits_per_day}`);
 log(`nex-code:  ${NEX_CODE_BIN}`);
 log(`Config:    ${CONFIG_FILE}`);
-log(`Practice:  every 3rd pass (Nex-Code-Playground)`);
+log(`Practice:  every 5th pass (Nex-Code-Playground)`);
 log("═══════════════════════════════════════════════════");
 
 // First pass after 2 min warmup, then every N min
