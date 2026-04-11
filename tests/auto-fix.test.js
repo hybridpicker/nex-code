@@ -15,7 +15,7 @@ jest.mock("../cli/tool-tiers", () => ({
 let tmpDir;
 
 beforeAll(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jc-autofix-"));
+  tmpDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-jc-autofix-"));
 });
 
 afterAll(() => {
