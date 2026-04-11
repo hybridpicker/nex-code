@@ -235,6 +235,8 @@ describe("planner.js", () => {
       expect(prompt).toContain("PLAN MODE");
       expect(prompt).toContain("read");
       expect(prompt).toContain("Do NOT make any file changes");
+      expect(prompt).toContain("Verify");
+      expect(prompt).toContain("highest-confidence targets");
     });
   });
 

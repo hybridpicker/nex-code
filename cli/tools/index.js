@@ -28,7 +28,14 @@ const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require("../git");
 const { recordChange } = require("../file-history");
 const { fuzzyFindText, findMostSimilar } = require("../fuzzy-match");
 const { runDiagnostics } = require("../diagnostics");
-const { findFileInIndex, getFileIndex } = require("../index-engine");
+const {
+  findFileInIndex,
+  getFileIndex,
+  searchContentIndex,
+  scorePathMatch,
+  refreshIndex,
+  isIndexValid,
+} = require("../index-engine");
 const { resolveProfile, sshExec, scpUpload, scpDownload } = require("../ssh");
 const { resolveDeployConfig, loadDeployConfigs } = require("../deploy-config");
 const { getEditMode } = require("../tool-tiers");
@@ -262,6 +269,133 @@ function getBlockedHint(cmd) {
     return 'sed -n line-range scrolling floods context with irrelevant lines. Use targeted grep instead: grep -n "ERROR\\|pattern" <logfile> | tail -20';
   }
   return "";
+}
+
+function extractLiteralSearchQuery(input) {
+  if (!input || typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Regex-heavy patterns are too ambiguous for deterministic ranking.
+  if (/[()[\]{}|^$\\]/.test(trimmed)) return null;
+
+  const cleaned = trimmed
+    .replace(/\*\*/g, " ")
+    .replace(/[*?]/g, " ")
+    .replace(/[:=><!]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+
+  const tokens = cleaned
+    .split(/[\/\s,]+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => token !== "." && token !== "..")
+    .filter((token) => !/^\.[a-z0-9]+$/i.test(token))
+    .filter((token) => token.length >= 3);
+
+  if (tokens.length === 0) return null;
+  tokens.sort((a, b) => b.length - a.length);
+  return tokens[0];
+}
+
+async function buildDefinitionScoreMap(query, basePath) {
+  const literal = extractLiteralSearchQuery(query);
+  if (!literal) return new Map();
+
+  try {
+    const defs = await searchContentIndex(literal, undefined, basePath || process.cwd());
+    const scores = new Map();
+    for (const hit of defs) {
+      const exact = hit.name.toLowerCase() === literal.toLowerCase();
+      const delta = exact ? 140 : 90;
+      scores.set(hit.file, (scores.get(hit.file) || 0) + delta);
+    }
+    return scores;
+  } catch {
+    return new Map();
+  }
+}
+
+function normalizeRelativePath(filePath, basePath) {
+  if (!filePath) return "";
+  const absBase = basePath || process.cwd();
+  const candidate = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(absBase, filePath);
+  const relFromBase = path.relative(absBase, candidate);
+  if (relFromBase && !relFromBase.startsWith("..") && !path.isAbsolute(relFromBase)) {
+    return relFromBase;
+  }
+  const relFromCwd = path.relative(process.cwd(), candidate);
+  return relFromCwd;
+}
+
+function parseGrepStdout(stdout, outputMode) {
+  const trimmed = (stdout || "").trim();
+  if (!trimmed) return [];
+  if (outputMode === "files_with_matches" || outputMode === "count") {
+    return trimmed.split("\n").filter((line) => line.trim());
+  }
+  return trimmed.split("\n").filter((line) => line.trim());
+}
+
+function rankPathCandidates(paths, { query, basePath, definitionScores = new Map(), mtimeByPath = new Map() } = {}) {
+  const literal = extractLiteralSearchQuery(query);
+  return [...paths].sort((a, b) => {
+    const relA = normalizeRelativePath(a, basePath);
+    const relB = normalizeRelativePath(b, basePath);
+    let scoreA = 0;
+    let scoreB = 0;
+
+    if (literal) {
+      scoreA += scorePathMatch(relA, literal);
+      scoreB += scorePathMatch(relB, literal);
+    }
+
+    scoreA += definitionScores.get(relA) || 0;
+    scoreB += definitionScores.get(relB) || 0;
+
+    if (scoreA !== scoreB) return scoreB - scoreA;
+
+    const mtimeA = mtimeByPath.get(a) || 0;
+    const mtimeB = mtimeByPath.get(b) || 0;
+    if (mtimeA !== mtimeB) return mtimeB - mtimeA;
+
+    return relA.localeCompare(relB);
+  });
+}
+
+async function rankLineResults(lines, { query, basePath, outputMode } = {}) {
+  if (!Array.isArray(lines) || lines.length <= 1) return lines;
+
+  const fileToLines = new Map();
+  const orderedFiles = [];
+  for (const line of lines) {
+    if (!line) continue;
+    let filePart = line;
+    if (outputMode === "count") filePart = line.split(":")[0];
+    else if (outputMode !== "files_with_matches") filePart = line.split(":")[0];
+    if (!fileToLines.has(filePart)) {
+      fileToLines.set(filePart, []);
+      orderedFiles.push(filePart);
+    }
+    fileToLines.get(filePart).push(line);
+  }
+
+  const definitionScores = await buildDefinitionScoreMap(query, basePath);
+  const rankedFiles = rankPathCandidates(orderedFiles, {
+    query,
+    basePath,
+    definitionScores,
+  });
+
+  const rankedLines = [];
+  for (const file of rankedFiles) {
+    rankedLines.push(...(fileToLines.get(file) || []));
+  }
+  return rankedLines;
 }
 
 /**
@@ -2731,7 +2865,7 @@ async function _executeToolInner(name, args, options = {}) {
       const dp = resolvePath(args.path);
       if (!dp)
         return `ERROR: Access denied — path outside project: ${args.path}`;
-      const grepArgs = ["-rn", "--null", "-H"];
+      const grepArgs = ["-rn", "-H"];
       if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
       grepArgs.push(args.pattern, dp);
       try {
@@ -2740,22 +2874,12 @@ async function _executeToolInner(name, args, options = {}) {
           timeout: 30000,
           maxBuffer: 2 * 1024 * 1024,
         });
-        // Parse null-delimited output to handle filenames with spaces
-        const parts = stdout.split("\0");
-        const results = [];
-        for (let i = 0; i < parts.length; i += 2) {
-          const file = parts[i];
-          const content = parts[i + 1];
-          if (file && content) {
-            const lines = content.split("\n").filter((l) => l.trim());
-            for (const line of lines) {
-              results.push(`${file}:${line}`);
-              if (results.length >= 50) break;
-            }
-          }
-          if (results.length >= 50) break;
-        }
-        return results.join("\n") || "(no matches)";
+        const results = parseGrepStdout(stdout).slice(0, 50);
+        const ranked = await rankLineResults(results, {
+          query: args.pattern,
+          basePath: dp,
+        });
+        return ranked.join("\n") || "(no matches)";
       } catch {
         return "(no matches)";
       }
@@ -2785,19 +2909,12 @@ async function _executeToolInner(name, args, options = {}) {
       const gProgress = new GlobProgress("glob", "Finding files...");
       gProgress.start();
 
-      let {
-        getFileIndex: getIndex,
-        getIndexedCwd,
-        refreshIndex,
-        isIndexValid,
-      } = require("../index-engine");
-      let allFiles = getIndex();
-      let indexedCwd = getIndexedCwd();
+      let allFiles = getFileIndex();
 
       // Refresh if index is invalid (empty, wrong cwd, or expired)
       if (!isIndexValid(basePath)) {
         await refreshIndex(basePath);
-        allFiles = getIndex();
+        allFiles = getFileIndex();
       }
 
       const matches = allFiles
@@ -2820,8 +2937,17 @@ async function _executeToolInner(name, args, options = {}) {
           }
         }),
       );
-      withStats.sort((a, b) => b.mtime - a.mtime);
-      const sortedMatches = withStats.map((s) => s.path);
+      const mtimeByPath = new Map(withStats.map((entry) => [entry.path, entry.mtime]));
+      const definitionScores = await buildDefinitionScoreMap(pattern, basePath);
+      const sortedMatches = rankPathCandidates(
+        withStats.map((s) => s.path),
+        {
+          query: pattern,
+          basePath,
+          definitionScores,
+          mtimeByPath,
+        },
+      );
 
       const truncated = matches.length > GLOB_LIMIT;
       const result = sortedMatches.slice(0, GLOB_LIMIT).join("\n");
@@ -2860,7 +2986,6 @@ async function _executeToolInner(name, args, options = {}) {
         const grepArgs2 = [
           "-rn",
           "-E",
-          "--null",
           "-H",
           "--exclude=*.md",
           "--exclude=*.txt",
@@ -2910,28 +3035,22 @@ async function _executeToolInner(name, args, options = {}) {
                 args.output_mode === "files_with_matches" ||
                 args.output_mode === "count"
               ) {
-                const fileResults = stdout
-                  .trim()
-                  .split("\n")
-                  .filter((l) => l.trim());
+                const fileResults = parseGrepStdout(stdout, args.output_mode);
                 results = results.concat(fileResults);
               } else {
-                const parts = stdout.split("\0");
-                for (let i = 0; i < parts.length; i += 2) {
-                  const content = parts[i + 1];
-                  if (content) {
-                    const lines = content.split("\n").filter((l) => l.trim());
-                    for (const line of lines) {
-                      results.push(`${file}:${line}`);
-                    }
-                  }
-                }
+                results = results.concat(parseGrepStdout(stdout));
               }
             }
           } catch (e) {
             // Ignore errors for individual files
           }
         }
+
+        results = await rankLineResults(results, {
+          query: args.pattern,
+          basePath: process.cwd(),
+          outputMode: args.output_mode,
+        });
 
         grepProgress.update({
           count: results.length,
@@ -2942,7 +3061,7 @@ async function _executeToolInner(name, args, options = {}) {
       }
 
       // Original non-staged search logic
-      const grepArgs2 = ["-rn", "-E", "--null", "-H"];
+      const grepArgs2 = ["-rn", "-E", "-H"];
       if (args.ignore_case) grepArgs2.push("-i");
       if (args.include) grepArgs2.push(`--include=${args.include}`);
       // type filter maps to --include
@@ -2987,25 +3106,9 @@ async function _executeToolInner(name, args, options = {}) {
           args.output_mode === "files_with_matches" ||
           args.output_mode === "count"
         ) {
-          // These modes output one line per file, no null-delimited parsing needed
-          results = stdout
-            .trim()
-            .split("\n")
-            .filter((l) => l.trim());
+          results = parseGrepStdout(stdout, args.output_mode);
         } else {
-          // Parse null-delimited output for content mode
-          const parts = stdout.split("\0");
-          results = [];
-          for (let i = 0; i < parts.length; i += 2) {
-            const file = parts[i];
-            const content = parts[i + 1];
-            if (file && content) {
-              const lines = content.split("\n").filter((l) => l.trim());
-              for (const line of lines) {
-                results.push(`${file}:${line}`);
-              }
-            }
-          }
+          results = parseGrepStdout(stdout);
         }
 
         // Apply offset and head_limit
@@ -3013,6 +3116,11 @@ async function _executeToolInner(name, args, options = {}) {
         const limit =
           args.head_limit ||
           (args.output_mode === "files_with_matches" ? 200 : 100);
+        results = await rankLineResults(results, {
+          query: args.pattern,
+          basePath: searchPath,
+          outputMode: args.output_mode,
+        });
         results = results.slice(offset, offset + limit);
 
         grepProgress.update({

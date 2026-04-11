@@ -558,6 +558,10 @@ RULES:
 - If your task says "add X to README" — add it, don't check if it exists first.
 - Max 10 tool calls. If you need more, you are doing too much — narrow your scope.
 - When done: stop calling tools and write a one-line summary of what you changed.
+- You are part of a team of agents. Respect file ownership strictly: write only to files you own; other scoped files are read-only context.
+- Start with symbol-aware reads inside your scope: locate the target function/class/module, then read the exact section instead of scanning broadly.
+- Before finishing, run the smallest relevant verification for your scope and report any residual risk explicitly.
+- If your sub-task is review/audit/verify-oriented, output findings first with severity, file, and impact. If nothing is wrong, say so explicitly and mention remaining risk.
 `;
 
   // Group sub-tasks by priority level — execute each wave before starting the next.
@@ -675,11 +679,51 @@ RULES:
         2000,
       );
 
+      let reviewNote = "";
+      if (_shouldRunFollowUpReview(agentType, result, st, _ownedFiles)) {
+        const filesToReview = [...new Set([
+          ..._ownedFiles,
+          ...(Array.isArray(result.filesModified) ? result.filesModified : []),
+          ...(Array.isArray(st.scope) ? st.scope : []),
+        ])].filter(Boolean);
+
+        try {
+          progress.labels[idx] = `Agent ${idx + 1} [${taskModel}] review`;
+          progress.update(idx, "retry");
+          const reviewResult = await runSubAgent(
+            {
+              task: `Review the completed changes for: ${st.task}`,
+              type: "review",
+              context: _buildReviewContext(st, result, filesToReview),
+              max_iterations: 4,
+              model: taskModel,
+              _skipLog: true,
+              _systemPrompt: WORKER_SYSTEM_PROMPT,
+            },
+            { onUpdate: () => {} },
+            1,
+          );
+
+          if (_hasMaterialReviewFindings(reviewResult.result)) {
+            reviewNote = `\n\nReviewer findings:\n${reviewResult.result}`;
+            sharedContext.findings.push({
+              agentId: `${st.id}-review`,
+              summary: String(reviewResult.result || "").slice(0, 200),
+              files: filesToReview,
+            });
+          } else if (reviewResult.result) {
+            reviewNote = `\n\nReviewer: ${reviewResult.result}`;
+          }
+        } catch (reviewErr) {
+          reviewNote = `\n\nReviewer note: review pass failed (${reviewErr.message})`;
+        }
+      }
+
       // Contribute this agent's findings to the shared scratch-pad
       const resultSummary =
         typeof result.result === "string"
-          ? result.result.slice(0, 200)
-          : String(result.result || "").slice(0, 200);
+          ? `${result.result}${reviewNote}`.slice(0, 200)
+          : `${String(result.result || "")}${reviewNote}`.slice(0, 200);
       sharedContext.findings.push({
         agentId: st.id,
         summary: resultSummary,
@@ -692,7 +736,12 @@ RULES:
       totalTokens.input += result.tokensUsed?.input || 0;
       totalTokens.output += result.tokensUsed?.output || 0;
       if (result.tokensUsed?._estimated) totalTokens._estimated = true;
-      return { ...result, _scope: st.scope, _idx: idx };
+      return {
+        ...result,
+        result: `${String(result.result || "")}${reviewNote}`,
+        _scope: st.scope,
+        _idx: idx,
+      };
     } catch (err) {
       progress.labels[idx] = labels[idx];
       progress.update(idx, "error");
@@ -803,20 +852,53 @@ RULES:
 // ─── Worker Type Classification ─────────────────────────────────────────────
 
 const EXPLORE_PATTERNS = /\b(research|analyze|investigate|check|verify|review|audit|read|find|search|discover|look|examine|inspect|scan|list)\b/i;
+const REVIEW_PATTERNS = /\b(review|audit|verify|validate|inspect|critique)\b/i;
 const IMPLEMENT_PATTERNS = /\b(fix|implement|create|add|update|modify|change|write|refactor|remove|delete|install|configure|setup|deploy|build|migrate|optimize|improve|patch|rewrite|replace)\b/i;
 
+function _buildReviewContext(task, result, filesToReview) {
+  const fileBlock =
+    Array.isArray(filesToReview) && filesToReview.length > 0
+      ? `Files to review: ${filesToReview.join(", ")}`
+      : "Files to review: inspect the files touched by the implementing agent";
+  return [
+    "Review the finished implementation for correctness, regressions, and missing verification.",
+    `Original task: ${task.task}`,
+    fileBlock,
+    `Implementation summary: ${String(result.result || "").slice(0, 600)}`,
+    "Report findings first. If no material issue exists, say \"No material findings\" and mention the main residual risk.",
+  ].join("\n");
+}
+
+function _hasMaterialReviewFindings(text) {
+  if (!text || typeof text !== "string") return false;
+  return !/no material findings/i.test(text);
+}
+
+function _shouldRunFollowUpReview(agentType, result, task, ownedFiles) {
+  if (agentType !== "implement") return false;
+  if (!result || result.status === "failed") return false;
+  const scopeCount = Array.isArray(task?.scope) ? task.scope.length : 0;
+  const modifiedCount = Array.isArray(result.filesModified)
+    ? result.filesModified.length
+    : 0;
+  const ownedCount = Array.isArray(ownedFiles) ? ownedFiles.length : 0;
+  return scopeCount + modifiedCount + ownedCount > 0;
+}
+
 /**
- * Classify a sub-task as explore (read-only) or implement (full access).
+ * Classify a sub-task as explore/review (read-only) or implement (full access).
  * Tasks that only need investigation get restricted tool access.
  * @param {string} taskDescription
- * @returns {string} — "explore" or "implement"
+ * @returns {string} — "explore", "review", or "implement"
  */
 function _classifyWorkerType(taskDescription) {
   if (!taskDescription) return "implement";
   const hasExplore = EXPLORE_PATTERNS.test(taskDescription);
+  const hasReview = REVIEW_PATTERNS.test(taskDescription);
   const hasImplement = IMPLEMENT_PATTERNS.test(taskDescription);
   // If task mentions both, prefer implement (it needs write access)
   if (hasImplement) return "implement";
+  if (hasReview) return "review";
   if (hasExplore) return "explore";
   return "implement"; // default: full access
 }
@@ -836,4 +918,6 @@ module.exports = {
   DEFAULT_MAX_SUBTASKS,
   withRetry,
   _classifyWorkerType,
+  _hasMaterialReviewFindings,
+  _shouldRunFollowUpReview,
 };
