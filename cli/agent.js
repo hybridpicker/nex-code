@@ -2157,7 +2157,7 @@ class MyListView(ListAPIView):
 \`\`\`python
 # ✅ CORRECT - Fail immediately if environment variable missing
 SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = os.environ['DEBUG'] == 'True'
 
 # ❌ WRONG - Insecure defaults allow production deployment with dev settings
 SECRET_KEY = os.getenv('SECRET_KEY', 'insecure-dev-key')
