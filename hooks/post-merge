@@ -78,16 +78,18 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
   echo "[post-merge] Pushing main (GitHub Actions will publish to npm)..."
   NEX_SKIP_TESTS=1 NEX_SKIP_BENCHMARK=1 NEX_SKIP_SECRET_CHECK=1 git push origin main
 
-  # Sync version bump back to devel so both branches stay in sync
+  # Sync version bump back to devel so both branches stay in sync.
+  # Use checkout of individual files instead of `git merge main` to avoid
+  # pushing the same commit SHA to devel. Shared SHAs cause the cancelled
+  # devel CI run to appear as a failing check on the main commit in GitHub.
   echo "[post-merge] Syncing version bump back to devel..."
   git checkout devel
-  git merge main --no-edit
-  NEX_SKIP_TESTS=1 NEX_SKIP_BENCHMARK=1 NEX_SKIP_SECRET_CHECK=1 git push origin devel
-
-  # Rebuild dist on devel and commit so the working tree stays clean
+  git checkout main -- package.json package-lock.json vscode/package.json
+  # Rebuild dist (picks up version bump + any source drift) and commit both
+  # in one go so devel gets a single new commit, not two.
   echo "[post-merge] Rebuilding dist/ on devel..."
   npm run build 2>&1 | tail -1
-  git add dist/
+  git add dist/ package.json package-lock.json vscode/package.json
   git commit -m "build: rebuild dist for v${NEW_VERSION}"
   NEX_SKIP_TESTS=1 NEX_SKIP_BENCHMARK=1 NEX_SKIP_SECRET_CHECK=1 git push origin devel
   echo "[post-merge] dist/ committed and pushed."
