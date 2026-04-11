@@ -58,7 +58,8 @@ On Ollama Cloud, nex-code automatically runs each task through plan → implemen
 
 - **Plan → Implement**: Triggers when investigation cap fires or model produces a text-only analysis
 - **Implement → Verify**: Triggers when model finishes with files modified
-- **Verify → Done**: On PASS. On FAIL, loops back to implement once, then completes
+- **Verify → Done**: Only after at least one verification tool call and an explicit `PASS`
+- **Verify → Implement**: On `FAIL`, loops back to implement once, then completes
 
 ### Configuration
 
