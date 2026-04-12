@@ -62,6 +62,22 @@ function matchesEditArgs(args, { pathIncludes = [], oldTexts = [], newTexts = []
   return Array.isArray(args.patches) && args.patches.length > 0;
 }
 
+function matchesWriteArgs(args, { pathIncludes = [], contentIncludes = [] } = {}) {
+  if (typeof args?.path !== "string" || typeof args?.content !== "string") {
+    return false;
+  }
+
+  const pathOk =
+    pathIncludes.length === 0 ||
+    pathIncludes.some((needle) => args.path.toLowerCase().includes(needle.toLowerCase()));
+  if (!pathOk) return false;
+
+  return (
+    contentIncludes.length === 0 ||
+    contentIncludes.every((needle) => args.content.includes(needle))
+  );
+}
+
 const TASKS = [
   // ── File operations ─────────────────────────────────────────────────────
   {
@@ -79,7 +95,10 @@ const TASKS = [
       'Create a file at /tmp/nex-bench-test.txt with the content "benchmark run".',
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" && typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["nex-bench-test.txt"],
+        contentIncludes: ["benchmark run"],
+      }),
   },
   {
     id: "edit-file",
@@ -146,10 +165,10 @@ const TASKS = [
       "Create a .gitignore file at the project root that ignores node_modules/ and dist/.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      args.path.includes(".gitignore") &&
-      typeof args.content === "string" &&
-      args.content.includes("node_modules"),
+      matchesWriteArgs(args, {
+        pathIncludes: [".gitignore"],
+        contentIncludes: ["node_modules", "dist"],
+      }),
   },
   {
     id: "edit-version-bump",
@@ -329,14 +348,13 @@ const TASKS = [
     id: "frontend-create-component",
     category: "frontend",
     prompt:
-      "Create a React functional component called Button that accepts a label prop and renders a styled button element. Save it to src/components/Button.jsx.",
+      "There is no existing Button component and no need to inspect other files first. What tool call do you use first to create src/components/Button.jsx with a React functional Button component that accepts a label prop and renders a styled button element?",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      (args.path.includes(".jsx") ||
-        args.path.includes(".tsx") ||
-        args.path.includes(".js")) &&
-      typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["button.", "src/components"],
+        contentIncludes: ["Button", "label", "button"],
+      }),
   },
   {
     id: "frontend-edit-css",
@@ -475,9 +493,10 @@ const TASKS = [
       "Write a SQL query to find all users who have not logged in for more than 30 days. Save it to queries/inactive-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      (args.path.includes(".sql") || args.path.includes("quer")) &&
-      typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["inactive-users.sql", "queries"],
+        contentIncludes: ["select", "users"],
+      }),
   },
   {
     id: "data-find-json-key",
@@ -493,12 +512,13 @@ const TASKS = [
     id: "data-python-csv",
     category: "data",
     prompt:
-      'Write a Python script that reads data.csv and calculates the average of the "price" column. Save it to scripts/average_price.py.',
+      'There is no need to inspect the repo first. What tool call do you use first to create scripts/average_price.py with a Python script that reads data.csv and calculates the average of the "price" column?',
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      args.path.includes(".py") &&
-      typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["average_price.py", "scripts"],
+        contentIncludes: ["data.csv", "price"],
+      }),
   },
   {
     id: "data-find-migrations",
@@ -525,7 +545,10 @@ const TASKS = [
     prompt: "Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" && args.path.includes(".sql"),
+      matchesWriteArgs(args, {
+        pathIncludes: ["recent-users.sql", "queries"],
+        contentIncludes: ["select", "users"],
+      }),
   },
   {
     id: "data-read-env",
@@ -749,12 +772,18 @@ const TASKS = [
     category: "agentic",
     prompt:
       "Run the full test suite. If any tests fail, identify the failing test file and read it to understand the issue.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("test") ||
-        args.command.includes("jest") ||
-        args.command.includes("npm")),
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("test") ||
+          args.command.includes("jest") ||
+          args.command.includes("npm")
+        );
+      }
+      const hay = searchNeedle(args);
+      return args.action === "create" && /test|failing|read/i.test(hay);
+    },
   },
   {
     id: "agentic-read-then-act",
@@ -770,10 +799,14 @@ const TASKS = [
     category: "agentic",
     prompt:
       "Build the project with npm run build, then verify the output exists in the dist/ directory.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("build") || args.command.includes("npm")),
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return args.command.includes("build") || args.command.includes("npm");
+      }
+      const hay = searchNeedle(args);
+      return args.action === "create" && /build|dist/i.test(hay);
+    },
   },
   {
     id: "agentic-spawn-parallel",
@@ -832,7 +865,7 @@ const PHASE_TASKS = [
     id: "phase-verify-test",
     category: "phase-verify",
     prompt:
-      "The file src/utils.js was modified to fix a null pointer bug. Run the test suite to verify the fix works correctly.",
+      "You are explicitly in the verify phase. What tool call do you use first to run tests for a fix in src/utils.js?",
     expectedTool: "bash",
     validateArgs: (args) =>
       typeof args.command === "string" &&
@@ -851,7 +884,7 @@ const PHASE_TASKS = [
     id: "phase-verify-lint",
     category: "phase-verify",
     prompt:
-      "Code was modified in src/components/Header.tsx. Run the linter to check for any style violations.",
+      "You are explicitly in the verify phase. What tool call do you use first to run linting after changes in src/components/Header.tsx?",
     expectedTool: "bash",
     validateArgs: (args) =>
       typeof args.command === "string" &&
