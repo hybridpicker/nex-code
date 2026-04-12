@@ -2161,8 +2161,8 @@ describe("agent.js", () => {
     });
   });
 
-  describe("_inferVerificationCommands", () => {
-    it("prefers package scripts and ts-focused checks for TS edits", () => {
+describe("_inferVerificationCommands", () => {
+    it("prefers package scripts and ts-focused checks for TS edits", async () => {
       const fs = require("fs");
       const path = require("path");
       const pkgPath = path.join(process.cwd(), "package.json");
@@ -2185,7 +2185,7 @@ describe("agent.js", () => {
       });
 
       try {
-        const commands = _inferVerificationCommands(new Set(["src/app.ts"]));
+        const commands = await _inferVerificationCommands(new Set(["src/app.ts"]));
         expect(commands).toContain("npm test");
         expect(commands).toContain("npm run lint");
         expect(commands).toContain("npm run typecheck");
@@ -2195,7 +2195,7 @@ describe("agent.js", () => {
       }
     });
 
-    it("adds targeted jest commands for related tests", () => {
+    it("adds targeted jest commands for related tests", async () => {
       const fs = require("fs");
       const path = require("path");
       const pkgPath = path.join(process.cwd(), "package.json");
@@ -2220,7 +2220,7 @@ describe("agent.js", () => {
       ]);
 
       try {
-        const commands = _inferVerificationCommands(new Set(["src/app.ts"]));
+        const commands = await _inferVerificationCommands(new Set(["src/app.ts"]));
         expect(commands.some((cmd) => cmd.includes("npx jest --runInBand tests/app.test.js"))).toBe(true);
       } finally {
         existsSpy.mockRestore();
@@ -2230,18 +2230,57 @@ describe("agent.js", () => {
     });
   });
 
-  describe("_inferRelevantTests", () => {
-    it("maps modified files to matching tests by basename", () => {
+describe("_inferRelevantTests", () => {
+    it("maps modified files to matching tests by basename", async () => {
       const indexEngine = require("../cli/index-engine");
       jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
         "src/app.ts",
         "tests/app.test.js",
         "tests/other.test.js",
       ]);
+      jest.spyOn(indexEngine, "buildContentIndex").mockResolvedValue({ files: {} });
+      jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue([]);
+      jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([]);
 
-      const tests = _inferRelevantTests(new Set(["src/app.ts"]));
+      const tests = await _inferRelevantTests(new Set(["src/app.ts"]));
       expect(tests).toContain("tests/app.test.js");
       indexEngine.getFileIndex.mockRestore();
+      indexEngine.buildContentIndex.mockRestore();
+      indexEngine.getRelatedFiles.mockRestore();
+      indexEngine.findSymbolReferences.mockRestore();
+    });
+
+    it("pulls in tests from related symbols and neighboring modules", async () => {
+      const indexEngine = require("../cli/index-engine");
+      jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
+        "src/app.ts",
+        "src/router.ts",
+        "tests/router.test.ts",
+        "tests/run-app.integration.test.ts",
+      ]);
+      jest.spyOn(indexEngine, "buildContentIndex").mockResolvedValue({
+        files: {
+          "src/app.ts": {
+            defs: [
+              { type: "function", name: "runApp", line: 12 },
+              { type: "export", name: "runApp", line: 30 },
+            ],
+          },
+        },
+      });
+      jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue(["src/router.ts"]);
+      jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([
+        { file: "tests/run-app.integration.test.ts", line: 8, context: "runApp();" },
+      ]);
+
+      const tests = await _inferRelevantTests(new Set(["src/app.ts"]));
+      expect(tests).toContain("tests/router.test.ts");
+      expect(tests).toContain("tests/run-app.integration.test.ts");
+
+      indexEngine.getFileIndex.mockRestore();
+      indexEngine.buildContentIndex.mockRestore();
+      indexEngine.getRelatedFiles.mockRestore();
+      indexEngine.findSymbolReferences.mockRestore();
     });
   });
 
@@ -2261,7 +2300,7 @@ describe("agent.js", () => {
   });
 
   describe("_buildSymbolHintBlock", () => {
-    it("includes related follow-up files when import graph neighbors exist", async () => {
+    it("includes related follow-up files and likely callers when graph neighbors exist", async () => {
       const indexEngine = require("../cli/index-engine");
       const searchSpy = jest.spyOn(indexEngine, "searchContentIndex").mockResolvedValue([
         { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
@@ -2270,15 +2309,21 @@ describe("agent.js", () => {
         "cli/router.js",
         "tests/app.test.js",
       ]);
+      const refsSpy = jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([
+        { file: "cli/index.js", line: 44, context: "runApp();" },
+        { file: "tests/app.test.js", line: 10, context: "runApp();" },
+      ]);
 
       try {
         const block = await _buildSymbolHintBlock("fix runApp timeout handling");
         expect(block).toContain("Likely symbol targets:");
         expect(block).toContain("read_file(path='cli/app.js'");
         expect(block).toContain("Follow-up files: cli/router.js, tests/app.test.js");
+        expect(block).toContain("Likely callers/usages: cli/index.js:44, tests/app.test.js:10");
       } finally {
         searchSpy.mockRestore();
         relatedSpy.mockRestore();
+        refsSpy.mockRestore();
       }
     });
   });
