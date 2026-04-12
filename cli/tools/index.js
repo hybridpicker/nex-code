@@ -24,6 +24,7 @@ const {
   confirmFileChange,
 } = require("../diff");
 const { C, Spinner, getToolSpinnerText } = require("../ui");
+const { ToolProgress } = require("../spinner");
 const { isGitRepo, getCurrentBranch, getStatus, getDiff } = require("../git");
 const { recordChange } = require("../file-history");
 const { fuzzyFindText, findMostSimilar } = require("../fuzzy-match");
@@ -2573,234 +2574,310 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case "read_file": {
-      let fp = resolvePath(args.path);
-      if (!fp)
-        return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fileExists(fp);
-      if (!exists) {
-        // Auto-fix: try to find the file
-        const fix = await autoFixPath(args.path);
-        if (fix.fixedPath) {
-          fp = fix.fixedPath;
-          console.log(
-            `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
-          );
-        } else {
-          return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
+      const readProgress = new ToolProgress("read_file", "Reading file...");
+      readProgress.start();
+      try {
+        let fp = resolvePath(args.path);
+        if (!fp)
+          return `ERROR: Access denied — path outside project: ${args.path}`;
+        const exists = await fileExists(fp);
+        if (!exists) {
+          // Auto-fix: try to find the file
+          const fix = await autoFixPath(args.path);
+          if (fix.fixedPath) {
+            fp = fix.fixedPath;
+            console.log(
+              `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
+            );
+            readProgress.update({
+              message: "Resolved path",
+              detail: path.relative(process.cwd(), fp),
+            });
+          } else {
+            return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
+          }
         }
+
+        const shortPath = path.relative(process.cwd(), fp);
+        readProgress.update({
+          message: "Scanning",
+          detail: shortPath,
+        });
+
+        // Binary file detection: check first 8KB for null bytes
+        const buf = Buffer.alloc(8192);
+        const fd = await fsSync.promises.open(fp, "r");
+        const { bytesRead } = await fd.read(buf, 0, 8192, 0);
+        await fd.close();
+        for (let b = 0; b < bytesRead; b++) {
+          if (buf[b] === 0)
+            return `ERROR: ${fp} is a binary file (not readable as text)`;
+        }
+
+        const content = await fs.readFile(fp, "utf-8");
+        if (!content && (await fs.stat(fp)).size > 0)
+          return `WARNING: ${fp} is empty or unreadable`;
+        const lines = content.split("\n");
+        const stats = await fs.stat(fp);
+        const lineCount = lines.length;
+
+        // Hard cap: unbounded reads are limited to 350 lines to protect context window.
+        // This prevents large files from flooding the context window and causing 400 errors.
+        // The model must use line_start/line_end to read specific sections of large files.
+        const FULL_READ_CAP = 350;
+        const isFullRead = !args.line_start && !args.line_end;
+        const isTruncated = isFullRead && lineCount > FULL_READ_CAP;
+
+        const start = (args.line_start || 1) - 1;
+        const end = isTruncated ? FULL_READ_CAP : args.line_end || lines.length;
+        const visibleStart = start + 1;
+        const visibleEnd = end;
+        readProgress.update({
+          count: Math.max(0, end - start),
+          total: lineCount,
+          detail: `${shortPath}  lines ${visibleStart}-${visibleEnd}`,
+          message: isTruncated ? "Reading excerpt" : "Reading",
+        });
+
+        const rangeLabel = isTruncated
+          ? `showing lines 1-${FULL_READ_CAP} of ${lineCount}`
+          : args.line_start || args.line_end
+            ? `lines ${start + 1}-${end} of ${lineCount}`
+            : `${lineCount} lines`;
+        const summary = `File: ${shortPath} (${rangeLabel}, ${stats.size} bytes)`;
+
+        const numberedLines = lines
+          .slice(start, end)
+          .map((l, i) => `${start + i + 1}: ${l}`)
+          .join("\n");
+
+        const truncationNote = isTruncated
+          ? `\n\n[🚨 FILE TRUNCATED: You are only seeing lines 1-${FULL_READ_CAP} of ${lineCount} total lines. The rest of the file is HIDDEN. You MUST use line_start and line_end to read further down (e.g. line_start=${FULL_READ_CAP + 1}), or use grep_search to find specific keywords.]`
+          : !isFullRead && lineCount > end
+            ? `\n\n[🚨 FILE CONTINUES: This is only lines ${start + 1} to ${end} of ${lineCount} total. The rest is HIDDEN. Use line_start=${end + 1} to read the next section, or grep_search for keywords.]`
+            : "";
+        return `${summary}\n${numberedLines}${truncationNote}`;
+      } finally {
+        readProgress.stop();
       }
-
-      // Binary file detection: check first 8KB for null bytes
-      const buf = Buffer.alloc(8192);
-      const fd = await fsSync.promises.open(fp, "r");
-      const { bytesRead } = await fd.read(buf, 0, 8192, 0);
-      await fd.close();
-      for (let b = 0; b < bytesRead; b++) {
-        if (buf[b] === 0)
-          return `ERROR: ${fp} is a binary file (not readable as text)`;
-      }
-
-      const content = await fs.readFile(fp, "utf-8");
-      if (!content && (await fs.stat(fp)).size > 0)
-        return `WARNING: ${fp} is empty or unreadable`;
-      const lines = content.split("\n");
-      const stats = await fs.stat(fp);
-      const lineCount = lines.length;
-
-      // Hard cap: unbounded reads are limited to 350 lines to protect context window.
-      // This prevents large files from flooding the context window and causing 400 errors.
-      // The model must use line_start/line_end to read specific sections of large files.
-      const FULL_READ_CAP = 350;
-      const isFullRead = !args.line_start && !args.line_end;
-      const isTruncated = isFullRead && lineCount > FULL_READ_CAP;
-
-      const start = (args.line_start || 1) - 1;
-      const end = isTruncated ? FULL_READ_CAP : args.line_end || lines.length;
-
-      const shortPath = path.relative(process.cwd(), fp);
-      const rangeLabel = isTruncated
-        ? `showing lines 1-${FULL_READ_CAP} of ${lineCount}`
-        : args.line_start || args.line_end
-          ? `lines ${start + 1}-${end} of ${lineCount}`
-          : `${lineCount} lines`;
-      const summary = `File: ${shortPath} (${rangeLabel}, ${stats.size} bytes)`;
-
-      const numberedLines = lines
-        .slice(start, end)
-        .map((l, i) => `${start + i + 1}: ${l}`)
-        .join("\n");
-
-      const truncationNote = isTruncated
-        ? `\n\n[🚨 FILE TRUNCATED: You are only seeing lines 1-${FULL_READ_CAP} of ${lineCount} total lines. The rest of the file is HIDDEN. You MUST use line_start and line_end to read further down (e.g. line_start=${FULL_READ_CAP + 1}), or use grep_search to find specific keywords.]`
-        : !isFullRead && lineCount > end
-          ? `\n\n[🚨 FILE CONTINUES: This is only lines ${start + 1} to ${end} of ${lineCount} total. The rest is HIDDEN. Use line_start=${end + 1} to read the next section, or grep_search for keywords.]`
-          : "";
-      return `${summary}\n${numberedLines}${truncationNote}`;
     }
 
     case "write_file": {
-      await ensureCheckpoint();
-      const fp = resolvePath(args.path);
-      if (!fp)
-        return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fileExists(fp);
-      let oldContent = null;
+      const writeProgress = new ToolProgress("write_file", "Preparing write...");
+      writeProgress.start();
+      try {
+        await ensureCheckpoint();
+        const fp = resolvePath(args.path);
+        if (!fp)
+          return `ERROR: Access denied — path outside project: ${args.path}`;
+        const exists = await fileExists(fp);
+        let oldContent = null;
+        const lineCount = String(args.content || "").split("\n").length;
+        writeProgress.update({
+          count: lineCount,
+          detail: `${path.relative(process.cwd(), fp)}  ${lineCount} lines`,
+          message: exists ? "Overwriting" : "Creating",
+        });
 
-      if (!options.autoConfirm) {
-        if (exists) {
+        if (!options.autoConfirm) {
+          if (exists) {
+            oldContent = await fs.readFile(fp, "utf-8");
+            const annotations = await runDiagnostics(fp, args.content);
+            showDiff(fp, oldContent, args.content, { annotations });
+            const ok = await confirmFileChange("Overwrite");
+            if (!ok) return "CANCELLED: User declined to overwrite file.";
+          } else {
+            const annotations = await runDiagnostics(fp, args.content);
+            showNewFile(fp, args.content, { annotations });
+            const ok = await confirmFileChange("Create");
+            if (!ok) return "CANCELLED: User declined to create file.";
+          }
+        } else if (exists) {
           oldContent = await fs.readFile(fp, "utf-8");
-          const annotations = await runDiagnostics(fp, args.content);
-          showDiff(fp, oldContent, args.content, { annotations });
-          const ok = await confirmFileChange("Overwrite");
-          if (!ok) return "CANCELLED: User declined to overwrite file.";
-        } else {
-          const annotations = await runDiagnostics(fp, args.content);
-          showNewFile(fp, args.content, { annotations });
-          const ok = await confirmFileChange("Create");
-          if (!ok) return "CANCELLED: User declined to create file.";
         }
-      } else if (exists) {
-        oldContent = await fs.readFile(fp, "utf-8");
-      }
 
-      const dir = path.dirname(fp);
-      const dirExists = await fileExists(dir);
-      if (!dirExists) await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(fp, args.content, "utf-8");
-      const needsExec =
-        /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
-        fp.endsWith(".sh") ||
-        args.content.startsWith("#!");
-      if (needsExec) await fs.chmod(fp, 0o755);
-      recordChange("write_file", fp, oldContent, args.content);
-      const execNote = needsExec ? " [chmod +x applied]" : "";
-      return `Written: ${fp} (${args.content.length} chars)${execNote}`;
+        const dir = path.dirname(fp);
+        const dirExists = await fileExists(dir);
+        if (!dirExists) await fs.mkdir(dir, { recursive: true });
+        writeProgress.update({
+          message: "Writing",
+          detail: `${path.relative(process.cwd(), fp)}  ${lineCount} lines`,
+        });
+        await fs.writeFile(fp, args.content, "utf-8");
+        const needsExec =
+          /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
+          fp.endsWith(".sh") ||
+          args.content.startsWith("#!");
+        if (needsExec) {
+          writeProgress.update({
+            message: "Chmod",
+            detail: path.relative(process.cwd(), fp),
+          });
+          await fs.chmod(fp, 0o755);
+        }
+        recordChange("write_file", fp, oldContent, args.content);
+        const execNote = needsExec ? " [chmod +x applied]" : "";
+        return `Written: ${fp} (${args.content.length} chars)${execNote}`;
+      } finally {
+        writeProgress.stop();
+      }
     }
 
     case "edit_file": {
-      await ensureCheckpoint();
-      let fp = resolvePath(args.path);
-      if (!fp)
-        return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fileExists(fp);
-      if (!exists) {
+      const editProgress = new ToolProgress("edit_file", "Preparing edit...");
+      editProgress.start();
+      try {
+        await ensureCheckpoint();
+        let fp = resolvePath(args.path);
+        if (!fp)
+          return `ERROR: Access denied — path outside project: ${args.path}`;
+        const exists = await fileExists(fp);
+        if (!exists) {
         // Auto-fix: try to find the file
-        const fix = await autoFixPath(args.path);
-        if (fix.fixedPath) {
-          fp = fix.fixedPath;
-          console.log(
-            `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
-          );
-        } else {
-          return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
-        }
-      }
-      const content = await fs.readFile(fp, "utf-8");
-
-      let matchText = args.old_text;
-      let fuzzyMatched = false;
-      let autoFixed = false;
-
-      if (!content.includes(args.old_text)) {
-        const {
-          getActiveModelId,
-          getActiveProviderName,
-        } = require("../providers/registry");
-        const editMode = getEditMode(
-          getActiveModelId(),
-          getActiveProviderName(),
-        );
-
-        if (editMode === "strict") {
-          // Strict mode: exact match only, no fuzzy fallback
-          const similar = findMostSimilar(content, args.old_text);
-          if (similar) {
-            return `ERROR: old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
-          }
-          return `ERROR: old_text not found in ${fp} (strict mode — exact match required)`;
-        }
-
-        // Fuzzy mode: try whitespace-normalized match → auto-fix → error
-        const fuzzyResult = fuzzyFindText(content, args.old_text);
-        if (fuzzyResult) {
-          matchText = fuzzyResult;
-          fuzzyMatched = true;
-          console.log(`${C.dim}  ✓ fuzzy whitespace match applied${C.reset}`);
-        } else {
-          // Try auto-fix: apply close matches automatically (≤5% distance)
-          const fix = autoFixEdit(content, args.old_text, args.new_text);
-          if (fix) {
-            if (!options.autoConfirm) {
-              const annotations = await runDiagnostics(fp, fix.content);
-              showDiff(fp, content, fix.content, { annotations });
-              const ok = await confirmFileChange(
-                `Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`,
-              );
-              if (!ok) return "CANCELLED: User declined to apply edit.";
-            }
-            await fs.writeFile(fp, fix.content, "utf-8");
-            if (
-              /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
-              fp.endsWith(".sh") ||
-              fix.content.startsWith("#!")
-            )
-              await fs.chmod(fp, 0o755);
-            recordChange("edit_file", fp, content, fix.content);
-            const matchPreview =
-              fix.matchText.length > 80
-                ? fix.matchText.substring(0, 77) + "..."
-                : fix.matchText;
+          const fix = await autoFixPath(args.path);
+          if (fix.fixedPath) {
+            fp = fix.fixedPath;
             console.log(
-              `${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`,
+              `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
             );
-            return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
+          } else {
+            return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
           }
-          // Provide helpful error with surrounding context so LLM can fix old_text without re-reading.
-          // Include ±10 lines around the most similar match — this is often enough to correct the edit
-          // directly without needing another read_file call (which may be blocked or flood context).
-          const similar = findMostSimilar(content, args.old_text);
-          if (similar) {
-            const allFileLines = content.split("\n");
-            const ctxStart = Math.max(0, similar.line - 6);
-            const ctxEnd = Math.min(allFileLines.length, similar.line + 10);
-            const surroundingCtx = allFileLines
-              .slice(ctxStart, ctxEnd)
-              .map((l, i) => `${ctxStart + i + 1}: ${l}`)
-              .join("\n");
-            const reReadHint = `line_start=${Math.max(1, similar.line - 5)} line_end=${Math.min(allFileLines.length, similar.line + 15)}`;
-            return `ERROR: old_text not found in ${fp} (most similar at line ${similar.line}, distance ${similar.distance})\n\nActual file content around line ${similar.line} — use this to correct old_text:\n${surroundingCtx}\n\nFix: update old_text to match the exact lines above, then retry. If you need more context: read_file with ${reReadHint}`;
-          }
-          const firstLine = (args.old_text || "")
-            .trim()
-            .split("\n")[0]
-            .slice(0, 60);
-          const grepHint = firstLine
-            ? `\nRecovery: grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to find the line, then re-read that section with line_start/line_end.`
-            : "\nRecovery: use grep -n to locate the text, then re-read that section with line_start/line_end.";
-          return `ERROR: old_text not found in ${fp}${grepHint}`;
         }
-      }
+        editProgress.update({
+          message: "Loading",
+          detail: path.relative(process.cwd(), fp),
+        });
+        const content = await fs.readFile(fp, "utf-8");
 
-      if (!options.autoConfirm) {
-        const preview = content.split(matchText).join(args.new_text);
-        const annotations = await runDiagnostics(fp, preview);
-        showDiff(fp, content, preview, { annotations });
-        const label = fuzzyMatched ? "Apply (fuzzy match)" : "Apply";
-        const ok = await confirmFileChange(label);
-        if (!ok) return "CANCELLED: User declined to apply edit.";
-      }
+        let matchText = args.old_text;
+        let fuzzyMatched = false;
+        let autoFixed = false;
 
-      // Use split/join for literal replacement (no regex interpretation)
-      const updated = content.split(matchText).join(args.new_text);
-      await fs.writeFile(fp, updated, "utf-8");
-      if (
-        /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
-        fp.endsWith(".sh") ||
-        updated.startsWith("#!")
-      )
-        await fs.chmod(fp, 0o755);
-      recordChange("edit_file", fp, content, updated);
-      return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
+        if (!content.includes(args.old_text)) {
+          editProgress.update({
+            message: "Matching target",
+            detail: `${path.relative(process.cwd(), fp)}  ${String(args.old_text || "").trim().split("\n")[0].slice(0, 40)}`,
+          });
+          const {
+            getActiveModelId,
+            getActiveProviderName,
+          } = require("../providers/registry");
+          const editMode = getEditMode(
+            getActiveModelId(),
+            getActiveProviderName(),
+          );
+
+          if (editMode === "strict") {
+            // Strict mode: exact match only, no fuzzy fallback
+            const similar = findMostSimilar(content, args.old_text);
+            if (similar) {
+              return `ERROR: old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+            }
+            return `ERROR: old_text not found in ${fp} (strict mode — exact match required)`;
+          }
+
+          // Fuzzy mode: try whitespace-normalized match → auto-fix → error
+          const fuzzyResult = fuzzyFindText(content, args.old_text);
+          if (fuzzyResult) {
+            matchText = fuzzyResult;
+            fuzzyMatched = true;
+            editProgress.update({
+              message: "Matched target",
+              detail: `${path.relative(process.cwd(), fp)}  whitespace-normalized`,
+            });
+            console.log(`${C.dim}  ✓ fuzzy whitespace match applied${C.reset}`);
+          } else {
+            // Try auto-fix: apply close matches automatically (≤5% distance)
+            const fix = autoFixEdit(content, args.old_text, args.new_text);
+            if (fix) {
+              if (!options.autoConfirm) {
+                const annotations = await runDiagnostics(fp, fix.content);
+                showDiff(fp, content, fix.content, { annotations });
+                const ok = await confirmFileChange(
+                  `Apply (auto-fix, line ${fix.line}, distance ${fix.distance})`,
+                );
+                if (!ok) return "CANCELLED: User declined to apply edit.";
+              }
+              await fs.writeFile(fp, fix.content, "utf-8");
+              if (
+                /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
+                fp.endsWith(".sh") ||
+                fix.content.startsWith("#!")
+              )
+                await fs.chmod(fp, 0o755);
+              recordChange("edit_file", fp, content, fix.content);
+              const matchPreview =
+                fix.matchText.length > 80
+                  ? fix.matchText.substring(0, 77) + "..."
+                  : fix.matchText;
+              console.log(
+                `${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`,
+              );
+              return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
+            }
+            // Provide helpful error with surrounding context so LLM can fix old_text without re-reading.
+            // Include ±10 lines around the most similar match — this is often enough to correct the edit
+            // directly without needing another read_file call (which may be blocked or flood context).
+            const similar = findMostSimilar(content, args.old_text);
+            if (similar) {
+              const allFileLines = content.split("\n");
+              const ctxStart = Math.max(0, similar.line - 6);
+              const ctxEnd = Math.min(allFileLines.length, similar.line + 10);
+              const surroundingCtx = allFileLines
+                .slice(ctxStart, ctxEnd)
+                .map((l, i) => `${ctxStart + i + 1}: ${l}`)
+                .join("\n");
+              const reReadHint = `line_start=${Math.max(1, similar.line - 5)} line_end=${Math.min(allFileLines.length, similar.line + 15)}`;
+              return `ERROR: old_text not found in ${fp} (most similar at line ${similar.line}, distance ${similar.distance})\n\nActual file content around line ${similar.line} — use this to correct old_text:\n${surroundingCtx}\n\nFix: update old_text to match the exact lines above, then retry. If you need more context: read_file with ${reReadHint}`;
+            }
+            const firstLine = (args.old_text || "")
+              .trim()
+              .split("\n")[0]
+              .slice(0, 60);
+            const grepHint = firstLine
+              ? `\nRecovery: grep -n "${firstLine.replace(/"/g, '\\"')}" <file> to find the line, then re-read that section with line_start/line_end.`
+              : "\nRecovery: use grep -n to locate the text, then re-read that section with line_start/line_end.";
+            return `ERROR: old_text not found in ${fp}${grepHint}`;
+          }
+        }
+
+        if (!options.autoConfirm) {
+          editProgress.update({
+            message: "Previewing edit",
+            detail: `${path.relative(process.cwd(), fp)}  ${String(args.new_text || "").trim().split("\n")[0].slice(0, 40)}`,
+          });
+          const preview = content.split(matchText).join(args.new_text);
+          const annotations = await runDiagnostics(fp, preview);
+          showDiff(fp, content, preview, { annotations });
+          const label = fuzzyMatched ? "Apply (fuzzy match)" : "Apply";
+          const ok = await confirmFileChange(label);
+          if (!ok) return "CANCELLED: User declined to apply edit.";
+        }
+
+        // Use split/join for literal replacement (no regex interpretation)
+        const updated = content.split(matchText).join(args.new_text);
+        editProgress.update({
+          message: "Applying edit",
+          detail: `${path.relative(process.cwd(), fp)}  ${String(args.new_text || "").trim().split("\n")[0].slice(0, 40)}`,
+        });
+        await fs.writeFile(fp, updated, "utf-8");
+        if (
+          /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
+          fp.endsWith(".sh") ||
+          updated.startsWith("#!")
+        ) {
+          editProgress.update({
+            message: "Chmod",
+            detail: path.relative(process.cwd(), fp),
+          });
+          await fs.chmod(fp, 0o755);
+        }
+        recordChange("edit_file", fp, content, updated);
+        return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
+      } finally {
+        editProgress.stop();
+      }
     }
 
     case "list_directory": {
@@ -3148,108 +3225,144 @@ async function _executeToolInner(name, args, options = {}) {
     }
 
     case "patch_file": {
-      await ensureCheckpoint();
-      let fp = resolvePath(args.path);
-      if (!fp)
-        return `ERROR: Access denied — path outside project: ${args.path}`;
-      const exists = await fileExists(fp);
-      if (!exists) {
-        // Auto-fix: try to find the file
-        const fix = await autoFixPath(args.path);
-        if (fix.fixedPath) {
-          fp = fix.fixedPath;
-          console.log(
-            `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
-          );
-        } else {
-          return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
-        }
-      }
-
-      const patches = args.patches;
-      if (!Array.isArray(patches) || patches.length === 0)
-        return "ERROR: No patches provided";
-
-      let content = await fs.readFile(fp, "utf-8");
-
-      // Determine edit mode for current model
-      const {
-        getActiveModelId: getPatchModelId,
-        getActiveProviderName: getPatchProviderName,
-      } = require("../providers/registry");
-      const patchEditMode = getEditMode(
-        getPatchModelId(),
-        getPatchProviderName(),
-      );
-
-      // Validate all patches first (exact → fuzzy → auto-fix → error)
-      const resolvedPatches = [];
-      let anyFuzzy = false;
-      let anyAutoFixed = false;
-      for (let i = 0; i < patches.length; i++) {
-        const { old_text, new_text } = patches[i];
-        if (content.includes(old_text)) {
-          resolvedPatches.push({ old_text, new_text });
-        } else if (patchEditMode === "strict") {
-          // Strict mode: exact match only, no fuzzy fallback
-          const similar = findMostSimilar(content, old_text);
-          if (similar) {
-            return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
-          }
-          return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)`;
-        } else {
-          const fuzzyResult = fuzzyFindText(content, old_text);
-          if (fuzzyResult) {
-            resolvedPatches.push({ old_text: fuzzyResult, new_text });
-            anyFuzzy = true;
+      const patchProgress = new ToolProgress("patch_file", "Preparing patches...");
+      patchProgress.start();
+      try {
+        await ensureCheckpoint();
+        let fp = resolvePath(args.path);
+        if (!fp)
+          return `ERROR: Access denied — path outside project: ${args.path}`;
+        const exists = await fileExists(fp);
+        if (!exists) {
+          // Auto-fix: try to find the file
+          const fix = await autoFixPath(args.path);
+          if (fix.fixedPath) {
+            fp = fix.fixedPath;
+            console.log(
+              `${C.dim}  ✓ auto-fixed path: ${args.path} → ${path.relative(process.cwd(), fp)}${C.reset}`,
+            );
           } else {
-            // Auto-fix: try close match (≤5% distance)
+            return `ERROR: File not found: ${args.path}${fix.message ? "\n" + fix.message : ""}`;
+          }
+        }
+
+        const patches = args.patches;
+        if (!Array.isArray(patches) || patches.length === 0)
+          return "ERROR: No patches provided";
+        patchProgress.update({
+          count: 0,
+          total: patches.length,
+          detail: `${path.relative(process.cwd(), fp)}  ${patches.length} patches`,
+          message: "Validating patches",
+        });
+
+        let content = await fs.readFile(fp, "utf-8");
+
+        // Determine edit mode for current model
+        const {
+          getActiveModelId: getPatchModelId,
+          getActiveProviderName: getPatchProviderName,
+        } = require("../providers/registry");
+        const patchEditMode = getEditMode(
+          getPatchModelId(),
+          getPatchProviderName(),
+        );
+
+        // Validate all patches first (exact → fuzzy → auto-fix → error)
+        const resolvedPatches = [];
+        let anyFuzzy = false;
+        let anyAutoFixed = false;
+        for (let i = 0; i < patches.length; i++) {
+          patchProgress.update({
+            count: i + 1,
+            total: patches.length,
+            detail: `${path.relative(process.cwd(), fp)}  patch ${i + 1}/${patches.length}`,
+            message: "Matching patches",
+          });
+          const { old_text, new_text } = patches[i];
+          if (content.includes(old_text)) {
+            resolvedPatches.push({ old_text, new_text });
+          } else if (patchEditMode === "strict") {
+            // Strict mode: exact match only, no fuzzy fallback
             const similar = findMostSimilar(content, old_text);
             if (similar) {
-              const threshold = Math.max(3, Math.ceil(old_text.length * 0.05));
-              if (similar.distance <= threshold) {
-                resolvedPatches.push({ old_text: similar.text, new_text });
-                anyAutoFixed = true;
-              } else {
-                return `ERROR: Patch ${i + 1} old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
-              }
+              return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+            }
+            return `ERROR: Patch ${i + 1} old_text not found in ${fp} (strict mode — exact match required)`;
+          } else {
+            const fuzzyResult = fuzzyFindText(content, old_text);
+            if (fuzzyResult) {
+              resolvedPatches.push({ old_text: fuzzyResult, new_text });
+              anyFuzzy = true;
             } else {
-              return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
+              // Auto-fix: try close match (≤5% distance)
+              const similar = findMostSimilar(content, old_text);
+              if (similar) {
+                const threshold = Math.max(3, Math.ceil(old_text.length * 0.05));
+                if (similar.distance <= threshold) {
+                  resolvedPatches.push({ old_text: similar.text, new_text });
+                  anyAutoFixed = true;
+                } else {
+                  return `ERROR: Patch ${i + 1} old_text not found in ${fp}\nMost similar text (line ${similar.line}, distance ${similar.distance}):\n${similar.text}`;
+                }
+              } else {
+                return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
+              }
             }
           }
         }
-      }
 
-      // Apply to a copy first (atomic — validate all patches succeed before writing)
-      let preview = content;
-      for (const { old_text, new_text } of resolvedPatches) {
-        preview = preview.split(old_text).join(new_text);
-      }
-      if (!options.autoConfirm) {
-        const annotations = await runDiagnostics(fp, preview);
-        showDiff(fp, content, preview, { annotations });
-        const label = anyFuzzy
-          ? "Apply patches (fuzzy match)"
-          : "Apply patches";
-        const ok = await confirmFileChange(label);
-        if (!ok) return "CANCELLED: User declined to apply patches.";
-      }
+        // Apply to a copy first (atomic — validate all patches succeed before writing)
+        let preview = content;
+        for (const { old_text, new_text } of resolvedPatches) {
+          preview = preview.split(old_text).join(new_text);
+        }
+        if (!options.autoConfirm) {
+          patchProgress.update({
+            message: "Previewing patch set",
+            count: resolvedPatches.length,
+            total: patches.length,
+            detail: `${path.relative(process.cwd(), fp)}  ${resolvedPatches.length} matched`,
+          });
+          const annotations = await runDiagnostics(fp, preview);
+          showDiff(fp, content, preview, { annotations });
+          const label = anyFuzzy
+            ? "Apply patches (fuzzy match)"
+            : "Apply patches";
+          const ok = await confirmFileChange(label);
+          if (!ok) return "CANCELLED: User declined to apply patches.";
+        }
 
-      // Write the fully-validated preview (atomic — no partial application)
-      await fs.writeFile(fp, preview, "utf-8");
-      const needsExecP =
-        /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
-        fp.endsWith(".sh") ||
-        preview.startsWith("#!");
-      if (needsExecP) await fs.chmod(fp, 0o755);
-      recordChange("patch_file", fp, content, preview);
-      const suffix = anyAutoFixed
-        ? " (auto-fixed)"
-        : anyFuzzy
-          ? " (fuzzy match)"
-          : "";
-      const execNoteP = needsExecP ? " [chmod +x applied]" : "";
-      return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}`;
+        // Write the fully-validated preview (atomic — no partial application)
+        patchProgress.update({
+          message: "Applying patches",
+          count: resolvedPatches.length,
+          total: patches.length,
+          detail: `${path.relative(process.cwd(), fp)}  ${resolvedPatches.length} matched`,
+        });
+        await fs.writeFile(fp, preview, "utf-8");
+        const needsExecP =
+          /[/\\]\.git[/\\]hooks[/\\]/.test(fp) ||
+          fp.endsWith(".sh") ||
+          preview.startsWith("#!");
+        if (needsExecP) {
+          patchProgress.update({
+            message: "Chmod",
+            detail: path.relative(process.cwd(), fp),
+          });
+          await fs.chmod(fp, 0o755);
+        }
+        recordChange("patch_file", fp, content, preview);
+        const suffix = anyAutoFixed
+          ? " (auto-fixed)"
+          : anyFuzzy
+            ? " (fuzzy match)"
+            : "";
+        const execNoteP = needsExecP ? " [chmod +x applied]" : "";
+        return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}`;
+      } finally {
+        patchProgress.stop();
+      }
     }
 
     case "web_fetch": {

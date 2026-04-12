@@ -226,7 +226,9 @@ describe("ui.js", () => {
     });
 
     it("returns Checking git status for git_status", () => {
-      expect(getToolSpinnerText("git_status", {})).toBe("Checking git status");
+      expect(getToolSpinnerText("git_status", {})).toBe(
+        "Analyzing repository status",
+      );
     });
 
     it("returns Diffing for git_diff without file", () => {
@@ -306,7 +308,7 @@ describe("ui.js", () => {
         "ERROR: command not found",
         true,
       );
-      expect(result).toContain("⎿");
+      expect(result).toContain("Execute");
       expect(result).toContain("command not found");
     });
 
@@ -329,7 +331,7 @@ describe("ui.js", () => {
         "file1\nfile2",
         false,
       );
-      expect(result).toContain("⎿");
+      expect(result).toContain("Execute");
     });
 
     // read_file
@@ -533,7 +535,7 @@ describe("ui.js", () => {
         "abc123 feat: stuff",
         false,
       );
-      expect(result).toContain("⎿");
+      expect(result).toContain("Verify");
     });
 
     // web tools
@@ -611,7 +613,7 @@ describe("ui.js", () => {
     // edge cases
     it("handles null/undefined result", () => {
       const result = formatToolSummary("bash", { command: "ls" }, null, false);
-      expect(result).toContain("⎿");
+      expect(result).toContain("Execute");
     });
 
     it("handles missing args", () => {
