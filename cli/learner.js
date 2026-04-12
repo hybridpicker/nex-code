@@ -299,6 +299,9 @@ async function reflectBrain(messages) {
  * @returns {Promise<{ written: Array<{name, reason}>, skipped: Array<string>, skip_reason?: string, error?: string }>}
  */
 async function learnBrainFromSession(messages) {
+  if (!Array.isArray(messages)) {
+    return { written: [], skipped: [], error: "messages must be an array" };
+  }
   const result = await reflectBrain(messages);
   if (result.error) return { written: [], skipped: [], error: result.error };
   if (!result.documents || result.documents.length === 0) {
