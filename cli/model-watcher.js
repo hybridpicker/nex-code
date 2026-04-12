@@ -128,6 +128,8 @@ async function findNewModels() {
 
 const SENTINEL_START = "<!-- nex-benchmark-start -->";
 const SENTINEL_END = "<!-- nex-benchmark-end -->";
+const ROUTING_SENTINEL_START = "<!-- nex-routing-start -->";
+const ROUTING_SENTINEL_END = "<!-- nex-routing-end -->";
 
 const BEST_FOR = {
   "qwen3-vl:235b": "Overall #1 — frontier tool selection, data + agentic tasks",
@@ -184,6 +186,31 @@ ${rows}
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run \`/benchmark --discover\` after model releases.
 ${SENTINEL_END}`;
+}
+
+/**
+ * Generate the markdown routing table block (between routing sentinels).
+ * @param {Object} categoryWinners — { coding: { model, score }, ... }
+ */
+function generateRoutingBlock(categoryWinners) {
+  const today = new Date().toISOString().split("T")[0];
+  const categories = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
+  const rows = categories
+    .filter((cat) => categoryWinners[cat] && categoryWinners[cat].score > 0)
+    .map((cat) => {
+      const { model, score } = categoryWinners[cat];
+      return `| ${cat} | \`${model}\` | ${score}/100 |`;
+    })
+    .join("\n");
+  return `${ROUTING_SENTINEL_START}
+<!-- Updated: ${today} -->
+
+**Model routing by task type** (auto-updated by \`/benchmark --all\`):
+
+| Category | Model | Score |
+|---|---|---|
+${rows}
+${ROUTING_SENTINEL_END}`;
 }
 
 /**
@@ -317,6 +344,23 @@ function updateRoutingConfig(categoryWinners) {
 
     fs.writeFileSync(envPath, content);
     envUpdated = true;
+  }
+
+  // Update README routing section
+  const readmePath = path.join(process.cwd(), "README.md");
+  if (fs.existsSync(readmePath)) {
+    try {
+      let readme = fs.readFileSync(readmePath, "utf-8");
+      const rs = readme.indexOf(ROUTING_SENTINEL_START);
+      const re = readme.indexOf(ROUTING_SENTINEL_END);
+      if (rs !== -1 && re !== -1) {
+        const block = generateRoutingBlock(categoryWinners);
+        readme = readme.slice(0, rs) + block + readme.slice(re + ROUTING_SENTINEL_END.length);
+        fs.writeFileSync(readmePath, readme);
+      }
+    } catch {
+      /* non-fatal */
+    }
   }
 
   return { saved: true, envUpdated, changes };

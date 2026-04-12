@@ -21,6 +21,15 @@ const { saveRoutingConfig } = require("./task-router");
 // expectedTool: null → model should NOT call a tool (pure reasoning).
 
 function searchNeedle(args) {
+  const taskNeedles = Array.isArray(args?.tasks)
+    ? args.tasks.flatMap((task) => {
+      if (typeof task === "string") return [task];
+      if (task && typeof task === "object") {
+        return [task.title, task.task, task.description];
+      }
+      return [];
+    })
+    : [];
   return [
     args?.pattern,
     args?.query,
@@ -29,6 +38,8 @@ function searchNeedle(args) {
     args?.include,
     args?.path,
     args?.command,
+    args?.name,
+    ...taskNeedles,
   ]
     .filter((v) => typeof v === "string")
     .join(" ");
@@ -66,6 +77,7 @@ function looksLikeSearchCommand(command = "") {
 
 function matchesTaskListIntent(args, keywords = []) {
   if (args?.action !== "create") return false;
+  if (!Array.isArray(args.tasks) || args.tasks.length === 0) return false;
   return includesAllCI(searchNeedle(args), keywords);
 }
 
@@ -80,6 +92,11 @@ function matchesSqlWriteTask(args, {
   const sql = normalizeText(args.content);
   if (!sql.includes(action) || !sql.includes(table)) return false;
   return conditionTerms.every((group) => includesAnyCI(sql, group));
+}
+
+function matchesSearchLikeArgs(args, requiredTerms = []) {
+  const needle = searchNeedle(args);
+  return includesAllCI(needle, requiredTerms);
 }
 
 function matchesEditArgs(args, { pathIncludes = [], oldTexts = [], newTexts = [] } = {}) {
@@ -222,7 +239,7 @@ const TASKS = [
     id: "edit-version-bump",
     category: "file-ops",
     prompt:
-      'You already read package.json and confirmed it contains the exact snippet `"version": "1.0.0"`. Update it to `"version": "1.1.0"`.',
+      'You already read package.json and confirmed it contains the exact snippet `"version": "1.0.0"`. Do not inspect the repo again. Update it directly to `"version": "1.1.0"`.',
     expectedTool: ["edit_file", "patch_file"],
     validateArgs: (args) =>
       matchesEditArgs(args, {
@@ -539,14 +556,14 @@ const TASKS = [
     id: "data-sql-query",
     category: "data",
     prompt:
-      "Write a SQL query to find all users who have not logged in for more than 30 days. Save it to queries/inactive-users.sql.",
+      "Do not inspect the repo first. Write a SQL query to find all users who have not logged in for more than 30 days and save it to queries/inactive-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
       matchesSqlWriteTask(args, {
         pathIncludes: ["queries", "inactive-users.sql"],
         conditionTerms: [
-          ["last_login", "last seen", "last_seen", "last_sign_in", "last_signin", "logged_in_at", "login_at"],
-          ["30 day", "30-day", "interval '30 day'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval"],
+          ["last_login", "last seen", "last_seen", "last_sign_in", "last_signin", "logged_in_at", "login_at", "last_active_at", "lastactivity"],
+          ["30 day", "30-day", "interval '30 day'", "interval '30 days'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval", "dateadd(day, -30", "add_months", "interval '1 month'"],
         ],
       }),
   },
@@ -586,22 +603,22 @@ const TASKS = [
     id: "data-find-schema",
     category: "data",
     prompt: "Find where the database schema or models are defined in this project.",
-    expectedTool: ["grep", "glob", "search_files", "list_directory"],
+    expectedTool: ["grep", "glob", "search_files", "list_directory", "bash"],
     validateArgs: (args) => {
-      return /schema|model|migration|prisma|dbml|typeorm|sequelize|orm|db/i.test(searchNeedle(args));
+      return /schema|model|migration|prisma|dbml|typeorm|sequelize|orm|db|database|entity/i.test(searchNeedle(args));
     },
   },
   {
     id: "data-write-query",
     category: "data",
-    prompt: "Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
+    prompt: "Do not inspect the repo first. Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
       matchesSqlWriteTask(args, {
         pathIncludes: ["queries", "recent-users.sql"],
         conditionTerms: [
-          ["created_at", "registered_at", "signup_date", "signed_up_at", "joined_at", "createdon"],
-          ["30 day", "30-day", "interval '30 day'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval"],
+          ["created_at", "registered_at", "registered_on", "signup_date", "signed_up_at", "joined_at", "createdon", "created_on"],
+          ["30 day", "30-day", "interval '30 day'", "interval '30 days'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval", "dateadd(day, -30", "add_months", "interval '1 month'"],
         ],
       }),
   },
@@ -630,7 +647,7 @@ const TASKS = [
     id: "resilience-file-not-found",
     category: "resilience",
     prompt:
-      "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. What tool do you use?",
+      "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. Use a discovery or search tool as your next step, not read_file again. What tool do you use first?",
     expectedTool: ["glob", "bash", "search_files", "list_directory"],
     validateArgs: (args) => {
       const s = searchNeedle(args);
@@ -641,27 +658,25 @@ const TASKS = [
     id: "resilience-large-file-nav",
     category: "resilience",
     prompt:
-      "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. What is the most efficient tool to use — read_file or bash with grep?",
-    expectedTool: ["bash", "grep", "search_files"],
+      "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. Use a search-oriented tool first instead of reading the whole file. What is the most efficient tool call?",
+    expectedTool: ["bash", "grep", "search_files", "glob"],
     validateArgs: (args) => {
       if (typeof args.command === "string" &&
         looksLikeSearchCommand(args.command) &&
         /authenticateuser|src\/api\.js/i.test(args.command))
         return true;
-      const pat = args.pattern || args.query || args.regex || "";
-      if (/authenticateUser/i.test(pat)) return true;
-      return false;
+      return matchesSearchLikeArgs(args, ["authenticateuser"]);
     },
   },
   {
     id: "resilience-broken-import",
     category: "resilience",
     prompt:
-      "TypeScript reports: Cannot find module './config'. The file was recently renamed. What tool do you use to find the new location?",
+      "TypeScript reports: Cannot find module './config'. The file was recently renamed. Use a search or discovery tool first to find the new location. What tool do you use?",
     expectedTool: ["glob", "bash", "search_files", "grep", "list_directory"],
     validateArgs: (args) => {
       const s = searchNeedle(args);
-      return /config|rename|module|import|\.ts|\.js|find/i.test(s);
+      return /config|rename|module|import|\.ts|\.js|find|src|path/i.test(s);
     },
   },
   {
@@ -677,7 +692,7 @@ const TASKS = [
     id: "resilience-grep-no-match",
     category: "resilience",
     prompt:
-      "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. What bash command finds all exported function names in src/ to identify the current name?",
+      "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. Use a search tool to list exported function names in src/ and identify the current name. What tool call do you use first?",
     expectedTool: ["bash", "grep", "search_files"],
     validateArgs: (args) => {
       if (typeof args.command === "string") {
@@ -686,7 +701,7 @@ const TASKS = [
           /src|export|function|module\.exports|exports\./i.test(args.command)
         );
       }
-      return /getUserById|export|function|module\.exports|exports\.|src/i.test(searchNeedle(args));
+      return /getUserById|export|function|module\.exports|exports\.|src|public|def /i.test(searchNeedle(args));
     },
   },
 
@@ -826,7 +841,7 @@ const TASKS = [
     id: "agentic-test-first",
     category: "agentic",
     prompt:
-      "You need to run the full test suite first. If any tests fail after that, identify the failing test file and read it to understand the issue. What is the first tool call?",
+      "You need to run the full test suite first. Do not inspect files before that. If any tests fail after the run, identify the failing test file and read it to understand the issue. What is the first tool call?",
     expectedTool: ["bash", "task_list"],
     validateArgs: (args) => {
       if (typeof args.command === "string") {
@@ -915,7 +930,7 @@ const PHASE_TASKS = [
     id: "phase-verify-test",
     category: "phase-verify",
     prompt:
-      "You are explicitly in the verify phase. The first verification step is to run tests for a fix in src/utils.js. What tool call do you use first?",
+      "You are explicitly in the verify phase. Do not inspect files first. The first verification step is to run tests for a fix in src/utils.js. What tool call do you use first?",
     expectedTool: ["bash", "task_list"],
     validateArgs: (args) => {
       if (typeof args.command === "string") return looksLikeTestCommand(args.command);
@@ -935,7 +950,7 @@ const PHASE_TASKS = [
     id: "phase-verify-lint",
     category: "phase-verify",
     prompt:
-      "You are explicitly in the verify phase. The first verification step is to run linting after changes in src/components/Header.tsx. What tool call do you use first?",
+      "You are explicitly in the verify phase. Do not inspect files first. The first verification step is to run linting after changes in src/components/Header.tsx. What tool call do you use first?",
     expectedTool: ["bash", "task_list"],
     validateArgs: (args) => {
       if (typeof args.command === "string") return looksLikeLintCommand(args.command);
@@ -973,7 +988,7 @@ const PHASE_TASKS = [
   {
     id: "phase-verify-build",
     category: "phase-verify",
-    prompt: "The TypeScript source was modified. Run the build command to verify there are no compilation errors.",
+    prompt: "You are in the verify phase. Do not inspect files first. The TypeScript source was modified, so run the build command to verify there are no compilation errors.",
     expectedTool: ["bash", "task_list"],
     validateArgs: (args) => {
       if (typeof args.command === "string") return looksLikeBuildCommand(args.command);

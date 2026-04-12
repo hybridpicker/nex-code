@@ -29,6 +29,17 @@ describe("benchmark task validators", () => {
     ).toBe(true);
   });
 
+  it("accepts recent-user SQL using common alternate date expressions", () => {
+    const task = getTask("data-write-query");
+    expect(
+      task.validateArgs({
+        path: "queries/recent-users.sql",
+        content:
+          "SELECT id FROM users WHERE registered_on >= DATEADD(day, -30, CURRENT_DATE);",
+      }),
+    ).toBe(true);
+  });
+
   it("accepts package.json version edits even when spacing differs", () => {
     const task = getTask("edit-version-bump");
     expect(
@@ -95,21 +106,24 @@ describe("benchmark task validators", () => {
     expect(
       getTask("phase-verify-test").validateArgs({
         action: "create",
-        query: "Run tests first, then inspect failures",
+        name: "Verify tests",
+        tasks: [{ title: "Run tests first, then inspect failures" }],
       }),
     ).toBe(true);
 
     expect(
       getTask("phase-verify-lint").validateArgs({
         action: "create",
-        query: "Run lint after the Header.tsx changes",
+        name: "Verify lint",
+        tasks: [{ title: "Run lint after the Header.tsx changes" }],
       }),
     ).toBe(true);
 
     expect(
       getTask("phase-verify-build").validateArgs({
         action: "create",
-        query: "Run build to verify the TypeScript changes compile",
+        name: "Verify build",
+        tasks: [{ title: "Run build to verify the TypeScript changes compile" }],
       }),
     ).toBe(true);
   });
@@ -119,7 +133,22 @@ describe("benchmark task validators", () => {
     expect(
       task.validateArgs({
         action: "create",
-        query: "Run the full test suite first",
+        name: "Run tests",
+        tasks: [{ title: "Run the full test suite first" }],
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts search-style args for large-file navigation and grep recovery", () => {
+    expect(
+      getTask("resilience-large-file-nav").validateArgs({
+        query: "authenticateUser src/api.js",
+      }),
+    ).toBe(true);
+
+    expect(
+      getTask("resilience-grep-no-match").validateArgs({
+        query: "find exported function names in src via module.exports",
       }),
     ).toBe(true);
   });
