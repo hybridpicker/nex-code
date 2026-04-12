@@ -1441,6 +1441,8 @@ let _implementSummary = null; // summary of changes from implement phase
 let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
+let _postEditVerifyPending = false; // require a narrow verification step after successful writes
+let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 
@@ -1608,6 +1610,35 @@ function _commandForScript(scriptName) {
   return `npm run ${scriptName}`;
 }
 
+function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
+  const modifiedList =
+    [...(filesModified || [])].slice(0, 6).join(", ") ||
+    "recently modified files";
+  const checks = (commands || []).slice(0, 3);
+  const tests = (relatedTests || []).slice(0, 3);
+  const lines = [
+    `[SYSTEM] You already changed code in: ${modifiedList}.`,
+    "Run one narrow verification step next before more exploration.",
+  ];
+  if (checks.length > 0) {
+    lines.push(`Suggested verification commands: ${checks.join(" | ")}`);
+  }
+  if (tests.length > 0) {
+    lines.push(`Likely related tests: ${tests.join(", ")}`);
+  }
+  lines.push(
+    "Do not continue broad read/search loops until the latest edit has been checked.",
+  );
+  return lines.join("\n");
+}
+
+function _isVerificationCommandCall(prep) {
+  if (!prep || !prep.fnName) return false;
+  if (!["bash", "ssh_exec"].includes(prep.fnName)) return false;
+  const cmd = String(prep.args?.command || "").toLowerCase();
+  return /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check)\b/.test(cmd);
+}
+
 async function _inferSymbolTargets(taskText) {
   const keywords = _extractTaskKeywords(taskText);
   if (keywords.length === 0) return [];
@@ -1634,7 +1665,7 @@ async function _inferSymbolTargets(taskText) {
 async function _buildSymbolHintBlock(taskText) {
   const hits = await _inferSymbolTargets(taskText);
   if (hits.length === 0) return "";
-  const { getRelatedFiles } = require("./index-engine");
+  const { getRelatedFiles, findSymbolReferences } = require("./index-engine");
   const lines = ["Likely symbol targets:"];
 
   for (let idx = 0; idx < hits.length; idx++) {
@@ -1655,12 +1686,32 @@ async function _buildSymbolHintBlock(taskText) {
     } catch {
       /* optional hint only */
     }
+
+    try {
+      const refs = await findSymbolReferences(hit.name, process.cwd(), {
+        excludeFile: hit.file,
+        excludeLine: hit.line,
+        limit: 2,
+      });
+      if (refs.length > 0) {
+        lines.push(
+          `   Likely callers/usages: ${refs.map((ref) => `${ref.file}:${ref.line}`).join(", ")} (read these next if behavior depends on where ${hit.name} is invoked)`,
+        );
+      }
+    } catch {
+      /* optional hint only */
+    }
   }
   return `${lines.join("\n")}\nUse these exact targeted reads before broader searching.\n\n`;
 }
 
-function _inferRelevantTests(filesModified) {
+async function _inferRelevantTests(filesModified) {
   const { getFileIndex } = require("./index-engine");
+  const {
+    buildContentIndex,
+    findSymbolReferences,
+    getRelatedFiles,
+  } = require("./index-engine");
   const files = getFileIndex();
   const testFiles = files.filter(
     (f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f),
@@ -1668,12 +1719,52 @@ function _inferRelevantTests(filesModified) {
   if (testFiles.length === 0) return [];
 
   const related = new Set();
+  const contentIndex = await buildContentIndex(process.cwd());
   for (const modifiedFile of filesModified || []) {
-    const base = path.basename(String(modifiedFile)).replace(/\.[^.]+$/, "");
+    const relFile = String(modifiedFile);
+    const base = path.basename(relFile).replace(/\.[^.]+$/, "");
     if (base.length < 3) continue;
     for (const testFile of testFiles) {
       if (testFile.includes(base)) related.add(testFile);
       if (related.size >= 4) return [...related];
+    }
+
+    try {
+      const neighbors = await getRelatedFiles(relFile, process.cwd(), 4);
+      for (const neighbor of neighbors) {
+        const neighborBase = path.basename(neighbor).replace(/\.[^.]+$/, "");
+        if (neighborBase.length < 3) continue;
+        for (const testFile of testFiles) {
+          if (testFile.includes(neighborBase)) related.add(testFile);
+          if (related.size >= 4) return [...related];
+        }
+      }
+    } catch {
+      /* optional heuristic only */
+    }
+
+    const defs = Array.isArray(contentIndex.files?.[relFile]?.defs)
+      ? contentIndex.files[relFile].defs
+      : [];
+    const symbolNames = defs
+      .filter((def) => ["function", "class", "export"].includes(def.type))
+      .map((def) => def.name)
+      .filter((name, index, arr) => name && arr.indexOf(name) === index)
+      .slice(0, 3);
+
+    for (const symbolName of symbolNames) {
+      try {
+        const refs = await findSymbolReferences(symbolName, process.cwd(), {
+          excludeFile: relFile,
+          limit: 8,
+        });
+        for (const ref of refs) {
+          if (testFiles.includes(ref.file)) related.add(ref.file);
+          if (related.size >= 4) return [...related];
+        }
+      } catch {
+        /* optional heuristic only */
+      }
     }
   }
   return [...related];
@@ -1716,6 +1807,8 @@ async function _transitionPhase(targetPhase, summary, filesModified, originalTas
   if (targetPhase === "verify") {
     _verifyToolCalls = 0;
     _verifyCompletionNudges = 0;
+    _postEditVerifyPending = false;
+    _postEditVerifyNudges = 0;
   }
 
   // Reset investigation/edit guards but PRESERVE read-tracking counters.
@@ -1757,8 +1850,8 @@ async function _transitionPhase(targetPhase, summary, filesModified, originalTas
   } else if (targetPhase === "verify") {
     _implementSummary = summary?.slice(0, 500) || "";
     const fileList = filesModified ? [...filesModified].join(", ") : "none";
-    const suggestedChecks = _inferVerificationCommands(filesModified);
-    const relatedTests = _inferRelevantTests(filesModified);
+    const suggestedChecks = await _inferVerificationCommands(filesModified);
+    const relatedTests = await _inferRelevantTests(filesModified);
     const checksBlock =
       suggestedChecks.length > 0
         ? `Suggested checks (run the narrowest ones that fit the change):\n${suggestedChecks.map((cmd, i) => `${i + 1}. ${cmd}`).join("\n")}\n\n`
@@ -1788,7 +1881,7 @@ async function _transitionPhase(targetPhase, summary, filesModified, originalTas
   return content ? { role: "user", content } : null;
 }
 
-function _inferVerificationCommands(filesModified) {
+async function _inferVerificationCommands(filesModified) {
   const commands = [];
   const modified = [...(filesModified || [])];
   const lowerFiles = modified.map((f) => String(f).toLowerCase());
@@ -1821,7 +1914,7 @@ function _inferVerificationCommands(filesModified) {
     }
   }
 
-  const targetedTests = _inferRelevantTests(filesModified);
+  const targetedTests = await _inferRelevantTests(filesModified);
   commands.unshift(..._inferTargetedTestCommands(targetedTests, scripts));
 
   const hasTsEdits = lowerFiles.some((f) => /\.(ts|tsx)$/.test(f));
@@ -2496,6 +2589,8 @@ function _resetSessionTracking() {
   _verifyLoopBack = 0;
   _verifyToolCalls = 0;
   _verifyCompletionNudges = 0;
+  _postEditVerifyPending = false;
+  _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
   _detectedCategoryId = null;
   _taskRegistry.clear();
@@ -5990,6 +6085,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      let _needsPostEditVerifyPrompt = false;
       // Track modified and read files
       for (let j = 0; j < prepared.length; j++) {
         const prep = prepared[j];
@@ -6130,6 +6226,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               saveNow(conversationMessages);
               return;
             }
+            if (!(_phaseEnabled && _currentPhase === "verify")) {
+              _postEditVerifyPending = true;
+              _postEditVerifyNudges = 0;
+              _needsPostEditVerifyPrompt = true;
+            }
           }
         }
         // ─── Investigation cap: force implementation after too many read-only calls ───
@@ -6185,9 +6286,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 );
               }
             }
+            if (
+              _phaseEnabled &&
+              _currentPhase === "implement" &&
+              _postEditVerifyPending &&
+              _postEditVerifyNudges < 1
+            ) {
+              _postEditVerifyNudges++;
+              _needsPostEditVerifyPrompt = true;
+            }
           }
           if (_phaseEnabled && _currentPhase === "verify") {
             _verifyToolCalls++;
+          }
+          if (isOk && _isVerificationCommandCall(prep)) {
+            _postEditVerifyPending = false;
+            _postEditVerifyNudges = 0;
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
@@ -6998,6 +7112,28 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             truncatedSwarmCount = 0;
           }
         }
+      }
+
+      if (
+        _needsPostEditVerifyPrompt &&
+        _postEditVerifyPending &&
+        !(_phaseEnabled && _currentPhase === "verify")
+      ) {
+        const suggestedChecks = await _inferVerificationCommands(filesModified);
+        const relatedTests = await _inferRelevantTests(filesModified);
+        const verifyMsg = {
+          role: "user",
+          content: _buildPostEditVerifyPrompt(
+            filesModified,
+            suggestedChecks,
+            relatedTests,
+          ),
+        };
+        conversationMessages.push(verifyMsg);
+        apiMessages.push(verifyMsg);
+        debugLog(
+          `${C.cyan}  ↳ Post-edit verify prompt injected (${suggestedChecks.length} checks, ${relatedTests.length} tests)${C.reset}`,
+        );
       }
 
       // ─── Per-message tool result budget ─────────────────────────────────────
