@@ -20,6 +20,48 @@ const { saveRoutingConfig } = require("./task-router");
 // Each task mirrors a real nex-code workflow.
 // expectedTool: null → model should NOT call a tool (pure reasoning).
 
+function searchNeedle(args) {
+  return [
+    args?.pattern,
+    args?.query,
+    args?.regex,
+    args?.file_pattern,
+    args?.include,
+    args?.path,
+    args?.command,
+  ]
+    .filter((v) => typeof v === "string")
+    .join(" ");
+}
+
+function matchesEditArgs(args, { pathIncludes = [], oldTexts = [], newTexts = [] } = {}) {
+  if (typeof args?.path !== "string") return false;
+
+  const pathOk =
+    pathIncludes.length === 0 ||
+    pathIncludes.some((needle) => args.path.toLowerCase().includes(needle.toLowerCase()));
+  if (!pathOk) return false;
+
+  const patchTexts = Array.isArray(args.patches)
+    ? args.patches.flatMap((p) => [p.old_text, p.new_text]).filter((v) => typeof v === "string")
+    : [];
+  const oldText = typeof args.old_text === "string" ? args.old_text : "";
+  const newText = typeof args.new_text === "string" ? args.new_text : "";
+  const allTexts = [oldText, newText, ...patchTexts];
+
+  const oldOk =
+    oldTexts.length === 0 ||
+    oldTexts.some((needle) => allTexts.some((text) => text.includes(needle)));
+  const newOk =
+    newTexts.length === 0 ||
+    newTexts.some((needle) => allTexts.some((text) => text.includes(needle)));
+
+  if (!oldOk || !newOk) return false;
+
+  if (oldText && newText) return true;
+  return Array.isArray(args.patches) && args.patches.length > 0;
+}
+
 const TASKS = [
   // ── File operations ─────────────────────────────────────────────────────
   {
@@ -43,19 +85,14 @@ const TASKS = [
     id: "edit-file",
     category: "file-ops",
     prompt:
-      'In the file src/config.js, replace the string "debug: false" with "debug: true".',
+      'You already read src/config.js and confirmed it contains the exact text "debug: false". Replace that exact text with "debug: true".',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (
-        args.path &&
-        args.old_string !== undefined &&
-        args.new_string !== undefined
-      )
-        return true;
-      if (args.path && Array.isArray(args.patches) && args.patches.length > 0)
-        return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: ["config"],
+        oldTexts: ["debug: false"],
+        newTexts: ["debug: true"],
+      }),
   },
   {
     id: "list-directory",
@@ -90,7 +127,8 @@ const TASKS = [
     validateArgs: (args) =>
       typeof args.path === "string" &&
       args.path.includes("index") &&
-      (typeof args.line_start === "number" || typeof args.start_line === "number"),
+      typeof args.line_start === "number" &&
+      typeof args.line_end === "number",
   },
   {
     id: "glob-ts-defs",
@@ -117,12 +155,14 @@ const TASKS = [
     id: "edit-version-bump",
     category: "file-ops",
     prompt:
-      "In package.json, change the version field from \"1.0.0\" to \"1.1.0\".",
+      'You already read package.json and confirmed it contains the exact snippet `"version": "1.0.0"`. Update it to `"version": "1.1.0"`.',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (args.path && args.path.includes("package")) return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: ["package"],
+        oldTexts: ['"version": "1.0.0"'],
+        newTexts: ['"version": "1.1.0"'],
+      }),
   },
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -239,10 +279,15 @@ const TASKS = [
     id: "multi-step-version",
     category: "multi-step",
     prompt:
-      "What is the current version of this project? Check the source files.",
-    expectedTool: "read_file",
-    validateArgs: (args) =>
-      typeof args.path === "string" && args.path.includes("package.json"),
+      "You need to determine the current project version. What tool do you call first to inspect the most likely source file?",
+    expectedTool: ["read_file", "glob", "list_directory"],
+    validateArgs: (args) => {
+      if (typeof args.path === "string" && /package|version/i.test(args.path))
+        return true;
+      if (typeof args.pattern === "string" && /package\.json|package|version/i.test(args.pattern))
+        return true;
+      return false;
+    },
   },
   {
     id: "multi-step-count",
@@ -297,18 +342,14 @@ const TASKS = [
     id: "frontend-edit-css",
     category: "frontend",
     prompt:
-      'In the file src/styles.css, change the background-color value from "blue" to "red".',
+      'You already read src/styles.css and confirmed it contains the exact text `background-color: blue`. Change that exact value to `background-color: red`.',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (args.path && args.old_string !== undefined)
-        return (
-          args.path.includes(".css") ||
-          args.old_string.includes("blue") ||
-          args.old_string.includes("background")
-        );
-      if (args.path && Array.isArray(args.patches)) return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: [".css", "styles"],
+        oldTexts: ["background-color: blue"],
+        newTexts: ["background-color: red"],
+      }),
   },
   {
     id: "frontend-glob-components",
@@ -341,13 +382,18 @@ const TASKS = [
     id: "sysadmin-port-check",
     category: "sysadmin",
     prompt: "Which process is currently listening on port 3000?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("lsof") ||
-        args.command.includes("ss") ||
-        args.command.includes("netstat") ||
-        args.command.includes("3000")),
+    expectedTool: ["bash", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("lsof") ||
+          args.command.includes("ss") ||
+          args.command.includes("netstat") ||
+          args.command.includes("3000")
+        );
+      }
+      return args.action === "network_status";
+    },
   },
   {
     id: "sysadmin-nginx-config",
@@ -369,23 +415,45 @@ const TASKS = [
     id: "sysadmin-service-status",
     category: "sysadmin",
     prompt: "Check the status of the nginx service and show if it is running.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("systemctl") ||
-        args.command.includes("service") ||
-        args.command.includes("nginx")),
+    expectedTool: ["bash", "service_manage", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("systemctl") ||
+          args.command.includes("service") ||
+          args.command.includes("nginx")
+        );
+      }
+      if (args.action === "status" && typeof args.service === "string") {
+        return args.service.includes("nginx");
+      }
+      return (
+        args.action === "service" &&
+        args.service_action === "status" &&
+        typeof args.service_name === "string" &&
+        args.service_name.includes("nginx")
+      );
+    },
   },
   {
     id: "sysadmin-error-log",
     category: "sysadmin",
     prompt: "Show the last 100 lines of the nginx error log.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("tail") ||
-        args.command.includes("journalctl") ||
-        args.command.includes("nginx")),
+    expectedTool: ["bash", "service_logs", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("tail") ||
+          args.command.includes("journalctl") ||
+          args.command.includes("nginx")
+        );
+      }
+      if (typeof args.service === "string") return args.service.includes("nginx");
+      return (
+        (args.action === "journalctl" && typeof args.unit === "string" && args.unit.includes("nginx")) ||
+        (args.action === "log_tail" && typeof args.path === "string" && /nginx|error/i.test(args.path))
+      );
+    },
   },
   {
     id: "sysadmin-docker-compose",
@@ -446,11 +514,9 @@ const TASKS = [
     id: "data-find-schema",
     category: "data",
     prompt: "Find where the database schema or models are defined in this project.",
-    expectedTool: ["grep", "glob"],
+    expectedTool: ["grep", "glob", "search_files"],
     validateArgs: (args) => {
-      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
-      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
-      return false;
+      return /schema|model|migration|prisma|dbml/i.test(searchNeedle(args));
     },
   },
   {
@@ -533,10 +599,17 @@ const TASKS = [
     category: "resilience",
     prompt:
       "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. What bash command finds all exported function names in src/ to identify the current name?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("src")),
+    expectedTool: ["bash", "grep", "search_files"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("grep") ||
+          args.command.includes("rg") ||
+          args.command.includes("src")
+        );
+      }
+      return /getUserById|export|function|src/i.test(searchNeedle(args));
+    },
   },
 
   // ── SSH ───────────────────────────────────────────────────────────────────
@@ -545,48 +618,86 @@ const TASKS = [
     category: "ssh",
     prompt:
       'Show the last 50 lines of /var/log/nginx/error.log on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("tail") || args.command.includes("log")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "service_logs", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("tail") || args.command.includes("log")) &&
+          typeof args.server === "string"
+        );
+      }
+      if (typeof args.service === "string") return args.service.includes("nginx");
+      return (
+        typeof args.server === "string" &&
+        ((args.action === "journalctl" && typeof args.unit === "string" && args.unit.includes("nginx")) ||
+          (args.action === "log_tail" && typeof args.path === "string" && /nginx|error/i.test(args.path)))
+      );
+    },
   },
   {
     id: "ssh-exec-service",
     category: "ssh",
     prompt: 'Restart the nginx service on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("nginx") ||
-        args.command.includes("systemctl") ||
-        args.command.includes("restart")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "service_manage", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("nginx") ||
+            args.command.includes("systemctl") ||
+            args.command.includes("restart")) &&
+          typeof args.server === "string"
+        );
+      }
+      if (
+        args.action === "restart" &&
+        typeof args.service === "string" &&
+        args.service.includes("nginx")
+      ) {
+        return true;
+      }
+      return (
+        args.action === "service" &&
+        args.service_action === "restart" &&
+        typeof args.service_name === "string" &&
+        args.service_name.includes("nginx") &&
+        typeof args.server === "string"
+      );
+    },
   },
   {
     id: "ssh-exec-port",
     category: "ssh",
     prompt: 'Check if port 8080 is listening on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("8080") ||
-        args.command.includes("ss") ||
-        args.command.includes("netstat") ||
-        args.command.includes("lsof")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("8080") ||
+            args.command.includes("ss") ||
+            args.command.includes("netstat") ||
+            args.command.includes("lsof")) &&
+          typeof args.server === "string"
+        );
+      }
+      return args.action === "network_status" && typeof args.server === "string";
+    },
   },
   {
     id: "ssh-exec-processes",
     category: "ssh",
     prompt: 'Show the top CPU-consuming processes on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("top") ||
-        args.command.includes("ps") ||
-        args.command.includes("htop")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("top") ||
+            args.command.includes("ps") ||
+            args.command.includes("htop")) &&
+          typeof args.server === "string"
+        );
+      }
+      return args.action === "process_list" && typeof args.server === "string";
+    },
   },
 
   // ── Git (native tools) ────────────────────────────────────────────────────
@@ -608,7 +719,11 @@ const TASKS = [
     prompt: "Show the last 5 commit messages with their hashes.",
     expectedTool: ["git_log", "bash"],
     validateArgs: (args) => {
-      if (typeof args.limit === "number" || typeof args.n === "number")
+      if (
+        typeof args.count === "number" ||
+        typeof args.limit === "number" ||
+        typeof args.n === "number"
+      )
         return true;
       if (typeof args.command === "string" && args.command.includes("log"))
         return true;
@@ -621,7 +736,7 @@ const TASKS = [
     prompt: "Check if there are any uncommitted changes in the repository.",
     expectedTool: ["git_status", "bash"],
     validateArgs: (args) => {
-      if (args.path === undefined && args.command === undefined) return false;
+      if (Object.keys(args || {}).length === 0) return true;
       if (typeof args.command === "string" && args.command.includes("status"))
         return true;
       return true; // git_status takes no required args
