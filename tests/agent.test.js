@@ -1791,14 +1791,26 @@ describe("agent.js", () => {
 
   // ─── language prompt (exercised through system prompt) ─────
   describe("language prompt", () => {
-    it("defaults to English when NEX_LANGUAGE is unset", async () => {
+    it("hard-enforces English for an English prompt when NEX_LANGUAGE is unset", async () => {
       delete process.env.NEX_LANGUAGE;
       const agent = require("../cli/agent");
       agent.invalidateSystemPromptCache();
       mockStream("ok");
-      await processInput("test");
+      await processInput("what is in this folder?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("respond in English");
+      expect(sysMsg).toContain("The current user message is in English.");
+      expect(sysMsg).toContain("You MUST answer this turn in English.");
+    });
+
+    it("hard-enforces German for a German prompt when NEX_LANGUAGE is unset", async () => {
+      delete process.env.NEX_LANGUAGE;
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      mockStream("ok");
+      await processInput("was ist in diesem ordner?");
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain("The current user message is in German.");
+      expect(sysMsg).toContain("You MUST answer this turn in German.");
     });
 
     it("includes specific language when NEX_LANGUAGE is set", async () => {

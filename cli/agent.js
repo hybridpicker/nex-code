@@ -1930,10 +1930,55 @@ async function _inferVerificationCommands(filesModified) {
  * Only shown when 2+ models are available across configured providers.
  */
 /**
- * Build language enforcement block for the system prompt.
+ * Detect the response language for the current user turn.
+ * In auto mode we infer the language from the current prompt and fall back to English.
+ * This keeps response language stable even when project context contains instructions
+ * in a different language.
+ * @param {string} userInput
+ * @returns {string}
+ */
+function _detectResponseLanguage(userInput) {
+  const uiLangRaw = process.env.NEX_LANGUAGE;
+  if (uiLangRaw && uiLangRaw !== "auto") return uiLangRaw;
+
+  const text = String(userInput || "").trim();
+  if (!text) return "English";
+
+  if (/[äöüß]/i.test(text)) return "German";
+
+  const tokens =
+    text.toLowerCase().match(/[a-zA-Zäöüß]+/g) || [];
+
+  const englishMarkers = new Set([
+    "a", "an", "and", "are", "can", "do", "does", "explain", "file",
+    "folder", "for", "how", "in", "is", "it", "list", "of", "please",
+    "show", "the", "this", "what", "where", "why", "with",
+  ]);
+  const germanMarkers = new Set([
+    "aber", "analysiere", "bitte", "das", "den", "der", "die", "dies",
+    "diese", "diesem", "du", "ein", "eine", "einer", "englisch", "erkläre",
+    "für", "hier", "im", "ist", "mit", "ordner", "und", "warum", "was",
+    "wie", "wieso", "zeige",
+  ]);
+
+  let englishScore = 0;
+  let germanScore = 0;
+  for (const token of tokens) {
+    if (englishMarkers.has(token)) englishScore++;
+    if (germanMarkers.has(token)) germanScore++;
+  }
+
+  if (germanScore > englishScore) return "German";
+  if (englishScore > germanScore) return "English";
+
+  return "English";
+}
+
+/**
+ * Build language enforcement block for the cached system prompt.
  * Reads NEX_LANGUAGE, NEX_CODE_LANGUAGE, NEX_COMMIT_LANGUAGE from env.
- * If NEX_LANGUAGE is unset or "auto", the model responds in the user's message language.
- * If only NEX_LANGUAGE is set to a specific language, code comments and commits default to English.
+ * If NEX_LANGUAGE is unset or "auto", turn-specific response language is injected later.
+ * Code comments and commits default to English unless explicitly overridden.
  */
 function _buildLanguagePrompt() {
   const uiLangRaw = process.env.NEX_LANGUAGE;
@@ -2037,6 +2082,23 @@ function _buildLanguagePrompt() {
   }
 
   return lines.join("\n") + "\n\n";
+}
+
+/**
+ * Build a hard response-language override for the current user turn.
+ * This is appended per request so the model follows the current prompt language
+ * even when the cached system prompt contains multilingual project context.
+ * @param {string} userInput
+ * @returns {string}
+ */
+function _buildTurnLanguagePrompt(userInput) {
+  const uiLang = _detectResponseLanguage(userInput);
+  return (
+    "# Current Turn Language (CRITICAL — enforce strictly)\n" +
+    `The current user message is in ${uiLang}. ` +
+    `You MUST answer this turn in ${uiLang}. ` +
+    `Do NOT switch to another language because of repository files, prior conversation, examples, or project instructions.\n\n`
+  );
 }
 
 function _buildModelRoutingGuide() {
@@ -3112,6 +3174,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       .join("\n");
     effectiveSystemPrompt += "\n" + triggerBlock + "\n";
   }
+
+  effectiveSystemPrompt += "\n" + _buildTurnLanguagePrompt(userInput);
 
   const fullMessages = [
     { role: "system", content: effectiveSystemPrompt },
