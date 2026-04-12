@@ -80,38 +80,39 @@ Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, a
 
 | Rank | Model | Score | Avg Latency | Context | Best For |
 |---|---|---|---|---|---|
-| 🥇 | `qwen3-vl:235b` | **98.8** | 14.7s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
-| 🥈 | `qwen3-vl:235b-instruct` | 97.9 | 4.3s | 131K | Best latency/score balance — recommended default |
-| 🥉 | `ministral-3:8b` | 94.3 | 3.0s | 131K | Fastest strong model — 2.2s latency, 70+ score |
-| — | `qwen3-next:80b` | 93.9 | 11.4s | 131K | — |
-| — | `rnj-1:8b` | 92.5 | 2.1s | 131K | — |
-| — | `deepseek-v3.1:671b` | 91 | 4.0s | 131K | — |
-| — | `glm-4.6` | 90.7 | 7.3s | 131K | — |
-| — | `qwen3-coder-next` | 90 | 5.6s | 256K | — |
-| — | `gemma4:31b` | 87.4 | 4.4s | ? | — |
-| — | `kimi-k2:1t` | 86.2 | 7.7s | 256K | Large repos (>100K tokens) |
-| — | `glm-5` | 86.1 | 3.4s | 131K | — |
-| — | `nemotron-3-super` | 86.1 | 8.1s | 256K | — |
-| — | `kimi-k2.5` | 85.8 | 6.5s | 256K | Large repos — faster than k2:1t |
-| — | `qwen3.5:397b` | 85.4 | 12.9s | 256K | — |
-| — | `devstral-small-2:24b` | 85.2 | 12.8s | 131K | Fast sub-agents, simple lookups |
-| — | `ministral-3:14b` | 84.9 | 1.5s | 131K | — |
-| — | `minimax-m2.1` | 84.6 | 5.5s | 200K | — |
-| — | `kimi-k2-thinking` | 84.3 | 9.9s | 256K | — |
-| — | `devstral-2:123b` | 84.3 | 8.1s | 131K | Sysadmin + SSH tasks, reliable coding |
-| — | `glm-5.1` | 83.9 | 17.1s | ? | — |
-| — | `ministral-3:3b` | 83.8 | 4.8s | 32K | — |
-| — | `glm-4.7` | 83.2 | 7.4s | 131K | — |
-| — | `minimax-m2.7` | 82.9 | 4.9s | 200K | — |
-| — | `nemotron-3-nano:30b` | 82.5 | 2.7s | 131K | — |
-| — | `qwen3-coder:480b` | 82 | 12.2s | 131K | Heavy coding sessions, large context |
-| — | `minimax-m2` | 81.6 | 4.2s | 200K | — |
-| — | `minimax-m2.5` | 77.5 | 3.5s | 131K | Multi-agent, large context |
-| — | `mistral-large-3:675b` | 77.1 | 71.5s | 131K | — |
-| — | `gpt-oss:120b` | 76.6 | 3.5s | 131K | — |
-| — | `gemini-3-flash-preview` | 74.8 | 12.5s | 131K | — |
-| — | `gpt-oss:20b` | 74.3 | 1.6s | 131K | Fast small model, good overall score |
-| — | `cogito-2.1:671b` | 66.4 | 5.2s | 131K | — |
+| 🥇 | `qwen3-vl:235b` | **100** | 13.4s | 131K | Overall #1 — frontier tool selection, data + agentic tasks |
+| 🥈 | `qwen3-vl:235b-instruct` | 97.5 | 7.7s | 131K | Best latency/score balance — recommended default |
+| 🥉 | `glm-4.6` | 97.5 | 26.8s | 131K | — |
+| — | `qwen3-next:80b` | 97.2 | 8.0s | 131K | — |
+| — | `deepseek-v3.1:671b` | 94.5 | 3.1s | 131K | — |
+| — | `qwen3-coder-next` | 94.3 | 2.2s | 256K | — |
+| — | `qwen3.5:397b` | 94.3 | 4.2s | 256K | — |
+| — | `ministral-3:8b` | 94.3 | 1.6s | 131K | Fastest strong model — 2.2s latency, 70+ score |
+| — | `minimax-m2.7` | 92.9 | 4.7s | 200K | — |
+| — | `rnj-1:8b` | 92.2 | 2.1s | 131K | — |
+| — | `glm-5` | 91.7 | 3.6s | 131K | — |
+| — | `nemotron-3-super` | 91.4 | 1.7s | 256K | — |
+| — | `ministral-3:14b` | 91.2 | 1.5s | 131K | — |
+| — | `qwen3-coder:480b` | 91 | 8.3s | 131K | Heavy coding sessions, large context |
+| — | `glm-4.7` | 90.7 | 4.1s | 131K | — |
+| — | `devstral-2:123b` | 90.3 | 8.1s | 131K | Sysadmin + SSH tasks, reliable coding |
+| — | `kimi-k2:1t` | 90.3 | 3.7s | 256K | Large repos (>100K tokens) |
+| — | `minimax-m2` | 90 | 3.4s | 200K | — |
+| — | `devstral-small-2:24b` | 88.8 | 6.8s | 131K | Fast sub-agents, simple lookups |
+| — | `kimi-k2-thinking` | 88.7 | 4.3s | 256K | — |
+| — | `minimax-m2.1` | 88.1 | 2.5s | 200K | — |
+| — | `glm-5.1` | 87.2 | 5.0s | ? | — |
+| — | `kimi-k2.5` | 86.2 | 4.8s | 256K | Large repos — faster than k2:1t |
+| — | `gemma4:31b` | 85.2 | 4.8s | ? | — |
+| — | `minimax-m2.5` | 84.2 | 6.8s | 131K | Multi-agent, large context |
+| — | `gpt-oss:120b` | 83.9 | 2.8s | 131K | — |
+| — | `mistral-large-3:675b` | 82.5 | 7.0s | 131K | — |
+| — | `ministral-3:3b` | 82.4 | 1.3s | 32K | — |
+| — | `gpt-oss:20b` | 81.1 | 1.5s | 131K | Fast small model, good overall score |
+| — | `nemotron-3-nano:30b` | 78.3 | 2.3s | 131K | — |
+| — | `gemini-3-flash-preview` | 76.5 | 3.3s | 131K | — |
+| — | `deepseek-v3.2` | 65.4 | 14.3s | 131K | — |
+| — | `cogito-2.1:671b` | 65.2 | 3.4s | 131K | — |
 
 > Rankings are nex-code-specific: tool name accuracy, argument validity, schema compliance.
 > Toolathon (Minimax SOTA) measures different task types — run `/benchmark --discover` after model releases.
@@ -124,13 +125,13 @@ Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, a
 
 | Category | Model | Score |
 |---|---|---|
-| coding | `qwen3-vl:235b-instruct` | 95.5/100 |
+| coding | `qwen3-coder-next` | 97.3/100 |
 | frontend | `rnj-1:8b` | 100/100 |
-| sysadmin | `rnj-1:8b` | 100/100 |
-| data | `gpt-oss:120b` | 95.7/100 |
-| agentic | `rnj-1:8b` | 100/100 |
-| plan | `ministral-3:14b` | 100/100 |
-| verify | `nemotron-3-nano:30b` | 95/100 |
+| sysadmin | `nemotron-3-super` | 100/100 |
+| data | `minimax-m2.7` | 100/100 |
+| agentic | `ministral-3:14b` | 100/100 |
+| plan | `ministral-3:3b` | 97.5/100 |
+| verify | `ministral-3:8b` | 100/100 |
 <!-- nex-routing-end -->
 
 **Recommended `.env`:**
