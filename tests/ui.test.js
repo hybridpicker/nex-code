@@ -343,6 +343,7 @@ describe("ui.js", () => {
         false,
       );
       expect(result).toContain("3 lines");
+      expect(result).toContain("line1");
     });
 
     it("shows line range for partial read_file", () => {
@@ -380,23 +381,34 @@ describe("ui.js", () => {
     it("shows diff summary for edit_file", () => {
       const result = formatToolSummary(
         "edit_file",
-        { path: "src/x.js", old_text: "foo", new_text: "bar" },
+        { path: "src/x.js", old_text: "foo\nzap", new_text: "bar\nzip" },
         "ok",
         false,
       );
-      expect(result).toContain("−1");
-      expect(result).toContain("+1");
+      expect(result).toContain("−2");
+      expect(result).toContain("+2");
+      expect(result).toContain("zap");
+      expect(result).toContain("zip");
     });
 
     // patch_file
     it("shows patch count for patch_file", () => {
       const result = formatToolSummary(
         "patch_file",
-        { path: "a.js", patches: [{}, {}, {}] },
+        {
+          path: "a.js",
+          patches: [
+            { old_text: "foo", new_text: "bar" },
+            { old_text: "baz", new_text: "qux" },
+            {},
+          ],
+        },
         "ok",
         false,
       );
       expect(result).toContain("3 patch");
+      expect(result).toContain("patch 1");
+      expect(result).toContain("bar");
     });
 
     // bash
@@ -437,11 +449,12 @@ describe("ui.js", () => {
     it("shows match count for grep", () => {
       const result = formatToolSummary(
         "grep",
-        { pattern: "TODO" },
+        { pattern: "TODO", path: "src" },
         "file1:1:TODO\nfile2:5:TODO",
         false,
       );
       expect(result).toContain("2 matches");
+      expect(result).toContain("path:");
     });
 
     it("shows No matches for grep with no results", () => {
@@ -473,6 +486,7 @@ describe("ui.js", () => {
         false,
       );
       expect(result).toContain("3 file");
+      expect(result).toContain("a.js");
     });
 
     it("shows no files found for empty glob", () => {

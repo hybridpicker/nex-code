@@ -125,13 +125,7 @@ Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, a
 
 | Category | Model | Score |
 |---|---|---|
-| coding | `qwen3-coder-next` | 97.3/100 |
-| frontend | `rnj-1:8b` | 100/100 |
-| sysadmin | `nemotron-3-super` | 100/100 |
-| data | `minimax-m2.7` | 100/100 |
-| agentic | `ministral-3:14b` | 100/100 |
-| plan | `ministral-3:3b` | 97.5/100 |
-| verify | `ministral-3:8b` | 100/100 |
+| coding | `new` | 90/100 |
 <!-- nex-routing-end -->
 
 **Recommended `.env`:**
