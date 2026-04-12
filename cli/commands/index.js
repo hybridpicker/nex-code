@@ -55,6 +55,7 @@ function getAbortSignal() {
 const SLASH_COMMANDS = [
   { cmd: "/help", desc: "Show full help" },
   { cmd: "/model", desc: "Show/switch model" },
+  { cmd: "/routing", desc: "Show active model routing (per task category)" },
   { cmd: "/providers", desc: "List providers and models" },
   { cmd: "/fallback", desc: "Show/set fallback chain" },
   { cmd: "/tokens", desc: "Token usage and context budget" },
@@ -258,6 +259,7 @@ function showHelp() {
 ${C.bold}${C.cyan}Commands:${C.reset}
   ${C.cyan}/help${C.reset}             ${C.dim}Show this help${C.reset}
   ${C.cyan}/model [spec]${C.reset}     ${C.dim}Show/switch model (e.g. openai:gpt-4o, claude-sonnet)${C.reset}
+  ${C.cyan}/routing${C.reset}          ${C.dim}Show active model routing per task category${C.reset}
   ${C.cyan}/providers${C.reset}        ${C.dim}Show available providers and models${C.reset}
   ${C.cyan}/fallback [chain]${C.reset} ${C.dim}Show/set fallback chain (e.g. anthropic,openai,local)${C.reset}
   ${C.cyan}/tokens${C.reset}           ${C.dim}Show token usage and context budget${C.reset}
@@ -403,6 +405,30 @@ async function handleSlashCommand(input, rl) {
           `${C.gray}Use /providers to see available models${C.reset}`,
         );
       }
+      return true;
+    }
+
+    case "/routing": {
+      const { loadRoutingConfig } = require("../task-router");
+      const routing = loadRoutingConfig();
+      const os = require("os");
+      const routingPath = require("path").join(os.homedir(), ".nex-code", "model-routing.json");
+      console.log(`\n${C.bold}${C.cyan}Model Routing${C.reset}  ${C.dim}(${routingPath})${C.reset}\n`);
+      const categories = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
+      for (const cat of categories) {
+        const model = routing[cat];
+        if (model) {
+          console.log(`  ${C.dim}${cat.padEnd(12)}${C.reset} ${C.green}${model}${C.reset}`);
+        }
+      }
+      const phases = routing.phases;
+      if (phases && Object.keys(phases).length > 0) {
+        console.log(`\n  ${C.bold}${C.dim}Phases:${C.reset}`);
+        for (const [phase, model] of Object.entries(phases)) {
+          console.log(`  ${C.dim}${phase.padEnd(12)}${C.reset} ${C.cyan}${model}${C.reset}`);
+        }
+      }
+      console.log(`\n${C.dim}Run /benchmark --all to update routing${C.reset}\n`);
       return true;
     }
 

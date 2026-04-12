@@ -16,6 +16,44 @@ const BOUNCE_POSITIONS = (() => {
 
 const TASK_FRAMES = ["✽", "✦", "✧", "✦"];
 
+function getSpinnerPhase(text = "") {
+  const lower = String(text).toLowerCase();
+
+  if (
+    lower.includes("search") ||
+    lower.includes("read") ||
+    lower.includes("list") ||
+    lower.includes("inspect")
+  ) {
+    return { glyph: "◌", color: C.cyan, accent: "scan" };
+  }
+  if (
+    lower.includes("write") ||
+    lower.includes("edit") ||
+    lower.includes("patch") ||
+    lower.includes("build")
+  ) {
+    return { glyph: "✦", color: C.yellow, accent: "shape" };
+  }
+  if (
+    lower.includes("test") ||
+    lower.includes("diff") ||
+    lower.includes("check") ||
+    lower.includes("verify")
+  ) {
+    return { glyph: "▣", color: C.green, accent: "verify" };
+  }
+  if (
+    lower.includes("wait") ||
+    lower.includes("github") ||
+    lower.includes("fetch") ||
+    lower.includes("browser")
+  ) {
+    return { glyph: "◍", color: C.blue, accent: "wait" };
+  }
+  return { glyph: "●", color: C.cyan, accent: "think" };
+}
+
 class Spinner {
   constructor(text = "Thinking...") {
     this.text = text;
@@ -27,10 +65,11 @@ class Spinner {
   _render() {
     if (this._stopped) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    const phase = getSpinnerPhase(this.text);
     // Build track: dim dots with a cyan ball at current position
     let track = "";
     for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${C.cyan}●${C.reset}` : " ";
+      track += i === pos ? `${phase.color}${phase.glyph}${C.reset}` : " ";
     }
     let elapsed = "";
     if (this.startTime) {
@@ -44,7 +83,7 @@ class Spinner {
       }
     }
     process.stderr.write(
-      `\x1b[2K\r${track} ${C.dim}${this.text}${C.reset}${elapsed}`,
+      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset} ${track} ${C.dim}${this.text}${C.reset}${elapsed}`,
     );
     this.frame++;
   }
@@ -105,7 +144,7 @@ class MultiProgress {
   _render() {
     if (this._stopped) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
-    const ball = `${C.cyan}●${C.reset}`;
+    const ball = `${C.cyan}◌${C.reset}`;
     const elapsed = this._formatElapsed();
     const elapsedStr = elapsed ? ` ${C.dim}${elapsed}${C.reset}` : "";
     // Truncate labels to terminal width to prevent line wrapping (which breaks cursor math)
@@ -128,7 +167,7 @@ class MultiProgress {
           color = C.yellow;
           break;
         default:
-          icon = i === pos ? ball : " ";
+          icon = i === pos ? ball : `${C.dim}·${C.reset}`;
           color = "";
       }
       // Show elapsed on last line only
@@ -278,11 +317,11 @@ class TaskProgress {
       .join(" · ");
     const statsStr = stats ? ` ${C.dim}(${stats})${C.reset}` : "";
 
-    let buf = `\x1b[2K${C.cyan}${f}${C.reset} ${this.name}…${statsStr}\n`;
+    let buf = `\x1b[2K${C.cyan}${C.bold}${f}${C.reset} ${C.bold}${this.name}${C.reset}${C.dim}…${C.reset}${statsStr}\n`;
 
     for (let i = 0; i < this.tasks.length; i++) {
       const t = this.tasks[i];
-      const connector = i === 0 ? "⎿" : " ";
+      const connector = i === 0 ? "⎿" : "│";
       const icon = TASK_ICONS[t.status] || TASK_ICONS.pending;
       const color = TASK_COLORS[t.status] || TASK_COLORS.pending;
       const desc =
@@ -381,10 +420,10 @@ class TaskProgress {
         ? `${done}/${total} done, ${failed} failed`
         : `${done}/${total} done`;
 
-    let buf = `\x1b[2K${C.green}✔${C.reset} ${this.name} ${C.dim}(${elapsed} · ${summary})${C.reset}\n`;
+    let buf = `\x1b[2K${C.green}${C.bold}✔${C.reset} ${C.bold}${this.name}${C.reset} ${C.dim}(${elapsed} · ${summary})${C.reset}\n`;
     for (let i = 0; i < this.tasks.length; i++) {
       const t = this.tasks[i];
-      const connector = i === 0 ? "⎿" : " ";
+      const connector = i === 0 ? "⎿" : "│";
       const icon = TASK_ICONS[t.status] || TASK_ICONS.pending;
       const color = TASK_COLORS[t.status] || TASK_COLORS.pending;
       const desc =
@@ -421,17 +460,18 @@ class ToolProgress {
     if (this._stopped) return;
     if (!process.stderr.isTTY) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
+    const phase = getSpinnerPhase(this.message);
     let track = "";
     for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${C.cyan}●${C.reset}` : " ";
+      track += i === pos ? `${phase.color}${phase.glyph}${C.reset}` : " ";
     }
 
     let info = this.message;
     if (this.count > 0) {
       info += ` ${C.cyan}${this.count}${C.reset}`;
       if (this.total) info += `/${this.total}`;
-      if (this.detail) info += ` ${C.dim}${this.detail}${C.reset}`;
     }
+    if (this.detail) info += ` ${C.dim}${this.detail}${C.reset}`;
 
     let elapsed = "";
     if (this.startTime) {
@@ -440,7 +480,7 @@ class ToolProgress {
     }
 
     process.stderr.write(
-      `\x1b[2K\r${track} ${C.dim}${info}${C.reset}${elapsed}`,
+      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset} ${track} ${C.dim}${info}${C.reset}${elapsed}`,
     );
     this.frame++;
   }

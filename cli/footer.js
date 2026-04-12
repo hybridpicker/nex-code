@@ -122,39 +122,42 @@ class StickyFooter {
     const mode = this._statusMode;
 
     if (!model) {
-      return T.footer_sep + "─".repeat(cols) + C_RESET;
+      return `${T.footer_sep}═${"═".repeat(Math.max(0, cols - 2))}═${C_RESET}`;
     }
 
     // Build colored left info segment
-    const divider = ` ${T.footer_divider}·${C_RESET} `;
+    const divider = ` ${T.footer_divider}│${C_RESET} `;
+    const branchChip = branch ? `${T.footer_branch}git:${branch}${C_RESET}` : "";
+    const projectChip = project ? `${T.footer_project}${project}${C_RESET}` : "";
     const parts = [];
     if (model) parts.push(`${T.footer_model}${model}${C_RESET}`);
-    if (branch) parts.push(`${T.footer_branch}${branch}${C_RESET}`);
-    if (project) parts.push(`${T.footer_project}${project}${C_RESET}`);
+    if (branchChip) parts.push(branchChip);
+    if (projectChip) parts.push(projectChip);
     const info = parts.join(divider);
-    const visibleInfo = [model, branch, project]
+    const visibleInfo = [model, branch ? `git:${branch}` : "", project]
       .filter(Boolean)
       .join(" · ").length;
-    const prefix = "─ ";
+    const prefix = "╼ ";
 
     if (mode) {
-      // Right-aligned mode badge: ── info ───── mode ──
-      const visibleMode = mode.length;
+      // Right-aligned mode badge: stronger cockpit-style bar
+      const modeLabel = `[${mode}]`;
+      const visibleMode = modeLabel.length;
       const trailLen = Math.max(
         0,
         cols - prefix.length - visibleInfo - 1 - 1 - visibleMode - 3,
       );
-      const trail = "─".repeat(trailLen);
+      const trail = "═".repeat(trailLen);
       return (
         `${T.footer_sep}${prefix}${C_RESET}` +
         `${info}${T.footer_sep} ${trail} ${C_RESET}` +
-        `${T.footer_mode}${mode}${C_RESET}` +
-        `${T.footer_sep} ──${C_RESET}`
+        `${T.footer_mode}${modeLabel}${C_RESET}` +
+        `${T.footer_sep} ╾${C_RESET}`
       );
     }
 
     const trailLen = Math.max(0, cols - prefix.length - visibleInfo - 2);
-    const trail = "─".repeat(trailLen);
+    const trail = "═".repeat(trailLen);
     return `${T.footer_sep}${prefix}${C_RESET}${info}${T.footer_sep} ${trail}${C_RESET}`;
   }
 

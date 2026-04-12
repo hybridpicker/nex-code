@@ -32,5 +32,5 @@ if ! (cd "$REPO_ROOT" && npm run build 2>&1 | tail -3); then
   exit 1
 fi
 
-git add dist/nex-code.js dist/benchmark.js
+git add dist/nex-code.js dist/benchmark.js dist/background-worker.js
 echo "[pre-commit] dist/ rebuilt and staged — source + dist will land in one commit."

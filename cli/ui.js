@@ -5,6 +5,7 @@
 
 const { T } = require("./theme");
 const C = T;
+const path = require("path");
 
 function colorLine(text, rgb) {
   return (
@@ -63,10 +64,14 @@ function banner(modelName, cwd, opts = {}) {
   const yoloTag = opts.yolo ? `  ${B}${T.banner_yolo}⚡ YOLO${r}` : "";
   const geminiTag = opts.gemini ? `  ${B}${T.banner_gemini}✦ GEMINI${r}` : "";
   const version = require("../package.json").version;
+  const project = cwd ? path.basename(cwd) : null;
+  const modelChip = `${T.banner_model}[${modelName || "model"}]${r}`;
+  const projectChip = `${T.banner_version}[${project || "workspace"}]${r}`;
 
   const subtitles = [
     `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
-    `  ${T.banner_model}${modelName}${r}  ${T.muted}·  /help${r}${geminiTag}${yoloTag}`,
+    `  ${modelChip} ${projectChip}`,
+    `  ${T.banner_logo}${B}terminal workbench${r}  ${T.muted}·  /help${r}${geminiTag}${yoloTag}`,
     "",
   ];
 
