@@ -6,6 +6,7 @@ const {
   buildContentIndex,
   getRelatedFiles,
   summarizeModuleHubs,
+  findSymbolReferences,
 } = require("../cli/index-engine");
 
 describe("index-engine import graph helpers", () => {
@@ -69,5 +70,19 @@ describe("index-engine import graph helpers", () => {
     } finally {
       fs.rmSync(otherDir, { recursive: true, force: true });
     }
+  });
+
+  it("finds likely callers/usages for a symbol outside its definition file", async () => {
+    await refreshIndex(tmpDir);
+    await buildContentIndex(tmpDir);
+
+    const refs = await findSymbolReferences("sharedUtil", tmpDir, {
+      excludeFile: "src/util.js",
+      limit: 4,
+    });
+
+    expect(refs.some((ref) => ref.file === "src/app.js")).toBe(true);
+    expect(refs.some((ref) => ref.file === "src/feature.js")).toBe(true);
+    expect(refs.every((ref) => ref.file !== "src/util.js")).toBe(true);
   });
 });

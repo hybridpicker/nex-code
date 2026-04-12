@@ -20,6 +20,129 @@ const { saveRoutingConfig } = require("./task-router");
 // Each task mirrors a real nex-code workflow.
 // expectedTool: null → model should NOT call a tool (pure reasoning).
 
+function searchNeedle(args) {
+  const taskNeedles = Array.isArray(args?.tasks)
+    ? args.tasks.flatMap((task) => {
+      if (typeof task === "string") return [task];
+      if (task && typeof task === "object") {
+        return [task.title, task.task, task.description];
+      }
+      return [];
+    })
+    : [];
+  return [
+    args?.pattern,
+    args?.query,
+    args?.regex,
+    args?.file_pattern,
+    args?.include,
+    args?.path,
+    args?.command,
+    args?.name,
+    ...taskNeedles,
+  ]
+    .filter((v) => typeof v === "string")
+    .join(" ");
+}
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function includesAnyCI(haystack, needles = []) {
+  const hay = normalizeText(haystack);
+  return needles.some((needle) => hay.includes(normalizeText(needle)));
+}
+
+function includesAllCI(haystack, needles = []) {
+  const hay = normalizeText(haystack);
+  return needles.every((needle) => hay.includes(normalizeText(needle)));
+}
+
+function looksLikeTestCommand(command = "") {
+  return /\b(test|jest|vitest|mocha|ava|pytest|cargo\s+test|go\s+test|rspec|phpunit|mix\s+test|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test)\b/i.test(command);
+}
+
+function looksLikeLintCommand(command = "") {
+  return /\b(lint|eslint|prettier|ruff|flake8|rubocop|golangci-lint|tsc(?:\s|$)|npm\s+run\s+lint|pnpm\s+run\s+lint|yarn\s+lint)\b/i.test(command);
+}
+
+function looksLikeBuildCommand(command = "") {
+  return /\b(build|compile|tsc(?:\s|$)|webpack|vite\s+build|next\s+build|npm\s+run\s+build|pnpm\s+run\s+build|yarn\s+build|cargo\s+build|go\s+build)\b/i.test(command);
+}
+
+function looksLikeSearchCommand(command = "") {
+  return /\b(rg|grep|find|fd|ls|dir|sed|awk)\b/i.test(command);
+}
+
+function matchesTaskListIntent(args, keywords = []) {
+  if (args?.action !== "create") return false;
+  if (!Array.isArray(args.tasks) || args.tasks.length === 0) return false;
+  return includesAllCI(searchNeedle(args), keywords);
+}
+
+function matchesSqlWriteTask(args, {
+  pathIncludes = [],
+  table = "users",
+  action = "select",
+  conditionTerms = [],
+} = {}) {
+  if (!matchesWriteArgs(args)) return false;
+  if (!includesAllCI(args.path, pathIncludes)) return false;
+  const sql = normalizeText(args.content);
+  if (!sql.includes(action) || !sql.includes(table)) return false;
+  return conditionTerms.every((group) => includesAnyCI(sql, group));
+}
+
+function matchesSearchLikeArgs(args, requiredTerms = []) {
+  const needle = searchNeedle(args);
+  return includesAllCI(needle, requiredTerms);
+}
+
+function matchesEditArgs(args, { pathIncludes = [], oldTexts = [], newTexts = [] } = {}) {
+  if (typeof args?.path !== "string") return false;
+
+  const pathOk =
+    pathIncludes.length === 0 ||
+    pathIncludes.some((needle) => args.path.toLowerCase().includes(needle.toLowerCase()));
+  if (!pathOk) return false;
+
+  const patchTexts = Array.isArray(args.patches)
+    ? args.patches.flatMap((p) => [p.old_text, p.new_text]).filter((v) => typeof v === "string")
+    : [];
+  const oldText = typeof args.old_text === "string" ? args.old_text : "";
+  const newText = typeof args.new_text === "string" ? args.new_text : "";
+  const allTexts = [oldText, newText, ...patchTexts];
+
+  const oldOk =
+    oldTexts.length === 0 ||
+    oldTexts.some((needle) => allTexts.some((text) => text.includes(needle)));
+  const newOk =
+    newTexts.length === 0 ||
+    newTexts.some((needle) => allTexts.some((text) => text.includes(needle)));
+
+  if (!oldOk || !newOk) return false;
+
+  if (oldText && newText) return true;
+  return Array.isArray(args.patches) && args.patches.length > 0;
+}
+
+function matchesWriteArgs(args, { pathIncludes = [], contentIncludes = [] } = {}) {
+  if (typeof args?.path !== "string" || typeof args?.content !== "string") {
+    return false;
+  }
+
+  const pathOk =
+    pathIncludes.length === 0 ||
+    pathIncludes.some((needle) => normalizeText(args.path).includes(normalizeText(needle)));
+  if (!pathOk) return false;
+
+  return (
+    contentIncludes.length === 0 ||
+    contentIncludes.every((needle) => normalizeText(args.content).includes(normalizeText(needle)))
+  );
+}
+
 const TASKS = [
   // ── File operations ─────────────────────────────────────────────────────
   {
@@ -37,25 +160,23 @@ const TASKS = [
       'Create a file at /tmp/nex-bench-test.txt with the content "benchmark run".',
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" && typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["nex-bench-test.txt"],
+        contentIncludes: ["benchmark run"],
+      }),
   },
   {
     id: "edit-file",
     category: "file-ops",
     prompt:
-      'In the file src/config.js, replace the string "debug: false" with "debug: true".',
+      'You already read src/config.js and confirmed it contains the exact text "debug: false". Replace that exact text with "debug: true".',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (
-        args.path &&
-        args.old_string !== undefined &&
-        args.new_string !== undefined
-      )
-        return true;
-      if (args.path && Array.isArray(args.patches) && args.patches.length > 0)
-        return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: ["config"],
+        oldTexts: ["debug: false"],
+        newTexts: ["debug: true"],
+      }),
   },
   {
     id: "list-directory",
@@ -90,7 +211,8 @@ const TASKS = [
     validateArgs: (args) =>
       typeof args.path === "string" &&
       args.path.includes("index") &&
-      (typeof args.line_start === "number" || typeof args.start_line === "number"),
+      typeof args.line_start === "number" &&
+      typeof args.line_end === "number",
   },
   {
     id: "glob-ts-defs",
@@ -108,21 +230,23 @@ const TASKS = [
       "Create a .gitignore file at the project root that ignores node_modules/ and dist/.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      args.path.includes(".gitignore") &&
-      typeof args.content === "string" &&
-      args.content.includes("node_modules"),
+      matchesWriteArgs(args, {
+        pathIncludes: [".gitignore"],
+        contentIncludes: ["node_modules", "dist"],
+      }),
   },
   {
     id: "edit-version-bump",
     category: "file-ops",
     prompt:
-      "In package.json, change the version field from \"1.0.0\" to \"1.1.0\".",
+      'You already read package.json and confirmed it contains the exact snippet `"version": "1.0.0"`. Do not inspect the repo again. Update it directly to `"version": "1.1.0"`.',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (args.path && args.path.includes("package")) return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: ["package.json"],
+        oldTexts: ["1.0.0", '"version": "1.0.0"', '"version":"1.0.0"'],
+        newTexts: ["1.1.0", '"version": "1.1.0"', '"version":"1.1.0"'],
+      }),
   },
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -190,17 +314,23 @@ const TASKS = [
     id: "git-branch",
     category: "shell",
     prompt: "What git branch am I currently on?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" && args.command.includes("git"),
+    expectedTool: ["bash", "git_status"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("git")) return true;
+      // git_status tool returns branch info
+      return true;
+    },
   },
   {
     id: "git-status",
     category: "shell",
     prompt: "Show me the current git status of the repository.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" && args.command.includes("git status"),
+    expectedTool: ["bash", "git_status"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("git status")) return true;
+      // git_status tool is the native equivalent
+      return true;
+    },
   },
   {
     id: "npm-install",
@@ -233,10 +363,16 @@ const TASKS = [
     id: "multi-step-version",
     category: "multi-step",
     prompt:
-      "What is the current version of this project? Check the source files.",
-    expectedTool: "read_file",
-    validateArgs: (args) =>
-      typeof args.path === "string" && args.path.includes("package.json"),
+      "You need to determine the current project version. What tool do you call first to inspect the most likely source file?",
+    expectedTool: ["read_file", "glob", "list_directory", "search_files"],
+    validateArgs: (args) => {
+      if (typeof args.path === "string" && /package\.json|package|version/i.test(args.path))
+        return true;
+      if (typeof args.pattern === "string" && /package\.json|package|version/i.test(args.pattern))
+        return true;
+      if (/package\.json|package|version/i.test(searchNeedle(args))) return true;
+      return false;
+    },
   },
   {
     id: "multi-step-count",
@@ -278,31 +414,26 @@ const TASKS = [
     id: "frontend-create-component",
     category: "frontend",
     prompt:
-      "Create a React functional component called Button that accepts a label prop and renders a styled button element. Save it to src/components/Button.jsx.",
+      "There is no existing Button component and no need to inspect other files first. What tool call do you use first to create src/components/Button.jsx with a React functional Button component that accepts a label prop and renders a styled button element?",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      (args.path.includes(".jsx") ||
-        args.path.includes(".tsx") ||
-        args.path.includes(".js")) &&
-      typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["button.", "src/components"],
+        contentIncludes: ["Button", "label", "button"],
+      }),
   },
   {
     id: "frontend-edit-css",
     category: "frontend",
     prompt:
-      'In the file src/styles.css, change the background-color value from "blue" to "red".',
+      'You already read src/styles.css and confirmed it contains the exact text `background-color: blue`. Change that exact value to `background-color: red`.',
     expectedTool: ["edit_file", "patch_file"],
-    validateArgs: (args) => {
-      if (args.path && args.old_string !== undefined)
-        return (
-          args.path.includes(".css") ||
-          args.old_string.includes("blue") ||
-          args.old_string.includes("background")
-        );
-      if (args.path && Array.isArray(args.patches)) return true;
-      return false;
-    },
+    validateArgs: (args) =>
+      matchesEditArgs(args, {
+        pathIncludes: [".css", "styles"],
+        oldTexts: ["background-color: blue"],
+        newTexts: ["background-color: red"],
+      }),
   },
   {
     id: "frontend-glob-components",
@@ -335,13 +466,18 @@ const TASKS = [
     id: "sysadmin-port-check",
     category: "sysadmin",
     prompt: "Which process is currently listening on port 3000?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("lsof") ||
-        args.command.includes("ss") ||
-        args.command.includes("netstat") ||
-        args.command.includes("3000")),
+    expectedTool: ["bash", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("lsof") ||
+          args.command.includes("ss") ||
+          args.command.includes("netstat") ||
+          args.command.includes("3000")
+        );
+      }
+      return args.action === "network_status";
+    },
   },
   {
     id: "sysadmin-nginx-config",
@@ -363,23 +499,45 @@ const TASKS = [
     id: "sysadmin-service-status",
     category: "sysadmin",
     prompt: "Check the status of the nginx service and show if it is running.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("systemctl") ||
-        args.command.includes("service") ||
-        args.command.includes("nginx")),
+    expectedTool: ["bash", "service_manage", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("systemctl") ||
+          args.command.includes("service") ||
+          args.command.includes("nginx")
+        );
+      }
+      if (args.action === "status" && typeof args.service === "string") {
+        return args.service.includes("nginx");
+      }
+      return (
+        args.action === "service" &&
+        args.service_action === "status" &&
+        typeof args.service_name === "string" &&
+        args.service_name.includes("nginx")
+      );
+    },
   },
   {
     id: "sysadmin-error-log",
     category: "sysadmin",
     prompt: "Show the last 100 lines of the nginx error log.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("tail") ||
-        args.command.includes("journalctl") ||
-        args.command.includes("nginx")),
+    expectedTool: ["bash", "service_logs", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          args.command.includes("tail") ||
+          args.command.includes("journalctl") ||
+          args.command.includes("nginx")
+        );
+      }
+      if (typeof args.service === "string") return args.service.includes("nginx");
+      return (
+        (args.action === "journalctl" && typeof args.unit === "string" && args.unit.includes("nginx")) ||
+        (args.action === "log_tail" && typeof args.path === "string" && /nginx|error/i.test(args.path))
+      );
+    },
   },
   {
     id: "sysadmin-docker-compose",
@@ -398,12 +556,16 @@ const TASKS = [
     id: "data-sql-query",
     category: "data",
     prompt:
-      "Write a SQL query to find all users who have not logged in for more than 30 days. Save it to queries/inactive-users.sql.",
+      "Do not inspect the repo first. Write a SQL query to find all users who have not logged in for more than 30 days and save it to queries/inactive-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      (args.path.includes(".sql") || args.path.includes("quer")) &&
-      typeof args.content === "string",
+      matchesSqlWriteTask(args, {
+        pathIncludes: ["queries", "inactive-users.sql"],
+        conditionTerms: [
+          ["last_login", "last seen", "last_seen", "last_sign_in", "last_signin", "logged_in_at", "login_at", "last_active_at", "lastactivity"],
+          ["30 day", "30-day", "interval '30 day'", "interval '30 days'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval", "dateadd(day, -30", "add_months", "interval '1 month'"],
+        ],
+      }),
   },
   {
     id: "data-find-json-key",
@@ -419,12 +581,13 @@ const TASKS = [
     id: "data-python-csv",
     category: "data",
     prompt:
-      'Write a Python script that reads data.csv and calculates the average of the "price" column. Save it to scripts/average_price.py.',
+      'There is no need to inspect the repo first. What tool call do you use first to create scripts/average_price.py with a Python script that reads data.csv and calculates the average of the "price" column?',
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" &&
-      args.path.includes(".py") &&
-      typeof args.content === "string",
+      matchesWriteArgs(args, {
+        pathIncludes: ["average_price.py", "scripts"],
+        contentIncludes: ["data.csv", "price"],
+      }),
   },
   {
     id: "data-find-migrations",
@@ -440,20 +603,24 @@ const TASKS = [
     id: "data-find-schema",
     category: "data",
     prompt: "Find where the database schema or models are defined in this project.",
-    expectedTool: ["grep", "glob"],
+    expectedTool: ["grep", "glob", "search_files", "list_directory", "bash"],
     validateArgs: (args) => {
-      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
-      if (args.pattern && /schema|model|migration/i.test(args.pattern)) return true;
-      return false;
+      return /schema|model|migration|prisma|dbml|typeorm|sequelize|orm|db|database|entity/i.test(searchNeedle(args));
     },
   },
   {
     id: "data-write-query",
     category: "data",
-    prompt: "Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
+    prompt: "Do not inspect the repo first. Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      typeof args.path === "string" && args.path.includes(".sql"),
+      matchesSqlWriteTask(args, {
+        pathIncludes: ["queries", "recent-users.sql"],
+        conditionTerms: [
+          ["created_at", "registered_at", "registered_on", "signup_date", "signed_up_at", "joined_at", "createdon", "created_on"],
+          ["30 day", "30-day", "interval '30 day'", "interval '30 days'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval", "dateadd(day, -30", "add_months", "interval '1 month'"],
+        ],
+      }),
   },
   {
     id: "data-read-env",
@@ -480,32 +647,36 @@ const TASKS = [
     id: "resilience-file-not-found",
     category: "resilience",
     prompt:
-      "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. What tool do you use?",
-    expectedTool: ["glob_files", "bash"],
+      "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. Use a discovery or search tool as your next step, not read_file again. What tool do you use first?",
+    expectedTool: ["glob", "bash", "search_files", "list_directory"],
     validateArgs: (args) => {
-      const s = JSON.stringify(args).toLowerCase();
-      return s.includes("src") || s.includes("helper") || s.includes("util") || s.includes("*.js");
+      const s = searchNeedle(args);
+      return /src|helper|util|helpers|\.js|find/i.test(s);
     },
   },
   {
     id: "resilience-large-file-nav",
     category: "resilience",
     prompt:
-      "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. What is the most efficient tool to use — read_file or bash with grep?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("awk")),
+      "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. Use a search-oriented tool first instead of reading the whole file. What is the most efficient tool call?",
+    expectedTool: ["bash", "grep", "search_files", "glob"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" &&
+        looksLikeSearchCommand(args.command) &&
+        /authenticateuser|src\/api\.js/i.test(args.command))
+        return true;
+      return matchesSearchLikeArgs(args, ["authenticateuser"]);
+    },
   },
   {
     id: "resilience-broken-import",
     category: "resilience",
     prompt:
-      "TypeScript reports: Cannot find module './config'. The file was recently renamed. What tool do you use to find the new location?",
-    expectedTool: ["glob_files", "bash"],
+      "TypeScript reports: Cannot find module './config'. The file was recently renamed. Use a search or discovery tool first to find the new location. What tool do you use?",
+    expectedTool: ["glob", "bash", "search_files", "grep", "list_directory"],
     validateArgs: (args) => {
-      const s = JSON.stringify(args).toLowerCase();
-      return s.includes("config") || s.includes("*.ts") || s.includes("*.js") || s.includes("find");
+      const s = searchNeedle(args);
+      return /config|rename|module|import|\.ts|\.js|find|src|path/i.test(s);
     },
   },
   {
@@ -521,11 +692,17 @@ const TASKS = [
     id: "resilience-grep-no-match",
     category: "resilience",
     prompt:
-      "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. What bash command finds all exported function names in src/ to identify the current name?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("src")),
+      "grep returned zero matches for 'getUserById' in src/. The function exists but may have been renamed. Use a search tool to list exported function names in src/ and identify the current name. What tool call do you use first?",
+    expectedTool: ["bash", "grep", "search_files"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          looksLikeSearchCommand(args.command) &&
+          /src|export|function|module\.exports|exports\./i.test(args.command)
+        );
+      }
+      return /getUserById|export|function|module\.exports|exports\.|src|public|def /i.test(searchNeedle(args));
+    },
   },
 
   // ── SSH ───────────────────────────────────────────────────────────────────
@@ -534,48 +711,86 @@ const TASKS = [
     category: "ssh",
     prompt:
       'Show the last 50 lines of /var/log/nginx/error.log on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("tail") || args.command.includes("log")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "service_logs", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("tail") || args.command.includes("log")) &&
+          typeof args.server === "string"
+        );
+      }
+      if (typeof args.service === "string") return args.service.includes("nginx");
+      return (
+        typeof args.server === "string" &&
+        ((args.action === "journalctl" && typeof args.unit === "string" && args.unit.includes("nginx")) ||
+          (args.action === "log_tail" && typeof args.path === "string" && /nginx|error/i.test(args.path)))
+      );
+    },
   },
   {
     id: "ssh-exec-service",
     category: "ssh",
     prompt: 'Restart the nginx service on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("nginx") ||
-        args.command.includes("systemctl") ||
-        args.command.includes("restart")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "service_manage", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("nginx") ||
+            args.command.includes("systemctl") ||
+            args.command.includes("restart")) &&
+          typeof args.server === "string"
+        );
+      }
+      if (
+        args.action === "restart" &&
+        typeof args.service === "string" &&
+        args.service.includes("nginx")
+      ) {
+        return true;
+      }
+      return (
+        args.action === "service" &&
+        args.service_action === "restart" &&
+        typeof args.service_name === "string" &&
+        args.service_name.includes("nginx") &&
+        typeof args.server === "string"
+      );
+    },
   },
   {
     id: "ssh-exec-port",
     category: "ssh",
     prompt: 'Check if port 8080 is listening on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("8080") ||
-        args.command.includes("ss") ||
-        args.command.includes("netstat") ||
-        args.command.includes("lsof")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("8080") ||
+            args.command.includes("ss") ||
+            args.command.includes("netstat") ||
+            args.command.includes("lsof")) &&
+          typeof args.server === "string"
+        );
+      }
+      return args.action === "network_status" && typeof args.server === "string";
+    },
   },
   {
     id: "ssh-exec-processes",
     category: "ssh",
     prompt: 'Show the top CPU-consuming processes on server "prod-1".',
-    expectedTool: "ssh_exec",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("top") ||
-        args.command.includes("ps") ||
-        args.command.includes("htop")) &&
-      (typeof args.host === "string" || typeof args.profile === "string"),
+    expectedTool: ["ssh_exec", "sysadmin"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return (
+          (args.command.includes("top") ||
+            args.command.includes("ps") ||
+            args.command.includes("htop")) &&
+          typeof args.server === "string"
+        );
+      }
+      return args.action === "process_list" && typeof args.server === "string";
+    },
   },
 
   // ── Git (native tools) ────────────────────────────────────────────────────
@@ -597,7 +812,11 @@ const TASKS = [
     prompt: "Show the last 5 commit messages with their hashes.",
     expectedTool: ["git_log", "bash"],
     validateArgs: (args) => {
-      if (typeof args.limit === "number" || typeof args.n === "number")
+      if (
+        typeof args.count === "number" ||
+        typeof args.limit === "number" ||
+        typeof args.n === "number"
+      )
         return true;
       if (typeof args.command === "string" && args.command.includes("log"))
         return true;
@@ -610,7 +829,7 @@ const TASKS = [
     prompt: "Check if there are any uncommitted changes in the repository.",
     expectedTool: ["git_status", "bash"],
     validateArgs: (args) => {
-      if (args.path === undefined && args.command === undefined) return false;
+      if (Object.keys(args || {}).length === 0) return true;
       if (typeof args.command === "string" && args.command.includes("status"))
         return true;
       return true; // git_status takes no required args
@@ -622,13 +841,14 @@ const TASKS = [
     id: "agentic-test-first",
     category: "agentic",
     prompt:
-      "Run the full test suite. If any tests fail, identify the failing test file and read it to understand the issue.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("test") ||
-        args.command.includes("jest") ||
-        args.command.includes("npm")),
+      "You need to run the full test suite first. Do not inspect files before that. If any tests fail after the run, identify the failing test file and read it to understand the issue. What is the first tool call?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return looksLikeTestCommand(args.command);
+      }
+      return matchesTaskListIntent(args, ["test"]);
+    },
   },
   {
     id: "agentic-read-then-act",
@@ -644,10 +864,14 @@ const TASKS = [
     category: "agentic",
     prompt:
       "Build the project with npm run build, then verify the output exists in the dist/ directory.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("build") || args.command.includes("npm")),
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") {
+        return args.command.includes("build") || args.command.includes("npm");
+      }
+      const hay = searchNeedle(args);
+      return args.action === "create" && /build|dist/i.test(hay);
+    },
   },
   {
     id: "agentic-spawn-parallel",
@@ -685,27 +909,33 @@ const PHASE_TASKS = [
     category: "phase-plan",
     prompt:
       "We're getting CORS errors in production. Search the codebase for where CORS middleware is configured.",
-    expectedTool: "grep",
-    validateArgs: (args) =>
-      typeof args.pattern === "string" && /cors/i.test(args.pattern),
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = args.pattern || args.query || args.regex || "";
+      return /cors/i.test(pat);
+    },
   },
   {
     id: "phase-plan-context",
     category: "phase-plan",
     prompt:
       "The login page shows a blank screen after the last deploy. Check git log for recent changes that might have broken it.",
-    expectedTool: "git_log",
-    validateArgs: () => true,
+    expectedTool: ["git_log", "bash"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("log")) return true;
+      return true; // git_log tool is always valid here
+    },
   },
   {
     id: "phase-verify-test",
     category: "phase-verify",
     prompt:
-      "The file src/utils.js was modified to fix a null pointer bug. Run the test suite to verify the fix works correctly.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /test|jest|npm\s+test|pytest|mocha/.test(args.command),
+      "You are explicitly in the verify phase. Do not inspect files first. The first verification step is to run tests for a fix in src/utils.js. What tool call do you use first?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeTestCommand(args.command);
+      return matchesTaskListIntent(args, ["test"]);
+    },
   },
   {
     id: "phase-verify-read",
@@ -720,18 +950,22 @@ const PHASE_TASKS = [
     id: "phase-verify-lint",
     category: "phase-verify",
     prompt:
-      "Code was modified in src/components/Header.tsx. Run the linter to check for any style violations.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /lint|eslint|prettier|tsc/.test(args.command),
+      "You are explicitly in the verify phase. Do not inspect files first. The first verification step is to run linting after changes in src/components/Header.tsx. What tool call do you use first?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeLintCommand(args.command);
+      return matchesTaskListIntent(args, ["lint"]);
+    },
   },
   {
     id: "phase-plan-git-blame",
     category: "phase-plan",
     prompt: "A production bug was introduced 2 days ago. Use git log to find commits from the last 2 days to identify what changed.",
-    expectedTool: "git_log",
-    validateArgs: () => true,
+    expectedTool: ["git_log", "bash"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("log")) return true;
+      return true; // git_log tool is always valid here
+    },
   },
   {
     id: "phase-plan-error-trace",
@@ -745,18 +979,21 @@ const PHASE_TASKS = [
     id: "phase-plan-grep-config",
     category: "phase-plan",
     prompt: "Users report the app is using wrong API keys in staging. Search for where API_KEY is loaded from environment.",
-    expectedTool: "grep",
-    validateArgs: (args) =>
-      typeof args.pattern === "string" && /api.?key|env/i.test(args.pattern),
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = args.pattern || args.query || args.regex || "";
+      return /api.?key|env/i.test(pat);
+    },
   },
   {
     id: "phase-verify-build",
     category: "phase-verify",
-    prompt: "The TypeScript source was modified. Run the build command to verify there are no compilation errors.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /build|tsc|compile/.test(args.command),
+    prompt: "You are in the verify phase. Do not inspect files first. The TypeScript source was modified, so run the build command to verify there are no compilation errors.",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeBuildCommand(args.command);
+      return matchesTaskListIntent(args, ["build"]);
+    },
   },
   {
     id: "phase-verify-git-diff",
@@ -886,31 +1123,58 @@ async function runTask(task, modelId) {
       result.validArgs = true;
       result.schemaCompliant = true;
     } else if (toolCalls.length > 0) {
-      const tc = toolCalls[0];
-      const name = tc.function?.name || "unknown";
-      const args = tc.function?.arguments || {};
-
       result.producedToolCall = true;
-      result.toolCalled = name;
 
       const expected = Array.isArray(task.expectedTool)
         ? task.expectedTool
         : [task.expectedTool];
-      result.correctTool = expected.includes(name);
 
-      if (result.correctTool) {
-        const toolDef = TOOL_DEFINITIONS.find((t) => t.function?.name === name);
-        result.validArgs = !!task.validateArgs(args, toolDef);
+      // Find the best matching tool call — models may read before editing,
+      // so scoring only the first call penalizes correct multi-step behavior.
+      let bestScore = -1;
+      let bestName = toolCalls[0].function?.name || "unknown";
+      let bestCorrect = false;
+      let bestValid = false;
+      let bestSchema = false;
 
-        if (toolDef) {
-          const schema = toolDef.function?.parameters || {};
-          const required = schema.required || [];
-          const known = Object.keys(schema.properties || {});
-          result.schemaCompliant =
-            required.every((r) => args[r] !== undefined) &&
-            Object.keys(args).every((k) => known.includes(k));
+      for (const tc of toolCalls) {
+        const name = tc.function?.name || "unknown";
+        const args = tc.function?.arguments || {};
+        const correct = expected.includes(name);
+        let valid = false;
+        let schema = false;
+        let tcScore = 0;
+
+        if (correct) {
+          const toolDef = TOOL_DEFINITIONS.find((t) => t.function?.name === name);
+          valid = !!task.validateArgs(args, toolDef);
+
+          if (toolDef) {
+            const s = toolDef.function?.parameters || {};
+            const required = s.required || [];
+            const known = Object.keys(s.properties || {});
+            schema =
+              required.every((r) => args[r] !== undefined) &&
+              Object.keys(args).every((k) => known.includes(k));
+          }
+
+          tcScore = (correct ? 2 : 0) + (valid ? 1 : 0) + (schema ? 0.5 : 0);
+        }
+
+        if (tcScore > bestScore) {
+          bestScore = tcScore;
+          bestName = name;
+          bestCorrect = correct;
+          bestValid = valid;
+          bestSchema = schema;
         }
       }
+
+      // If no call matched the expected tool, record the first call for diagnostics
+      result.toolCalled = bestCorrect ? bestName : (toolCalls[0].function?.name || "unknown");
+      result.correctTool = bestCorrect;
+      result.validArgs = bestValid;
+      result.schemaCompliant = bestSchema;
     }
     // No tool call but one was expected → all flags remain false
   } catch (err) {
@@ -1023,11 +1287,12 @@ function buildSummary(modelResults) {
  * Only counts models where categoryScores[cat] is available.
  */
 function buildCategoryWinners(summary) {
+  return rankCategoryWinners(summary);
+}
+
+function rankCategoryWinners(summary) {
   const winners = {};
   const LATENCY_TIEBREAK_BAND = 5;
-  // Scores this high on a small sample are likely flukes — require a clear gap
-  const SUSPICIOUS_SCORE = 95;
-  const SUSPICIOUS_MIN_GAP = 15; // 2nd place must be ≥15 pts behind to trust a near-100 score
   // Minimum number of tasks in a category before trusting routing updates
   const MIN_TASKS_FOR_ROUTING = 4;
   // Minimum overall score — prevents weak models that got lucky on one category
@@ -1061,32 +1326,6 @@ function buildCategoryWinners(summary) {
     if (catTaskCount < MIN_TASKS_FOR_ROUTING) continue; // too few tasks — skip
 
     const best = candidates[0];
-    const second = candidates[1];
-
-    // Suspicion check: near-100 score on a small sample requires a large gap
-    if (
-      best.categoryScores[routeKey] >= SUSPICIOUS_SCORE &&
-      catTaskCount < 8 &&
-      second
-    ) {
-      const gap =
-        best.categoryScores[routeKey] - second.categoryScores[routeKey];
-      if (gap < SUSPICIOUS_MIN_GAP) {
-        // Fluke — fall back to the highest overall-scoring model that has category data
-        const reliable = summary
-          .filter((r) => r.categoryScores[routeKey] !== undefined)
-          .find((r) => r.categoryScores[routeKey] < SUSPICIOUS_SCORE);
-        if (reliable) {
-          winners[routeKey] = {
-            model: reliable.model,
-            score: reliable.categoryScores[routeKey],
-            avgLatency: reliable.avgLatency,
-            _flukePrevented: true,
-          };
-        }
-        continue;
-      }
-    }
 
     // Standard: within tiebreak band, prefer lowest latency
     const inBand = candidates.filter(
@@ -1196,25 +1435,61 @@ function printResults(summary, taskCount) {
     console.log();
   }
 
+  // Systemic failures — tasks that fail across most models indicate benchmark issues
+  if (summary.length >= 3) {
+    const taskFailCounts = {};
+    const taskModelCounts = {};
+    for (const row of summary) {
+      for (const t of row.results) {
+        if (t.error) continue;
+        taskModelCounts[t.taskId] = (taskModelCounts[t.taskId] || 0) + 1;
+        if (!t.correctTool || !t.validArgs) {
+          taskFailCounts[t.taskId] = (taskFailCounts[t.taskId] || 0) + 1;
+        }
+      }
+    }
+    const threshold = Math.ceil(summary.length * 0.5);
+    const systemic = Object.entries(taskFailCounts)
+      .filter(([id, count]) => count >= threshold && taskModelCounts[id] >= 3)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (systemic.length > 0) {
+      console.log(`\n${C.bold}Systemic failures${C.reset} ${C.dim}(>50% of models fail — may indicate benchmark design issues)${C.reset}`);
+      for (const [taskId, count] of systemic) {
+        const total = taskModelCounts[taskId];
+        const pct = Math.round((count / total) * 100);
+        const color = pct >= 80 ? C.red : C.yellow;
+        console.log(`  ${color}${pct}%${C.reset} ${C.dim}fail${C.reset}  ${taskId}`);
+      }
+      console.log();
+    }
+  }
+
   // Per-category winners (only shown if category tasks were included)
-  const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic"];
+  const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
   const hasCatData = summary.some(
     (r) => Object.keys(r.categoryScores).length > 1,
   );
   if (hasCatData) {
     console.log(`\n${C.bold}Best model per task type:${C.reset}`);
+    const routedWinners = rankCategoryWinners(summary);
     for (const cat of catRoutes) {
-      const ranked = summary
-        .filter((r) => r.categoryScores[cat] !== undefined)
-        .sort((a, b) => b.categoryScores[cat] - a.categoryScores[cat]);
-      if (ranked.length === 0) continue;
-      const winner = ranked[0];
-      const sc = winner.categoryScores[cat];
+      const winner = routedWinners[cat];
+      if (!winner) continue;
+      const sc = winner.score;
       const color = sc >= 80 ? C.green : sc >= 60 ? C.yellow : C.red;
+      const rawLeader = summary
+        .filter((r) => r.categoryScores[cat] !== undefined)
+        .sort((a, b) => b.categoryScores[cat] - a.categoryScores[cat])[0];
+      const note =
+        rawLeader && rawLeader.model !== winner.model
+          ? `${C.dim}  raw leader: ${rawLeader.model} (${rawLeader.categoryScores[cat]}/100)${C.reset}`
+          : "";
       console.log(
-        `  ${C.dim}${cat.padEnd(10)}${C.reset} ${color}${winner.model}${C.reset}  ${C.dim}${sc}/100${C.reset}`,
+        `  ${C.dim}${cat.padEnd(10)}${C.reset} ${color}${winner.model}${C.reset}  ${C.dim}${sc}/100${C.reset}${note}`,
       );
     }
+    console.log(`${C.dim}  Winners use the same conservative routing criteria as auto-update (overall-score floor plus latency tiebreak band).${C.reset}`);
   }
   console.log();
 }

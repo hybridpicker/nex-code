@@ -5,6 +5,7 @@
 
 const { T } = require("./theme");
 const C = T;
+const path = require("path");
 
 // Last 1-2 path segments for compact display: "src/utils/helper.js"
 function _shortPath(p) {
@@ -131,6 +132,120 @@ const STEP_DESCRIPTIONS = {
   frontend_recon: "Scanning design system",
 };
 
+const TOOL_STAGES = {
+  read_file: { label: "Inspect", accent: T.tool_read, icon: "◌" },
+  list_directory: { label: "Inspect", accent: T.tool_read, icon: "◌" },
+  grep: { label: "Inspect", accent: T.tool_search, icon: "◌" },
+  search_files: { label: "Inspect", accent: T.tool_search, icon: "◌" },
+  glob: { label: "Inspect", accent: T.tool_search, icon: "◌" },
+  web_fetch: { label: "Explore", accent: T.tool_web, icon: "◌" },
+  web_search: { label: "Explore", accent: T.tool_web, icon: "◌" },
+  browser_open: { label: "Explore", accent: T.tool_web, icon: "◌" },
+  browser_screenshot: { label: "Capture", accent: T.tool_web, icon: "◌" },
+  browser_click: { label: "Interact", accent: T.tool_web, icon: "◌" },
+  browser_fill: { label: "Interact", accent: T.tool_web, icon: "◌" },
+  write_file: { label: "Shape", accent: T.tool_write, icon: "✦" },
+  edit_file: { label: "Shape", accent: T.tool_write, icon: "✦" },
+  patch_file: { label: "Shape", accent: T.tool_write, icon: "✦" },
+  bash: { label: "Execute", accent: T.tool_exec, icon: "▣" },
+  sysadmin: { label: "Operate", accent: T.tool_sysadmin, icon: "▣" },
+  ssh_exec: { label: "Operate", accent: T.tool_sysadmin, icon: "▣" },
+  ssh_upload: { label: "Ship", accent: T.tool_sysadmin, icon: "▣" },
+  ssh_download: { label: "Collect", accent: T.tool_sysadmin, icon: "▣" },
+  deploy: { label: "Ship", accent: T.tool_sysadmin, icon: "▣" },
+  git_status: { label: "Verify", accent: T.tool_git, icon: "✓" },
+  git_diff: { label: "Verify", accent: T.tool_git, icon: "✓" },
+  git_log: { label: "Verify", accent: T.tool_git, icon: "✓" },
+  git_commit: { label: "Commit", accent: T.tool_git, icon: "✓" },
+  git_push: { label: "Ship", accent: T.tool_git, icon: "✓" },
+  git_pull: { label: "Sync", accent: T.tool_git, icon: "✓" },
+  git_branch: { label: "Sync", accent: T.tool_git, icon: "✓" },
+  git_stash: { label: "Sync", accent: T.tool_git, icon: "✓" },
+};
+
+function getToolStage(fnName) {
+  return TOOL_STAGES[fnName] || {
+    label: "Run",
+    accent: T.tool_default,
+    icon: "•",
+  };
+}
+
+function formatStageBadge(fnName) {
+  const stage = getToolStage(fnName);
+  return `${stage.accent}${C.bold}${stage.icon} ${stage.label.toUpperCase()}${T.reset}`;
+}
+
+function _humanizeLabel(name) {
+  return name
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function _compactPrimaryArg(fnName, args = {}) {
+  if (args.path) return _shortPath(args.path);
+  if (args.file) return _shortPath(args.file);
+  if (args.query) return String(args.query).substring(0, 44);
+  if (args.pattern) return String(args.pattern).substring(0, 44);
+  if (args.url) return String(args.url).substring(0, 44);
+  if (args.command) return String(args.command).substring(0, 44);
+  return TOOL_LABELS[fnName] || _humanizeLabel(fnName);
+}
+
+function _extractNumberedLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^(\d+):\s?(.*)$/s);
+      if (!match) return null;
+      return { lineNumber: match[1], content: match[2] || "" };
+    })
+    .filter(Boolean);
+}
+
+function _formatCodePreviewLines(filePath, numberedLines, options = {}) {
+  const {
+    maxLines = 4,
+    indent = "    ",
+    maxContent = 110,
+    includeOverflow = true,
+  } = options;
+  if (!Array.isArray(numberedLines) || numberedLines.length === 0) return "";
+
+  const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
+  const lang = _dl(filePath || null);
+  const shown = numberedLines.slice(0, maxLines);
+  const preview = shown.map(({ lineNumber, content }) => {
+    const clipped = content.length > maxContent
+      ? content.substring(0, maxContent - 1) + "…"
+      : content;
+    return `${indent}${T.subtle}${lineNumber}:${T.reset} ${_hlLine(clipped, lang)}${T.reset}`;
+  });
+
+  if (includeOverflow && numberedLines.length > shown.length) {
+    preview.push(
+      `${indent}${T.subtle}… +${numberedLines.length - shown.length} more line${numberedLines.length - shown.length !== 1 ? "s" : ""}${T.reset}`,
+    );
+  }
+
+  return preview.join("\n");
+}
+
+function _buildFlowTitle(tools) {
+  const seen = new Set();
+  const stages = [];
+  for (const tool of tools) {
+    const label = getToolStage(tool.fnName).label;
+    if (!seen.has(label)) {
+      seen.add(label);
+      stages.push(label);
+    }
+  }
+  if (stages.length === 0) return "";
+  if (stages.length <= 3) return stages.join(`${C.dim} → ${C.reset}`);
+  return `${stages.slice(0, 3).join(`${C.dim} → ${C.reset}`)}${C.dim} → +${stages.length - 3}${C.reset}`;
+}
+
 /**
  * Build a meaningful section header from a list of prepared tool calls.
  * Falls back to "Step N" if no tools or no mapping found.
@@ -153,27 +268,23 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
   if (tools.length === 1) {
     const t = tools[0];
     const a = t.args || {};
-    const label = TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, " ");
-    let arg = "";
-    if (a.path) arg = a._originalPath || a.path;
-    else if (a.command) arg = String(a.command).substring(0, 80);
-    else if (a.query) arg = String(a.query).substring(0, 60);
-    else if (a.pattern) arg = String(a.pattern).substring(0, 60);
-    else if (a.url) arg = String(a.url).substring(0, 60);
-    const argStr = arg ? `(${C.dim}${arg}${C.reset})` : "";
-    return `${_dot(t.fnName, isError, frame)} ${C.bold}${label}${C.reset}${argStr}`;
+    const target = _compactPrimaryArg(t.fnName, {
+      ...a,
+      path: a._originalPath || a.path,
+    });
+    return `${_dot(t.fnName, isError, frame)} ${formatStageBadge(t.fnName)} ${C.bold}${target}${C.reset}`;
   }
 
-  // Multi-tool: use first tool's color, list unique labels
+  // Multi-tool: show the semantic flow instead of a plain tool list
   const firstFn = tools[0].fnName;
-  const labels = [
-    ...new Set(
-      tools.map((t) => TOOL_LABELS[t.fnName] || t.fnName.replace(/_/g, " ")),
-    ),
-  ];
-  const title =
-    labels.length <= 3 ? labels.join(", ") : `${tools.length} tools`;
-  return `${_dot(firstFn, isError, frame)} ${C.bold}${title}${C.reset}`;
+  const title = _buildFlowTitle(tools) || `${tools.length} tools`;
+  const focus = tools
+    .slice(0, 2)
+    .map((t) => _compactPrimaryArg(t.fnName, t.args || {}))
+    .filter(Boolean)
+    .join(`${C.dim} · ${C.reset}`);
+  const focusStr = focus ? ` ${T.subtle}·${T.reset} ${C.dim}${focus}${C.reset}` : "";
+  return `${_dot(firstFn, isError, frame)} ${formatStageBadge(firstFn)} ${C.bold}${title}${C.reset}${focusStr}`;
 }
 
 function formatToolCall(name, args) {
@@ -255,8 +366,7 @@ function setActiveModelForSpinner(modelId) {
 function getThinkingVerb() {
   const verb = THINKING_VERBS[_thinkingVerbIdx % THINKING_VERBS.length];
   _thinkingVerbIdx++;
-  const suffix = _activeModelId ? ` · ${_activeModelId}` : "";
-  return `${verb}${suffix}`;
+  return verb;
 }
 
 /**
@@ -290,7 +400,7 @@ function getToolSpinnerText(name, args) {
     case "web_search":
       return `Searching web: ${(args.query || "").substring(0, 50)}`;
     case "git_status":
-      return "Checking git status";
+      return "Analyzing repository status";
     case "git_diff":
       return `Diffing${args.file ? ` ${args.file}` : ""}`;
     case "git_log":
@@ -368,6 +478,8 @@ function getToolSpinnerText(name, args) {
  */
 function formatToolSummary(name, args, result, isError) {
   const r = String(result || "");
+  const stage = getToolStage(name);
+  const cardPrefix = `  ${T.subtle}│${T.reset} ${stage.accent}${C.bold}${stage.label}${T.reset} ${T.subtle}·${T.reset} `;
 
   if (isError) {
     const firstLine = r.split("\n")[0];
@@ -379,7 +491,7 @@ function formatToolSummary(name, args, result, isError) {
         .replace(/\s*\(hard cap:.*?\)/, "")
         .trim()
         .substring(0, 70);
-      return `  ${T.muted}⎿  blocked: ${reason}${T.reset}`;
+      return `${cardPrefix}${T.muted}blocked: ${reason}${T.reset}`;
     }
     const errMsg = firstLine
       .replace(/^ERROR:\s*/i, "")
@@ -388,35 +500,37 @@ function formatToolSummary(name, args, result, isError) {
     const hintStr = hintMatch
       ? `\n     ${T.muted}${hintMatch[1].substring(0, 100)}${T.reset}`
       : "";
-    return `  ${T.error}⎿  ${errMsg}${T.reset}${hintStr}`;
+    return `${cardPrefix}${T.error}${errMsg}${T.reset}${hintStr}`;
   }
 
   let summary;
   switch (name) {
     case "read_file": {
-      const resultLines = r.split("\n").filter(Boolean);
-      const codeLines = resultLines.filter(
-        (l) => !/^File:\s/.test(l) && !/^\[LARGE FILE:/.test(l),
-      );
-      const count = codeLines.length;
-      const lastLine = codeLines[codeLines.length - 1];
+      const numberedLines = _extractNumberedLines(r);
+      const count = numberedLines.length;
+      const lastLine = numberedLines[numberedLines.length - 1];
       const lastLineNum = lastLine
-        ? parseInt(lastLine.match(/^(\d+):/)?.[1] || "0")
+        ? parseInt(lastLine.lineNumber || "0")
         : 0;
       const isPartial = args.line_start || args.line_end;
-      const fname = args.path ? require("path").basename(args.path) : null;
+      const fname = args.path ? path.basename(args.path) : null;
       const fileHint = fname ? ` ${T.muted}from ${fname}${T.reset}` : "";
       if (isPartial && lastLineNum > count) {
         summary = `Read lines ${args.line_start || 1}–${lastLineNum}${fileHint}`;
       } else {
         summary = `Read ${count} line${count !== 1 ? "s" : ""}${fileHint}`;
       }
+      const preview = _formatCodePreviewLines(args.path, numberedLines, {
+        maxLines: 4,
+        maxContent: 120,
+      });
+      if (preview) summary += `\n${preview}`;
       break;
     }
     case "write_file": {
       const contentLines = (args.content || "").split("\n");
       const lineCount = contentLines.length;
-      const fname = args.path ? require("path").basename(args.path) : null;
+      const fname = args.path ? path.basename(args.path) : null;
       const header = fname
         ? `Wrote ${fname} · ${lineCount} line${lineCount !== 1 ? "s" : ""}`
         : `Wrote ${lineCount} line${lineCount !== 1 ? "s" : ""}`;
@@ -445,22 +559,38 @@ function formatToolSummary(name, args, result, isError) {
       const newLines = (args.new_text || "").split("\n");
       const removed = oldLines.length;
       const added = newLines.length;
-      const fname = args.path ? require("path").basename(args.path) : null;
+      const fname = args.path ? path.basename(args.path) : null;
       const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : "";
-      const firstOld = oldLines.find((l) => l.trim());
-      const firstNew = newLines.find((l) => l.trim());
       // Highlight the diff preview lines
       const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
       const _lang = _dl(args.path || null);
       const diffLines = [];
-      if (firstOld)
+      const oldPreview = oldLines
+        .filter((line, idx, arr) => line.trim() || arr.length === 1 || idx === 0)
+        .slice(0, 3);
+      const newPreview = newLines
+        .filter((line, idx, arr) => line.trim() || arr.length === 1 || idx === 0)
+        .slice(0, 3);
+      oldPreview.forEach((line) => {
         diffLines.push(
-          `    ${T.diff_rem}- ${T.reset}${_hlLine(firstOld.trimEnd().substring(0, 72), _lang)}${T.reset}`,
+          `    ${T.diff_rem}- ${T.reset}${_hlLine(line.trimEnd().substring(0, 96), _lang)}${T.reset}`,
         );
-      if (firstNew)
+      });
+      if (oldLines.length > oldPreview.length) {
         diffLines.push(
-          `    ${T.diff_add}+ ${T.reset}${_hlLine(firstNew.trimEnd().substring(0, 72), _lang)}${T.reset}`,
+          `    ${T.subtle}… ${oldLines.length - oldPreview.length} more removed line${oldLines.length - oldPreview.length !== 1 ? "s" : ""}${T.reset}`,
         );
+      }
+      newPreview.forEach((line) => {
+        diffLines.push(
+          `    ${T.diff_add}+ ${T.reset}${_hlLine(line.trimEnd().substring(0, 96), _lang)}${T.reset}`,
+        );
+      });
+      if (newLines.length > newPreview.length) {
+        diffLines.push(
+          `    ${T.subtle}… ${newLines.length - newPreview.length} more added line${newLines.length - newPreview.length !== 1 ? "s" : ""}${T.reset}`,
+        );
+      }
       summary =
         `${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}${fnameStr}` +
         (diffLines.length > 0 ? "\n" + diffLines.join("\n") : "");
@@ -476,7 +606,33 @@ function formatToolSummary(name, args, result, isError) {
         (s, p) => s + (p.new_text || "").split("\n").length,
         0,
       );
-      summary = `${T.reset}${patches.length} patch${patches.length !== 1 ? "es" : ""}  ${T.diff_rem}−${totalRemoved}${T.reset}  ${T.diff_add}+${totalAdded}${T.reset}`;
+      const fname = args.path ? path.basename(args.path) : null;
+      const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : "";
+      summary = `${patches.length} patch${patches.length !== 1 ? "es" : ""}  ${T.diff_rem}−${totalRemoved}${T.reset}  ${T.diff_add}+${totalAdded}${T.reset}${fnameStr}`;
+      const patchPreview = [];
+      const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
+      const _lang = _dl(args.path || null);
+      patches.slice(0, 2).forEach((patch, index) => {
+        const oldFirst = String(patch.old_text || "").split("\n").find(Boolean);
+        const newFirst = String(patch.new_text || "").split("\n").find(Boolean);
+        patchPreview.push(`    ${T.subtle}patch ${index + 1}${T.reset}`);
+        if (oldFirst) {
+          patchPreview.push(
+            `    ${T.diff_rem}- ${T.reset}${_hlLine(oldFirst.trimEnd().substring(0, 92), _lang)}${T.reset}`,
+          );
+        }
+        if (newFirst) {
+          patchPreview.push(
+            `    ${T.diff_add}+ ${T.reset}${_hlLine(newFirst.trimEnd().substring(0, 92), _lang)}${T.reset}`,
+          );
+        }
+      });
+      if (patches.length > 2) {
+        patchPreview.push(
+          `    ${T.subtle}… +${patches.length - 2} more patches${T.reset}`,
+        );
+      }
+      if (patchPreview.length > 0) summary += `\n${patchPreview.join("\n")}`;
       break;
     }
     case "bash": {
@@ -557,15 +713,18 @@ function formatToolSummary(name, args, result, isError) {
           const snippet = `${T.muted}${content.substring(0, 80)}${content.length > 80 ? "…" : ""}${T.reset}`;
           return `${label}  ${snippet}`;
         }
+        const searchRoot = args.path
+          ? `\n    ${T.subtle}path:${T.reset} ${T.muted}${String(args.path).substring(0, 70)}${T.reset}`
+          : "";
         const preview = lines
-          .slice(0, 3)
+          .slice(0, 5)
           .map((l, i) =>
             i === 0
-              ? `${header}\n    ${fmtGrepLine(l)}`
+              ? `${header}${searchRoot}\n    ${fmtGrepLine(l)}`
               : `    ${fmtGrepLine(l)}`,
           );
-        const more = lines.length - 3;
-        if (more > 0) preview.push(`    ${T.subtle}… +${more} lines${T.reset}`);
+        const more = lines.length - 5;
+        if (more > 0) preview.push(`    ${T.subtle}… +${more} more matches${T.reset}`);
         summary = preview.join("\n");
       }
       break;
@@ -580,10 +739,16 @@ function formatToolSummary(name, args, result, isError) {
         const path = require("path");
         const allFiles = r.split("\n").filter(Boolean);
         const count = allFiles.length;
-        const shown = allFiles.slice(0, 5).map((f) => path.basename(f));
+        const shown = allFiles.slice(0, 8);
         const more = count - shown.length;
-        const names = shown.join(", ") + (more > 0 ? `, +${more} more` : "");
-        summary = `${count} file${count !== 1 ? "s" : ""}${globPatternHint} — ${T.muted}${names}${T.reset}`;
+        const lines = shown.map((f) => `    ${T.muted}${f}${T.reset}`);
+        if (more > 0) lines.push(`    ${T.subtle}… +${more} more files${T.reset}`);
+        const rootHint = args.path
+          ? `\n    ${T.subtle}path:${T.reset} ${T.muted}${String(args.path).substring(0, 70)}${T.reset}`
+          : "";
+        summary =
+          `${count} file${count !== 1 ? "s" : ""}${globPatternHint}${rootHint}` +
+          (lines.length > 0 ? `\n${lines.join("\n")}` : "");
       }
       break;
     }
@@ -784,12 +949,12 @@ function formatToolSummary(name, args, result, isError) {
             : "";
         summary = `${T.muted}${first}${T.reset}${more}`;
       } else {
-        summary = "Done";
+        summary = `${stage.label} complete`;
       }
     }
   }
 
-  return `  ${T.muted}⎿  ${summary}${T.reset}`;
+  return `${cardPrefix}${summary}${T.reset}`;
 }
 
 function formatMilestone(
@@ -807,9 +972,11 @@ function formatMilestone(
       : `${elapsedSecs}s`;
 
   let line = `\n${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
-  line += `${C.dim} · ${timeStr}`;
+  line += ` ${T.subtle}━━${T.reset} ${C.dim}${timeStr}`;
   if (filesModified.size > 0)
     line += ` · ${filesModified.size} file${filesModified.size !== 1 ? "s" : ""} modified`;
+  if (filesRead.size > 0)
+    line += ` · ${filesRead.size} scanned`;
   line += C.reset;
   return line;
 }
