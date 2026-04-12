@@ -1452,7 +1452,7 @@ function _logCompression(msg, color) {
   if (msg === _lastCompressionMsg) {
     _compressionMsgCount++;
     // Overwrite the previous line with updated counter
-    if (debug.DEBUG) {
+    if (debug && debug.DEBUG) {
       process.stdout.write(
         `\x1b[1A\x1b[2K${color}  ⚠ ${msg} (×${_compressionMsgCount})${C.reset}\n`,
       );
