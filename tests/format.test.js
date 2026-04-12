@@ -240,7 +240,9 @@ describe("getToolSpinnerText()", () => {
   });
 
   it("returns git_status text", () => {
-    expect(getToolSpinnerText("git_status", {})).toBe("Checking git status");
+    expect(getToolSpinnerText("git_status", {})).toBe(
+      "Analyzing repository status",
+    );
   });
 
   it("returns git_diff text with file", () => {
@@ -701,7 +703,7 @@ describe("formatToolSummary()", () => {
 
   it("formats unknown tool with empty result as Done", () => {
     const out = formatToolSummary("custom_tool", {}, "", false);
-    expect(out).toContain("Done");
+    expect(out).toContain("Run complete");
   });
 });
 
@@ -728,8 +730,8 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("Read");
-    expect(out).toContain("index.js");
+    expect(out).toContain("INSPECT");
+    expect(out).toContain("src/index.js");
   });
 
   it("formats single tool with command arg", () => {
@@ -737,7 +739,7 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "bash", args: { command: "npm test" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("Bash");
+    expect(out).toContain("EXECUTE");
     expect(out).toContain("npm test");
   });
 
@@ -746,7 +748,8 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "web_search", args: { query: "node js" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("WebSearch");
+    expect(out).toContain("EXPLORE");
+    expect(out).toContain("node js");
   });
 
   it("formats single tool with pattern arg", () => {
@@ -754,10 +757,11 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "grep", args: { pattern: "TODO" }, canExecute: true }],
       1,
     );
-    expect(out).toContain("Grep");
+    expect(out).toContain("INSPECT");
+    expect(out).toContain("TODO");
   });
 
-  it("formats multi-tool with labels", () => {
+  it("formats multi-tool with semantic flow", () => {
     const out = formatSectionHeader(
       [
         { fnName: "read_file", args: { path: "a.js" }, canExecute: true },
@@ -765,10 +769,11 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("Read");
+    expect(out).toContain("Inspect");
+    expect(out).toContain("a.js");
   });
 
-  it("formats multi-tool with different labels", () => {
+  it("formats multi-tool with different semantic stages", () => {
     const out = formatSectionHeader(
       [
         { fnName: "read_file", args: { path: "a.js" }, canExecute: true },
@@ -776,20 +781,22 @@ describe("formatSectionHeader()", () => {
       ],
       1,
     );
-    expect(out).toContain("Read");
+    expect(out).toContain("Inspect");
+    expect(out).toContain("Execute");
   });
 
-  it("shows N tools for > 3 unique labels", () => {
+  it("compresses long multi-stage flows", () => {
     const out = formatSectionHeader(
       [
         { fnName: "read_file", args: {}, canExecute: true },
         { fnName: "bash", args: {}, canExecute: true },
         { fnName: "grep", args: {}, canExecute: true },
-        { fnName: "glob", args: {}, canExecute: true },
+        { fnName: "write_file", args: {}, canExecute: true },
+        { fnName: "git_diff", args: {}, canExecute: true },
       ],
       1,
     );
-    expect(out).toContain("4 tools");
+    expect(out).toContain("+1");
   });
 
   it("filters out tools with canExecute=false", () => {
@@ -814,7 +821,7 @@ describe("formatSectionHeader()", () => {
       [{ fnName: "custom_thing", args: {}, canExecute: true }],
       1,
     );
-    expect(out).toContain("custom thing");
+    expect(out).toContain("Custom Thing");
   });
 });
 
@@ -832,6 +839,18 @@ describe("formatMilestone()", () => {
       new Set(),
     );
     expect(out).toContain("Exploration");
+  });
+
+  it("includes scanned file count when files were read", () => {
+    const out = formatMilestone(
+      "Exploration",
+      5,
+      counts({ read_file: 5 }),
+      3000,
+      new Set(["a.js", "b.js"]),
+      new Set(),
+    );
+    expect(out).toContain("2 scanned");
   });
 
   it("does not expose step or tool counts", () => {

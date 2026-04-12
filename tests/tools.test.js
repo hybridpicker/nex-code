@@ -62,6 +62,7 @@ jest.mock("../cli/deploy-config", () => ({
 
 const { TOOL_DEFINITIONS, executeTool, resolvePath } = require("../cli/tools");
 const { confirmFileChange } = require("../cli/diff");
+const { ToolProgress } = require("../cli/spinner");
 
 describe("tools.js", () => {
   let tmpDir;
@@ -208,6 +209,20 @@ describe("tools.js", () => {
       expect(result).toContain("ERROR");
       expect(result).toContain("not found");
     });
+
+    it("emits live progress updates while reading", async () => {
+      const fp = path.join(tmpDir, "progress-read.txt");
+      fs.writeFileSync(fp, "line1\nline2\nline3\nline4\n");
+      const startSpy = jest.spyOn(ToolProgress.prototype, "start");
+      const updateSpy = jest.spyOn(ToolProgress.prototype, "update");
+      const stopSpy = jest.spyOn(ToolProgress.prototype, "stop");
+
+      await executeTool("read_file", { path: fp, line_start: 2, line_end: 3 });
+
+      expect(startSpy).toHaveBeenCalled();
+      expect(updateSpy).toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalled();
+    });
   });
 
   // ─── write_file tool ────────────────────────────────────────
@@ -251,6 +266,22 @@ describe("tools.js", () => {
       });
       expect(result).toContain("Written");
       expect(fs.readFileSync(fp, "utf-8")).toBe("new");
+    });
+
+    it("emits live progress updates while writing", async () => {
+      const fp = path.join(tmpDir, "write-progress.txt");
+      const startSpy = jest.spyOn(ToolProgress.prototype, "start");
+      const updateSpy = jest.spyOn(ToolProgress.prototype, "update");
+      const stopSpy = jest.spyOn(ToolProgress.prototype, "stop");
+
+      await executeTool("write_file", {
+        path: fp,
+        content: "alpha\nbeta\ngamma\n",
+      });
+
+      expect(startSpy).toHaveBeenCalled();
+      expect(updateSpy).toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalled();
     });
   });
 
@@ -301,6 +332,24 @@ describe("tools.js", () => {
       expect(result).toContain("CANCELLED");
       // File unchanged
       expect(fs.readFileSync(fp, "utf-8")).toBe("hello world");
+    });
+
+    it("emits live progress updates while editing", async () => {
+      const fp = path.join(tmpDir, "edit-progress.txt");
+      fs.writeFileSync(fp, "hello world");
+      const startSpy = jest.spyOn(ToolProgress.prototype, "start");
+      const updateSpy = jest.spyOn(ToolProgress.prototype, "update");
+      const stopSpy = jest.spyOn(ToolProgress.prototype, "stop");
+
+      await executeTool("edit_file", {
+        path: fp,
+        old_text: "world",
+        new_text: "terminal",
+      });
+
+      expect(startSpy).toHaveBeenCalled();
+      expect(updateSpy).toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalled();
     });
   });
 
@@ -598,6 +647,23 @@ describe("tools.js", () => {
       });
       expect(result).toContain("CANCELLED");
       expect(fs.readFileSync(fp, "utf-8")).toBe("hello world");
+    });
+
+    it("emits live progress updates while patching", async () => {
+      const fp = path.join(tmpDir, "patch-progress.txt");
+      fs.writeFileSync(fp, "a\nb\nc\n");
+      const startSpy = jest.spyOn(ToolProgress.prototype, "start");
+      const updateSpy = jest.spyOn(ToolProgress.prototype, "update");
+      const stopSpy = jest.spyOn(ToolProgress.prototype, "stop");
+
+      await executeTool("patch_file", {
+        path: fp,
+        patches: [{ old_text: "b", new_text: "beta" }],
+      });
+
+      expect(startSpy).toHaveBeenCalled();
+      expect(updateSpy).toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalled();
     });
   });
 

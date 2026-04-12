@@ -1456,10 +1456,10 @@ describe("agent.js", () => {
       expect(
         spinnerLabels().some(
           (l) =>
-            l.includes("Read") ||
+            l.includes("Inspect") ||
             l.includes("read_file") ||
             l.includes("2 tools") ||
-            l.includes(","),
+            l.includes("a.js"),
         ),
       ).toBe(true);
     });
@@ -1481,7 +1481,7 @@ describe("agent.js", () => {
           (l) =>
             l.includes("actions") ||
             l.includes("tools") ||
-            l.includes("Read"),
+            l.includes("Inspect"),
         ),
       ).toBe(true);
     });
@@ -1802,15 +1802,15 @@ describe("agent.js", () => {
       expect(sysMsg).toContain("You MUST answer this turn in English.");
     });
 
-    it("hard-enforces German for a German prompt when NEX_LANGUAGE is unset", async () => {
+    it("keeps English when the project rules require English", async () => {
       delete process.env.NEX_LANGUAGE;
       const agent = require("../cli/agent");
       agent.invalidateSystemPromptCache();
       mockStream("ok");
       await processInput("was ist in diesem ordner?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("The current user message is in German.");
-      expect(sysMsg).toContain("You MUST answer this turn in German.");
+      expect(sysMsg).toContain("The current user message is in English.");
+      expect(sysMsg).toContain("You MUST answer this turn in English.");
     });
 
     it("includes specific language when NEX_LANGUAGE is set", async () => {
