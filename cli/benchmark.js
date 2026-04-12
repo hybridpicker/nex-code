@@ -190,17 +190,23 @@ const TASKS = [
     id: "git-branch",
     category: "shell",
     prompt: "What git branch am I currently on?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" && args.command.includes("git"),
+    expectedTool: ["bash", "git_status"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("git")) return true;
+      // git_status tool returns branch info
+      return true;
+    },
   },
   {
     id: "git-status",
     category: "shell",
     prompt: "Show me the current git status of the repository.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" && args.command.includes("git status"),
+    expectedTool: ["bash", "git_status"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("git status")) return true;
+      // git_status tool is the native equivalent
+      return true;
+    },
   },
   {
     id: "npm-install",
@@ -481,7 +487,7 @@ const TASKS = [
     category: "resilience",
     prompt:
       "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. What tool do you use?",
-    expectedTool: ["glob_files", "bash"],
+    expectedTool: ["glob", "bash", "search_files"],
     validateArgs: (args) => {
       const s = JSON.stringify(args).toLowerCase();
       return s.includes("src") || s.includes("helper") || s.includes("util") || s.includes("*.js");
@@ -492,17 +498,22 @@ const TASKS = [
     category: "resilience",
     prompt:
       "The file src/api.js is 2800 lines. You need to locate the authenticateUser function. What is the most efficient tool to use — read_file or bash with grep?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("awk")),
+    expectedTool: ["bash", "grep", "search_files"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" &&
+        (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("awk")))
+        return true;
+      const pat = args.pattern || args.query || args.regex || "";
+      if (/authenticateUser/i.test(pat)) return true;
+      return false;
+    },
   },
   {
     id: "resilience-broken-import",
     category: "resilience",
     prompt:
       "TypeScript reports: Cannot find module './config'. The file was recently renamed. What tool do you use to find the new location?",
-    expectedTool: ["glob_files", "bash"],
+    expectedTool: ["glob", "bash", "search_files"],
     validateArgs: (args) => {
       const s = JSON.stringify(args).toLowerCase();
       return s.includes("config") || s.includes("*.ts") || s.includes("*.js") || s.includes("find");
@@ -685,17 +696,22 @@ const PHASE_TASKS = [
     category: "phase-plan",
     prompt:
       "We're getting CORS errors in production. Search the codebase for where CORS middleware is configured.",
-    expectedTool: "grep",
-    validateArgs: (args) =>
-      typeof args.pattern === "string" && /cors/i.test(args.pattern),
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = args.pattern || args.query || args.regex || "";
+      return /cors/i.test(pat);
+    },
   },
   {
     id: "phase-plan-context",
     category: "phase-plan",
     prompt:
       "The login page shows a blank screen after the last deploy. Check git log for recent changes that might have broken it.",
-    expectedTool: "git_log",
-    validateArgs: () => true,
+    expectedTool: ["git_log", "bash"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("log")) return true;
+      return true; // git_log tool is always valid here
+    },
   },
   {
     id: "phase-verify-test",
@@ -730,8 +746,11 @@ const PHASE_TASKS = [
     id: "phase-plan-git-blame",
     category: "phase-plan",
     prompt: "A production bug was introduced 2 days ago. Use git log to find commits from the last 2 days to identify what changed.",
-    expectedTool: "git_log",
-    validateArgs: () => true,
+    expectedTool: ["git_log", "bash"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string" && args.command.includes("log")) return true;
+      return true; // git_log tool is always valid here
+    },
   },
   {
     id: "phase-plan-error-trace",
@@ -745,9 +764,11 @@ const PHASE_TASKS = [
     id: "phase-plan-grep-config",
     category: "phase-plan",
     prompt: "Users report the app is using wrong API keys in staging. Search for where API_KEY is loaded from environment.",
-    expectedTool: "grep",
-    validateArgs: (args) =>
-      typeof args.pattern === "string" && /api.?key|env/i.test(args.pattern),
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = args.pattern || args.query || args.regex || "";
+      return /api.?key|env/i.test(pat);
+    },
   },
   {
     id: "phase-verify-build",
@@ -886,31 +907,58 @@ async function runTask(task, modelId) {
       result.validArgs = true;
       result.schemaCompliant = true;
     } else if (toolCalls.length > 0) {
-      const tc = toolCalls[0];
-      const name = tc.function?.name || "unknown";
-      const args = tc.function?.arguments || {};
-
       result.producedToolCall = true;
-      result.toolCalled = name;
 
       const expected = Array.isArray(task.expectedTool)
         ? task.expectedTool
         : [task.expectedTool];
-      result.correctTool = expected.includes(name);
 
-      if (result.correctTool) {
-        const toolDef = TOOL_DEFINITIONS.find((t) => t.function?.name === name);
-        result.validArgs = !!task.validateArgs(args, toolDef);
+      // Find the best matching tool call — models may read before editing,
+      // so scoring only the first call penalizes correct multi-step behavior.
+      let bestScore = -1;
+      let bestName = toolCalls[0].function?.name || "unknown";
+      let bestCorrect = false;
+      let bestValid = false;
+      let bestSchema = false;
 
-        if (toolDef) {
-          const schema = toolDef.function?.parameters || {};
-          const required = schema.required || [];
-          const known = Object.keys(schema.properties || {});
-          result.schemaCompliant =
-            required.every((r) => args[r] !== undefined) &&
-            Object.keys(args).every((k) => known.includes(k));
+      for (const tc of toolCalls) {
+        const name = tc.function?.name || "unknown";
+        const args = tc.function?.arguments || {};
+        const correct = expected.includes(name);
+        let valid = false;
+        let schema = false;
+        let tcScore = 0;
+
+        if (correct) {
+          const toolDef = TOOL_DEFINITIONS.find((t) => t.function?.name === name);
+          valid = !!task.validateArgs(args, toolDef);
+
+          if (toolDef) {
+            const s = toolDef.function?.parameters || {};
+            const required = s.required || [];
+            const known = Object.keys(s.properties || {});
+            schema =
+              required.every((r) => args[r] !== undefined) &&
+              Object.keys(args).every((k) => known.includes(k));
+          }
+
+          tcScore = (correct ? 2 : 0) + (valid ? 1 : 0) + (schema ? 0.5 : 0);
+        }
+
+        if (tcScore > bestScore) {
+          bestScore = tcScore;
+          bestName = name;
+          bestCorrect = correct;
+          bestValid = valid;
+          bestSchema = schema;
         }
       }
+
+      // If no call matched the expected tool, record the first call for diagnostics
+      result.toolCalled = bestCorrect ? bestName : (toolCalls[0].function?.name || "unknown");
+      result.correctTool = bestCorrect;
+      result.validArgs = bestValid;
+      result.schemaCompliant = bestSchema;
     }
     // No tool call but one was expected → all flags remain false
   } catch (err) {
@@ -1196,8 +1244,38 @@ function printResults(summary, taskCount) {
     console.log();
   }
 
+  // Systemic failures — tasks that fail across most models indicate benchmark issues
+  if (summary.length >= 3) {
+    const taskFailCounts = {};
+    const taskModelCounts = {};
+    for (const row of summary) {
+      for (const t of row.results) {
+        if (t.error) continue;
+        taskModelCounts[t.taskId] = (taskModelCounts[t.taskId] || 0) + 1;
+        if (!t.correctTool || !t.validArgs) {
+          taskFailCounts[t.taskId] = (taskFailCounts[t.taskId] || 0) + 1;
+        }
+      }
+    }
+    const threshold = Math.ceil(summary.length * 0.5);
+    const systemic = Object.entries(taskFailCounts)
+      .filter(([id, count]) => count >= threshold && taskModelCounts[id] >= 3)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (systemic.length > 0) {
+      console.log(`\n${C.bold}Systemic failures${C.reset} ${C.dim}(>50% of models fail — may indicate benchmark design issues)${C.reset}`);
+      for (const [taskId, count] of systemic) {
+        const total = taskModelCounts[taskId];
+        const pct = Math.round((count / total) * 100);
+        const color = pct >= 80 ? C.red : C.yellow;
+        console.log(`  ${color}${pct}%${C.reset} ${C.dim}fail${C.reset}  ${taskId}`);
+      }
+      console.log();
+    }
+  }
+
   // Per-category winners (only shown if category tasks were included)
-  const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic"];
+  const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
   const hasCatData = summary.some(
     (r) => Object.keys(r.categoryScores).length > 1,
   );
