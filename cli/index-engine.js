@@ -554,6 +554,75 @@ async function summarizeModuleHubs(cwd, limit = 4) {
     .map(([file, count]) => `${file} (${count} links)`);
 }
 
+function _escapeRegex(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function _looksLikeDefinitionLine(line, symbolName) {
+  const escaped = _escapeRegex(symbolName);
+  const patterns = [
+    new RegExp(`\\bfunction\\s+${escaped}\\b`),
+    new RegExp(`\\bclass\\s+${escaped}\\b`),
+    new RegExp(`\\b(?:const|let|var)\\s+${escaped}\\b\\s*=`),
+    new RegExp(`\\bdef\\s+${escaped}\\b`),
+    new RegExp(`\\btype\\s+${escaped}\\b\\s+struct\\b`),
+    new RegExp(`\\bmodule\\.exports\\b[^\\n]*\\b${escaped}\\b`),
+    new RegExp(`\\bexport\\b[^\\n]*\\b${escaped}\\b`),
+  ];
+  return patterns.some((pattern) => pattern.test(line));
+}
+
+async function findSymbolReferences(symbolName, cwd, opts = {}) {
+  cwd = cwd || process.cwd();
+  const {
+    excludeFile = null,
+    excludeLine = null,
+    limit = 6,
+  } = opts;
+  if (!symbolName || typeof symbolName !== "string") return [];
+
+  const index = await buildContentIndex(cwd);
+  const escaped = _escapeRegex(symbolName);
+  const callPattern = new RegExp(`\\b${escaped}\\s*\\(`);
+  const wordPattern = new RegExp(`\\b${escaped}\\b`);
+  const references = [];
+
+  for (const file of Object.keys(index.files || {})) {
+    const relFile = file.replace(/\\/g, "/");
+    try {
+      const fullPath = path.join(cwd, relFile);
+      const content = await fs.readFile(fullPath, "utf-8");
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const lineNum = i + 1;
+        if (!wordPattern.test(line)) continue;
+        if (excludeFile && relFile === excludeFile && excludeLine === lineNum) continue;
+        if (_looksLikeDefinitionLine(line, symbolName)) continue;
+
+        const score =
+          (relFile === excludeFile ? 0 : 4) +
+          (callPattern.test(line) ? 3 : 1);
+        references.push({
+          file: relFile,
+          line: lineNum,
+          context: line.trim(),
+          score,
+        });
+      }
+    } catch {
+      /* skip unreadable files */
+    }
+  }
+
+  references.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.file.localeCompare(b.file) || a.line - b.line;
+  });
+
+  return references.slice(0, limit);
+}
+
 module.exports = {
   refreshIndex,
   getFileIndex,
@@ -567,6 +636,7 @@ module.exports = {
   buildImportGraph,
   getRelatedFiles,
   summarizeModuleHubs,
+  findSymbolReferences,
   smartSearch,
   scorePathMatch,
   pathLevenshtein,
