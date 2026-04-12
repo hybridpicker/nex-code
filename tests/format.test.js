@@ -450,6 +450,7 @@ describe("formatToolSummary()", () => {
     const result = "1: const x = 1;\n2: const y = 2;\n3: const z = 3;";
     const out = formatToolSummary("read_file", {}, result, false);
     expect(out).toContain("Read 3 line");
+    expect(out).toContain("const x = 1");
   });
 
   it("formats read_file partial read", () => {
@@ -483,6 +484,8 @@ describe("formatToolSummary()", () => {
     // Should show removed and added counts
     expect(out).toMatch(/[−-]2/); // removed 2
     expect(out).toMatch(/\+3/); // added 3
+    expect(out).toContain("old2");
+    expect(out).toContain("new3");
   });
 
   it("formats patch_file summary", () => {
@@ -498,6 +501,8 @@ describe("formatToolSummary()", () => {
       false,
     );
     expect(out).toContain("2 patches");
+    expect(out).toContain("patch 1");
+    expect(out).toContain("b");
   });
 
   it("formats bash with exit 0", () => {
@@ -543,12 +548,14 @@ describe("formatToolSummary()", () => {
   it("formats grep with matches", () => {
     const out = formatToolSummary(
       "grep",
-      {},
+      { path: "src" },
       "src/a.js:10:match\nsrc/b.js:20:match",
       false,
     );
     expect(out).toContain("2 matches");
     expect(out).toContain("2 files");
+    expect(out).toContain("path:");
+    expect(out).toContain("a.js:10");
   });
 
   it("formats grep with matches in single file", () => {
@@ -570,7 +577,7 @@ describe("formatToolSummary()", () => {
   it("formats glob with files", () => {
     const out = formatToolSummary("glob", {}, "src/a.js\nsrc/b.js", false);
     expect(out).toContain("2 files");
-    expect(out).toContain("a.js");
+    expect(out).toContain("src/a.js");
   });
 
   it("formats list_directory", () => {
