@@ -613,6 +613,10 @@ function setAbortSignalGetter(fn) {
 let cachedSystemPrompt = null;
 let cachedContextHash = null;
 let cachedModelRoutingGuide = null;
+let _lastRenderedHeaderLine = "";
+let _lastRenderedHeaderAt = 0;
+let _lastRenderedSummaryLine = "";
+let _lastRenderedSummaryAt = 0;
 
 // ─── Tool Filter Cache ───────────────────────────────────────
 // Cache filtered tool definitions per model (saves 5-10ms per iteration)
@@ -1940,6 +1944,7 @@ async function _inferVerificationCommands(filesModified) {
 function _detectResponseLanguage(userInput) {
   const uiLangRaw = process.env.NEX_LANGUAGE;
   if (uiLangRaw && uiLangRaw !== "auto") return uiLangRaw;
+  if (_isProjectEnglishOnly()) return "English";
 
   const text = String(userInput || "").trim();
   if (!text) return "English";
@@ -1984,6 +1989,7 @@ function _buildLanguagePrompt() {
   const uiLangRaw = process.env.NEX_LANGUAGE;
   const codeLang = process.env.NEX_CODE_LANGUAGE;
   const commitLang = process.env.NEX_COMMIT_LANGUAGE;
+  const projectEnglishOnly = _isProjectEnglishOnly();
 
   // Default: mirror user's language (auto). Set NEX_LANGUAGE=English (or any language) to hard-enforce.
   const uiLang = !uiLangRaw || uiLangRaw === "auto" ? null : uiLangRaw;
@@ -1993,6 +1999,10 @@ function _buildLanguagePrompt() {
   if (uiLang) {
     lines.push(
       `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
+    );
+  } else if (projectEnglishOnly) {
+    lines.push(
+      "RESPONSE LANGUAGE: This project requires English. Always respond in English, even if the user writes in another language.",
     );
   } else {
     // Auto mode: mirror the user's language
@@ -2664,6 +2674,10 @@ function _resetSessionTracking() {
 function clearConversation() {
   conversationMessages = [];
   _lastCreationSummary = null;
+  _lastRenderedHeaderLine = "";
+  _lastRenderedHeaderAt = 0;
+  _lastRenderedSummaryLine = "";
+  _lastRenderedSummaryAt = 0;
   _resetSessionTracking();
   // Reset compaction circuit breaker so a fresh conversation can compact again
   try {
@@ -2684,6 +2698,24 @@ function trimConversationHistory() {
       conversationMessages.length - MAX_CONVERSATION_HISTORY,
     );
   }
+}
+
+function _isProjectEnglishOnly() {
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const agentsPath = path.join(process.cwd(), "AGENTS.md");
+    if (!fs.existsSync(agentsPath)) return false;
+    const text = fs.readFileSync(agentsPath, "utf8");
+    return /all.*english/i.test(text) && /no german/i.test(text);
+  } catch {
+    return false;
+  }
+}
+
+function _isImmediateDuplicateLine(line, lastLine, lastAt, windowMs = 1500) {
+  if (!line || !lastLine) return false;
+  return line === lastLine && Date.now() - lastAt < windowMs;
 }
 
 function getConversationLength() {
@@ -6040,15 +6072,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           // Blink the ⏺ via ANSI \x1b[5m while the tool executes — no interval needed,
           // the terminal handles blinking natively so it works even for sub-ms tools
-          process.stdout.write(
-            formatSectionHeader(prepared, totalSteps, false, "blink"),
+          const _blinkHeader = formatSectionHeader(
+            prepared,
+            totalSteps,
+            false,
+            "blink",
           );
+          const _staticHeader = formatSectionHeader(prepared, totalSteps, false);
+          process.stdout.write(
+            `${totalSteps > 1 ? "\n" : ""}${_blinkHeader}`,
+          );
+          _lastRenderedHeaderLine = _staticHeader;
+          _lastRenderedHeaderAt = Date.now();
           _spinAnim = true; // flag: header needs cleanup after execution
         } else if (!_serverHooks) {
           // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
-          process.stdout.write(
-            formatSectionHeader(prepared, totalSteps, false) + "\n",
-          );
+          const _header = formatSectionHeader(prepared, totalSteps, false);
+          if (!_isImmediateDuplicateLine(
+            _header,
+            _lastRenderedHeaderLine,
+            _lastRenderedHeaderAt,
+          )) {
+            process.stdout.write(
+              `${totalSteps > 1 ? "\n" : ""}${_header}\n`,
+            );
+            _lastRenderedHeaderLine = _header;
+            _lastRenderedHeaderAt = Date.now();
+          }
         }
       } else if (_showStepHeader) {
         stepPrinted = true;
@@ -6110,12 +6160,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       if (_spinAnim) {
         _spinAnim = null;
         const _staticHeader = formatSectionHeader(prepared, totalSteps, false);
-        if (_blinkHeaderRow !== null) {
-          process.stdout.write(
-            `\x1b[${_blinkHeaderRow};1H\x1b[2K${_staticHeader}\n`,
-          );
-        } else {
-          process.stdout.write(`\r\x1b[2K${_staticHeader}\n`);
+        if (!_isImmediateDuplicateLine(
+          _staticHeader,
+          _lastRenderedHeaderLine,
+          _lastRenderedHeaderAt,
+        )) {
+          if (_blinkHeaderRow !== null) {
+            process.stdout.write(
+              `\x1b[${_blinkHeaderRow};1H\x1b[2K${_staticHeader}\n`,
+            );
+          } else {
+            process.stdout.write(`\r\x1b[2K${_staticHeader}\n`);
+          }
+          _lastRenderedHeaderLine = _staticHeader;
+          _lastRenderedHeaderAt = Date.now();
         }
         _blinkHeaderRow = null;
       }
@@ -6125,7 +6183,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const shownSummaries = batchSummaries.filter(
           (_, si) => !(prepared[si] && prepared[si].fnName === "ask_user"),
         );
-        for (const s of shownSummaries) console.log(s);
+        for (const s of shownSummaries) {
+          if (_isImmediateDuplicateLine(
+            s,
+            _lastRenderedSummaryLine,
+            _lastRenderedSummaryAt,
+          )) continue;
+          console.log(s);
+          _lastRenderedSummaryLine = s;
+          _lastRenderedSummaryAt = Date.now();
+        }
 
         // Milestone tracking — linesBack no longer needed (append-only emit)
         const toolNames = prepared

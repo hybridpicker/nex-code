@@ -111,7 +111,7 @@ describe("StickyFooter", () => {
   describe("_statusLine()", () => {
     it("returns separator line when no model set", () => {
       const line = footer._statusLine();
-      expect(line).toContain("─");
+      expect(line).toContain("═");
       expect(line).toContain("\x1b[0m"); // C_RESET
     });
 
@@ -136,8 +136,7 @@ describe("StickyFooter", () => {
     it("includes divider dot between parts", () => {
       footer.setStatusInfo({ model: "gpt-4", branch: "main", project: "app" });
       const line = footer._statusLine();
-      // The divider character is '·'
-      expect(line).toContain("·");
+      expect(line).toContain("│");
     });
 
     it("produces a plain separator when model is empty string", () => {
@@ -437,22 +436,21 @@ describe("StickyFooter", () => {
       expect(line).toContain("claude");
       expect(line).toContain("devel");
       expect(line).toContain("nex");
-      expect(line).toContain("·");
-      expect(line).toContain("─ "); // prefix
+      expect(line).toContain("│");
+      expect(line).toContain("╼ "); // prefix
     });
 
     it("omits branch divider when only model set", () => {
       footer.setStatusInfo({ model: "gpt-4" });
       const line = footer._statusLine();
       expect(line).toContain("gpt-4");
-      expect(line).toContain("─ ");
+      expect(line).toContain("╼ ");
     });
 
     it("includes trailing dashes to fill width", () => {
       footer.setStatusInfo({ model: "x", branch: "y", project: "z" });
       const line = footer._statusLine();
-      // Should have trailing dashes
-      expect(line).toContain("─");
+      expect(line).toContain("═");
     });
   });
 
@@ -844,8 +842,7 @@ describe("StickyFooter", () => {
     it("strips ANSI when computing visible widths", () => {
       footer.setStatusInfo({ model: "test-model" });
       const line = footer._statusLine();
-      // The line should contain trailing dashes computed based on visible length
-      expect(line).toContain("─");
+      expect(line).toContain("═");
     });
   });
 });
