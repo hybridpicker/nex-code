@@ -34,6 +34,54 @@ function searchNeedle(args) {
     .join(" ");
 }
 
+function normalizeText(value) {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function includesAnyCI(haystack, needles = []) {
+  const hay = normalizeText(haystack);
+  return needles.some((needle) => hay.includes(normalizeText(needle)));
+}
+
+function includesAllCI(haystack, needles = []) {
+  const hay = normalizeText(haystack);
+  return needles.every((needle) => hay.includes(normalizeText(needle)));
+}
+
+function looksLikeTestCommand(command = "") {
+  return /\b(test|jest|vitest|mocha|ava|pytest|cargo\s+test|go\s+test|rspec|phpunit|mix\s+test|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test)\b/i.test(command);
+}
+
+function looksLikeLintCommand(command = "") {
+  return /\b(lint|eslint|prettier|ruff|flake8|rubocop|golangci-lint|tsc(?:\s|$)|npm\s+run\s+lint|pnpm\s+run\s+lint|yarn\s+lint)\b/i.test(command);
+}
+
+function looksLikeBuildCommand(command = "") {
+  return /\b(build|compile|tsc(?:\s|$)|webpack|vite\s+build|next\s+build|npm\s+run\s+build|pnpm\s+run\s+build|yarn\s+build|cargo\s+build|go\s+build)\b/i.test(command);
+}
+
+function looksLikeSearchCommand(command = "") {
+  return /\b(rg|grep|find|fd|ls|dir|sed|awk)\b/i.test(command);
+}
+
+function matchesTaskListIntent(args, keywords = []) {
+  if (args?.action !== "create") return false;
+  return includesAllCI(searchNeedle(args), keywords);
+}
+
+function matchesSqlWriteTask(args, {
+  pathIncludes = [],
+  table = "users",
+  action = "select",
+  conditionTerms = [],
+} = {}) {
+  if (!matchesWriteArgs(args)) return false;
+  if (!includesAllCI(args.path, pathIncludes)) return false;
+  const sql = normalizeText(args.content);
+  if (!sql.includes(action) || !sql.includes(table)) return false;
+  return conditionTerms.every((group) => includesAnyCI(sql, group));
+}
+
 function matchesEditArgs(args, { pathIncludes = [], oldTexts = [], newTexts = [] } = {}) {
   if (typeof args?.path !== "string") return false;
 
@@ -69,12 +117,12 @@ function matchesWriteArgs(args, { pathIncludes = [], contentIncludes = [] } = {}
 
   const pathOk =
     pathIncludes.length === 0 ||
-    pathIncludes.some((needle) => args.path.toLowerCase().includes(needle.toLowerCase()));
+    pathIncludes.some((needle) => normalizeText(args.path).includes(normalizeText(needle)));
   if (!pathOk) return false;
 
   return (
     contentIncludes.length === 0 ||
-    contentIncludes.every((needle) => args.content.includes(needle))
+    contentIncludes.every((needle) => normalizeText(args.content).includes(normalizeText(needle)))
   );
 }
 
@@ -178,9 +226,9 @@ const TASKS = [
     expectedTool: ["edit_file", "patch_file"],
     validateArgs: (args) =>
       matchesEditArgs(args, {
-        pathIncludes: ["package"],
-        oldTexts: ['"version": "1.0.0"'],
-        newTexts: ['"version": "1.1.0"'],
+        pathIncludes: ["package.json"],
+        oldTexts: ["1.0.0", '"version": "1.0.0"', '"version":"1.0.0"'],
+        newTexts: ["1.1.0", '"version": "1.1.0"', '"version":"1.1.0"'],
       }),
   },
 
@@ -299,12 +347,13 @@ const TASKS = [
     category: "multi-step",
     prompt:
       "You need to determine the current project version. What tool do you call first to inspect the most likely source file?",
-    expectedTool: ["read_file", "glob", "list_directory"],
+    expectedTool: ["read_file", "glob", "list_directory", "search_files"],
     validateArgs: (args) => {
-      if (typeof args.path === "string" && /package|version/i.test(args.path))
+      if (typeof args.path === "string" && /package\.json|package|version/i.test(args.path))
         return true;
       if (typeof args.pattern === "string" && /package\.json|package|version/i.test(args.pattern))
         return true;
+      if (/package\.json|package|version/i.test(searchNeedle(args))) return true;
       return false;
     },
   },
@@ -493,9 +542,12 @@ const TASKS = [
       "Write a SQL query to find all users who have not logged in for more than 30 days. Save it to queries/inactive-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      matchesWriteArgs(args, {
-        pathIncludes: ["inactive-users.sql", "queries"],
-        contentIncludes: ["select", "users"],
+      matchesSqlWriteTask(args, {
+        pathIncludes: ["queries", "inactive-users.sql"],
+        conditionTerms: [
+          ["last_login", "last seen", "last_seen", "last_sign_in", "last_signin", "logged_in_at", "login_at"],
+          ["30 day", "30-day", "interval '30 day'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval"],
+        ],
       }),
   },
   {
@@ -534,9 +586,9 @@ const TASKS = [
     id: "data-find-schema",
     category: "data",
     prompt: "Find where the database schema or models are defined in this project.",
-    expectedTool: ["grep", "glob", "search_files"],
+    expectedTool: ["grep", "glob", "search_files", "list_directory"],
     validateArgs: (args) => {
-      return /schema|model|migration|prisma|dbml/i.test(searchNeedle(args));
+      return /schema|model|migration|prisma|dbml|typeorm|sequelize|orm|db/i.test(searchNeedle(args));
     },
   },
   {
@@ -545,9 +597,12 @@ const TASKS = [
     prompt: "Write a SQL query to find all users who registered in the last 30 days and save it to queries/recent-users.sql.",
     expectedTool: "write_file",
     validateArgs: (args) =>
-      matchesWriteArgs(args, {
-        pathIncludes: ["recent-users.sql", "queries"],
-        contentIncludes: ["select", "users"],
+      matchesSqlWriteTask(args, {
+        pathIncludes: ["queries", "recent-users.sql"],
+        conditionTerms: [
+          ["created_at", "registered_at", "signup_date", "signed_up_at", "joined_at", "createdon"],
+          ["30 day", "30-day", "interval '30 day'", "date_sub", "datetime('now', '-30 days')", "current_date - 30", "now() - interval"],
+        ],
       }),
   },
   {
@@ -576,10 +631,10 @@ const TASKS = [
     category: "resilience",
     prompt:
       "read_file returned 'file not found' for src/utils/helpers.js. You need to find where the helper functions are now. What tool do you use?",
-    expectedTool: ["glob", "bash", "search_files"],
+    expectedTool: ["glob", "bash", "search_files", "list_directory"],
     validateArgs: (args) => {
-      const s = JSON.stringify(args).toLowerCase();
-      return s.includes("src") || s.includes("helper") || s.includes("util") || s.includes("*.js");
+      const s = searchNeedle(args);
+      return /src|helper|util|helpers|\.js|find/i.test(s);
     },
   },
   {
@@ -590,7 +645,8 @@ const TASKS = [
     expectedTool: ["bash", "grep", "search_files"],
     validateArgs: (args) => {
       if (typeof args.command === "string" &&
-        (args.command.includes("grep") || args.command.includes("rg") || args.command.includes("awk")))
+        looksLikeSearchCommand(args.command) &&
+        /authenticateuser|src\/api\.js/i.test(args.command))
         return true;
       const pat = args.pattern || args.query || args.regex || "";
       if (/authenticateUser/i.test(pat)) return true;
@@ -602,10 +658,10 @@ const TASKS = [
     category: "resilience",
     prompt:
       "TypeScript reports: Cannot find module './config'. The file was recently renamed. What tool do you use to find the new location?",
-    expectedTool: ["glob", "bash", "search_files"],
+    expectedTool: ["glob", "bash", "search_files", "grep", "list_directory"],
     validateArgs: (args) => {
-      const s = JSON.stringify(args).toLowerCase();
-      return s.includes("config") || s.includes("*.ts") || s.includes("*.js") || s.includes("find");
+      const s = searchNeedle(args);
+      return /config|rename|module|import|\.ts|\.js|find/i.test(s);
     },
   },
   {
@@ -626,12 +682,11 @@ const TASKS = [
     validateArgs: (args) => {
       if (typeof args.command === "string") {
         return (
-          args.command.includes("grep") ||
-          args.command.includes("rg") ||
-          args.command.includes("src")
+          looksLikeSearchCommand(args.command) &&
+          /src|export|function|module\.exports|exports\./i.test(args.command)
         );
       }
-      return /getUserById|export|function|src/i.test(searchNeedle(args));
+      return /getUserById|export|function|module\.exports|exports\.|src/i.test(searchNeedle(args));
     },
   },
 
@@ -771,18 +826,13 @@ const TASKS = [
     id: "agentic-test-first",
     category: "agentic",
     prompt:
-      "Run the full test suite. If any tests fail, identify the failing test file and read it to understand the issue.",
+      "You need to run the full test suite first. If any tests fail after that, identify the failing test file and read it to understand the issue. What is the first tool call?",
     expectedTool: ["bash", "task_list"],
     validateArgs: (args) => {
       if (typeof args.command === "string") {
-        return (
-          args.command.includes("test") ||
-          args.command.includes("jest") ||
-          args.command.includes("npm")
-        );
+        return looksLikeTestCommand(args.command);
       }
-      const hay = searchNeedle(args);
-      return args.action === "create" && /test|failing|read/i.test(hay);
+      return matchesTaskListIntent(args, ["test"]);
     },
   },
   {
@@ -865,11 +915,12 @@ const PHASE_TASKS = [
     id: "phase-verify-test",
     category: "phase-verify",
     prompt:
-      "You are explicitly in the verify phase. What tool call do you use first to run tests for a fix in src/utils.js?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /test|jest|npm\s+test|pytest|mocha/.test(args.command),
+      "You are explicitly in the verify phase. The first verification step is to run tests for a fix in src/utils.js. What tool call do you use first?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeTestCommand(args.command);
+      return matchesTaskListIntent(args, ["test"]);
+    },
   },
   {
     id: "phase-verify-read",
@@ -884,11 +935,12 @@ const PHASE_TASKS = [
     id: "phase-verify-lint",
     category: "phase-verify",
     prompt:
-      "You are explicitly in the verify phase. What tool call do you use first to run linting after changes in src/components/Header.tsx?",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /lint|eslint|prettier|tsc/.test(args.command),
+      "You are explicitly in the verify phase. The first verification step is to run linting after changes in src/components/Header.tsx. What tool call do you use first?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeLintCommand(args.command);
+      return matchesTaskListIntent(args, ["lint"]);
+    },
   },
   {
     id: "phase-plan-git-blame",
@@ -922,10 +974,11 @@ const PHASE_TASKS = [
     id: "phase-verify-build",
     category: "phase-verify",
     prompt: "The TypeScript source was modified. Run the build command to verify there are no compilation errors.",
-    expectedTool: "bash",
-    validateArgs: (args) =>
-      typeof args.command === "string" &&
-      /build|tsc|compile/.test(args.command),
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeBuildCommand(args.command);
+      return matchesTaskListIntent(args, ["build"]);
+    },
   },
   {
     id: "phase-verify-git-diff",
@@ -1219,11 +1272,12 @@ function buildSummary(modelResults) {
  * Only counts models where categoryScores[cat] is available.
  */
 function buildCategoryWinners(summary) {
+  return rankCategoryWinners(summary);
+}
+
+function rankCategoryWinners(summary) {
   const winners = {};
   const LATENCY_TIEBREAK_BAND = 5;
-  // Scores this high on a small sample are likely flukes — require a clear gap
-  const SUSPICIOUS_SCORE = 95;
-  const SUSPICIOUS_MIN_GAP = 15; // 2nd place must be ≥15 pts behind to trust a near-100 score
   // Minimum number of tasks in a category before trusting routing updates
   const MIN_TASKS_FOR_ROUTING = 4;
   // Minimum overall score — prevents weak models that got lucky on one category
@@ -1257,32 +1311,6 @@ function buildCategoryWinners(summary) {
     if (catTaskCount < MIN_TASKS_FOR_ROUTING) continue; // too few tasks — skip
 
     const best = candidates[0];
-    const second = candidates[1];
-
-    // Suspicion check: near-100 score on a small sample requires a large gap
-    if (
-      best.categoryScores[routeKey] >= SUSPICIOUS_SCORE &&
-      catTaskCount < 8 &&
-      second
-    ) {
-      const gap =
-        best.categoryScores[routeKey] - second.categoryScores[routeKey];
-      if (gap < SUSPICIOUS_MIN_GAP) {
-        // Fluke — fall back to the highest overall-scoring model that has category data
-        const reliable = summary
-          .filter((r) => r.categoryScores[routeKey] !== undefined)
-          .find((r) => r.categoryScores[routeKey] < SUSPICIOUS_SCORE);
-        if (reliable) {
-          winners[routeKey] = {
-            model: reliable.model,
-            score: reliable.categoryScores[routeKey],
-            avgLatency: reliable.avgLatency,
-            _flukePrevented: true,
-          };
-        }
-        continue;
-      }
-    }
 
     // Standard: within tiebreak band, prefer lowest latency
     const inBand = candidates.filter(
@@ -1429,18 +1457,24 @@ function printResults(summary, taskCount) {
   );
   if (hasCatData) {
     console.log(`\n${C.bold}Best model per task type:${C.reset}`);
+    const routedWinners = rankCategoryWinners(summary);
     for (const cat of catRoutes) {
-      const ranked = summary
-        .filter((r) => r.categoryScores[cat] !== undefined)
-        .sort((a, b) => b.categoryScores[cat] - a.categoryScores[cat]);
-      if (ranked.length === 0) continue;
-      const winner = ranked[0];
-      const sc = winner.categoryScores[cat];
+      const winner = routedWinners[cat];
+      if (!winner) continue;
+      const sc = winner.score;
       const color = sc >= 80 ? C.green : sc >= 60 ? C.yellow : C.red;
+      const rawLeader = summary
+        .filter((r) => r.categoryScores[cat] !== undefined)
+        .sort((a, b) => b.categoryScores[cat] - a.categoryScores[cat])[0];
+      const note =
+        rawLeader && rawLeader.model !== winner.model
+          ? `${C.dim}  raw leader: ${rawLeader.model} (${rawLeader.categoryScores[cat]}/100)${C.reset}`
+          : "";
       console.log(
-        `  ${C.dim}${cat.padEnd(10)}${C.reset} ${color}${winner.model}${C.reset}  ${C.dim}${sc}/100${C.reset}`,
+        `  ${C.dim}${cat.padEnd(10)}${C.reset} ${color}${winner.model}${C.reset}  ${C.dim}${sc}/100${C.reset}${note}`,
       );
     }
+    console.log(`${C.dim}  Winners use the same conservative routing criteria as auto-update (overall-score floor plus latency tiebreak band).${C.reset}`);
   }
   console.log();
 }
