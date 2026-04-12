@@ -154,6 +154,24 @@ jest.mock("../cli/tools", () => ({
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "ask_user",
+        description: "ask",
+        parameters: {
+          type: "object",
+          properties: {
+            question: { type: "string" },
+            options: {
+              type: "array",
+              items: { type: "string" },
+            },
+          },
+          required: ["question", "options"],
+        },
+      },
+    },
   ],
   executeTool: jest.fn(),
 }));
@@ -576,6 +594,50 @@ describe("agent.js", () => {
       executeTool.mockResolvedValueOnce("1").mockResolvedValueOnce("2");
       await processInput("run both");
       expect(executeTool).toHaveBeenCalledTimes(2);
+    });
+
+    it("runs ask_user exclusively and defers sibling tool calls", async () => {
+      mockStream("", [
+        {
+          function: {
+            name: "ask_user",
+            arguments: {
+              question: "Which area should I update?",
+              options: ["backend", "frontend"],
+            },
+          },
+          id: "c1",
+        },
+        {
+          function: { name: "bash", arguments: { command: "echo should-wait" } },
+          id: "c2",
+        },
+      ]);
+      mockStream("Thanks, I will wait for your answer.");
+      executeTool.mockResolvedValueOnce("backend");
+
+      await processInput("help");
+
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool).toHaveBeenCalledWith(
+        "ask_user",
+        {
+          question: "Which area should I update?",
+          options: ["backend", "frontend"],
+        },
+        { silent: true, autoConfirm: true },
+      );
+      expect(getConversationMessages().some((m) => m.role === "tool")).toBe(
+        true,
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("ask_user is exclusive"),
+        ),
+      ).toBe(true);
     });
 
     it("passes onToken and signal to callStream", async () => {
