@@ -4459,7 +4459,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (taskProgress) taskProgress.setStats({ tokens: cumulativeTokens });
       }
 
-      const { content: rawContent, tool_calls } = result;
+      const { content: rawContent, tool_calls: rawToolCalls } = result;
+      let tool_calls = rawToolCalls;
+      let askUserBatchTrimmed = false;
+      if (Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+        const askUserCalls = rawToolCalls.filter(
+          (tc) => tc?.function?.name === "ask_user",
+        );
+        if (askUserCalls.length > 0) {
+          tool_calls = [askUserCalls[0]];
+          askUserBatchTrimmed = rawToolCalls.length !== 1;
+          if (askUserBatchTrimmed) {
+            debugLog(
+              `${C.yellow}  ⚠ ask_user must run alone — deferring ${rawToolCalls.length - 1} other tool call(s) until the user replies${C.reset}`,
+            );
+          }
+        }
+      }
 
       // ── Repetition guard: truncate looping LLM output before storing ──────
       // First apply paragraph-level loop detection (catches tight single-line loops)
@@ -6006,6 +6022,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ...batchOpts,
           skipSummaries: true,
         });
+
+      if (askUserBatchTrimmed) {
+        const askUserWaitMsg = {
+          role: "user",
+          content:
+            "[SYSTEM] ask_user is exclusive. Wait for the user's answer before making any other tool calls.",
+        };
+        conversationMessages.push(askUserWaitMsg);
+        apiMessages.push(askUserWaitMsg);
+      }
 
       // Stop elapsed-time updater
       if (_longCmdTimer) {
