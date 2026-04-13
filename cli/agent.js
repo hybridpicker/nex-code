@@ -123,7 +123,11 @@ function _scoreAndPrint(messages) {
   }
 }
 const { getMemoryContext } = require("./memory");
-const { getDeploymentContextBlock, probeUrlServer } = require("./server-context");
+const {
+  getDeploymentContextBlock,
+  probeUrlServer,
+  detectRuntimeDebugTarget,
+} = require("./server-context");
 const { getFewShotForInput } = require("./few-shot");
 const {
   checkPermission,
@@ -704,6 +708,24 @@ function getCachedFilteredTools(allTools) {
  */
 function clearToolFilterCache() {
   toolFilterCache.clear();
+}
+
+function hasConversationToolCall(messages, toolNames) {
+  const wanted = new Set(toolNames);
+  return (messages || []).some((message) => {
+    if (message.role !== "assistant") return false;
+    if (Array.isArray(message.tool_calls)) {
+      return message.tool_calls.some((tc) =>
+        wanted.has(tc?.function?.name || tc?.name),
+      );
+    }
+    if (Array.isArray(message.content)) {
+      return message.content.some(
+        (block) => block?.type === "tool_use" && wanted.has(block?.name),
+      );
+    }
+    return false;
+  });
 }
 
 /**
@@ -3093,6 +3115,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _resolvedInput +=
       "\n\n[Note for assistant: the user appears frustrated — acknowledge their concern briefly and empathetically before proceeding]";
   }
+  const runtimeDebugTarget =
+    typeof userInput === "string" ? detectRuntimeDebugTarget(userInput) : null;
   let userContent = buildUserContent(_resolvedInput);
   // buildUserContent may return a Promise when remote URLs or clipboard are involved
   if (userContent && typeof userContent.then === "function") {
@@ -3280,6 +3304,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     ];
   }
 
+  if (runtimeDebugTarget && isFirstMessage) {
+    const runtimeGuidance = runtimeDebugTarget.shouldPreferSsh
+      ? `[Runtime URL detected]\nThe user linked a live app URL (${runtimeDebugTarget.url}) and described broken behavior. Treat this as a runtime/deployed-instance issue first. Reproduce it with browser_open or browser_screenshot on the URL before reading local files. Because this URL matches server profile "${runtimeDebugTarget.matchedName}", prefer ssh_exec/service_logs on that server for investigation before local repo inspection.`
+      : `[Runtime URL detected]\nThe user linked a live app URL (${runtimeDebugTarget.url}) and described broken behavior. Treat this as a runtime issue first. Reproduce it with browser_open or browser_screenshot before reading local files. Only inspect the local repo after you have confirmed the live behavior.`;
+    apiMessages = [
+      apiMessages[0],
+      { role: "user", content: runtimeGuidance },
+      { role: "assistant", content: "Understood — I will inspect the live app/runtime first." },
+      ...apiMessages.slice(1),
+    ];
+  }
+
   // Inject few-shot example: 1 synthetic user/assistant exchange showing correct approach.
   // Category is detected from the user's prompt (sysadmin, coding, frontend, data).
   // Private examples from ~/.nex-code/examples/ take priority over bundled generics.
@@ -3343,11 +3379,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     const m = conversationMessages.find((r) => r.role === "user");
     return typeof m?.content === "string" ? m.content : "";
   })();
+  const _runtimeDebugTarget =
+    typeof _firstUserText === "string"
+      ? detectRuntimeDebugTarget(_firstUserText)
+      : null;
   // Only trigger for actual server debugging, not for feature development tasks.
   const _isServerDebugging =
     /set_reminder|google.?auth|cron:|api\.log|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
       _firstUserText,
-    );
+    ) || Boolean(_runtimeDebugTarget?.shouldPreferSsh);
+  const _isRuntimeUrlDebugging = Boolean(_runtimeDebugTarget);
   let _serverLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Pre-loop root-cause scan: briefing / initial context ────────────────
@@ -5877,10 +5918,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // locally. Fires once per session. Must be pre-execution (before executeBatch)
       // — post-execution warnings can't prevent the tool from running.
       // SKIP when SSH is blocked after storm — local tools are the only fallback.
-      if (_isServerDebugging && _serverLocalWarnFired < 3 && !_sshBlockedAfterStorm) {
+      const _hasRuntimeInspection = hasConversationToolCall(
+        conversationMessages,
+        ["browser_open", "browser_screenshot", "ssh_exec", "service_logs", "remote_agent"],
+      );
+      if (
+        (_isServerDebugging || _isRuntimeUrlDebugging) &&
+        !_hasRuntimeInspection &&
+        _serverLocalWarnFired < 3 &&
+        !_sshBlockedAfterStorm
+      ) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
-          if (!["bash", "read_file", "find_files"].includes(prep.fnName))
+          if (
+            ![
+              "bash",
+              "read_file",
+              "find_files",
+              "list_directory",
+              "search_files",
+              "glob",
+              "grep",
+            ].includes(prep.fnName)
+          )
             continue;
           _serverLocalWarnFired++;
           {
@@ -5888,13 +5948,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const { messages: _c } = forceCompress(apiMessages, _allTools);
             apiMessages = _c;
           }
+          const runtimeTargetLabel = _runtimeDebugTarget?.matchedName
+            ? `${_runtimeDebugTarget.matchedName} (${_runtimeDebugTarget.matchedProfile?.host || "server"})`
+            : _runtimeDebugTarget?.url;
+          const blockMessage =
+            _runtimeDebugTarget?.shouldPreferSsh
+              ? `BLOCKED: ${prep.fnName} denied — this looks like a live app/server issue. Inspect ${_runtimeDebugTarget?.url} with browser_open or use ssh_exec on ${runtimeTargetLabel} first, then return to local code if needed.`
+              : `BLOCKED: ${prep.fnName} denied — this looks like a live app issue. Inspect ${_runtimeDebugTarget?.url} with browser_open first, then return to local code if needed.`;
           debugLog(
-            `${C.yellow}  ⚠ Server-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`,
+            `${C.yellow}  ⚠ Runtime guard: blocking local ${prep.fnName} — inspect the live app first${C.reset}`,
           );
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
-            content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
+            content: blockMessage,
             tool_call_id: prep.callId,
           };
           break; // one block per batch is enough to redirect the agent
