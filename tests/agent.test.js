@@ -137,6 +137,18 @@ jest.mock("../cli/tools", () => ({
     {
       type: "function",
       function: {
+        name: "browser_open",
+        description: "browser",
+        parameters: {
+          type: "object",
+          properties: { url: { type: "string" } },
+          required: ["url"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "spawn_agents",
         description: "spawn",
         parameters: { type: "object", properties: {}, required: [] },
@@ -2740,6 +2752,24 @@ describe("_inferRelevantTests", () => {
           m.content.includes("You have read enough files"),
       );
       expect(hasCapMsg).toBe(false);
+    });
+
+    it("blocks local repo inspection first for live app bug URLs", async () => {
+      mockStream("checking files", [readCall(1)]);
+      mockStream("I will inspect the live app first");
+
+      await processInput(
+        "Wenn ich bei /guitar-mentor Ideen loesche kommen sie immer wieder zurueck ins webui https://jarvis.schoensgibl.com/guitar-mentor/",
+      );
+
+      expect(executeTool).not.toHaveBeenCalled();
+      const msgs = getConversationMessages();
+      const hasBlockMsg = msgs.some(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("Inspect https://jarvis.schoensgibl.com/guitar-mentor/ with browser_open first"),
+      );
+      expect(hasBlockMsg).toBe(true);
     });
 
     it("hard-blocks reads after cap fires and a file has been written", async () => {

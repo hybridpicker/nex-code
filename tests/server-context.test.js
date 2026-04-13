@@ -5,18 +5,22 @@
 
 jest.mock("../cli/ssh", () => ({
   loadServerProfiles: jest.fn(),
+  sshExec: jest.fn(),
 }));
 
-const { loadServerProfiles } = require("../cli/ssh");
+const { loadServerProfiles, sshExec } = require("../cli/ssh");
 const {
   getServerContext,
   hasServerOS,
   getProfileNames,
   OS_HINTS,
+  detectRuntimeDebugTarget,
+  probeUrlServer,
 } = require("../cli/server-context");
 
 beforeEach(() => {
   loadServerProfiles.mockReset();
+  sshExec.mockReset();
 });
 
 describe("OS_HINTS", () => {
@@ -155,5 +159,49 @@ describe("getDeploymentContextBlock — server rules", () => {
     const block = getDeploymentContextBlock();
     expect(block).toBeDefined();
     expect(block).not.toContain("Server Debugging Rules");
+  });
+});
+
+describe("detectRuntimeDebugTarget", () => {
+  test("detects a live app bug report and matches a server profile from the URL", () => {
+    loadServerProfiles.mockReturnValue({
+      jarvis: { host: "94.130.37.43", user: "jarvis" },
+    });
+    const result = detectRuntimeDebugTarget(
+      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://jarvis.schoensgibl.com/guitar-mentor/",
+    );
+    expect(result).toBeTruthy();
+    expect(result.url).toBe("https://jarvis.schoensgibl.com/guitar-mentor/");
+    expect(result.matchedName).toBe("jarvis");
+    expect(result.shouldPreferSsh).toBe(true);
+  });
+
+  test("ignores image URLs even when the prompt contains analyze wording", () => {
+    loadServerProfiles.mockReturnValue({
+      jarvis: { host: "94.130.37.43", user: "jarvis" },
+    });
+    expect(
+      detectRuntimeDebugTarget(
+        "Analyze this mockup and implement it https://jarvis.schoensgibl.com/mockup.png",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("probeUrlServer", () => {
+  test("probes the matched server for runtime debug URLs", async () => {
+    loadServerProfiles.mockReturnValue({
+      jarvis: { host: "94.130.37.43", user: "jarvis" },
+    });
+    sshExec.mockResolvedValue({
+      stdout: ":3000\n---services---\nnode server.js\n---data---\n/home/jarvis/data",
+    });
+
+    const result = await probeUrlServer(
+      "Deleting ideas fails and they come back in the webui https://jarvis.schoensgibl.com/guitar-mentor/",
+    );
+
+    expect(result).toContain('Server context for "jarvis"');
+    expect(sshExec).toHaveBeenCalledTimes(1);
   });
 });
