@@ -20,6 +20,7 @@ require("dotenv").config({
 require("dotenv").config(); // Also check CWD (non-override — user project wins)
 
 const args = process.argv.slice(2);
+const jsonMode = args.includes("--json");
 
 // ─── --help / -h ──────────────────────────────────────────────
 if (args.includes("--help") || args.includes("-h")) {
@@ -111,10 +112,11 @@ if (flatrateMode) {
   if (!process.env.OLLAMA_FALLBACK_CHAIN) {
     process.env.OLLAMA_FALLBACK_CHAIN = "ministral-3:8b,qwen3-vl:235b-instruct,devstral-small-2:24b";
   }
-  // Print badge on stderr so it shows even in --json mode
-  process.stderr.write(
-    "\x1b[38;2;80;210;120m◆\x1b[0m \x1b[1mFlatrate mode\x1b[0m\x1b[2m — 100 turns · 6 parallel agents · 5 retries · verify-on\x1b[0m\n",
-  );
+  if (!jsonMode) {
+    process.stderr.write(
+      "\x1b[38;2;80;210;120m◆\x1b[0m \x1b[1mFlatrate mode\x1b[0m\x1b[2m — 100 turns · 6 parallel agents · 5 retries · verify-on\x1b[0m\n",
+    );
+  }
 }
 
 // ─── --model ──────────────────────────────────────────────────
@@ -174,9 +176,11 @@ if (geminiMode) {
     );
     process.exit(1);
   }
-  process.stderr.write(
-    `\x1b[38;2;138;180;248m◆\x1b[0m \x1b[1mGemini mode\x1b[0m\x1b[2m — provider=gemini · model=${geminiModel} · routing locked\x1b[0m\n`,
-  );
+  if (!jsonMode) {
+    process.stderr.write(
+      `\x1b[38;2;138;180;248m◆\x1b[0m \x1b[1mGemini mode\x1b[0m\x1b[2m — provider=gemini · model=${geminiModel} · routing locked\x1b[0m\n`,
+    );
+  }
 }
 
 // ─── --max-turns (flag or .nex/config.json) ──────────────────
@@ -244,6 +248,104 @@ async function checkSetup() {
   await runSetupWizard();
 }
 
+function emitJsonLine(obj, write = process.stdout.write.bind(process.stdout)) {
+  write(JSON.stringify(obj) + "\n");
+}
+
+function stripAnsi(text) {
+  return String(text || "").replace(/\x1B\[[0-9;]*m/g, "");
+}
+
+function cleanToolSummary(summary) {
+  const lines = stripAnsi(summary || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  return lines[0]
+    .replace(/^[│↩]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countToolCalls(messages) {
+  if (!Array.isArray(messages)) return 0;
+  return messages.reduce((total, msg) => {
+    if (!msg || msg.role !== "assistant") return total;
+    if (Array.isArray(msg.tool_calls)) return total + msg.tool_calls.length;
+    if (Array.isArray(msg.content)) {
+      return (
+        total +
+        msg.content.filter((block) => block && block.type === "tool_use").length
+      );
+    }
+    return total;
+  }, 0);
+}
+
+function createJsonModeHooks() {
+  process.env.NEX_SERVER = "1";
+
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalConsole = {
+    log: console.log,
+    warn: console.warn,
+    info: console.info,
+    error: console.error,
+  };
+  const passthroughStdout = process.stdout.write;
+  const passthroughStderr = process.stderr.write;
+
+  function swallowWrite(_chunk, encoding, cb) {
+    let callback = cb;
+    if (typeof encoding === "function") callback = encoding;
+    if (typeof callback === "function") callback();
+    return true;
+  }
+
+  process.stdout.write = swallowWrite;
+  process.stderr.write = swallowWrite;
+
+  console.log = () => {};
+  console.warn = () => {};
+  console.info = () => {};
+  console.error = () => {};
+
+  return {
+    hooks: {
+      onToken(text) {
+        emitJsonLine({ type: "token", text }, originalStdoutWrite);
+      },
+      onThinkingToken() {
+        emitJsonLine({ type: "thinking" }, originalStdoutWrite);
+      },
+      onToolStart(toolName, args) {
+        emitJsonLine({
+          type: "tool_start",
+          tool: toolName,
+          args: args || {},
+        }, originalStdoutWrite);
+      },
+      onToolEnd(toolName, summary, ok) {
+        emitJsonLine({
+          type: "tool_end",
+          tool: toolName,
+          summary: cleanToolSummary(summary || ""),
+          ok: !!ok,
+        }, originalStdoutWrite);
+      },
+    },
+    restore() {
+      process.stdout.write = passthroughStdout;
+      process.stderr.write = passthroughStderr;
+      console.log = originalConsole.log;
+      console.warn = originalConsole.warn;
+      console.info = originalConsole.info;
+      console.error = originalConsole.error;
+    },
+  };
+}
+
 // ─── helper: run headless task ───────────────────────────────
 function runHeadlessTask(task) {
   if (args.includes("--auto")) {
@@ -270,6 +372,50 @@ function runHeadlessTask(task) {
   const orchModelIdx = args.indexOf("--orchestrator-model");
   const orchestratorModel =
     orchModelIdx !== -1 ? args[orchModelIdx + 1] : undefined;
+  const jsonModeState = jsonMode ? createJsonModeHooks() : null;
+  const agentHooks = jsonModeState ? jsonModeState.hooks : null;
+
+  function finishSuccess(getMessages) {
+    if (!jsonModeState) {
+      process.exit(0);
+      return;
+    }
+
+    const { getSessionCosts } = require("../cli/costs");
+    const msgs = getMessages();
+    const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
+    const costs = getSessionCosts();
+    jsonModeState.restore();
+    emitJsonLine({
+      type: "done",
+      success: true,
+      response: lastAssistant?.content || "",
+      usage: {
+        input: costs.totalInput || 0,
+        output: costs.totalOutput || 0,
+        cacheRead: costs.totalCacheRead || 0,
+      },
+      toolCalls: countToolCalls(msgs),
+    });
+    process.exit(0);
+  }
+
+  function finishError(err) {
+    if (!jsonModeState) {
+      console.error(err.message);
+      process.exit(1);
+      return;
+    }
+
+    jsonModeState.restore();
+    emitJsonLine({
+      type: "error",
+      success: false,
+      error: err?.message || String(err),
+    });
+    process.exit(1);
+  }
+
   // Slash commands (e.g. /bench, /benchmark, /trend) must be routed to the
   // command handler, not sent to the model as a prompt.
   if (task.startsWith("/")) {
@@ -280,46 +426,38 @@ function runHeadlessTask(task) {
     if (skillResult && skillResult.agentPrompt) {
       // Skill returned an agent prompt — run it through processInput
       const { processInput, getConversationMessages } = require("../cli/agent");
-      processInput(skillResult.agentPrompt, null, { autoOrchestrate, orchestratorModel })
-        .then(() => process.exit(0))
-        .catch((err) => { console.error(err.message); process.exit(1); });
+      processInput(skillResult.agentPrompt, agentHooks, {
+        autoOrchestrate,
+        orchestratorModel,
+      })
+        .then(() => finishSuccess(getConversationMessages))
+        .catch((err) => finishError(err));
       return;
     }
     const { handleSlashCommand } = require("../cli/commands/index");
     handleSlashCommand(task, null)
-      .then(() => process.exit(0))
-      .catch((err) => { console.error(err.message); process.exit(1); });
+      .then(() => {
+        if (jsonModeState) {
+          jsonModeState.restore();
+          emitJsonLine({ type: "done", success: true, response: "" });
+        }
+        process.exit(0);
+      })
+      .catch((err) => finishError(err));
     return;
   }
 
   const { processInput, getConversationMessages } = require("../cli/agent");
-  processInput(task, null, { autoOrchestrate, orchestratorModel })
+  processInput(task, agentHooks, { autoOrchestrate, orchestratorModel })
     .then(() => {
       // Write dream log for session consolidation
       try {
         const { writeDreamLog } = require("../cli/dream");
         writeDreamLog(getConversationMessages());
       } catch { /* non-critical */ }
-      if (args.includes("--json")) {
-        const msgs = getConversationMessages();
-        const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
-        console.log(
-          JSON.stringify({
-            success: true,
-            response: lastAssistant?.content || "",
-          }),
-        );
-      }
-      process.exit(0);
+      finishSuccess(getConversationMessages);
     })
-    .catch((err) => {
-      if (args.includes("--json")) {
-        console.log(JSON.stringify({ success: false, error: err.message }));
-      } else {
-        console.error(err.message);
-      }
-      process.exit(1);
-    });
+    .catch((err) => finishError(err));
 }
 
 // ─── --server (VS Code extension IPC mode) ───────────────────
