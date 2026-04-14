@@ -2,7 +2,7 @@
 /**
  * scripts/improve.js — Proactive Improvement Loop
  *
- * Runs benchmark-realworld.js → clusters failures → implements ONE fix →
+ * Runs benchmark-reallife.js → clusters failures → implements ONE fix →
  * rebuilds → re-benchmarks → commits if improved, reverts if regressed.
  * Stops after 3 consecutive plateaus, score >= 95, or 8 max passes.
  *
@@ -15,20 +15,18 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync, execFileSync, spawnSync } = require("child_process");
+const {
+  BENCHMARK_SCRIPT,
+  SAFETY_BOUNDS,
+  checkSafetyBounds: checkSharedSafetyBounds,
+  getBenchmarkScore,
+  runBenchmarkScript,
+} = require("./benchmark-shared");
 
 const ROOT = path.join(__dirname, "..");
 const RESULTS_DIR = path.join(__dirname, "benchmark-results");
 const STATE_FILE = path.join(RESULTS_DIR, "improve-state.json");
 const NEX_CODE = path.join(ROOT, "dist", "nex-code.js");
-
-// ─── Safety Bounds ──────────────────────────────────────────────
-// Guard constants must stay within these ranges after any fix.
-const SAFETY_BOUNDS = {
-  SSH_STORM_WARN: [6, 12],
-  SSH_STORM_ABORT: [8, 18],
-  INVESTIGATION_CAP: [10, 18],
-  POST_WIPE_BUDGET: [10, 17],
-};
 
 const MAX_PASSES_DEFAULT = 8;
 const MAX_PLATEAUS = 3;
@@ -50,27 +48,32 @@ function writeState(state) {
 }
 
 function runBenchmark(model) {
-  const args = ["scripts/benchmark-realworld.js"];
-  if (model) args.push("--model", model);
-  const result = spawnSync("node", args, {
-    cwd: ROOT,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 600000, // 10 min max
-    env: { ...process.env },
+  const { data, stdout, stderr } = runBenchmarkScript({
+    root: ROOT,
+    model,
+    timeoutMs: 600000,
   });
-  const stdout = (result.stdout || "").toString();
-  const stderr = (result.stderr || "").toString();
 
-  // Parse the latest results file
-  const date = new Date().toISOString().split("T")[0];
-  const resultsFile = path.join(RESULTS_DIR, `${date}.json`);
-  if (!fs.existsSync(resultsFile)) {
+  if (!data) {
     console.error("  Benchmark did not produce results file");
     console.error("  stdout:", stdout.slice(-500));
     console.error("  stderr:", stderr.slice(-500));
     return null;
   }
-  return JSON.parse(fs.readFileSync(resultsFile, "utf-8"));
+  return data;
+}
+
+function summarizeBenchmarkResults(results) {
+  const score = getBenchmarkScore(results);
+  if (score == null) return { ok: false, reason: "missing-score" };
+  return { ok: true, score };
+}
+
+function classifyScoreDelta(previousScore, nextScore) {
+  if (typeof nextScore !== "number") return "missing-score";
+  if (nextScore > previousScore) return "improved";
+  if (nextScore === previousScore) return "no-change";
+  return "regressed";
 }
 
 function clusterFailures(results) {
@@ -107,15 +110,15 @@ function clusterFailures(results) {
   return sorted.length > 0 ? { pattern: sorted[0][0], tasks: sorted[0][1] } : null;
 }
 
-function buildFixPrompt(cluster) {
+function buildFixPrompt(cluster, benchmarkScore) {
   const taskList = cluster.tasks
     .slice(0, 5)
     .map((t) => `  - ${t.id} (score: ${t.score}): ${JSON.stringify(t.details)}`)
     .join("\n");
 
-  return `You are improving nex-code (an agentic coding CLI).
+  return `You are improving nex-code (an agentic coding CLI).${typeof benchmarkScore === "number" ? ` Current real-life benchmark score: ${benchmarkScore}/100.` : ""}
 
-The real-world benchmark shows a failure pattern: "${cluster.pattern}"
+The real-life benchmark shows a failure pattern: "${cluster.pattern}"
 
 Failing tasks:
 ${taskList}
@@ -131,32 +134,7 @@ Make the minimal change needed. Read the relevant file first, then edit.`;
 }
 
 function checkSafetyBounds() {
-  const agentPath = path.join(ROOT, "cli", "agent.js");
-  const content = fs.readFileSync(agentPath, "utf-8");
-
-  // Also check model-profiles.js since investigationCap lives there now
-  let profileContent = "";
-  const profilePath = path.join(ROOT, "cli", "model-profiles.js");
-  try { profileContent = fs.readFileSync(profilePath, "utf-8"); } catch { /* ignore */ }
-  const combined = content + "\n" + profileContent;
-
-  for (const [name, [lo, hi]] of Object.entries(SAFETY_BOUNDS)) {
-    // Match multiple patterns: const X = 10, X = 10, X: 10 (object property)
-    const patterns = [
-      new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*(\\d+)`, "g"),
-      new RegExp(`${name}\\s*:\\s*(\\d+)`, "g"),
-    ];
-    for (const re of patterns) {
-      let match;
-      while ((match = re.exec(combined)) !== null) {
-        const val = parseInt(match[1], 10);
-        if (val < lo || val > hi) {
-          return { ok: false, violation: `${name} = ${val} (bounds: [${lo}, ${hi}])` };
-        }
-      }
-    }
-  }
-  return { ok: true };
+  return checkSharedSafetyBounds(ROOT);
 }
 
 function build() {
@@ -261,11 +239,17 @@ async function main() {
     console.log("  --dry-run: running benchmark once without fixes\n");
     const results = runBenchmark(model);
     if (results) {
-      console.log(`\n  Benchmark average: ${results.average}/100`);
+      const summary = summarizeBenchmarkResults(results);
+      if (!summary.ok) {
+        console.log("\n  Benchmark results did not include a score.\n");
+        return;
+      }
+      const score = summary.score;
+      console.log(`\n  Benchmark score: ${score}/100`);
       const cluster = clusterFailures(results);
       if (cluster) {
         console.log(`  Top failure pattern: ${cluster.pattern} (${cluster.tasks.length} tasks)`);
-        console.log(`\n  Fix prompt would be:\n${buildFixPrompt(cluster)}\n`);
+        console.log(`\n  Fix prompt would be:\n${buildFixPrompt(cluster, score)}\n`);
       } else {
         console.log("  No failure clusters found — all tasks passing!\n");
       }
@@ -291,7 +275,12 @@ async function main() {
       console.error("  Benchmark failed, stopping");
       break;
     }
-    const score = results.average;
+    const summary = summarizeBenchmarkResults(results);
+    if (!summary.ok) {
+      console.error("  Benchmark results did not include a score, stopping");
+      break;
+    }
+    const score = summary.score;
     console.log(`  Score: ${score}/100`);
 
     // Check stop conditions
@@ -313,7 +302,7 @@ async function main() {
 
     // 3. Implement fix
     console.log("  Running fix...");
-    const fixPrompt = buildFixPrompt(cluster);
+    const fixPrompt = buildFixPrompt(cluster, score);
     const fixResult = runHeadlessFix(fixPrompt);
     if (!fixResult.ok) {
       console.log(`  Fix failed: ${fixResult.reason} — reverting`);
@@ -345,10 +334,17 @@ async function main() {
     console.log("  Re-benchmarking...");
     const newResults = runBenchmark(model);
     if (!newResults) { revert(); state.plateaus++; continue; }
-    const newScore = newResults.average;
+    const nextSummary = summarizeBenchmarkResults(newResults);
+    if (!nextSummary.ok) {
+      console.log("  Re-benchmark results did not include a score, reverting");
+      revert();
+      state.plateaus++;
+      continue;
+    }
+    const newScore = nextSummary.score;
     console.log(`  New score: ${newScore}/100 (was ${score})`);
 
-    if (newScore > score) {
+    if (classifyScoreDelta(score, newScore) === "improved") {
       // Improved — commit
       commit(cluster.pattern, score, newScore);
       state.plateaus = 0;
@@ -373,7 +369,20 @@ async function main() {
   console.log(`  Passes: ${state.pass}, Scores: [${state.scores.join(", ")}]\n`);
 }
 
-main().catch((err) => {
-  console.error("Improvement loop failed:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Improvement loop failed:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  BENCHMARK_SCRIPT,
+  buildFixPrompt,
+  checkSafetyBounds,
+  classifyScoreDelta,
+  clusterFailures,
+  getBenchmarkScore,
+  runBenchmark,
+  summarizeBenchmarkResults,
+};

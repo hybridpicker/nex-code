@@ -65,6 +65,11 @@ function isTooShort(text) {
   return false;
 }
 
+function isTextDeliverablePath(filePath) {
+  if (!filePath || typeof filePath !== "string") return false;
+  return /\.(?:md|mdx|txt|rst|adoc)$/i.test(filePath);
+}
+
 /**
  * Score the current session and print the result, then persist score into
  * the autosave metadata.  Only runs when there were actual tool calls.
@@ -3526,10 +3531,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const _rawUserText = typeof userInput === "string" ? userInput.trim() : "";
   const _isAnalysisOnlyPrompt =
     _rawUserText.length > 0 &&
-    /^\s*(analyze|analyse|analysiere|explain|erkläre|describe|beschreib|review|audit|summari[sz]e|zusammenfass|list|liste|what is|what does|wie funktioniert|wie geht|how does|show me|zeig|show the|show all|tell me about|erzähl)/i.test(
+    /^\s*(analyze|analyse|analysiere|explain|erkläre|describe|beschreib|review|audit|summari[sz]e|zusammenfass|list|liste|understand|document|documentation|docs|what is|what does|wie funktioniert|wie geht|how does|show me|zeig|show the|show all|tell me about|erzähl)/i.test(
       _rawUserText,
     ) &&
     !/\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|edit|write|delete|remove|install|setup|deploy|run)\b/i.test(
+      _rawUserText,
+    );
+  const _isSynthesisHeavyPrompt =
+    _rawUserText.length > 0 &&
+    /\b(analyze|analyse|explain|describe|review|audit|summari[sz]e|understand|document|scan|count|inventory|map|list|identify)\b/i.test(
+      _rawUserText,
+    ) &&
+    /\b(create|write|generate|produce|output)\b/i.test(_rawUserText) &&
+    /\b([A-Z0-9_-]+\.md|markdown|report|summary|overview|architecture|audit|table|documentation|docs|inventory|catalog)\b/i.test(
+      _rawUserText,
+    ) &&
+    !/\b(fix|bug|crash|error|implement|add(?!\s+(?:to|into)\b)|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|delete|remove|install|setup|deploy|run)\b/i.test(
       _rawUserText,
     );
 
@@ -3546,6 +3563,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
   let _skillLoopNudges = 0; // cap continuation nudges to prevent infinite nudge loops
+  let _synthesisEvidenceReady = false; // enough evidence gathered to finalize a text deliverable
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
     progressMadeThisPass = false;
@@ -4642,12 +4660,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       // ─── Analysis-only hard exit ─────────────────────────────────────────
       // For pure analysis prompts, after the first substantive text response
-      // (>1500 chars) with no file modifications anywhere, end the loop. Some
-      // big models (qwen3-vl) ignore the system-prompt "STOP" instruction and
-      // keep iterating with redundant re-reads. This is a hard backstop.
+      // with no file modifications anywhere, end the loop. Some models ignore
+      // the system-prompt "STOP" instruction and keep iterating with redundant
+      // re-reads. This is a hard backstop for read-only deliverables.
       if (
         _isAnalysisOnlyPrompt &&
-        (content || "").trim().length > 1500 &&
+        !isTooShort(content || streamedText || "") &&
         filesModified.size === 0 &&
         _bashModifiedFiles === 0
       ) {
@@ -4808,12 +4826,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         // ─── Early exit in headless mode ──────────────────────────────────────
         // When running in auto/headless mode (benchmarks, improvement loop), once
-        // the model has edited files and produces a text-only response, the task
-        // is done. Skip further verification/polish iterations to save time.
-        // Skip early exit when phase routing is active — let implement→verify handle it.
-        if (getAutoConfirm() && !opts.skillLoop && !_phaseEnabled && (filesModified.size > 0 || _bashModifiedFiles > 0) && hasText && totalSteps >= 2) {
+        // the model has edited files and produces a substantive text-only response,
+        // the task is usually done. Forcing a separate verify pass after a clean
+        // implementation summary often burns the remaining budget and converts a
+        // useful run into a timeout. Keep verify-phase behavior unchanged, but let
+        // implementation-phase sessions finish cleanly once they have already
+        // produced useful work and a real wrap-up.
+        const _canHeadlessEarlyExit =
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+          hasText &&
+          !isTooShort(content || streamedText || "") &&
+          totalSteps >= 1 &&
+          (!_phaseEnabled || _currentPhase === "implement");
+        if (_canHeadlessEarlyExit) {
           debugLog(
-            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), text response received${C.reset}`,
+            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), substantive text response received${C.reset}`,
           );
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
           saveNow(conversationMessages);
@@ -4998,7 +5027,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // the main REPL readline is paused while processInput() runs, so
             // direct stdin access is safe here and avoids stream conflicts.
             let _autoApproved = false;
-            if (process.stdout.isTTY && process.stdin.isTTY) {
+            const _allowInteractivePlanPrompt =
+              process.stdout.isTTY &&
+              process.stdin.isTTY &&
+              !process.env.JEST_WORKER_ID;
+            if (_allowInteractivePlanPrompt) {
               const {
                 approvePlan,
                 startExecution,
@@ -5070,7 +5103,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           } else {
             // Prose plan with no extractable numbered steps — still offer A-key approval
             let _prosePlanApproved = false;
-            if (process.stdout.isTTY && process.stdin.isTTY) {
+            const _allowInteractivePlanPrompt =
+              process.stdout.isTTY &&
+              process.stdin.isTTY &&
+              !process.env.JEST_WORKER_ID;
+            if (_allowInteractivePlanPrompt) {
               const {
                 approvePlan,
                 startExecution,
@@ -6544,6 +6581,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : INVESTIGATION_CAP;
           const _effectiveCap = _rootCauseDetected
             ? 8
+            : _isSynthesisHeavyPrompt
+              ? (_editsMadeThisSession > 0 ? 4 : 6)
             : _isCreationTask
               ? (_editsMadeThisSession > 0 ? 6 : 10)
               : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : _phaseAwareCap);
@@ -6609,6 +6648,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             };
           } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
             _investigationCapFired = true;
+            if (_isSynthesisHeavyPrompt) _synthesisEvidenceReady = true;
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
             );
@@ -6628,6 +6668,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             let _capContent;
             if (_rootCauseDetected) {
               _capContent = `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`;
+            } else if (_isSynthesisHeavyPrompt) {
+              _capContent =
+                "[SYSTEM] You have enough evidence to write the requested summary/document now. Use write_file or edit_file to produce the deliverable, and stop reading more files unless a required section is still unsupported.";
             } else if (_sshBlockedAfterStorm) {
               _capContent =
                 "[SYSTEM] SSH temporarily paused. Summarize your findings and state the likely diagnosis. Do NOT ask the user to run commands — SSH re-enables after your summary.";
@@ -7395,6 +7438,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       for (const toolMsg of toolMessages) {
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
+      }
+
+      const _wroteTextDeliverableThisBatch =
+        _isSynthesisHeavyPrompt &&
+        prepared.some((prep, idx) => {
+          if (!prep || !["write_file", "edit_file", "patch_file"].includes(prep.fnName)) {
+            return false;
+          }
+          const pathArg = prep.args?.path || prep.args?.file_path;
+          return (
+            isTextDeliverablePath(pathArg) &&
+            typeof toolMessages[idx]?.content === "string" &&
+            !toolMessages[idx].content.startsWith("ERROR") &&
+            !toolMessages[idx].content.startsWith("BLOCKED:")
+          );
+        });
+
+      // ─── Synthesis deliverable exit (headless mode) ───────────────────────
+      // For analysis/doc tasks in auto mode, once the investigation cap has
+      // already established that we have enough evidence and the requested text
+      // deliverable has been written to disk, treat that as completion. Waiting
+      // for another LLM turn often leads to avoidable "polish" loops and
+      // timeouts, while the benchmark/user only needs the file on disk.
+      if (
+        getAutoConfirm() &&
+        !opts.skillLoop &&
+        _synthesisEvidenceReady &&
+        _wroteTextDeliverableThisBatch
+      ) {
+        debugLog(
+          `${C.green}  ✓ Synthesis deliverable exit: text deliverable written after evidence threshold reached${C.reset}`,
+        );
+        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+        saveNow(conversationMessages);
+        break outer;
       }
 
       // ─── Background agent results: drain completed jobs after tool execution ──

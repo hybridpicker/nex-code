@@ -2754,6 +2754,65 @@ describe("_inferRelevantTests", () => {
       expect(hasCapMsg).toBe(false);
     });
 
+    it("fires synthesis cap after 6 reads for understanding prompts that write a report", async () => {
+      clearConversation();
+      const reads = [];
+      for (let i = 1; i <= 6; i++) reads.push(readCall(i));
+      mockStream("scanning files", reads);
+      executeTool.mockResolvedValue("file content");
+      mockStream("I will write the report now");
+
+      await processInput(
+        "Analyze this Express.js project and create a brief ARCHITECTURE.md file describing the app structure.",
+      );
+
+      const msgs = getConversationMessages();
+      const hasCapMsg = msgs.some(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("You have enough evidence to write the requested summary/document now"),
+      );
+      expect(hasCapMsg).toBe(true);
+    });
+
+    it("exits immediately after writing a text deliverable once synthesis evidence is sufficient", async () => {
+      clearConversation();
+      getAutoConfirm.mockReturnValue(true);
+
+      const reads = [];
+      for (let i = 1; i <= 6; i++) reads.push(readCall(i));
+      mockStream("scanning files", reads);
+      executeTool.mockResolvedValue("file content");
+
+      mockStream("writing the architecture summary", [
+        {
+          function: {
+            name: "write_file",
+            arguments: {
+              path: "/ARCHITECTURE.md",
+              content: "# Architecture\n\nSummary",
+            },
+          },
+          id: "wf-arch",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("Written: /ARCHITECTURE.md");
+
+      mockStream("SHOULD NOT REACH");
+
+      await processInput(
+        "Analyze this Express.js project and create a brief ARCHITECTURE.md file describing the app structure.",
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) => typeof m.content === "string" && m.content.includes("SHOULD NOT REACH"),
+        ),
+      ).toBe(false);
+    });
+
     it("blocks local repo inspection first for live app bug URLs", async () => {
       mockStream("checking files", [readCall(1)]);
       mockStream("I will inspect the live app first");
@@ -3119,6 +3178,85 @@ describe("_inferRelevantTests", () => {
             m.content.includes("PASS: Verified by reading the modified file."),
         ),
       ).toBe(true);
+    });
+
+    it("exits cleanly in headless implement phase after a substantive summary", async () => {
+      clearConversation();
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Plan: update /fix.js after checking the current implementation.");
+      mockStream("Implemented the fix.", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream(
+        "Updated /fix.js to handle the missing branch correctly and kept the existing API shape intact. The change is in place and ready for the next benchmark step.",
+      );
+
+      await processInput("Fix the bug in fix.js");
+
+      expect(callStream).toHaveBeenCalledTimes(3);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("ready for the next benchmark step"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: VERIFICATION]"),
+        ),
+      ).toBe(false);
+    });
+
+    it("exits after a substantive analysis answer instead of entering implement phase", async () => {
+      clearConversation();
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("I will inspect the project structure first.", [
+        {
+          function: { name: "read_file", arguments: { path: "/package.json" } },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce('{ "name": "demo" }');
+      mockStream(
+        "The project is organized around a CLI entrypoint in dist/, core runtime logic in cli/, and Jest-based regression coverage in tests/. " +
+        "The control flow starts in the command layer, delegates to the agent loop for tool-driven work, and uses provider abstractions to swap model backends cleanly.",
+      );
+
+      await processInput("Understand the project structure", null, {
+        autoConfirm: true,
+        silent: true,
+      });
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("The project is organized around a CLI entrypoint"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
     });
   });
 });

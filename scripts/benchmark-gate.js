@@ -22,6 +22,12 @@ const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
 const { execSync } = require("child_process");
+const {
+  DEFAULT_HARNESS_VERSION,
+  buildBaselineKey,
+  computeBenchmarkScore,
+  getBaselinePath,
+} = require("./benchmark-shared");
 
 const { runTask } = require("./benchmark-reallife");
 
@@ -49,9 +55,7 @@ async function ollamaHasModels() {
     return false;
   }
 }
-const { TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
-
-const BASELINE_PATH = path.join(os.homedir(), ".nex-code", "benchmark-baseline.json");
+const { HARNESS_VERSION, TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
 const CACHE_DIR = path.join(__dirname, "..", ".nex", "gate-cache");
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
 const ROUTING_PATH = path.join(os.homedir(), ".nex-code", "model-routing.json");
@@ -89,28 +93,28 @@ function getCachePath(sha) {
 }
 
 // Short hash of the baseline file — used to detect baseline changes in cache
-function hashBaseline() {
-  if (!fs.existsSync(BASELINE_PATH)) return null;
+function hashBaseline(baselinePath) {
+  if (!baselinePath || !fs.existsSync(baselinePath)) return null;
   try {
-    return crypto.createHash("sha1").update(fs.readFileSync(BASELINE_PATH)).digest("hex").slice(0, 12);
+    return crypto.createHash("sha1").update(fs.readFileSync(baselinePath)).digest("hex").slice(0, 12);
   } catch {
     return null;
   }
 }
 
-function loadBaseline() {
-  if (!fs.existsSync(BASELINE_PATH)) return null;
+function loadBaseline(baselinePath) {
+  if (!baselinePath || !fs.existsSync(baselinePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(baselinePath, "utf8"));
   } catch {
     return null;
   }
 }
 
-function saveBaseline(data) {
-  const dir = path.dirname(BASELINE_PATH);
+function saveBaseline(baselinePath, data) {
+  const dir = path.dirname(baselinePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(BASELINE_PATH, JSON.stringify(data, null, 2));
+  fs.writeFileSync(baselinePath, JSON.stringify(data, null, 2));
 }
 
 function loadCache(sha) {
@@ -160,6 +164,58 @@ function routingSignature(routing) {
     .join(",");
 }
 
+function getBaselineContext({ homeDir, harnessVersion, routingSignature: currentRoutingSig }) {
+  const resolvedHarnessVersion = harnessVersion || DEFAULT_HARNESS_VERSION;
+  const baselineKey = buildBaselineKey({
+    harnessVersion: resolvedHarnessVersion,
+    routingSignature: currentRoutingSig,
+  });
+  const baselinePath = getBaselinePath({
+    homeDir,
+    harnessVersion: resolvedHarnessVersion,
+    routingSignature: currentRoutingSig,
+  });
+  return {
+    baselineKey,
+    baselinePath,
+    harnessVersion: resolvedHarnessVersion,
+  };
+}
+
+function evaluateGateRegression(current, baseline) {
+  let pass = true;
+  const reasons = [];
+
+  const scoreDrop = baseline.finalScore - current.finalScore;
+  if (scoreDrop > SCORE_DROP_THRESHOLD) {
+    pass = false;
+    reasons.push(`Score dropped ${scoreDrop} points (${baseline.finalScore} -> ${current.finalScore}, threshold: ${SCORE_DROP_THRESHOLD})`);
+  }
+
+  const speedRatio = current.avgElapsed / baseline.avgElapsed;
+  if (speedRatio > SPEED_REGRESSION_FACTOR) {
+    pass = false;
+    const pct = Math.round((speedRatio - 1) * 100);
+    reasons.push(`Speed regressed ${pct}% (avg ${(current.avgElapsed / 1000).toFixed(1)}s vs baseline ${(baseline.avgElapsed / 1000).toFixed(1)}s, threshold: ${Math.round((SPEED_REGRESSION_FACTOR - 1) * 100)}%)`);
+  }
+
+  for (const [cat, score] of Object.entries(current.categoryScores)) {
+    const bScore = baseline.categoryScores[cat];
+    if (bScore != null && bScore - score > 10) {
+      pass = false;
+      reasons.push(`Category "${cat}" dropped ${bScore - score} points (${bScore} -> ${score})`);
+    }
+  }
+
+  const baselineTimeoutRate = baseline.metrics?.timeoutRate || 0;
+  if (current.timeoutRate > baselineTimeoutRate + 20) {
+    pass = false;
+    reasons.push(`Timeout rate increased ${current.timeoutRate - baselineTimeoutRate} points (${baselineTimeoutRate}% -> ${current.timeoutRate}%)`);
+  }
+
+  return { pass, reasons };
+}
+
 // Run tasks with a bounded concurrency pool, printing results as they arrive
 async function runParallel(tasks, model, concurrency) {
   if (tasks.length === 0) return [];
@@ -194,45 +250,6 @@ async function runParallel(tasks, model, concurrency) {
   });
 }
 
-function computeScore(results) {
-  // Exclude setup errors — they reflect missing test fixtures, not nex-code quality
-  const valid = results.filter((r) => r.completionReason !== "setup-error");
-
-  const byCategory = {};
-  for (const r of valid) {
-    if (!byCategory[r.category]) byCategory[r.category] = [];
-    byCategory[r.category].push(r);
-  }
-
-  const categoryScores = {};
-  for (const [cat, tasks] of Object.entries(byCategory)) {
-    categoryScores[cat] = Math.round(
-      tasks.reduce((s, t) => s + t.score, 0) / tasks.length
-    );
-  }
-
-  let weightedTotal = 0;
-  let totalWeight = 0;
-  for (const [cat, avg] of Object.entries(categoryScores)) {
-    const weight = CATEGORY_WEIGHTS[cat] || 0;
-    weightedTotal += avg * weight;
-    totalWeight += weight;
-  }
-
-  const finalScore = totalWeight > 0 ? Math.round(weightedTotal / totalWeight) : 0;
-  const avgElapsed = valid.length > 0
-    ? Math.round(valid.reduce((s, r) => s + r.elapsed, 0) / valid.length)
-    : 0;
-
-  return {
-    finalScore,
-    categoryScores,
-    avgElapsed,
-    validCount: valid.length,
-    skippedCount: results.length - valid.length,
-  };
-}
-
 // --- Main -------------------------------------------------------------
 
 async function main() {
@@ -257,12 +274,26 @@ async function main() {
   }
 
   const sha = getCurrentCommit();
-  const currentBaselineHash = hashBaseline();
+
+  // Load model routing and warn if it differs from the baseline snapshot
+  const currentRouting = loadRouting();
+  const currentRoutingSig = routingSignature(currentRouting);
+  const requestedHarnessVersion = HARNESS_VERSION || DEFAULT_HARNESS_VERSION;
+  const {
+    baselineKey,
+    baselinePath,
+    harnessVersion,
+  } = getBaselineContext({
+    homeDir: os.homedir(),
+    harnessVersion: requestedHarnessVersion,
+    routingSignature: currentRoutingSig,
+  });
+  const currentBaselineHash = hashBaseline(baselinePath);
 
   // Check cache for current commit — only valid if baseline hasn't changed since caching
   if (sha && !updateBaseline) {
     const cached = loadCache(sha);
-    if (cached && cached.pass) {
+    if (cached && cached.pass && cached.baselineKey === baselineKey) {
       if (cached.baselineHash && cached.baselineHash !== currentBaselineHash) {
         console.log(`  Gate: cache invalidated (baseline changed since ${sha.slice(0, 8)}), re-running...`);
       } else {
@@ -273,19 +304,7 @@ async function main() {
     }
   }
 
-  // Load model routing and warn if it differs from the baseline snapshot
-  const currentRouting = loadRouting();
-  const currentRoutingSig = routingSignature(currentRouting);
-
-  const baseline = loadBaseline();
-  if (baseline && baseline.routingSignature && currentRoutingSig &&
-      baseline.routingSignature !== currentRoutingSig) {
-    console.log("\n  \x1b[33mWarning: model routing changed since baseline was created.\x1b[0m");
-    console.log(`  Baseline routing: ${baseline.routingSignature}`);
-    console.log(`  Current routing:  ${currentRoutingSig}`);
-    console.log("  Score delta may reflect model change, not code change.");
-    console.log("  After verifying, run: npm run benchmark:gate -- --update-baseline\n");
-  }
+  const baseline = loadBaseline(baselinePath);
 
   // Select tasks
   const taskIds = fullRun ? TASKS.map((t) => t.id) : SMOKE_TASK_IDS;
@@ -303,7 +322,7 @@ async function main() {
   const results = await runParallel(tasks, model, CONCURRENCY);
   const totalElapsed = Date.now() - startTime;
 
-  const current = computeScore(results);
+  const current = computeBenchmarkScore(results, CATEGORY_WEIGHTS);
 
   // Print summary
   console.log("\n  " + "=".repeat(50));
@@ -332,6 +351,7 @@ async function main() {
         pass: true,
         finalScore: current.finalScore,
         avgElapsed: current.avgElapsed,
+        baselineKey,
         baselineHash: currentBaselineHash,
       });
       cleanOldCache();
@@ -340,31 +360,49 @@ async function main() {
 
   // No baseline yet — save one automatically
   if (!baseline) {
-    saveBaseline({
+    saveBaseline(baselinePath, {
       date: new Date().toISOString(),
       sha,
+      baselineKey,
+      harnessVersion,
       finalScore: current.finalScore,
       categoryScores: current.categoryScores,
+      categoryMetrics: current.categoryMetrics,
       avgElapsed: current.avgElapsed,
       routingSignature: currentRoutingSig,
+      metrics: {
+        avgToolCalls: current.avgToolCalls,
+        timeoutRate: current.timeoutRate,
+        errorRate: current.errorRate,
+        avgTokens: current.avgTokens,
+      },
       perTask: results
         .filter((r) => r.completionReason !== "setup-error")
         .map((r) => ({ id: r.id, score: r.score, elapsed: r.elapsed })),
     });
     cachePass();
     console.log("\n  \x1b[33mNo baseline found — saved current run as baseline.\x1b[0m");
-    console.log(`  Baseline: ${BASELINE_PATH}\n`);
+    console.log(`  Baseline: ${baselinePath}\n`);
     process.exit(0);
   }
 
   if (updateBaseline) {
-    saveBaseline({
+    saveBaseline(baselinePath, {
       date: new Date().toISOString(),
       sha,
+      baselineKey,
+      harnessVersion,
       finalScore: current.finalScore,
       categoryScores: current.categoryScores,
+      categoryMetrics: current.categoryMetrics,
       avgElapsed: current.avgElapsed,
       routingSignature: currentRoutingSig,
+      metrics: {
+        avgToolCalls: current.avgToolCalls,
+        timeoutRate: current.timeoutRate,
+        errorRate: current.errorRate,
+        avgTokens: current.avgTokens,
+      },
       perTask: results
         .filter((r) => r.completionReason !== "setup-error")
         .map((r) => ({ id: r.id, score: r.score, elapsed: r.elapsed })),
@@ -384,29 +422,7 @@ async function main() {
   }
 
   // Decision
-  let pass = true;
-  const reasons = [];
-
-  const scoreDrop = baseline.finalScore - current.finalScore;
-  if (scoreDrop > SCORE_DROP_THRESHOLD) {
-    pass = false;
-    reasons.push(`Score dropped ${scoreDrop} points (${baseline.finalScore} -> ${current.finalScore}, threshold: ${SCORE_DROP_THRESHOLD})`);
-  }
-
-  const speedRatio = current.avgElapsed / baseline.avgElapsed;
-  if (speedRatio > SPEED_REGRESSION_FACTOR) {
-    pass = false;
-    const pct = Math.round((speedRatio - 1) * 100);
-    reasons.push(`Speed regressed ${pct}% (avg ${(current.avgElapsed / 1000).toFixed(1)}s vs baseline ${(baseline.avgElapsed / 1000).toFixed(1)}s, threshold: ${Math.round((SPEED_REGRESSION_FACTOR - 1) * 100)}%)`);
-  }
-
-  for (const [cat, score] of Object.entries(current.categoryScores)) {
-    const bScore = baseline.categoryScores[cat];
-    if (bScore != null && bScore - score > 10) {
-      pass = false;
-      reasons.push(`Category "${cat}" dropped ${bScore - score} points (${bScore} -> ${score})`);
-    }
-  }
+  const { pass, reasons } = evaluateGateRegression(current, baseline);
 
   if (pass) {
     console.log("\n  \x1b[32m\u2714 Gate: PASS — no quality or speed regression detected.\x1b[0m\n");
@@ -424,7 +440,17 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("Gate failed:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Gate failed:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  evaluateGateRegression,
+  getBaselineContext,
+  hashBaseline,
+  main,
+  routingSignature,
+};

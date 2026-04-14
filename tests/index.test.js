@@ -2043,6 +2043,14 @@ describe("index.js (REPL commands)", () => {
       expect(output.length).toBeGreaterThan(0);
     });
 
+    it("/harness-optimization runs without throwing", async () => {
+      await expect(
+        handleSlashCommand("/harness-optimization --last 3"),
+      ).resolves.not.toThrow();
+      const output = logSpy2.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Harness Optimization Report");
+    });
+
     // ─── /install-skill ───────────────────────────────────
     it("/install-skill without URL shows usage", async () => {
       await handleSlashCommand("/install-skill");

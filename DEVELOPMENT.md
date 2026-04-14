@@ -48,11 +48,11 @@ The proactive improvement loop benchmarks nex-code against real-world tasks and 
 ```bash
 npm run improve              # full loop: benchmark → fix → validate → commit
 npm run improve -- --dry-run # benchmark once, show failure clusters
-npm run benchmark:realworld  # run 20-task benchmark only
+npm run benchmark:reallife   # run 35-task benchmark only
 ```
 
 **How it works:**
-1. `scripts/benchmark-realworld.js` runs 20 commit-sized tasks (simple edits, multi-file, investigation, creation) in temp directories using nex-code headless mode
+1. `scripts/benchmark-reallife.js` runs 35 commit-sized tasks across 7 categories in temp directories using nex-code headless mode
 2. Results are scored: taskCompletion (30%) + editPrecision (40%) + efficiency (30%)
 3. `scripts/improve.js` clusters failures, picks the top pattern, runs nex-code to implement ONE fix
 4. Rebuilds dist, re-benchmarks, commits if improved, reverts if regressed
