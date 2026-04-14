@@ -2,7 +2,7 @@
 /**
  * scripts/benchmark-reallife.js — Real-Life Task Benchmark
  *
- * 28 tasks across 7 categories sourced from real ~/Coding/ projects.
+ * 35 tasks across 7 categories sourced from real ~/Coding/ projects.
  * Runs nex-code headless, evaluates results with category-weighted scoring.
  *
  * Usage:
@@ -15,8 +15,9 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { spawn } = require("child_process");
+const { computeBenchmarkScore, makeRunId } = require("./benchmark-shared");
 
-const { TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
+const { HARNESS_VERSION, TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
 
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
 
@@ -52,6 +53,8 @@ function runTask(task, model) {
       resolve({
         id: task.id,
         category: task.category,
+        taskVersion: task.taskVersion,
+        determinism: task.determinism,
         score: 0,
         elapsed: 0,
         completionReason: "setup-error",
@@ -126,6 +129,8 @@ function runTask(task, model) {
       resolve({
         id: task.id,
         category: task.category,
+        taskVersion: task.taskVersion,
+        determinism: task.determinism,
         score: 0,
         elapsed: Date.now() - startTime,
         completionReason: "error",
@@ -138,43 +143,75 @@ function runTask(task, model) {
 
 // ─── Evaluation ─────────────────────────────────────────────────
 
-function countToolCalls(stdout, stderr) {
-  let count = 0;
-  const stderrMarkers = (stderr || "").match(/✓\s+\w+\(/g);
-  if (stderrMarkers) count = stderrMarkers.length;
-  if (count === 0) {
-    const toolUseMatches = (stdout || "").match(/"type"\s*:\s*"function"|"tool_use"|"tool_call"/g);
-    if (toolUseMatches) count = toolUseMatches.length;
+function parseJsonEventStream(stdout) {
+  const events = [];
+  for (const line of String(stdout || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") events.push(parsed);
+    } catch {
+      // Ignore non-JSON lines for backward compatibility.
+    }
   }
-  if (count === 0) {
-    const spinnerLines = (stderr || "").match(/^\s*\[.*?\]/gm);
-    if (spinnerLines) count = spinnerLines.length;
-  }
-  return count;
+  return events;
 }
 
-function extractTokens(stdout) {
-  try {
-    // nex-code --json outputs a final summary with token counts
-    const lines = stdout.split("\n").filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const obj = JSON.parse(lines[i]);
-        if (obj.inputTokens || obj.outputTokens || obj.usage) {
-          return {
-            input: obj.inputTokens || obj.usage?.input_tokens || 0,
-            output: obj.outputTokens || obj.usage?.output_tokens || 0,
-          };
-        }
-      } catch { /* not JSON */ }
-    }
-  } catch { /* ignore */ }
-  return { input: 0, output: 0 };
+function extractUsageFromDoneEvent(doneEvent) {
+  if (!doneEvent || typeof doneEvent !== "object") {
+    return { input: 0, output: 0 };
+  }
+  const usage = doneEvent.usage || {};
+  return {
+    input:
+      doneEvent.inputTokens ||
+      usage.input ||
+      usage.input_tokens ||
+      usage.prompt_tokens ||
+      0,
+    output:
+      doneEvent.outputTokens ||
+      usage.output ||
+      usage.output_tokens ||
+      usage.completion_tokens ||
+      0,
+  };
+}
+
+function extractBenchmarkMetrics(stdout, stderr) {
+  const events = parseJsonEventStream(stdout);
+  const toolStartCount = events.filter((event) => event.type === "tool_start").length;
+  const doneEvent = [...events].reverse().find((event) => event.type === "done");
+  const usage = extractUsageFromDoneEvent(doneEvent);
+
+  if (toolStartCount > 0 || usage.input > 0 || usage.output > 0) {
+    return {
+      toolCalls: toolStartCount > 0 ? toolStartCount : Number(doneEvent?.toolCalls) || 0,
+      tokens: usage,
+    };
+  }
+
+  let fallbackToolCalls = 0;
+  const stderrMarkers = (stderr || "").match(/✓\s+\w+\(/g);
+  if (stderrMarkers) fallbackToolCalls = stderrMarkers.length;
+  if (fallbackToolCalls === 0) {
+    const toolUseMatches = (stdout || "").match(/"type"\s*:\s*"function"|"tool_use"|"tool_call"/g);
+    if (toolUseMatches) fallbackToolCalls = toolUseMatches.length;
+  }
+  if (fallbackToolCalls === 0) {
+    const spinnerLines = (stderr || "").match(/^\s*\[.*?\]/gm);
+    if (spinnerLines) fallbackToolCalls = spinnerLines.length;
+  }
+
+  return {
+    toolCalls: fallbackToolCalls,
+    tokens: usage,
+  };
 }
 
 function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
-  const toolCalls = countToolCalls(stdout, stderr);
-  const tokens = extractTokens(stdout);
+  const { toolCalls, tokens } = extractBenchmarkMetrics(stdout, stderr);
 
   // Run task-specific evaluation
   let evalResult = { taskCompletion: 0, editPrecision: 100, quality: 100 };
@@ -217,6 +254,8 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
   return {
     id: task.id,
     category: task.category,
+    taskVersion: task.taskVersion,
+    determinism: task.determinism,
     score,
     elapsed,
     completionReason,
@@ -240,36 +279,16 @@ function printReport(results, elapsed) {
     if (!byCategory[r.category]) byCategory[r.category] = [];
     byCategory[r.category].push(r);
   }
-
-  // Per-category averages
-  const categoryScores = {};
-  for (const [cat, tasks] of Object.entries(byCategory)) {
-    const avg = Math.round(tasks.reduce((s, t) => s + t.score, 0) / tasks.length);
-    categoryScores[cat] = avg;
-  }
-
-  // Weighted total
-  let weightedTotal = 0;
-  let totalWeight = 0;
-  for (const [cat, avg] of Object.entries(categoryScores)) {
-    const weight = CATEGORY_WEIGHTS[cat] || 0;
-    weightedTotal += avg * weight;
-    totalWeight += weight;
-  }
-  const finalScore = totalWeight > 0 ? Math.round(weightedTotal / totalWeight) : 0;
-
-  // Token totals
-  const totalTokens = results.reduce((s, r) => ({
-    input: s.input + (r.tokens?.input || 0),
-    output: s.output + (r.tokens?.output || 0),
-  }), { input: 0, output: 0 });
+  const summary = computeBenchmarkScore(results, CATEGORY_WEIGHTS);
+  const { finalScore, categoryMetrics, categoryScores, totalTokens } = summary;
 
   console.log("\n  ══════════════════════════════════════════════════");
   console.log("  Real-Life Benchmark Results");
   console.log("  ══════════════════════════════════════════════════\n");
 
   // Per-task results
-  for (const [cat, tasks] of Object.entries(byCategory)) {
+  for (const cat of Object.keys(byCategory).sort((a, b) => a.localeCompare(b))) {
+    const tasks = [...byCategory[cat]].sort((a, b) => a.id.localeCompare(b.id));
     const weight = CATEGORY_WEIGHTS[cat] || 0;
     const avg = categoryScores[cat];
     console.log(`  ── ${cat} (weight: ${(weight * 100).toFixed(0)}%, avg: ${avg}/100) ──`);
@@ -291,10 +310,20 @@ function printReport(results, elapsed) {
   console.log(`  Partial (50-79): ${results.filter(r => r.score >= 50 && r.score < 80).length}`);
   console.log(`  Failing (<50): ${results.filter(r => r.score < 50).length}`);
   console.log(`  Total Time: ${(elapsed / 1000).toFixed(1)}s`);
+  console.log(`  Avg Tool Calls: ${summary.avgToolCalls}`);
+  console.log(`  Timeout Rate: ${summary.timeoutRate}%`);
+  console.log(`  Error Rate: ${summary.errorRate}%`);
   console.log(`  Tokens: ${totalTokens.input} in / ${totalTokens.output} out`);
+  console.log("  Category Metrics:");
+  for (const cat of Object.keys(categoryMetrics).sort((a, b) => a.localeCompare(b))) {
+    const metrics = categoryMetrics[cat];
+    console.log(
+      `    ${cat}: pass ${metrics.passRate}% | timeout ${metrics.timeoutRate}% | avg tools ${metrics.avgToolCalls}`,
+    );
+  }
   console.log();
 
-  return { finalScore, categoryScores, totalTokens };
+  return summary;
 }
 
 // ─── Main ───────────────────────────────────────────────────────
@@ -304,6 +333,8 @@ async function main() {
   const dryRun = args.includes("--dry-run");
   const modelIdx = args.indexOf("--model");
   const model = modelIdx !== -1 ? args[modelIdx + 1] : null;
+  const runIdIdx = args.indexOf("--run-id");
+  const runId = process.env.NEX_BENCHMARK_RUN_ID || (runIdIdx !== -1 ? args[runIdIdx + 1] : null) || makeRunId();
   const tasksIdx = args.indexOf("--tasks");
   const taskFilter = tasksIdx !== -1 ? args[tasksIdx + 1].split(",") : null;
   const catIdx = args.indexOf("--category");
@@ -312,6 +343,7 @@ async function main() {
   let tasks = TASKS;
   if (taskFilter) tasks = tasks.filter((t) => taskFilter.includes(t.id));
   if (catFilter) tasks = tasks.filter((t) => t.category === catFilter);
+  tasks = [...tasks].sort((a, b) => a.ordinal - b.ordinal);
 
   console.log(`\n  Real-Life Benchmark: ${tasks.length} tasks${model ? ` (model: ${model})` : ""}`);
   console.log(`  Categories: ${[...new Set(tasks.map(t => t.category))].join(", ")}\n`);
@@ -343,18 +375,32 @@ async function main() {
   }
 
   const totalElapsed = Date.now() - startTime;
-  const { finalScore, categoryScores, totalTokens } = printReport(results, totalElapsed);
+  const summary = printReport(results, totalElapsed);
+  const { finalScore, categoryScores, categoryMetrics, totalTokens } = summary;
 
   // Save results
   if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const outPath = path.join(RESULTS_DIR, `reallife-${timestamp}.json`);
+  const safeRunId = runId.replace(/[^a-zA-Z0-9-]/g, "-");
+  const outPath = path.join(RESULTS_DIR, `reallife-${timestamp}-${safeRunId}.json`);
 
   const resultData = {
     date: new Date().toISOString(),
+    runId,
+    harnessVersion: HARNESS_VERSION,
     model,
     finalScore,
     categoryScores,
+    categoryMetrics,
+    metrics: {
+      avgElapsed: summary.avgElapsed,
+      avgToolCalls: summary.avgToolCalls,
+      timeoutRate: summary.timeoutRate,
+      errorRate: summary.errorRate,
+      statusCounts: summary.statusCounts,
+      avgTokens: summary.avgTokens,
+      totalToolCalls: summary.totalToolCalls,
+    },
     totalTokens,
     totalElapsed,
     taskCount: results.length,
@@ -368,11 +414,15 @@ async function main() {
   const historyPath = path.join(RESULTS_DIR, "reallife-history.jsonl");
   const historyLine = JSON.stringify({
     date: resultData.date,
+    runId,
+    harnessVersion: HARNESS_VERSION,
     model,
     finalScore,
     categoryScores,
+    categoryMetrics,
     taskCount: results.length,
     passing: resultData.passing,
+    metrics: resultData.metrics,
     totalTokens,
   }) + "\n";
   fs.appendFileSync(historyPath, historyLine);
@@ -389,4 +439,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runTask, evaluateTask, TASKS };
+module.exports = {
+  main,
+  runTask,
+  evaluateTask,
+  TASKS,
+  parseJsonEventStream,
+  extractUsageFromDoneEvent,
+  extractBenchmarkMetrics,
+};

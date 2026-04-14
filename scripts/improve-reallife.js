@@ -14,6 +14,11 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync, spawnSync } = require("child_process");
+const {
+  SAFETY_BOUNDS,
+  checkSafetyBounds: checkSharedSafetyBounds,
+  runBenchmarkScript,
+} = require("./benchmark-shared");
 
 const ROOT = path.join(__dirname, "..");
 const RESULTS_DIR = path.join(__dirname, "benchmark-results");
@@ -27,14 +32,6 @@ const MAX_PASSES_DEFAULT = 12;
 const MAX_PLATEAUS = 3;
 const SCORE_TARGET = 90;
 const DEFAULT_TOKEN_BUDGET = 500000;
-
-// Guard constants must stay within these ranges after any fix.
-const SAFETY_BOUNDS = {
-  SSH_STORM_WARN: [6, 12],
-  SSH_STORM_ABORT: [8, 18],
-  INVESTIGATION_CAP: [10, 18],
-  POST_WIPE_BUDGET: [10, 17],
-};
 
 // ─── State Management ───────────────────────────────────────────
 
@@ -65,38 +62,31 @@ function logExperiment(experiment) {
 
 function runBenchmark(model) {
   console.log("    Running real-life benchmark...");
-  const args = ["scripts/benchmark-reallife.js"];
-  if (model) args.push("--model", model);
-
-  const result = spawnSync("node", args, {
-    cwd: ROOT,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 1800000, // 30 min max (28 tasks)
-    env: { ...process.env },
+  const { data, stderr } = runBenchmarkScript({
+    root: ROOT,
+    model,
+    timeoutMs: 1800000,
   });
 
-  const stdout = (result.stdout || "").toString();
-  const stderr = (result.stderr || "").toString();
-
-  // Find the latest results file
-  if (!fs.existsSync(RESULTS_DIR)) return null;
-  const files = fs.readdirSync(RESULTS_DIR)
-    .filter(f => f.startsWith("reallife-") && f.endsWith(".json") && !f.includes("state") && !f.includes("history"))
-    .sort()
-    .reverse();
-
-  if (files.length === 0) {
+  if (!data) {
     console.error("    Benchmark did not produce results file");
     if (stderr) console.error("    stderr:", stderr.slice(-300));
     return null;
   }
 
-  try {
-    return JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, files[0]), "utf-8"));
-  } catch {
-    console.error("    Failed to parse results file");
-    return null;
-  }
+  return data;
+}
+
+function summarizeBenchmarkResults(results) {
+  if (typeof results?.finalScore !== "number") return { ok: false, reason: "missing-score" };
+  return { ok: true, score: results.finalScore };
+}
+
+function classifyScoreDelta(previousScore, nextScore) {
+  if (typeof nextScore !== "number") return "missing-score";
+  if (nextScore > previousScore) return "improved";
+  if (nextScore === previousScore) return "no-change";
+  return "regressed";
 }
 
 // ─── Failure Clustering ─────────────────────────────────────────
@@ -188,29 +178,7 @@ Read the relevant file(s) first, then make the minimal change needed.`;
 // ─── Safety & Validation ────────────────────────────────────────
 
 function checkSafetyBounds() {
-  const agentPath = path.join(ROOT, "cli", "agent.js");
-  const content = fs.readFileSync(agentPath, "utf-8");
-
-  let profileContent = "";
-  try { profileContent = fs.readFileSync(path.join(ROOT, "cli", "model-profiles.js"), "utf-8"); } catch { /* ignore */ }
-  const combined = content + "\n" + profileContent;
-
-  for (const [name, [lo, hi]] of Object.entries(SAFETY_BOUNDS)) {
-    const patterns = [
-      new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*(\\d+)`, "g"),
-      new RegExp(`${name}\\s*:\\s*(\\d+)`, "g"),
-    ];
-    for (const re of patterns) {
-      let match;
-      while ((match = re.exec(combined)) !== null) {
-        const val = parseInt(match[1], 10);
-        if (val < lo || val > hi) {
-          return { ok: false, violation: `${name} = ${val} (bounds: [${lo}, ${hi}])` };
-        }
-      }
-    }
-  }
-  return { ok: true };
+  return checkSharedSafetyBounds(ROOT);
 }
 
 function build() {
@@ -379,11 +347,16 @@ async function main() {
     console.log("  --dry-run: running benchmark once without fixes\n");
     const results = runBenchmark(model);
     if (results) {
-      console.log(`\n  Final score: ${results.finalScore}/100`);
+      const summary = summarizeBenchmarkResults(results);
+      if (!summary.ok) {
+        console.log("\n  Benchmark results did not include a score.\n");
+        return;
+      }
+      console.log(`\n  Final score: ${summary.score}/100`);
       const cluster = clusterFailures(results);
       if (cluster) {
         console.log(`  Top failure pattern: ${cluster.pattern} (${cluster.tasks.length} tasks)`);
-        console.log(`\n  Fix prompt would be:\n${buildFixPrompt(cluster, results.finalScore)}\n`);
+        console.log(`\n  Fix prompt would be:\n${buildFixPrompt(cluster, summary.score)}\n`);
       } else {
         console.log("  No failure clusters — all tasks passing!\n");
       }
@@ -422,7 +395,12 @@ async function main() {
       console.error("    Benchmark failed, stopping");
       break;
     }
-    const score = results.finalScore;
+    const summary = summarizeBenchmarkResults(results);
+    if (!summary.ok) {
+      console.error("    Benchmark results did not include a score, stopping");
+      break;
+    }
+    const score = summary.score;
     console.log(`    Score: ${score}/100`);
 
     // Track tokens
@@ -524,13 +502,25 @@ async function main() {
       continue;
     }
 
-    const newScore = newResults.finalScore;
+    const newSummary = summarizeBenchmarkResults(newResults);
+    if (!newSummary.ok) {
+      revert();
+      experiment.reason = "missing-score";
+      state.plateaus++;
+      logExperiment(experiment);
+      state.experiments = state.experiments || [];
+      state.experiments.push(experiment);
+      continue;
+    }
+
+    const newScore = newSummary.score;
     state.tokensSpent += (newResults.totalTokens?.input || 0) + (newResults.totalTokens?.output || 0);
     experiment.newScore = newScore;
 
     console.log(`    New score: ${newScore}/100 (was ${score})`);
 
-    if (newScore > score) {
+    const scoreDelta = classifyScoreDelta(score, newScore);
+    if (scoreDelta === "improved") {
       commit(cluster.pattern, score, newScore);
       experiment.kept = true;
       experiment.reason = "improved";
@@ -538,7 +528,7 @@ async function main() {
     } else {
       console.log("    No improvement, reverting");
       revert();
-      experiment.reason = newScore === score ? "no-change" : "regressed";
+      experiment.reason = scoreDelta;
       state.plateaus++;
     }
 
@@ -564,7 +554,18 @@ async function main() {
   console.log("  ══════════════════════════════════════════════════\n");
 }
 
-main().catch((err) => {
-  console.error("Improvement loop failed:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Improvement loop failed:", err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  buildFixPrompt,
+  checkSafetyBounds,
+  classifyScoreDelta,
+  clusterFailures,
+  runBenchmark,
+  summarizeBenchmarkResults,
+};
