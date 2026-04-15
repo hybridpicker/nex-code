@@ -13,7 +13,8 @@ const { execSync } = require("child_process");
 
 const HOME = require("os").homedir();
 const CODING = path.join(HOME, "Coding");
-const HARNESS_VERSION = "2026-04-13.1";
+const REPO_FIXTURES_DIR = path.join(__dirname, "..", "benchmark", "fixtures");
+const HARNESS_VERSION = "2026-04-15.1";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ const HARNESS_VERSION = "2026-04-13.1";
  * Paths are relative to the sourceProject.
  */
 function copyFiles(sourceProject, files, tmpDir) {
-  const src = path.resolve(CODING, sourceProject);
+  const src = resolveFixtureProjectRoot(sourceProject);
   for (const rel of files) {
     const srcFile = path.resolve(src, rel);
     const dest = path.resolve(tmpDir, rel);
@@ -39,7 +40,8 @@ function copyFiles(sourceProject, files, tmpDir) {
  * Copy an entire directory tree (excluding node_modules, .git, dist).
  */
 function copyTree(sourceProject, subDir, tmpDir) {
-  const src = path.join(CODING, sourceProject, subDir || "");
+  const projectRoot = resolveFixtureProjectRoot(sourceProject);
+  const src = path.join(projectRoot, subDir || "");
   const dest = path.join(tmpDir, subDir || "");
   if (!fs.existsSync(src)) return;
   const SKIP = new Set(["node_modules", ".git", "dist", "coverage", ".next", "__pycache__"]);
@@ -61,6 +63,33 @@ function copyTree(sourceProject, subDir, tmpDir) {
   }
   fs.mkdirSync(dest, { recursive: true });
   walk(src, "");
+}
+
+function getFixtureRootCandidates() {
+  const roots = [];
+  if (process.env.NEX_BENCHMARK_FIXTURES_DIR) {
+    roots.push(path.resolve(process.env.NEX_BENCHMARK_FIXTURES_DIR));
+  }
+  roots.push(REPO_FIXTURES_DIR);
+  roots.push(CODING);
+  return [...new Set(roots)];
+}
+
+function resolveFixtureProjectRoot(sourceProject) {
+  if (!sourceProject) {
+    throw new Error("sourceProject is required for external benchmark fixtures.");
+  }
+
+  const attempted = [];
+  for (const root of getFixtureRootCandidates()) {
+    const candidate = path.resolve(root, sourceProject);
+    attempted.push(candidate);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  throw new Error(
+    `Missing benchmark fixture "${sourceProject}". Checked: ${attempted.join(", ")}`,
+  );
 }
 
 /**
@@ -135,7 +164,7 @@ const RAW_TASKS = [
     id: "bugfix-express-session-fallback",
     category: "bugfix",
     description: "The Express app in app.js uses a hardcoded fallback session secret ('fallback-secret'). This is a security issue. Fix it to throw an error if SESSION_SECRET env var is not set, instead of using a fallback.",
-    sourceProject: "arbeitszeiterfassung",
+    sourceProject: null,
     setupFn(tmpDir) {
       // Create a simplified version of the real app
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -1411,7 +1440,7 @@ module.exports = app;
       "Parse the action-log.jsonl file and create a cost analysis tool (cost-report.js) that " +
       "calculates per-provider costs using these rates: Gemini $0.075/$0.3 per M tokens, " +
       "DeepSeek $0.14/$0.28, Qwen $0.02/$0.06. Output JSON with breakdown by provider and date.",
-    sourceProject: "jarvis-agent",
+    sourceProject: null,
     setupFn(tmpDir) {
       // Create a sample JSONL file
       const lines = [
@@ -1456,21 +1485,25 @@ module.exports = app;
       "schema changes per migration, and outputs a JSON report with field additions/removals.",
     sourceProject: "chord-library",
     setupFn(tmpDir) {
-      // Copy migration files
-      const migrationsDir = path.join(CODING, "chord-library", "backend", "chords", "migrations");
-      const destMigrations = path.join(tmpDir, "chords", "migrations");
-      fs.mkdirSync(destMigrations, { recursive: true });
-      if (fs.existsSync(migrationsDir)) {
-        const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith(".py"));
-        for (const f of files) {
-          fs.copyFileSync(path.join(migrationsDir, f), path.join(destMigrations, f));
-        }
+      copyTree("chord-library", "backend/chords/migrations", tmpDir);
+      copyFiles("chord-library", ["backend/chords/models.py"], tmpDir);
+      const backendRoot = path.join(tmpDir, "backend");
+      const sourceChordsDir = path.join(backendRoot, "chords");
+      const nestedMigrations = path.join(sourceChordsDir, "migrations");
+      const targetChordsDir = path.join(tmpDir, "chords");
+      const targetMigrations = path.join(targetChordsDir, "migrations");
+      fs.mkdirSync(targetChordsDir, { recursive: true });
+      if (fs.existsSync(path.join(sourceChordsDir, "models.py"))) {
+        fs.copyFileSync(
+          path.join(sourceChordsDir, "models.py"),
+          path.join(targetChordsDir, "models.py"),
+        );
       }
-      // Copy models.py for reference
-      const modelsPath = path.join(CODING, "chord-library", "backend", "chords", "models.py");
-      if (fs.existsSync(modelsPath)) {
-        fs.mkdirSync(path.join(tmpDir, "chords"), { recursive: true });
-        fs.copyFileSync(modelsPath, path.join(tmpDir, "chords", "models.py"));
+      if (fs.existsSync(nestedMigrations)) {
+        fs.mkdirSync(targetMigrations, { recursive: true });
+        for (const file of fs.readdirSync(nestedMigrations)) {
+          fs.copyFileSync(path.join(nestedMigrations, file), path.join(targetMigrations, file));
+        }
       }
       initGit(tmpDir);
     },
@@ -1701,7 +1734,7 @@ const TASKS = RAW_TASKS.map((task, index) => ({
   harnessVersion: task.harnessVersion || HARNESS_VERSION,
   taskVersion: task.taskVersion || 1,
   determinism: task.determinism || "high",
-  fixtureStability: task.fixtureStability || "isolated",
+  fixtureStability: task.fixtureStability || (task.sourceProject ? "snapshot-preferred" : "isolated"),
   ordinal: index + 1,
 }));
 
@@ -1709,6 +1742,8 @@ module.exports = {
   HARNESS_VERSION,
   TASKS,
   CATEGORY_WEIGHTS,
+  getFixtureRootCandidates,
+  resolveFixtureProjectRoot,
   copyFiles,
   copyTree,
   initGit,

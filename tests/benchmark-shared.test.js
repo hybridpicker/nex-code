@@ -53,9 +53,40 @@ describe("benchmark-shared", () => {
       },
       timeoutRate: 0,
       errorRate: 33,
+      invalidHarnessRate: 0,
+      harnessFailureRate: 0,
       validCount: 2,
       skippedCount: 1,
+      invalidCount: 0,
     });
+  });
+
+  it("excludes invalid harness runs from score aggregation", () => {
+    const summary = computeBenchmarkScore(
+      [
+        { category: "bugfix", score: 90, elapsed: 1000, completionReason: "success" },
+        {
+          category: "feature",
+          score: 100,
+          elapsed: 1200,
+          completionReason: "harness-failure",
+          telemetry: { valid: false },
+        },
+      ],
+      { bugfix: 0.5, feature: 0.5 },
+    );
+
+    expect(summary.finalScore).toBe(90);
+    expect(summary.categoryScores).toEqual({ bugfix: 90 });
+    expect(summary.statusCounts).toEqual({
+      success: 1,
+      "harness-failure": 1,
+    });
+    expect(summary.validCount).toBe(1);
+    expect(summary.skippedCount).toBe(1);
+    expect(summary.invalidCount).toBe(1);
+    expect(summary.invalidHarnessRate).toBe(50);
+    expect(summary.harnessFailureRate).toBe(50);
   });
 
   it("reads both modern and legacy benchmark score fields", () => {

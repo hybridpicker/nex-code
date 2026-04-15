@@ -281,35 +281,30 @@ describe("index-handlers.test.js — additional handler coverage", () => {
   // ─── /benchmark with actual data ──────────────────────────
   describe("/benchmark", () => {
     let tmpDir;
+    let originalHistoryDir;
 
     beforeEach(() => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-bench-"));
+      originalHistoryDir = process.env.NEX_BENCHMARK_HISTORY_DIR;
+      process.env.NEX_BENCHMARK_HISTORY_DIR = path.join(tmpDir, "results");
     });
 
     afterEach(() => {
+      if (originalHistoryDir === undefined) {
+        delete process.env.NEX_BENCHMARK_HISTORY_DIR;
+      } else {
+        process.env.NEX_BENCHMARK_HISTORY_DIR = originalHistoryDir;
+      }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     it("shows benchmark data when results exist", async () => {
-      // Create a fake results dir at the expected path
-      const resultsDir = path.join(
-        os.homedir(),
-        "Coding",
-        "nex-code-benchmarks",
-        "results",
-      );
-      const needsCleanup = !fs.existsSync(resultsDir);
-
-      if (needsCleanup) {
-        fs.mkdirSync(resultsDir, { recursive: true });
-      }
+      const resultsDir = process.env.NEX_BENCHMARK_HISTORY_DIR;
+      fs.mkdirSync(resultsDir, { recursive: true });
 
       // Write test result files
       const today = new Date().toISOString().slice(0, 10);
       const resultFile = path.join(resultsDir, `${today}.json`);
-      const hadFile = fs.existsSync(resultFile);
-      let origContent;
-      if (hadFile) origContent = fs.readFileSync(resultFile, "utf-8");
 
       fs.writeFileSync(
         resultFile,
@@ -327,58 +322,17 @@ describe("index-handlers.test.js — additional handler coverage", () => {
       const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
       expect(output).toContain("Nightly Results");
       expect(output).toContain("qwen3-coder");
-
-      // Cleanup
-      if (hadFile) {
-        fs.writeFileSync(resultFile, origContent);
-      } else {
-        fs.unlinkSync(resultFile);
-      }
-      if (needsCleanup) {
-        // Only remove if we created it and it's now empty
-        try {
-          const remaining = fs.readdirSync(resultsDir);
-          if (remaining.length === 0) fs.rmdirSync(resultsDir);
-        } catch {
-          /* ignore */
-        }
-      }
     });
 
     it("shows trend arrow for multiple days", async () => {
-      const resultsDir = path.join(
-        os.homedir(),
-        "Coding",
-        "nex-code-benchmarks",
-        "results",
-      );
-      const needsCleanup = !fs.existsSync(resultsDir);
-      if (needsCleanup) fs.mkdirSync(resultsDir, { recursive: true });
+      const resultsDir = process.env.NEX_BENCHMARK_HISTORY_DIR;
+      fs.mkdirSync(resultsDir, { recursive: true });
 
-      // Clean up any existing result files to ensure a clean state
-      try {
-        const existingFiles = fs
-          .readdirSync(resultsDir)
-          .filter((f) => f.endsWith(".json"));
-        for (const file of existingFiles) {
-          fs.unlinkSync(path.join(resultsDir, file));
-        }
-      } catch {
-        /* ignore */
-      }
-
-      const files = [];
       for (let i = 0; i < 3; i++) {
         const date = new Date();
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().slice(0, 10);
         const filePath = path.join(resultsDir, `${dateStr}.json`);
-        const existed = fs.existsSync(filePath);
-        files.push({
-          path: filePath,
-          existed,
-          orig: existed ? fs.readFileSync(filePath, "utf-8") : null,
-        });
         fs.writeFileSync(
           filePath,
           JSON.stringify({ model: "test", score: 80 + i * 5 }),
@@ -388,27 +342,6 @@ describe("index-handlers.test.js — additional handler coverage", () => {
       await handleSlashCommand("/benchmark --history");
       const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
       expect(output).toContain("Trend");
-
-      // Cleanup
-      for (const f of files) {
-        if (f.existed) {
-          fs.writeFileSync(f.path, f.orig);
-        } else {
-          try {
-            fs.unlinkSync(f.path);
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-      if (needsCleanup) {
-        try {
-          const remaining = fs.readdirSync(resultsDir);
-          if (remaining.length === 0) fs.rmdirSync(resultsDir);
-        } catch {
-          /* ignore */
-        }
-      }
     });
   });
 

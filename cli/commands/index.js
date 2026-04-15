@@ -2638,12 +2638,14 @@ For each issue, include:
       // --history: show OpenClaw nightly results instead of running live benchmark
       if (rest.includes("--history")) {
         const os = require("os");
-        const resultsDir = path.join(
-          os.homedir(),
-          "Coding",
-          "nex-code-benchmarks",
-          "results",
-        );
+        const resultsDir =
+          process.env.NEX_BENCHMARK_HISTORY_DIR ||
+          path.join(
+            os.homedir(),
+            "Coding",
+            "nex-code-benchmarks",
+            "results",
+          );
         if (!fs.existsSync(resultsDir)) {
           console.log(
             `${C.yellow}No nightly results at ${resultsDir}${C.reset}`,
