@@ -119,7 +119,7 @@ Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, a
 <!-- nex-benchmark-end -->
 
 <!-- nex-routing-start -->
-<!-- Updated: 2026-04-14 -->
+<!-- Updated: 2026-04-15 -->
 
 **Model routing by task type** (auto-updated by `/benchmark --all`):
 

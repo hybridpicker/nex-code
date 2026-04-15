@@ -2813,6 +2813,32 @@ describe("_inferRelevantTests", () => {
       ).toBe(false);
     });
 
+    it("blocks renewed read-only exploration after synthesis evidence is sufficient", async () => {
+      clearConversation();
+
+      const reads = [];
+      for (let i = 1; i <= 6; i++) reads.push(readCall(i));
+      mockStream("scanning files", reads);
+      executeTool.mockResolvedValue("file content");
+
+      mockStream("trying to inspect one more file", [readCall(7)]);
+      mockStream("writing the report now");
+
+      await processInput(
+        "Analyze this Express.js project and create a brief ARCHITECTURE.md file describing the app structure.",
+      );
+
+      expect(executeTool).toHaveBeenCalledTimes(6);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("BLOCKED: You already have enough evidence to produce the requested summary/document"),
+        ),
+      ).toBe(true);
+    });
+
     it("blocks local repo inspection first for live app bug URLs", async () => {
       mockStream("checking files", [readCall(1)]);
       mockStream("I will inspect the live app first");
@@ -3129,8 +3155,9 @@ describe("_inferRelevantTests", () => {
       expect(msgs.length).toBeGreaterThan(0);
     });
 
-    it("does not complete verify phase without a verification tool call and PASS", async () => {
+    it("does not complete verify phase without any verification tool call", async () => {
       clearConversation();
+      callStream.mockReset();
       process.env.NEX_PHASE_ROUTING = "1";
       callStream.mockImplementation(async () => ({
         content:
@@ -3147,14 +3174,6 @@ describe("_inferRelevantTests", () => {
       ]);
       executeTool.mockResolvedValueOnce("OK");
       mockStream("Looks good now.");
-      mockStream("PASS: Verified by reading the modified file.", [
-        {
-          function: { name: "read_file", arguments: { path: "/fix.js" } },
-          id: "read-1",
-        },
-      ]);
-      executeTool.mockResolvedValueOnce("updated file");
-      mockStream("PASS: Verified by reading the modified file.");
       mockStream(
         "Verification finished. I re-read the modified file, confirmed the change, and the task is complete.",
       );
@@ -3173,11 +3192,58 @@ describe("_inferRelevantTests", () => {
       expect(
         msgs.some(
           (m) =>
-            m.role === "assistant" &&
+            m.role === "user" &&
             typeof m.content === "string" &&
-            m.content.includes("PASS: Verified by reading the modified file."),
+            m.content.includes("[SYSTEM] Verification is incomplete: run at least one verification tool"),
         ),
       ).toBe(true);
+    });
+
+    it("exits cleanly in headless verify phase after verification evidence and a substantive summary", async () => {
+      clearConversation();
+      callStream.mockReset();
+      callStream.mockImplementation(async () => ({ content: "FALLBACK", tool_calls: [] }));
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Plan: update /fix.js");
+      mockStream("Implemented the fix", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Looks good now.");
+      mockStream("PASS: Verified by reading the modified file.", [
+        {
+          function: { name: "read_file", arguments: { path: "/fix.js" } },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("updated file");
+      mockStream(
+        "I re-read /fix.js after the edit and confirmed the guard is present in the right branch. The implementation and verification are complete, so this task is ready to stop here.",
+      );
+      await processInput("Fix the bug in fix.js");
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("ready to stop here"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification is incomplete"),
+        ),
+      ).toBe(false);
     });
 
     it("exits cleanly in headless implement phase after a substantive summary", async () => {
