@@ -1517,6 +1517,15 @@ function _normalizePromptPathMatch(value) {
     .trim();
 }
 
+function _extractDirectTaskPaths(prompt) {
+  const text = String(prompt || "");
+  const matches = text.match(
+    /(?:^|\s)((?:\.{1,2}\/)?[\w./-]+\.(?:js|ts|tsx|jsx|py|md|json|yml|yaml|sh|css|html))\b/gi,
+  );
+  if (!matches) return [];
+  return [...new Set(matches.map((m) => _normalizePromptPathMatch(m)))];
+}
+
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
 function _logCompression(msg, color) {
@@ -3428,6 +3437,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     typeof _firstUserText === "string"
       ? detectRuntimeDebugTarget(_firstUserText)
       : null;
+  const _directTaskPaths = _extractDirectTaskPaths(_firstUserText);
   // Only trigger for actual server debugging, not for feature development tasks.
   const _isServerDebugging =
     /set_reminder|google.?auth|cron:|api\.log|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
@@ -3499,6 +3509,19 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ? `${C.cyan}  ⚡ Phase routing enabled — skipping plan phase for direct file task, starting in implement with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`
           : `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
       );
+      if (_skipPlanForDirectCreation && _directTaskPaths.length > 0) {
+        const _targetList = _directTaskPaths.slice(0, 3).join(", ");
+        const _directTaskGuardrail = {
+          role: "user",
+          content:
+            `[SYSTEM] This is a direct file task targeting: ${_targetList}. ` +
+            `Modify only the explicitly requested file(s) unless the user asks for more. ` +
+            `Do NOT create extra helper or test files for verification. ` +
+            `Prefer inline verification with bash or by reading the edited file.`,
+        };
+        conversationMessages.push(_directTaskGuardrail);
+        apiMessages.push(_directTaskGuardrail);
+      }
     }
   }
 
