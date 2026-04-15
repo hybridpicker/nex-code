@@ -184,11 +184,24 @@ function extractBenchmarkMetrics(stdout, stderr) {
   const toolStartCount = events.filter((event) => event.type === "tool_start").length;
   const doneEvent = [...events].reverse().find((event) => event.type === "done");
   const usage = extractUsageFromDoneEvent(doneEvent);
+  const diagnostics = {
+    jsonEventCount: events.length,
+    toolStartCount,
+    hasDoneEvent: Boolean(doneEvent),
+    stdoutBytes: Buffer.byteLength(String(stdout || ""), "utf8"),
+    stderrBytes: Buffer.byteLength(String(stderr || ""), "utf8"),
+  };
 
   if (toolStartCount > 0 || usage.input > 0 || usage.output > 0) {
     return {
       toolCalls: toolStartCount > 0 ? toolStartCount : Number(doneEvent?.toolCalls) || 0,
       tokens: usage,
+      telemetry: {
+        valid: Boolean(doneEvent),
+        source: "json",
+        reason: doneEvent ? null : "missing-done-event",
+      },
+      harnessDiagnostics: diagnostics,
     };
   }
 
@@ -207,11 +220,24 @@ function extractBenchmarkMetrics(stdout, stderr) {
   return {
     toolCalls: fallbackToolCalls,
     tokens: usage,
+    telemetry: {
+      valid: false,
+      source: fallbackToolCalls > 0 ? "legacy-fallback" : "missing",
+      reason: events.length > 0 ? "missing-done-event" : "missing-json-events",
+    },
+    harnessDiagnostics: {
+      ...diagnostics,
+      usedLegacyFallback: fallbackToolCalls > 0,
+    },
   };
 }
 
 function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
-  const { toolCalls, tokens } = extractBenchmarkMetrics(stdout, stderr);
+  const { toolCalls, tokens, telemetry, harnessDiagnostics } = extractBenchmarkMetrics(stdout, stderr);
+  const measuredCompletionReason =
+    completionReason === "success" && telemetry?.valid === false
+      ? "harness-failure"
+      : completionReason;
 
   // Run task-specific evaluation
   let evalResult = { taskCompletion: 0, editPrecision: 100, quality: 100 };
@@ -247,7 +273,7 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
 
   // Penalty: proportional reduction for timeout (not hard cap)
   // Tasks that completed the work but timed out still get credit for completion
-  if (completionReason === "timeout") {
+  if (measuredCompletionReason === "timeout") {
     score = Math.round(score * 0.7);
   }
 
@@ -258,9 +284,16 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
     determinism: task.determinism,
     score,
     elapsed,
-    completionReason,
+    completionReason: measuredCompletionReason,
     toolCalls,
     tokens,
+    telemetry,
+    harnessDiagnostics: {
+      ...harnessDiagnostics,
+      exitCompletionReason: completionReason,
+      measuredCompletionReason,
+      elapsed,
+    },
     details: {
       taskCompletion: evalResult.taskCompletion || 0,
       editPrecision: evalResult.editPrecision || 0,
@@ -313,6 +346,7 @@ function printReport(results, elapsed) {
   console.log(`  Avg Tool Calls: ${summary.avgToolCalls}`);
   console.log(`  Timeout Rate: ${summary.timeoutRate}%`);
   console.log(`  Error Rate: ${summary.errorRate}%`);
+  console.log(`  Invalid Harness Rate: ${summary.invalidHarnessRate}%`);
   console.log(`  Tokens: ${totalTokens.input} in / ${totalTokens.output} out`);
   console.log("  Category Metrics:");
   for (const cat of Object.keys(categoryMetrics).sort((a, b) => a.localeCompare(b))) {
@@ -397,6 +431,7 @@ async function main() {
       avgToolCalls: summary.avgToolCalls,
       timeoutRate: summary.timeoutRate,
       errorRate: summary.errorRate,
+      invalidHarnessRate: summary.invalidHarnessRate,
       statusCounts: summary.statusCounts,
       avgTokens: summary.avgTokens,
       totalToolCalls: summary.totalToolCalls,

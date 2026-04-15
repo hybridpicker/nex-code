@@ -25,6 +25,18 @@ describe("benchmark reallife parser", () => {
     expect(extractBenchmarkMetrics(stdout, "")).toEqual({
       toolCalls: 1,
       tokens: { input: 123, output: 45 },
+      telemetry: {
+        valid: true,
+        source: "json",
+        reason: null,
+      },
+      harnessDiagnostics: {
+        jsonEventCount: 4,
+        toolStartCount: 1,
+        hasDoneEvent: true,
+        stdoutBytes: Buffer.byteLength(stdout, "utf8"),
+        stderrBytes: 0,
+      },
     });
   });
 
@@ -42,6 +54,43 @@ describe("benchmark reallife parser", () => {
     expect(extractBenchmarkMetrics(stdout, "")).toEqual({
       toolCalls: 1,
       tokens: { input: 0, output: 0 },
+      telemetry: {
+        valid: false,
+        source: "legacy-fallback",
+        reason: "missing-done-event",
+      },
+      harnessDiagnostics: {
+        jsonEventCount: 1,
+        toolStartCount: 0,
+        hasDoneEvent: false,
+        stdoutBytes: Buffer.byteLength(stdout, "utf8"),
+        stderrBytes: 0,
+        usedLegacyFallback: true,
+      },
+    });
+  });
+
+  test("marks partial JSON streams without a done event as invalid telemetry", () => {
+    const stdout = [
+      JSON.stringify({ type: "tool_start", tool: "read_file", args: { path: "package.json" } }),
+      JSON.stringify({ type: "tool_end", tool: "read_file", ok: true }),
+    ].join("\n");
+
+    expect(extractBenchmarkMetrics(stdout, "")).toEqual({
+      toolCalls: 1,
+      tokens: { input: 0, output: 0 },
+      telemetry: {
+        valid: false,
+        source: "json",
+        reason: "missing-done-event",
+      },
+      harnessDiagnostics: {
+        jsonEventCount: 2,
+        toolStartCount: 1,
+        hasDoneEvent: false,
+        stdoutBytes: Buffer.byteLength(stdout, "utf8"),
+        stderrBytes: 0,
+      },
     });
   });
 });

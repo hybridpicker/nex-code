@@ -59,9 +59,12 @@ const { HARNESS_VERSION, TASKS, CATEGORY_WEIGHTS } = require("./benchmark-realli
 const CACHE_DIR = path.join(__dirname, "..", ".nex", "gate-cache");
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
 const ROUTING_PATH = path.join(os.homedir(), ".nex-code", "model-routing.json");
+const GATE_HISTORY_FILENAME_PREFIX = "benchmark-gate-history";
 
 // Parallelism: run this many tasks simultaneously
 const CONCURRENCY = 3;
+const GATE_HISTORY_LIMIT = 20;
+const GATE_BASELINE_WINDOW = 5;
 
 // Smoke-test tasks: one fast, reliable task per category
 const SMOKE_TASK_IDS = [
@@ -115,6 +118,37 @@ function saveBaseline(baselinePath, data) {
   const dir = path.dirname(baselinePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(baselinePath, JSON.stringify(data, null, 2));
+}
+
+function getGateHistoryPath({ homeDir, baselineKey }) {
+  return path.join(homeDir, ".nex-code", `${GATE_HISTORY_FILENAME_PREFIX}-${baselineKey}.jsonl`);
+}
+
+function loadGateHistory(historyPath) {
+  if (!historyPath || !fs.existsSync(historyPath)) return [];
+  return fs.readFileSync(historyPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function appendGateHistory(historyPath, entry) {
+  const dir = path.dirname(historyPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const history = loadGateHistory(historyPath);
+  history.push(entry);
+  const trimmed = history.slice(-GATE_HISTORY_LIMIT);
+  fs.writeFileSync(
+    historyPath,
+    trimmed.map((item) => JSON.stringify(item)).join("\n") + "\n",
+  );
 }
 
 function loadCache(sha) {
@@ -182,9 +216,109 @@ function getBaselineContext({ homeDir, harnessVersion, routingSignature: current
   };
 }
 
-function evaluateGateRegression(current, baseline) {
+function median(values) {
+  const valid = values
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (valid.length === 0) return null;
+  const middle = Math.floor(valid.length / 2);
+  if (valid.length % 2 === 1) return valid[middle];
+  return (valid[middle - 1] + valid[middle]) / 2;
+}
+
+function summarizeGateBaseline(baseline, history = [], windowSize = GATE_BASELINE_WINDOW) {
+  const seedEntry = baseline ? {
+    finalScore: baseline.finalScore,
+    avgElapsed: baseline.avgElapsed,
+    timeoutRate: baseline.metrics?.timeoutRate || 0,
+    categoryScores: baseline.categoryScores || {},
+  } : null;
+  const recent = history.slice(-Math.max(0, windowSize - (seedEntry ? 1 : 0)));
+  const entries = [...(seedEntry ? [seedEntry] : []), ...recent].filter(Boolean);
+
+  const allCategories = new Set();
+  for (const entry of entries) {
+    for (const category of Object.keys(entry.categoryScores || {})) {
+      allCategories.add(category);
+    }
+  }
+
+  const categoryScores = {};
+  const categoryRanges = {};
+  for (const category of allCategories) {
+    const values = entries
+      .map((entry) => entry.categoryScores?.[category])
+      .filter((value) => Number.isFinite(value));
+    if (values.length === 0) continue;
+    categoryScores[category] = Math.round(median(values));
+    categoryRanges[category] = {
+      min: Math.min(...values),
+      max: Math.max(...values),
+    };
+  }
+
+  const scoreValues = entries.map((entry) => entry.finalScore).filter(Number.isFinite);
+  const avgElapsedValues = entries.map((entry) => entry.avgElapsed).filter(Number.isFinite);
+  const timeoutValues = entries.map((entry) => entry.timeoutRate).filter(Number.isFinite);
+
+  return {
+    finalScore: Math.round(median(scoreValues) || 0),
+    avgElapsed: Math.round(median(avgElapsedValues) || 0),
+    metrics: {
+      timeoutRate: Math.round(median(timeoutValues) || 0),
+    },
+    categoryScores,
+    sampleSize: entries.length,
+    scoreRange: {
+      min: scoreValues.length > 0 ? Math.min(...scoreValues) : null,
+      max: scoreValues.length > 0 ? Math.max(...scoreValues) : null,
+    },
+    avgElapsedRange: {
+      min: avgElapsedValues.length > 0 ? Math.min(...avgElapsedValues) : null,
+      max: avgElapsedValues.length > 0 ? Math.max(...avgElapsedValues) : null,
+    },
+    timeoutRange: {
+      min: timeoutValues.length > 0 ? Math.min(...timeoutValues) : null,
+      max: timeoutValues.length > 0 ? Math.max(...timeoutValues) : null,
+    },
+    categoryRanges,
+    windowSize: entries.length,
+  };
+}
+
+function classifyRegressionSeverity(current, baselineSummary, reasons = []) {
+  if (reasons.length === 0) return { severe: false, repeated: false };
+  const scoreFloor = Math.max(
+    0,
+    (baselineSummary.scoreRange?.min ?? baselineSummary.finalScore) - SCORE_DROP_THRESHOLD,
+  );
+  const speedCeiling = Math.max(
+    baselineSummary.avgElapsed * SPEED_REGRESSION_FACTOR,
+    (baselineSummary.avgElapsedRange?.max || baselineSummary.avgElapsed) * 1.15,
+  );
+  const timeoutCeiling = Math.max(
+    (baselineSummary.timeoutRange?.max || baselineSummary.metrics?.timeoutRate || 0) + 10,
+    (baselineSummary.metrics?.timeoutRate || 0) + 20,
+  );
+
+  return {
+    severe:
+      current.finalScore < scoreFloor ||
+      current.avgElapsed > speedCeiling ||
+      current.timeoutRate > timeoutCeiling,
+  };
+}
+
+function collectRegressionReasons(current, baseline) {
   let pass = true;
   const reasons = [];
+
+  if ((current.invalidCount || 0) > 0 || (current.invalidHarnessRate || 0) > 0) {
+    pass = false;
+    reasons.push(
+      `Harness telemetry failed for ${current.invalidCount || 0} task(s) (${current.invalidHarnessRate || 0}% invalid)`,
+    );
+  }
 
   const scoreDrop = baseline.finalScore - current.finalScore;
   if (scoreDrop > SCORE_DROP_THRESHOLD) {
@@ -214,6 +348,39 @@ function evaluateGateRegression(current, baseline) {
   }
 
   return { pass, reasons };
+}
+
+function evaluateGateRegression(current, baseline, options = {}) {
+  const previous = options.previous || null;
+  const { pass, reasons } = collectRegressionReasons(current, baseline);
+
+  if (pass) {
+    return { pass: true, reasons: [], severity: "none" };
+  }
+
+  const { severe } = classifyRegressionSeverity(current, baseline, reasons);
+  if (severe || (current.invalidCount || 0) > 0 || (current.invalidHarnessRate || 0) > 0) {
+    return { pass: false, reasons, severity: "severe" };
+  }
+
+  if (previous) {
+    const previousRegression = collectRegressionReasons(previous, baseline);
+    if (!previousRegression.pass) {
+      return {
+        pass: false,
+        reasons,
+        severity: "repeat",
+      };
+    }
+  }
+
+  return {
+    pass: true,
+    reasons: [],
+    severity: "transient",
+    warning: `Single-run regression detected against a ${baseline.sampleSize || 1}-run median baseline; re-run before blocking.`,
+    warningReasons: reasons,
+  };
 }
 
 // Run tasks with a bounded concurrency pool, printing results as they arrive
@@ -289,6 +456,10 @@ async function main() {
     routingSignature: currentRoutingSig,
   });
   const currentBaselineHash = hashBaseline(baselinePath);
+  const historyPath = getGateHistoryPath({
+    homeDir: os.homedir(),
+    baselineKey,
+  });
 
   // Check cache for current commit — only valid if baseline hasn't changed since caching
   if (sha && !updateBaseline) {
@@ -305,6 +476,11 @@ async function main() {
   }
 
   const baseline = loadBaseline(baselinePath);
+  const gateHistory = loadGateHistory(historyPath);
+  const baselineSummary = baseline
+    ? summarizeGateBaseline(baseline, gateHistory)
+    : null;
+  const previousComparableRun = gateHistory[gateHistory.length - 1] || null;
 
   // Select tasks
   const taskIds = fullRun ? TASKS.map((t) => t.id) : SMOKE_TASK_IDS;
@@ -326,17 +502,18 @@ async function main() {
 
   // Print summary
   console.log("\n  " + "=".repeat(50));
-  console.log(`  Score:    ${current.finalScore}/100${baseline ? ` (baseline: ${baseline.finalScore}/100)` : ""}`);
-  console.log(`  Avg Time: ${(current.avgElapsed / 1000).toFixed(1)}s${baseline ? ` (baseline: ${(baseline.avgElapsed / 1000).toFixed(1)}s)` : ""}`);
+  console.log(`  Score:    ${current.finalScore}/100${baselineSummary ? ` (baseline median: ${baselineSummary.finalScore}/100)` : ""}`);
+  console.log(`  Avg Time: ${(current.avgElapsed / 1000).toFixed(1)}s${baselineSummary ? ` (baseline median: ${(baselineSummary.avgElapsed / 1000).toFixed(1)}s)` : ""}`);
   console.log(`  Total:    ${(totalElapsed / 1000).toFixed(1)}s`);
   console.log(`  Passing:  ${results.filter((r) => r.score >= 80).length}/${results.length}` +
     (current.skippedCount > 0 ? ` \x1b[33m(${current.skippedCount} skipped — setup error)\x1b[0m` : ""));
 
   // Per-category comparison
-  if (baseline) {
+  if (baselineSummary) {
+    console.log(`  Baseline Window: ${baselineSummary.sampleSize} run${baselineSummary.sampleSize === 1 ? "" : "s"}`);
     console.log("\n  Per-category:");
     for (const [cat, score] of Object.entries(current.categoryScores)) {
-      const bScore = baseline.categoryScores[cat];
+      const bScore = baselineSummary.categoryScores[cat];
       const delta = bScore != null ? score - bScore : null;
       const indicator = delta == null ? "" : delta >= 0 ? ` \x1b[32m(+${delta})\x1b[0m` : ` \x1b[31m(${delta})\x1b[0m`;
       console.log(`    ${cat.padEnd(15)} ${score}/100${indicator}`);
@@ -356,6 +533,20 @@ async function main() {
       });
       cleanOldCache();
     }
+  }
+
+  function recordGateRun(outcome) {
+    appendGateHistory(historyPath, {
+      date: new Date().toISOString(),
+      sha,
+      baselineKey,
+      harnessVersion,
+      outcome,
+      finalScore: current.finalScore,
+      avgElapsed: current.avgElapsed,
+      timeoutRate: current.timeoutRate,
+      categoryScores: current.categoryScores,
+    });
   }
 
   // No baseline yet — save one automatically
@@ -380,6 +571,7 @@ async function main() {
         .filter((r) => r.completionReason !== "setup-error")
         .map((r) => ({ id: r.id, score: r.score, elapsed: r.elapsed })),
     });
+    recordGateRun("baseline");
     cachePass();
     console.log("\n  \x1b[33mNo baseline found — saved current run as baseline.\x1b[0m");
     console.log(`  Baseline: ${baselinePath}\n`);
@@ -407,6 +599,7 @@ async function main() {
         .filter((r) => r.completionReason !== "setup-error")
         .map((r) => ({ id: r.id, score: r.score, elapsed: r.elapsed })),
     });
+    recordGateRun("baseline-update");
     cachePass();
     console.log("\n  \x1b[32mBaseline updated.\x1b[0m\n");
     process.exit(0);
@@ -422,13 +615,26 @@ async function main() {
   }
 
   // Decision
-  const { pass, reasons } = evaluateGateRegression(current, baseline);
+  const decision = evaluateGateRegression(current, baselineSummary, {
+    previous: previousComparableRun,
+  });
+  const { pass, reasons } = decision;
 
   if (pass) {
-    console.log("\n  \x1b[32m\u2714 Gate: PASS — no quality or speed regression detected.\x1b[0m\n");
+    recordGateRun(decision.severity === "transient" ? "transient-warning" : "pass");
+    if (decision.warning) {
+      console.log(`\n  \x1b[33m⚠ Gate: WARN — ${decision.warning}\x1b[0m`);
+      for (const reason of decision.warningReasons || []) {
+        console.log(`    \x1b[33m• ${reason}\x1b[0m`);
+      }
+      console.log();
+    } else {
+      console.log("\n  \x1b[32m\u2714 Gate: PASS — no quality or speed regression detected.\x1b[0m\n");
+    }
     cachePass();
     process.exit(0);
   } else {
+    recordGateRun(decision.severity === "repeat" ? "repeat-fail" : "fail");
     console.log("\n  \x1b[31m\u2718 Gate: FAIL — regression detected:\x1b[0m");
     for (const r of reasons) {
       console.log(`    \x1b[31m\u2022 ${r}\x1b[0m`);
@@ -450,7 +656,10 @@ if (require.main === module) {
 module.exports = {
   evaluateGateRegression,
   getBaselineContext,
+  getGateHistoryPath,
   hashBaseline,
+  loadGateHistory,
   main,
   routingSignature,
+  summarizeGateBaseline,
 };

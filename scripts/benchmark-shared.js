@@ -139,7 +139,12 @@ function getBenchmarkScore(results) {
 }
 
 function computeBenchmarkScore(results, categoryWeights) {
-  const valid = results.filter((entry) => entry.completionReason !== "setup-error");
+  const valid = results.filter((entry) =>
+    entry.completionReason !== "setup-error" &&
+    entry.completionReason !== "harness-failure" &&
+    entry.completionReason !== "invalid-harness" &&
+    entry.telemetry?.valid !== false,
+  );
 
   const byCategory = {};
   for (const result of valid) {
@@ -183,7 +188,14 @@ function computeBenchmarkScore(results, categoryWeights) {
     return counts;
   }, {});
   const timeoutCount = statusCounts.timeout || 0;
-  const errorCount = (statusCounts.error || 0) + (statusCounts["setup-error"] || 0);
+  const errorCount =
+    (statusCounts.error || 0) +
+    (statusCounts["setup-error"] || 0) +
+    (statusCounts["harness-failure"] || 0) +
+    (statusCounts["invalid-harness"] || 0);
+  const invalidCount =
+    (statusCounts["harness-failure"] || 0) +
+    (statusCounts["invalid-harness"] || 0);
 
   return {
     finalScore,
@@ -202,8 +214,11 @@ function computeBenchmarkScore(results, categoryWeights) {
     statusCounts,
     timeoutRate: valid.length > 0 ? Math.round((timeoutCount / valid.length) * 100) : 0,
     errorRate: results.length > 0 ? Math.round((errorCount / results.length) * 100) : 0,
+    invalidHarnessRate: results.length > 0 ? Math.round((invalidCount / results.length) * 100) : 0,
+    harnessFailureRate: results.length > 0 ? Math.round((invalidCount / results.length) * 100) : 0,
     validCount: valid.length,
     skippedCount: results.length - valid.length,
+    invalidCount,
   };
 }
 
