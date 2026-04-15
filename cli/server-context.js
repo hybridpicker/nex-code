@@ -7,6 +7,69 @@
 
 const { loadServerProfiles, resolveProfile, sshExec } = require("./ssh");
 
+const IMAGE_URL_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|svg|ico|pdf|mp4|webm|mov)(?:[?#].*)?$/i;
+const RUNTIME_DEBUG_HINT_RE =
+  /\b(bug|issue|problem|broken|failing|fails|error|wrong|regression|debug|investigate|why|slow|fix|delete|deleted|deleting|removed|reappears?|returns?|comes?\s+back|webui|production|prod|server|fehler|kaputt|lösche|loesch|gelösch|geloesch|zurück|zurueck|taucht?\s+wieder\s+auf)\b/i;
+const URL_RE = /https?:\/\/[^\s)]+/gi;
+
+function _extractHttpUrls(text) {
+  if (typeof text !== "string") return [];
+  const seen = new Set();
+  const urls = [];
+  for (const match of text.match(URL_RE) || []) {
+    const cleaned = match.replace(/[.,;!?]+$/g, "");
+    if (!seen.has(cleaned)) {
+      seen.add(cleaned);
+      urls.push(cleaned);
+    }
+  }
+  return urls;
+}
+
+function _matchUrlToProfile(url, profiles) {
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+
+  const segments = hostname.split(".");
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (segments.includes(name.toLowerCase())) {
+      return { matchedName: name, matchedProfile: profile, hostname };
+    }
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (String(profile.host || "").toLowerCase() === hostname) {
+      return { matchedName: name, matchedProfile: profile, hostname };
+    }
+  }
+  return { matchedName: null, matchedProfile: null, hostname };
+}
+
+function detectRuntimeDebugTarget(userInput, profiles = loadServerProfiles()) {
+  if (typeof userInput !== "string") return null;
+  if (!RUNTIME_DEBUG_HINT_RE.test(userInput)) return null;
+
+  const urls = _extractHttpUrls(userInput).filter((url) => !IMAGE_URL_EXT_RE.test(url));
+  if (urls.length === 0) return null;
+
+  for (const url of urls) {
+    const match = _matchUrlToProfile(url, profiles);
+    if (!match) continue;
+    return {
+      url,
+      hostname: match.hostname,
+      matchedName: match.matchedName,
+      matchedProfile: match.matchedProfile,
+      shouldPreferBrowser: true,
+      shouldPreferSsh: Boolean(match.matchedName && match.matchedProfile),
+    };
+  }
+  return null;
+}
+
 // OS-specific knowledge injected into the system prompt
 const OS_HINTS = {
   almalinux9: [
@@ -186,6 +249,7 @@ ${serverList}
 - ✅ Use \`ssh_exec\` or \`service_logs\` to investigate on the remote server
 - ✅ \`ssh_exec\` example: \`tail -50 /path/to/logs/api.log\`
 - ✅ \`service_logs\` or \`bash\` with \`ssh\` to check \`systemctl status <service>\`${logHint}
+- ✅ When the user includes a public app URL and describes broken behavior, treat it as a runtime issue first: inspect the live app with \`browser_open\` or \`ssh_exec\` before reading local source files
 - ❌ Do NOT \`read_file\` on paths like \`logs/\` — these files do not exist locally
 - ❌ Do NOT \`list_directory\` on server paths — the local project is the source, not the running instance
 
@@ -234,41 +298,10 @@ function _getServerRules(profiles) {
  * @returns {Promise<string|null>}
  */
 async function probeUrlServer(userInput) {
-  if (typeof userInput !== "string") return null;
-
-  // Extract all https?:// URLs from the prompt
-  const urlMatches = [...userInput.matchAll(/https?:\/\/([a-zA-Z0-9._-]+)/g)];
-  if (urlMatches.length === 0) return null;
-
   const profiles = loadServerProfiles();
-  if (Object.keys(profiles).length === 0) return null;
-
-  let matchedProfile = null;
-  let matchedName = null;
-
-  for (const [, hostname] of urlMatches) {
-    const segments = hostname.toLowerCase().split(".");
-    // Priority 1: hostname segment == profile name
-    for (const [name, profile] of Object.entries(profiles)) {
-      if (segments.includes(name.toLowerCase())) {
-        matchedProfile = profile;
-        matchedName = name;
-        break;
-      }
-    }
-    if (matchedProfile) break;
-    // Priority 2: profile.host == hostname
-    for (const [name, profile] of Object.entries(profiles)) {
-      if (profile.host === hostname) {
-        matchedProfile = profile;
-        matchedName = name;
-        break;
-      }
-    }
-    if (matchedProfile) break;
-  }
-
-  if (!matchedProfile || !matchedName) return null;
+  const target = detectRuntimeDebugTarget(userInput, profiles);
+  if (!target?.matchedProfile || !target?.matchedName) return null;
+  const { matchedProfile, matchedName } = target;
 
   // Fast server probe — 4s timeout, failures are silently swallowed
   const probeCmd = [
@@ -305,5 +338,6 @@ module.exports = {
   hasServerOS,
   getProfileNames,
   probeUrlServer,
+  detectRuntimeDebugTarget,
   OS_HINTS,
 };

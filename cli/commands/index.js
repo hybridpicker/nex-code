@@ -138,6 +138,10 @@ const SLASH_COMMANDS = [
     cmd: "/trend [n]",
     desc: "Show score history trend (default: last 10 sessions)",
   },
+  {
+    cmd: "/harness-optimization [--last N] [--prompt] [--verify]",
+    desc: "Analyze recent real-life benchmark runs and optionally verify a priority slice",
+  },
   { cmd: "/init", desc: "Interactive setup wizard (.nex/)" },
   { cmd: "/setup", desc: "Configure provider and API keys" },
   {
@@ -3086,6 +3090,54 @@ For each issue, include:
       const { showScoreTrend } = require("../benchmark");
       const n = parseInt(rest[0], 10) || 10;
       showScoreTrend(n);
+      return true;
+    }
+
+    case "/harness-optimization": {
+      const {
+        buildOptimizationReport,
+        readHistory,
+        readLatestResult,
+        readLatestProblematicResult,
+        verifyHarnessOptimization,
+      } = require("../harness-optimization");
+      const lastIndex = rest.indexOf("--last");
+      const lastN =
+        lastIndex !== -1 ? Math.max(1, parseInt(rest[lastIndex + 1], 10) || 5) : 5;
+      const includePrompt = rest.includes("--prompt");
+      const history = readHistory(CWD);
+      const latestRun = readLatestResult(CWD);
+      const report = buildOptimizationReport({
+        latestRun,
+        history,
+        lastN,
+        includePrompt,
+      });
+      console.log(report);
+      if (rest.includes("--verify")) {
+        const verifySourceRun = readLatestProblematicResult(CWD);
+        console.log(`${C.dim}Running focused tests and a priority benchmark slice...${C.reset}\n`);
+        if (verifySourceRun?.runId && verifySourceRun.runId !== latestRun?.runId) {
+          console.log(
+            `${C.dim}Using latest problematic run for verification: ${verifySourceRun.runId}${C.reset}`,
+          );
+        }
+        let lastProgress = -1;
+        const verification = await verifyHarnessOptimization({
+          rootDir: CWD,
+          latestRun: verifySourceRun,
+          onProgress(update) {
+            const percent = Math.max(0, Math.min(100, Math.round(update.percent || 0)));
+            if (percent === lastProgress && update.phase !== "done") return;
+            lastProgress = percent;
+            console.log(
+              `${C.dim}${String(percent).padStart(3)}%${C.reset} ${update.message}`,
+            );
+          },
+        });
+        console.log(verification.summary);
+      }
+      console.log("");
       return true;
     }
 

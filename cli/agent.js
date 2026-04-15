@@ -65,6 +65,11 @@ function isTooShort(text) {
   return false;
 }
 
+function isTextDeliverablePath(filePath) {
+  if (!filePath || typeof filePath !== "string") return false;
+  return /\.(?:md|mdx|txt|rst|adoc)$/i.test(filePath);
+}
+
 /**
  * Score the current session and print the result, then persist score into
  * the autosave metadata.  Only runs when there were actual tool calls.
@@ -123,7 +128,11 @@ function _scoreAndPrint(messages) {
   }
 }
 const { getMemoryContext } = require("./memory");
-const { getDeploymentContextBlock, probeUrlServer } = require("./server-context");
+const {
+  getDeploymentContextBlock,
+  probeUrlServer,
+  detectRuntimeDebugTarget,
+} = require("./server-context");
 const { getFewShotForInput } = require("./few-shot");
 const {
   checkPermission,
@@ -704,6 +713,24 @@ function getCachedFilteredTools(allTools) {
  */
 function clearToolFilterCache() {
   toolFilterCache.clear();
+}
+
+function hasConversationToolCall(messages, toolNames) {
+  const wanted = new Set(toolNames);
+  return (messages || []).some((message) => {
+    if (message.role !== "assistant") return false;
+    if (Array.isArray(message.tool_calls)) {
+      return message.tool_calls.some((tc) =>
+        wanted.has(tc?.function?.name || tc?.name),
+      );
+    }
+    if (Array.isArray(message.content)) {
+      return message.content.some(
+        (block) => block?.type === "tool_use" && wanted.has(block?.name),
+      );
+    }
+    return false;
+  });
 }
 
 /**
@@ -3093,6 +3120,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _resolvedInput +=
       "\n\n[Note for assistant: the user appears frustrated — acknowledge their concern briefly and empathetically before proceeding]";
   }
+  const runtimeDebugTarget =
+    typeof userInput === "string" ? detectRuntimeDebugTarget(userInput) : null;
   let userContent = buildUserContent(_resolvedInput);
   // buildUserContent may return a Promise when remote URLs or clipboard are involved
   if (userContent && typeof userContent.then === "function") {
@@ -3280,6 +3309,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     ];
   }
 
+  if (runtimeDebugTarget && isFirstMessage) {
+    const runtimeGuidance = runtimeDebugTarget.shouldPreferSsh
+      ? `[Runtime URL detected]\nThe user linked a live app URL (${runtimeDebugTarget.url}) and described broken behavior. Treat this as a runtime/deployed-instance issue first. Reproduce it with browser_open or browser_screenshot on the URL before reading local files. Because this URL matches server profile "${runtimeDebugTarget.matchedName}", prefer ssh_exec/service_logs on that server for investigation before local repo inspection.`
+      : `[Runtime URL detected]\nThe user linked a live app URL (${runtimeDebugTarget.url}) and described broken behavior. Treat this as a runtime issue first. Reproduce it with browser_open or browser_screenshot before reading local files. Only inspect the local repo after you have confirmed the live behavior.`;
+    apiMessages = [
+      apiMessages[0],
+      { role: "user", content: runtimeGuidance },
+      { role: "assistant", content: "Understood — I will inspect the live app/runtime first." },
+      ...apiMessages.slice(1),
+    ];
+  }
+
   // Inject few-shot example: 1 synthetic user/assistant exchange showing correct approach.
   // Category is detected from the user's prompt (sysadmin, coding, frontend, data).
   // Private examples from ~/.nex-code/examples/ take priority over bundled generics.
@@ -3343,11 +3384,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     const m = conversationMessages.find((r) => r.role === "user");
     return typeof m?.content === "string" ? m.content : "";
   })();
+  const _runtimeDebugTarget =
+    typeof _firstUserText === "string"
+      ? detectRuntimeDebugTarget(_firstUserText)
+      : null;
   // Only trigger for actual server debugging, not for feature development tasks.
   const _isServerDebugging =
     /set_reminder|google.?auth|cron:|api\.log|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
       _firstUserText,
-    );
+    ) || Boolean(_runtimeDebugTarget?.shouldPreferSsh);
+  const _isRuntimeUrlDebugging = Boolean(_runtimeDebugTarget);
   let _serverLocalWarnFired = 0; // count firings — reset after each super-nuclear context reset
 
   // ─── Pre-loop root-cause scan: briefing / initial context ────────────────
@@ -3485,10 +3531,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const _rawUserText = typeof userInput === "string" ? userInput.trim() : "";
   const _isAnalysisOnlyPrompt =
     _rawUserText.length > 0 &&
-    /^\s*(analyze|analyse|analysiere|explain|erkläre|describe|beschreib|review|audit|summari[sz]e|zusammenfass|list|liste|what is|what does|wie funktioniert|wie geht|how does|show me|zeig|show the|show all|tell me about|erzähl)/i.test(
+    /^\s*(analyze|analyse|analysiere|explain|erkläre|describe|beschreib|review|audit|summari[sz]e|zusammenfass|list|liste|understand|document|documentation|docs|what is|what does|wie funktioniert|wie geht|how does|show me|zeig|show the|show all|tell me about|erzähl)/i.test(
       _rawUserText,
     ) &&
     !/\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|edit|write|delete|remove|install|setup|deploy|run)\b/i.test(
+      _rawUserText,
+    );
+  const _isSynthesisHeavyPrompt =
+    _rawUserText.length > 0 &&
+    /\b(analyze|analyse|explain|describe|review|audit|summari[sz]e|understand|document|scan|count|inventory|map|list|identify)\b/i.test(
+      _rawUserText,
+    ) &&
+    /\b(create|write|generate|produce|output)\b/i.test(_rawUserText) &&
+    /\b([A-Z0-9_-]+\.md|markdown|report|summary|overview|architecture|audit|table|documentation|docs|inventory|catalog)\b/i.test(
+      _rawUserText,
+    ) &&
+    !/\b(fix|bug|crash|error|implement|add(?!\s+(?:to|into)\b)|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|delete|remove|install|setup|deploy|run)\b/i.test(
       _rawUserText,
     );
 
@@ -3505,6 +3563,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const MAX_AUTO_EXTENSIONS = 3; // hard cap: max 3×20 = 60 extra turns (50+60=110 total)
   let progressMadeThisPass = false; // progress gate for auto-extend
   let _skillLoopNudges = 0; // cap continuation nudges to prevent infinite nudge loops
+  let _synthesisEvidenceReady = false; // enough evidence gathered to finalize a text deliverable
   // eslint-disable-next-line no-constant-condition
   outer: while (true) {
     progressMadeThisPass = false;
@@ -4601,12 +4660,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       // ─── Analysis-only hard exit ─────────────────────────────────────────
       // For pure analysis prompts, after the first substantive text response
-      // (>1500 chars) with no file modifications anywhere, end the loop. Some
-      // big models (qwen3-vl) ignore the system-prompt "STOP" instruction and
-      // keep iterating with redundant re-reads. This is a hard backstop.
+      // with no file modifications anywhere, end the loop. Some models ignore
+      // the system-prompt "STOP" instruction and keep iterating with redundant
+      // re-reads. This is a hard backstop for read-only deliverables.
       if (
         _isAnalysisOnlyPrompt &&
-        (content || "").trim().length > 1500 &&
+        !isTooShort(content || streamedText || "") &&
         filesModified.size === 0 &&
         _bashModifiedFiles === 0
       ) {
@@ -4767,12 +4826,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         // ─── Early exit in headless mode ──────────────────────────────────────
         // When running in auto/headless mode (benchmarks, improvement loop), once
-        // the model has edited files and produces a text-only response, the task
-        // is done. Skip further verification/polish iterations to save time.
-        // Skip early exit when phase routing is active — let implement→verify handle it.
-        if (getAutoConfirm() && !opts.skillLoop && !_phaseEnabled && (filesModified.size > 0 || _bashModifiedFiles > 0) && hasText && totalSteps >= 2) {
+        // the model has edited files and produces a substantive text-only response,
+        // the task is usually done. Forcing a separate verify pass after a clean
+        // implementation summary often burns the remaining budget and converts a
+        // useful run into a timeout. Keep verify-phase behavior unchanged, but let
+        // implementation-phase sessions finish cleanly once they have already
+        // produced useful work and a real wrap-up.
+        const _canHeadlessEarlyExit =
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+          hasText &&
+          !isTooShort(content || streamedText || "") &&
+          totalSteps >= 1 &&
+          (!_phaseEnabled || _currentPhase === "implement");
+        if (_canHeadlessEarlyExit) {
           debugLog(
-            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), text response received${C.reset}`,
+            `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), substantive text response received${C.reset}`,
           );
           _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
           saveNow(conversationMessages);
@@ -4854,6 +4924,30 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const _hasPass = /\bPASS\b/i.test(_assistantText.slice(0, 500));
             const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
             const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
+            const _verifyEvidenceSeen =
+              _verifyToolCalls > 0 ||
+              apiMessages.some(
+                (m) =>
+                  m.role === "assistant" &&
+                  typeof m.content === "string" &&
+                  /\bPASS\b/i.test(m.content.slice(0, 500)),
+              );
+
+            if (
+              getAutoConfirm() &&
+              !opts.skillLoop &&
+              _verifyEvidenceSeen &&
+              !_hasFailed &&
+              !isTooShort(_assistantText)
+            ) {
+              debugLog(
+                `${C.green}  ✓ Verification phase complete (headless substantive summary)${C.reset}`,
+              );
+              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
 
             if (_hasFailed && _verifyLoopBack < 3) {
               _verifyLoopBack++;
@@ -4957,7 +5051,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // the main REPL readline is paused while processInput() runs, so
             // direct stdin access is safe here and avoids stream conflicts.
             let _autoApproved = false;
-            if (process.stdout.isTTY && process.stdin.isTTY) {
+            const _allowInteractivePlanPrompt =
+              process.stdout.isTTY &&
+              process.stdin.isTTY &&
+              !process.env.JEST_WORKER_ID;
+            if (_allowInteractivePlanPrompt) {
               const {
                 approvePlan,
                 startExecution,
@@ -5029,7 +5127,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           } else {
             // Prose plan with no extractable numbered steps — still offer A-key approval
             let _prosePlanApproved = false;
-            if (process.stdout.isTTY && process.stdin.isTTY) {
+            const _allowInteractivePlanPrompt =
+              process.stdout.isTTY &&
+              process.stdin.isTTY &&
+              !process.env.JEST_WORKER_ID;
+            if (_allowInteractivePlanPrompt) {
               const {
                 approvePlan,
                 startExecution,
@@ -5309,6 +5411,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const prepared = await Promise.all(
         tool_calls.map((tc) => prepareToolCall(tc)),
       );
+
+      // ─── Synthesis finalization guard (pre-execution) ─────────────────────
+      // Once a docs/understanding task has already crossed the evidence threshold,
+      // any new read-only call is renewed exploration. Block it before execution
+      // so the model has to switch into deliverable generation immediately.
+      if (_synthesisEvidenceReady) {
+        const SYNTHESIS_READ_ONLY_TOOLS = new Set([
+          "read_file",
+          "grep",
+          "search_files",
+          "glob",
+          "list_directory",
+          "ssh_exec",
+          "find_files",
+        ]);
+        for (const prep of prepared) {
+          if (!prep.canExecute || !SYNTHESIS_READ_ONLY_TOOLS.has(prep.fnName)) continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: "BLOCKED: You already have enough evidence to produce the requested summary/document. Write the deliverable now and stop reading more files.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
 
       // ─── Pre-batch context pressure check ───────────────────────────────────
       // Warn the LLM before it executes tool calls that could overflow context.
@@ -5877,10 +6004,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // locally. Fires once per session. Must be pre-execution (before executeBatch)
       // — post-execution warnings can't prevent the tool from running.
       // SKIP when SSH is blocked after storm — local tools are the only fallback.
-      if (_isServerDebugging && _serverLocalWarnFired < 3 && !_sshBlockedAfterStorm) {
+      const _hasRuntimeInspection = hasConversationToolCall(
+        conversationMessages,
+        ["browser_open", "browser_screenshot", "ssh_exec", "service_logs", "remote_agent"],
+      );
+      if (
+        (_isServerDebugging || _isRuntimeUrlDebugging) &&
+        !_hasRuntimeInspection &&
+        _serverLocalWarnFired < 3 &&
+        !_sshBlockedAfterStorm
+      ) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
-          if (!["bash", "read_file", "find_files"].includes(prep.fnName))
+          if (
+            ![
+              "bash",
+              "read_file",
+              "find_files",
+              "list_directory",
+              "search_files",
+              "glob",
+              "grep",
+            ].includes(prep.fnName)
+          )
             continue;
           _serverLocalWarnFired++;
           {
@@ -5888,13 +6034,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const { messages: _c } = forceCompress(apiMessages, _allTools);
             apiMessages = _c;
           }
+          const runtimeTargetLabel = _runtimeDebugTarget?.matchedName
+            ? `${_runtimeDebugTarget.matchedName} (${_runtimeDebugTarget.matchedProfile?.host || "server"})`
+            : _runtimeDebugTarget?.url;
+          const blockMessage =
+            _runtimeDebugTarget?.shouldPreferSsh
+              ? `BLOCKED: ${prep.fnName} denied — this looks like a live app/server issue. Inspect ${_runtimeDebugTarget?.url} with browser_open or use ssh_exec on ${runtimeTargetLabel} first, then return to local code if needed.`
+              : `BLOCKED: ${prep.fnName} denied — this looks like a live app issue. Inspect ${_runtimeDebugTarget?.url} with browser_open first, then return to local code if needed.`;
           debugLog(
-            `${C.yellow}  ⚠ Server-local guard: blocking local ${prep.fnName} — use ssh_exec on 94.130.37.43${C.reset}`,
+            `${C.yellow}  ⚠ Runtime guard: blocking local ${prep.fnName} — inspect the live app first${C.reset}`,
           );
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
-            content: `BLOCKED: ${prep.fnName} denied — this is a server issue. Use ssh_exec on 94.130.37.43 instead.`,
+            content: blockMessage,
             tool_call_id: prep.callId,
           };
           break; // one block per batch is enough to redirect the agent
@@ -6477,6 +6630,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : INVESTIGATION_CAP;
           const _effectiveCap = _rootCauseDetected
             ? 8
+            : _isSynthesisHeavyPrompt
+              ? (_editsMadeThisSession > 0 ? 4 : 6)
             : _isCreationTask
               ? (_editsMadeThisSession > 0 ? 6 : 10)
               : (_editsMadeThisSession > 0 ? POST_EDIT_CAP : _phaseAwareCap);
@@ -6542,6 +6697,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             };
           } else if (_readOnlyCallsSinceEdit >= _effectiveCap && !_investigationCapFired) {
             _investigationCapFired = true;
+            if (_isSynthesisHeavyPrompt) _synthesisEvidenceReady = true;
             debugLog(
               `${C.yellow}  ⚠ Investigation cap: ${_readOnlyCallsSinceEdit} read-only calls without an edit — forcing implementation${C.reset}`,
             );
@@ -6561,6 +6717,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             let _capContent;
             if (_rootCauseDetected) {
               _capContent = `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Edit the file now — do not read more files.`;
+            } else if (_isSynthesisHeavyPrompt) {
+              _capContent =
+                "[SYSTEM] You have enough evidence to write the requested summary/document now. Use write_file or edit_file to produce the deliverable, and stop reading more files unless a required section is still unsupported.";
             } else if (_sshBlockedAfterStorm) {
               _capContent =
                 "[SYSTEM] SSH temporarily paused. Summarize your findings and state the likely diagnosis. Do NOT ask the user to run commands — SSH re-enables after your summary.";
@@ -7328,6 +7487,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       for (const toolMsg of toolMessages) {
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
+      }
+
+      const _wroteTextDeliverableThisBatch =
+        _isSynthesisHeavyPrompt &&
+        prepared.some((prep, idx) => {
+          if (!prep || !["write_file", "edit_file", "patch_file"].includes(prep.fnName)) {
+            return false;
+          }
+          const pathArg = prep.args?.path || prep.args?.file_path;
+          return (
+            isTextDeliverablePath(pathArg) &&
+            typeof toolMessages[idx]?.content === "string" &&
+            !toolMessages[idx].content.startsWith("ERROR") &&
+            !toolMessages[idx].content.startsWith("BLOCKED:")
+          );
+        });
+
+      // ─── Synthesis deliverable exit (headless mode) ───────────────────────
+      // For analysis/doc tasks in auto mode, once the investigation cap has
+      // already established that we have enough evidence and the requested text
+      // deliverable has been written to disk, treat that as completion. Waiting
+      // for another LLM turn often leads to avoidable "polish" loops and
+      // timeouts, while the benchmark/user only needs the file on disk.
+      if (
+        getAutoConfirm() &&
+        !opts.skillLoop &&
+        _synthesisEvidenceReady &&
+        _wroteTextDeliverableThisBatch
+      ) {
+        debugLog(
+          `${C.green}  ✓ Synthesis deliverable exit: text deliverable written after evidence threshold reached${C.reset}`,
+        );
+        _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+        saveNow(conversationMessages);
+        break outer;
       }
 
       // ─── Background agent results: drain completed jobs after tool execution ──
