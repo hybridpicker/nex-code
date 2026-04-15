@@ -57,21 +57,28 @@ describe("formatToolCall()", () => {
   });
 
   it("formats edit_file with path", () => {
-    const out = formatToolCall("edit_file", { path: "deep/nested/file.js" });
+    const out = formatToolCall("edit_file", {
+      path: "deep/nested/file.js",
+      old_text: "const oldValue = true;",
+      new_text: "const newValue = false;",
+    });
     expect(out).toContain("Edit");
     expect(out).toContain("nested/file.js");
+    expect(out).toContain("before");
+    expect(out).toContain("after");
   });
 
   it("formats bash with command", () => {
     const out = formatToolCall("bash", { command: "npm test" });
     expect(out).toContain("Bash");
     expect(out).toContain("npm test");
+    expect(out).toContain("$");
   });
 
   it("truncates long bash commands", () => {
     const longCmd = "x".repeat(100);
     const out = formatToolCall("bash", { command: longCmd });
-    expect(out.length).toBeLessThan(200);
+    expect(out.length).toBeLessThan(300);
   });
 
   it("formats grep with pattern and path", () => {
@@ -116,8 +123,12 @@ describe("formatToolCall()", () => {
   });
 
   it("formats patch_file with path", () => {
-    const out = formatToolCall("patch_file", { path: "lib/main.js" });
+    const out = formatToolCall("patch_file", {
+      path: "lib/main.js",
+      patches: [{ old_text: "oldThing()", new_text: "newThing()" }],
+    });
     expect(out).toContain("Edit");
+    expect(out).toContain("patch 1");
   });
 
   it("handles empty args for grep", () => {
@@ -477,13 +488,20 @@ describe("formatToolSummary()", () => {
   it("formats edit_file summary with diff counts", () => {
     const out = formatToolSummary(
       "edit_file",
-      { old_text: "old\nold2", new_text: "new\nnew2\nnew3" },
+      {
+        path: "src/components/panel.js",
+        old_text: "old\nold2",
+        new_text: "new\nnew2\nnew3",
+      },
       "OK",
       false,
     );
     // Should show removed and added counts
     expect(out).toMatch(/[−-]2/); // removed 2
     expect(out).toMatch(/\+3/); // added 3
+    expect(out).toContain("components/panel.js");
+    expect(out).toContain("before");
+    expect(out).toContain("after");
     expect(out).toContain("old2");
     expect(out).toContain("new3");
   });
@@ -508,10 +526,11 @@ describe("formatToolSummary()", () => {
   it("formats bash with exit 0", () => {
     const out = formatToolSummary(
       "bash",
-      {},
+      { command: "npm test -- --runInBand" },
       "EXIT 0\noutput line 1\noutput line 2",
       false,
     );
+    expect(out).toContain("npm test -- --runInBand");
     expect(out).toContain("output line 1");
   });
 
@@ -821,6 +840,16 @@ describe("formatSectionHeader()", () => {
       true,
     );
     expect(out).toContain("\x1b[31m"); // error color (red)
+  });
+
+  it("supports animated frame variants", () => {
+    const out = formatSectionHeader(
+      [{ fnName: "bash", args: {}, canExecute: true }],
+      1,
+      false,
+      2,
+    );
+    expect(out).toContain("◎");
   });
 
   it("handles unknown tool name gracefully", () => {
