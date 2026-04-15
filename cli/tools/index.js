@@ -2553,7 +2553,7 @@ async function _executeToolInner(name, args, options = {}) {
       const { ToolProgress: BashProgress } = require("../spinner");
       const bProgress = options.silent
         ? null
-        : new BashProgress("bash", cmd.substring(0, 40));
+        : new BashProgress("bash", `$ ${cmd.substring(0, 72)}`);
       if (bProgress) bProgress.start();
       try {
         const { stdout, stderr } = await exec(cmd, {
