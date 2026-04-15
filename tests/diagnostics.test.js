@@ -91,6 +91,33 @@ describe("runDiagnostics", () => {
     );
   });
 
+  test("detects credential URL", () => {
+    const result = runDiagnostics(
+      "config.js",
+      'const url = "https://admin:secret123@example.com/internal";',
+    );
+    expect(result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining("Credential URL"),
+        }),
+      ]),
+    );
+  });
+
+  test("detects server IP assignments", () => {
+    const result = runDiagnostics("deploy.env", 'SERVER_IP="203.0.113.22"');
+    expect(result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining("Server IP Assignment"),
+        }),
+      ]),
+    );
+  });
+
   test("detects hardcoded secret", () => {
     const result = runDiagnostics(
       "app.js",
