@@ -52,6 +52,27 @@ function readLatestResult(rootDir = process.cwd()) {
   return { ...data, __file: latest.fullPath };
 }
 
+function isHealthyRun(run) {
+  if (!run) return false;
+  const timeoutRate = run.metrics?.timeoutRate || 0;
+  const finalScore = run.finalScore || 0;
+  const results = Array.isArray(run.results) ? run.results : [];
+  if (timeoutRate > 0 || finalScore < 90) return false;
+  if (results.length === 0) return true;
+  return results.every((result) => classifyTask(result) === "healthy");
+}
+
+function readLatestProblematicResult(rootDir = process.cwd()) {
+  const files = listResultFiles(rootDir);
+  for (const file of files) {
+    const data = safeParseJson(fs.readFileSync(file.fullPath, "utf8"));
+    if (!data) continue;
+    const run = { ...data, __file: file.fullPath };
+    if (!isHealthyRun(run)) return run;
+  }
+  return readLatestResult(rootDir);
+}
+
 function formatPercent(value) {
   return `${Math.round(value || 0)}%`;
 }
@@ -644,9 +665,11 @@ module.exports = {
   classifyTask,
   getPriorityDir,
   getResultsDir,
+  isHealthyRun,
   listResultFiles,
   readHistory,
   readLatestResult,
+  readLatestProblematicResult,
   selectPriorityTasks,
   verifyHarnessOptimization,
 };
