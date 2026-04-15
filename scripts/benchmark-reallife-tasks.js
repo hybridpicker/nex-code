@@ -1,7 +1,7 @@
 /**
  * scripts/benchmark-reallife-tasks.js — Real-Life Task Definitions
  *
- * 28 tasks across 7 categories, sourced from real ~/Coding/ projects.
+ * 35 tasks across 7 categories, sourced from real ~/Coding/ projects.
  * Each task copies real files into a temp directory and evaluates nex-code's work.
  */
 
@@ -13,6 +13,7 @@ const { execSync } = require("child_process");
 
 const HOME = require("os").homedir();
 const CODING = path.join(HOME, "Coding");
+const HARNESS_VERSION = "2026-04-13.1";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ const CATEGORY_WEIGHTS = {
 
 // ─── Task Definitions ───────────────────────────────────────────
 
-const TASKS = [
+const RAW_TASKS = [
 
   // ═══════════════════════════════════════════════════════════════
   // Category 1: Bug Fixing (5 tasks, weight: 25%)
@@ -1695,4 +1696,23 @@ test('processes all items exactly once', async () => {
   },
 ];
 
-module.exports = { TASKS, CATEGORY_WEIGHTS, copyFiles, copyTree, initGit, fileContains, fileExists, filesChanged };
+const TASKS = RAW_TASKS.map((task, index) => ({
+  ...task,
+  harnessVersion: task.harnessVersion || HARNESS_VERSION,
+  taskVersion: task.taskVersion || 1,
+  determinism: task.determinism || "high",
+  fixtureStability: task.fixtureStability || "isolated",
+  ordinal: index + 1,
+}));
+
+module.exports = {
+  HARNESS_VERSION,
+  TASKS,
+  CATEGORY_WEIGHTS,
+  copyFiles,
+  copyTree,
+  initGit,
+  fileContains,
+  fileExists,
+  filesChanged,
+};

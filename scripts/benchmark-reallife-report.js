@@ -97,6 +97,12 @@ function main() {
   if (totalTokens.input > 0 || totalTokens.output > 0) {
     console.log(`  Tokens:   ${totalTokens.input.toLocaleString()} in / ${totalTokens.output.toLocaleString()} out (last ${recent.length} runs)`);
   }
+  const latestMetrics = latest?.metrics;
+  if (latestMetrics) {
+    console.log(`  Avg tools: ${latestMetrics.avgToolCalls ?? 0}`);
+    console.log(`  Timeout:   ${latestMetrics.timeoutRate ?? 0}%`);
+    console.log(`  Error:     ${latestMetrics.errorRate ?? 0}%`);
+  }
 
   console.log();
 

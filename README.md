@@ -119,7 +119,7 @@ Rankings from nex-code's own `/benchmark` — 62 tasks testing tool selection, a
 <!-- nex-benchmark-end -->
 
 <!-- nex-routing-start -->
-<!-- Updated: 2026-04-12 -->
+<!-- Updated: 2026-04-15 -->
 
 **Model routing by task type** (auto-updated by `/benchmark --all`):
 
@@ -434,7 +434,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for full architecture details.
 npm test              # 97 suites, 3920 tests
 npm run typecheck     # TypeScript noEmit check
 npm run benchmark:gate        # 7-task smoke test (blocks push on regression)
-npm run benchmark:reallife    # 35 real-world tasks across 7 categories
+npm run benchmark:reallife    # 35 real-life tasks across 7 categories
 ```
 
 ---
