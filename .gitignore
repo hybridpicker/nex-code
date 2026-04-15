@@ -3,7 +3,12 @@ vscode/node_modules/
 vscode/out/
 vscode/*.vsix
 .env
+.env.*
 .env.bak*
+!.env.example
+!.env*.example
+!.env*.sample
+!.env*.template
 .nex/
 !.nex/brain/
 !.nex/brain/*.md
@@ -15,6 +20,13 @@ coverage/
 .nex/push-allowlist
 CLAUDE.md
 .npmrc
+.netrc
+*.p12
+*.pfx
+*.mobileprovision
+*.tfvars
+*.tfstate
+*.tfstate.*
 IMPROVEMENT_LOG.md
 docs/prompts/
 scripts/benchmark-results/
