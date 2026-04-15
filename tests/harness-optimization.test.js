@@ -8,8 +8,10 @@ const {
   buildOptimizationReport,
   classifyTask,
   getPriorityDir,
+  isHealthyRun,
   readHistory,
   readLatestResult,
+  readLatestProblematicResult,
   selectPriorityTasks,
   verifyHarnessOptimization,
 } = require("../cli/harness-optimization");
@@ -129,6 +131,50 @@ describe("harness optimization", () => {
     expect(report).toContain("over-exploration");
     expect(report).toContain("Weakest Categories");
     expect(report).toContain("Suggested Codex Prompt");
+  });
+
+  it("prefers the newest problematic run over a newer healthy run", () => {
+    const resultsDir = path.join(tempRoot, "scripts", "benchmark-results");
+    fs.writeFileSync(
+      path.join(resultsDir, "reallife-older-problematic.json"),
+      JSON.stringify({
+        runId: "problematic-run",
+        finalScore: 70,
+        metrics: { timeoutRate: 83, avgToolCalls: 11 },
+        results: [
+          {
+            id: "understand-project-structure",
+            category: "understanding",
+            score: 28,
+            completionReason: "timeout",
+            toolCalls: 32,
+            tokens: { input: 500000, output: 800 },
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(resultsDir, "reallife-newer-healthy.json"),
+      JSON.stringify({
+        runId: "healthy-run",
+        finalScore: 100,
+        metrics: { timeoutRate: 0, avgToolCalls: 6 },
+        results: [
+          {
+            id: "docs-api-documentation",
+            category: "docs",
+            score: 100,
+            completionReason: "success",
+            toolCalls: 4,
+            tokens: { input: 100000, output: 500 },
+          },
+        ],
+      }),
+    );
+
+    const latestProblematic = readLatestProblematicResult(tempRoot);
+    expect(isHealthyRun(latestProblematic)).toBe(false);
+    expect(latestProblematic.runId).toBe("problematic-run");
   });
 
   it("selects priority tasks from the weakest timed-out results", () => {

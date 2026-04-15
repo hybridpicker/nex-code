@@ -3098,6 +3098,7 @@ For each issue, include:
         buildOptimizationReport,
         readHistory,
         readLatestResult,
+        readLatestProblematicResult,
         verifyHarnessOptimization,
       } = require("../harness-optimization");
       const lastIndex = rest.indexOf("--last");
@@ -3114,11 +3115,17 @@ For each issue, include:
       });
       console.log(report);
       if (rest.includes("--verify")) {
+        const verifySourceRun = readLatestProblematicResult(CWD);
         console.log(`${C.dim}Running focused tests and a priority benchmark slice...${C.reset}\n`);
+        if (verifySourceRun?.runId && verifySourceRun.runId !== latestRun?.runId) {
+          console.log(
+            `${C.dim}Using latest problematic run for verification: ${verifySourceRun.runId}${C.reset}`,
+          );
+        }
         let lastProgress = -1;
         const verification = await verifyHarnessOptimization({
           rootDir: CWD,
-          latestRun,
+          latestRun: verifySourceRun,
           onProgress(update) {
             const percent = Math.max(0, Math.min(100, Math.round(update.percent || 0)));
             if (percent === lastProgress && update.phase !== "done") return;

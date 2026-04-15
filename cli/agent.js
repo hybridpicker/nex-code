@@ -4924,6 +4924,30 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const _hasPass = /\bPASS\b/i.test(_assistantText.slice(0, 500));
             const _failPattern = /\bFAIL\b|test.*fail|error|broken|missing|incorrect/i;
             const _hasFailed = _failPattern.test(_assistantText.slice(0, 500));
+            const _verifyEvidenceSeen =
+              _verifyToolCalls > 0 ||
+              apiMessages.some(
+                (m) =>
+                  m.role === "assistant" &&
+                  typeof m.content === "string" &&
+                  /\bPASS\b/i.test(m.content.slice(0, 500)),
+              );
+
+            if (
+              getAutoConfirm() &&
+              !opts.skillLoop &&
+              _verifyEvidenceSeen &&
+              !_hasFailed &&
+              !isTooShort(_assistantText)
+            ) {
+              debugLog(
+                `${C.green}  ✓ Verification phase complete (headless substantive summary)${C.reset}`,
+              );
+              _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
 
             if (_hasFailed && _verifyLoopBack < 3) {
               _verifyLoopBack++;
@@ -5387,6 +5411,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const prepared = await Promise.all(
         tool_calls.map((tc) => prepareToolCall(tc)),
       );
+
+      // ─── Synthesis finalization guard (pre-execution) ─────────────────────
+      // Once a docs/understanding task has already crossed the evidence threshold,
+      // any new read-only call is renewed exploration. Block it before execution
+      // so the model has to switch into deliverable generation immediately.
+      if (_synthesisEvidenceReady) {
+        const SYNTHESIS_READ_ONLY_TOOLS = new Set([
+          "read_file",
+          "grep",
+          "search_files",
+          "glob",
+          "list_directory",
+          "ssh_exec",
+          "find_files",
+        ]);
+        for (const prep of prepared) {
+          if (!prep.canExecute || !SYNTHESIS_READ_ONLY_TOOLS.has(prep.fnName)) continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: "BLOCKED: You already have enough evidence to produce the requested summary/document. Write the deliverable now and stop reading more files.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
 
       // ─── Pre-batch context pressure check ───────────────────────────────────
       // Warn the LLM before it executes tool calls that could overflow context.
