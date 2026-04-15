@@ -53,10 +53,14 @@ npm run benchmark:reallife   # run 35-task benchmark only
 
 **How it works:**
 1. `scripts/benchmark-reallife.js` runs 35 commit-sized tasks across 7 categories in temp directories using nex-code headless mode
-2. Results are scored: taskCompletion (30%) + editPrecision (40%) + efficiency (30%)
+2. Results are scored with a weighted composite: taskCompletion (40%) + editPrecision (25%) + efficiency (20%) + quality (15%)
 3. `scripts/improve.js` clusters failures, picks the top pattern, runs nex-code to implement ONE fix
 4. Rebuilds dist, re-benchmarks, commits if improved, reverts if regressed
 5. Stops after 3 plateaus, score >= 95, or 8 passes
+
+Real-life benchmark telemetry is validated before a run counts toward the score. Successful runs without a clean JSON `done` event are marked as `harness-failure` and excluded from aggregate scoring so broken measurement does not masquerade as agent regression.
+
+The pre-push smoke gate (`npm run benchmark:gate`) compares the current run against a rolling median baseline from recent matching gate runs. A single soft regression is surfaced as a warning; clear outliers and repeated regressions still block the push.
 
 **Safety bounds** are enforced before every commit:
 - SSH_STORM_WARN: [6, 12], SSH_STORM_ABORT: [8, 18]
