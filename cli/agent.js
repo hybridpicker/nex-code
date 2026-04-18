@@ -986,6 +986,7 @@ async function prepareToolCall(tc) {
     finalArgs.agents.every((a) => a.background === true);
   if (_phaseEnabled && _currentPhase === "plan" && !_PHASE_PLAN_ALLOWED.has(fnName) && !fnName.startsWith("skill_") && !_isAllBackgroundSpawn) {
     _planPhaseBlockedCount++;
+    _lastPlanBlockedTool = fnName;
     debugLog(`${C.yellow}  ✗ ${fnName}: blocked in plan phase (read-only, block #${_planPhaseBlockedCount})${C.reset}`);
     return {
       callId, fnName, args: finalArgs, canExecute: false,
@@ -1466,6 +1467,7 @@ let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
 let _phaseIterations = 0; // iterations consumed in current phase
 let _phaseEnabled = false; // true when config has 'phases' key
 let _planPhaseBlockedCount = 0; // consecutive non-allowed tool calls blocked in plan phase
+let _lastPlanBlockedTool = null; // last tool blocked during plan phase
 let _phaseModelOverride = null; // model ID string for current phase (null = use default)
 let _planSummary = null; // compressed summary from plan phase
 let _implementSummary = null; // summary of changes from implement phase
@@ -1476,6 +1478,53 @@ let _postEditVerifyPending = false; // require a narrow verification step after 
 let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
+const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+
+function _shouldFastTrackPlanBlock(fnName) {
+  return (
+    fnName === "write_file" ||
+    fnName === "edit_file" ||
+    fnName === "patch_file" ||
+    fnName === "bash"
+  );
+}
+
+function _shouldSkipPlanPhaseForDirectCreation(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  const hasExplicitPath =
+    /(?:^|\s)(?:\.{1,2}\/)?[\w./-]+\.(?:js|ts|tsx|jsx|py|md|json|yml|yaml|sh|css|html)\b/i.test(
+      text,
+    );
+  const directCreateRefactor =
+    /\b(create|write|add|make|build|scaffold)\b[\s\S]{0,160}\b(refactor|rename|improve|update|change|edit)\b/i.test(
+      text,
+    ) ||
+    /\b(refactor|update|change|edit)\b[\s\S]{0,160}\b(create|write|add|make|build|scaffold)\b/i.test(
+      text,
+    );
+  const directFileTask =
+    /\b(create|write|add|make|build|refactor|update|change|edit)\b[\s\S]{0,160}\bfile\b/i.test(
+      text,
+    );
+  return hasExplicitPath && (directCreateRefactor || directFileTask);
+}
+
+function _normalizePromptPathMatch(value) {
+  return String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .trim();
+}
+
+function _extractDirectTaskPaths(prompt) {
+  const text = String(prompt || "");
+  const matches = text.match(
+    /(?:^|\s)((?:\.{1,2}\/)?[\w./-]+\.(?:js|ts|tsx|jsx|py|md|json|yml|yaml|sh|css|html))\b/gi,
+  );
+  if (!matches) return [];
+  return [...new Set(matches.map((m) => _normalizePromptPathMatch(m)))];
+}
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
 // Shows the first occurrence normally, then updates with a counter on repeats.
@@ -3388,6 +3437,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     typeof _firstUserText === "string"
       ? detectRuntimeDebugTarget(_firstUserText)
       : null;
+  const _directTaskPaths = _extractDirectTaskPaths(_firstUserText);
   // Only trigger for actual server debugging, not for feature development tasks.
   const _isServerDebugging =
     /set_reminder|google.?auth|cron:|api\.log|swarm.{0,30}(agent|crash|gecrasht|abgestürzt|fail)|agent.{0,30}(gecrasht|abgestürzt|crashed|fail)|server.{0,30}(passiert|fehler|crash|problem)|am.server/i.test(
@@ -3437,19 +3487,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     if (_phaseEnabled) {
       const _cat = detectCategory(_firstUserText);
       _detectedCategoryId = _cat?.id || "coding";
-      _currentPhase = "plan";
-      _phaseModelOverride = getModelForPhase("plan", _detectedCategoryId);
+      const _skipPlanForDirectCreation = _shouldSkipPlanPhaseForDirectCreation(
+        _firstUserText,
+      );
+      _currentPhase = _skipPlanForDirectCreation ? "implement" : "plan";
+      _phaseModelOverride = getModelForPhase(_currentPhase, _detectedCategoryId);
       _phaseIterations = 0;
       _verifyLoopBack = 0;
       _planPhaseBlockedCount = 0;
+      _lastPlanBlockedTool = null;
+      _freshlyWrittenFiles.clear();
       if (process.stdout.isTTY) {
         console.log(
-          `${C.dim}  ↳ Phase routing: plan(${_phaseModelOverride || "default"}) → implement → verify${C.reset}`,
+          _skipPlanForDirectCreation
+            ? `${C.dim}  ↳ Phase routing: implement(${_phaseModelOverride || "default"}) → verify ${C.yellow}[plan skipped: direct file task]${C.reset}`
+            : `${C.dim}  ↳ Phase routing: plan(${_phaseModelOverride || "default"}) → implement → verify${C.reset}`,
         );
       }
       debugLog(
-        `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
+        _skipPlanForDirectCreation
+          ? `${C.cyan}  ⚡ Phase routing enabled — skipping plan phase for direct file task, starting in implement with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`
+          : `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
       );
+      if (_skipPlanForDirectCreation && _directTaskPaths.length > 0) {
+        const _targetList = _directTaskPaths.slice(0, 3).join(", ");
+        const _directTaskGuardrail = {
+          role: "user",
+          content:
+            `[SYSTEM] This is a direct file task targeting: ${_targetList}. ` +
+            `Modify only the explicitly requested file(s) unless the user asks for more. ` +
+            `Do NOT create extra helper or test files for verification. ` +
+            `Prefer inline verification with bash or by reading the edited file.`,
+        };
+        conversationMessages.push(_directTaskGuardrail);
+        apiMessages.push(_directTaskGuardrail);
+      }
     }
   }
 
@@ -4852,9 +4924,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Auto-advance if model keeps hitting the plan-phase bash block without
         // producing text. This happens for simple tasks (e.g. "compress a video")
         // where bash is the only sensible action — model never produces a text turn.
-        if (_phaseEnabled && _currentPhase === "plan" && _planPhaseBlockedCount >= 2) {
-          debugLog(`${C.cyan}  ↳ Plan phase: ${_planPhaseBlockedCount} consecutive blocks — auto-advancing to implement${C.reset}`);
+        const _planBlockThreshold =
+          _shouldFastTrackPlanBlock(_lastPlanBlockedTool) ? 1 : 2;
+        if (_phaseEnabled && _currentPhase === "plan" && _planPhaseBlockedCount >= _planBlockThreshold) {
+          debugLog(`${C.cyan}  ↳ Plan phase: ${_planPhaseBlockedCount} consecutive blocks (last: ${_lastPlanBlockedTool || "unknown"}) — auto-advancing to implement${C.reset}`);
           _planPhaseBlockedCount = 0;
+          _lastPlanBlockedTool = null;
           const phaseMsg = await _transitionPhase("implement", "[auto-advance: task only requires direct action]");
           if (phaseMsg) {
             conversationMessages.push(phaseMsg);
@@ -5520,6 +5595,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const committed = _getLoopCount(fileReadCounts, path);
         const pending = _pendingReadCounts.get(path) || 0;
         const alreadyRead = committed + pending;
+        const allowFreshWriteFollowUp = _freshlyWrittenFiles.has(path);
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.
@@ -5532,7 +5608,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
         // allowed since the model may need to navigate a large file in multiple sections.
 
-        if (alreadyRead >= TARGETED_READ_HARD_CAP) {
+        if (!allowFreshWriteFollowUp && alreadyRead >= TARGETED_READ_HARD_CAP) {
           // Hard cap exceeded — block regardless of targeted/unbounded
           const shortPath = path.split("/").slice(-2).join("/");
           const blockShownCount = (_sessionReReadBlockShown.get(path) || 0) + 1;
@@ -5561,7 +5637,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             content: `BLOCKED: read_file("${path}") denied — file already read ${alreadyRead}× (hard cap: ${TARGETED_READ_HARD_CAP}). You have seen enough of this file. Use grep to find specific content or proceed with what you know.`,
             tool_call_id: prep.callId,
           };
-        } else if (alreadyRead >= 1 && isTargetedReRead) {
+        } else if (!allowFreshWriteFollowUp && alreadyRead >= 1 && isTargetedReRead) {
           // Targeted re-read within cap — allow. Clear edit-failure flag when used.
           // Edit recovery: allow up to EDIT_RECOVERY_MAX unconditional re-reads per file after
           // a failed edit. Beyond that, the model must use existing context instead of re-reading.
@@ -5684,7 +5760,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           }
           // else: normal targeted section read of a large file — let through silently
-        } else if (alreadyRead >= 1) {
+        } else if (!allowFreshWriteFollowUp && alreadyRead >= 1) {
           // Test-failure recovery: allow one full re-read if a test command just
           // failed while this file was recently edited. Without this bypass, the model
           // cannot inspect the broken output it produced and invents ghost problems.
@@ -5839,6 +5915,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const oldLen = fs_.statSync(resolvedWf).size;
             const newLen = Buffer.byteLength(newContent, "utf8");
             const ratio = oldLen > 0 ? newLen / oldLen : 1;
+            const normalizedPrompt = _normalizePromptPathMatch(_firstUserText);
+            const normalizedWfPath = _normalizePromptPathMatch(wfPath);
+            const allowDirectTaskOverwrite =
+              _shouldSkipPlanPhaseForDirectCreation(_firstUserText) &&
+              (normalizedPrompt.includes(normalizedWfPath) ||
+                normalizedPrompt.includes(`./${normalizedWfPath}`));
+            if (allowDirectTaskOverwrite) {
+              continue;
+            }
             if (ratio < 0.6 && oldLen > 200) {
               const shortPath = wfPath.split("/").slice(-2).join("/");
               console.log(
@@ -6184,7 +6269,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (!["edit_file", "patch_file"].includes(prep.fnName)) continue;
           const _mfPath = prep.args?.path;
           if (!_mfPath) continue;
-          if (_editedFilesNotReread.has(_mfPath) || _batchEditPaths.has(_mfPath)) {
+          if (_batchEditPaths.has(_mfPath)) {
+            prep.canExecute = false;
+            prep.errorResult = {
+              role: "tool",
+              content: `BLOCKED: "${_mfPath}" is already being edited in this batch. Finish one edit first, then re-read the changed section before the next one.`,
+              tool_call_id: prep.callId,
+            };
+            debugLog(
+              `${C.yellow}  ⚠ Map-first gate: blocked duplicate same-batch edit of "${_mfPath.split("/").slice(-1)[0]}"${C.reset}`,
+            );
+          } else if (_editedFilesNotReread.has(_mfPath) && !_freshlyWrittenFiles.has(_mfPath)) {
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
@@ -6223,21 +6318,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               global._nexFooter._scrollEnd,
             );
           }
-          // Blink the ⏺ via ANSI \x1b[5m while the tool executes — no interval needed,
-          // the terminal handles blinking natively so it works even for sub-ms tools
-          const _blinkHeader = formatSectionHeader(
+          const _animatedHeader = formatSectionHeader(
             prepared,
             totalSteps,
             false,
-            "blink",
+            0,
           );
           const _staticHeader = formatSectionHeader(prepared, totalSteps, false);
           process.stdout.write(
-            `${totalSteps > 1 ? "\n" : ""}${_blinkHeader}`,
+            `${totalSteps > 1 ? "\n" : ""}${_animatedHeader}`,
           );
           _lastRenderedHeaderLine = _staticHeader;
           _lastRenderedHeaderAt = Date.now();
-          _spinAnim = true; // flag: header needs cleanup after execution
+          _spinAnim = {
+            start: Date.now(),
+            frame: 0,
+            timer: null,
+          };
         } else if (!_serverHooks) {
           // Non-TTY headless mode: plain section header (skip in server mode to avoid stdout pollution)
           const _header = formatSectionHeader(prepared, totalSteps, false);
@@ -6260,28 +6357,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // Resume TaskProgress animation during tool execution so the UI never looks frozen
       if (taskProgress && taskProgress._paused) taskProgress.resume();
 
-      // For long-running bash/ssh commands: update the header line with elapsed time
-      // every second after 3s so the user knows it's still running (not stuck).
-      let _longCmdTimer = null;
       if (_spinAnim && process.stdout.isTTY) {
-        const _hasLong = prepared.some(
-          (p) =>
-            p.canExecute && (p.fnName === "bash" || p.fnName === "ssh_exec"),
-        );
-        if (_hasLong) {
-          const _longStart = Date.now();
-          _longCmdTimer = setInterval(() => {
-            const _elapsed = Math.round((Date.now() - _longStart) / 1000);
-            if (_elapsed >= 3) {
-              const _hdr = `${formatSectionHeader(prepared, totalSteps, false, "blink")} ${C.dim}[${_elapsed}s]${C.reset}`;
-              if (_blinkHeaderRow !== null) {
-                process.stdout.write(`\x1b[${_blinkHeaderRow};1H\x1b[2K${_hdr}`);
-              } else {
-                process.stdout.write(`\r\x1b[2K${_hdr}`);
-              }
-            }
-          }, 1000);
-        }
+        _spinAnim.timer = setInterval(() => {
+          _spinAnim.frame++;
+          const _elapsed = Math.round((Date.now() - _spinAnim.start) / 1000);
+          const _elapsedSuffix = _elapsed >= 1
+            ? ` ${C.dim}[${_elapsed}s]${C.reset}`
+            : "";
+          const _hdr = `${formatSectionHeader(
+            prepared,
+            totalSteps,
+            false,
+            _spinAnim.frame,
+          )}${_elapsedSuffix}`;
+          if (_blinkHeaderRow !== null) {
+            process.stdout.write(`\x1b[${_blinkHeaderRow};1H\x1b[2K${_hdr}`);
+          } else {
+            process.stdout.write(`\r\x1b[2K${_hdr}`);
+          }
+        }, 120);
       }
 
       const { results: toolMessages, summaries: batchSummaries } =
@@ -6300,18 +6394,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         apiMessages.push(askUserWaitMsg);
       }
 
-      // Stop elapsed-time updater
-      if (_longCmdTimer) {
-        clearInterval(_longCmdTimer);
-        _longCmdTimer = null;
-      }
-
-      // Stop blink, finalize header with static dot.
+      // Stop header animation, finalize header with static dot.
       // Use absolute row positioning when available — a confirm dialog during tool
-      // execution moves the cursor away from the blink header row, so \r\x1b[2K
+      // execution moves the cursor away from the animated header row, so \r\x1b[2K
       // would clear the wrong row and trigger an unwanted scroll.
       if (_spinAnim) {
-        _spinAnim = null;
+        if (_spinAnim.timer) {
+          clearInterval(_spinAnim.timer);
+          _spinAnim.timer = null;
+        }
         const _staticHeader = formatSectionHeader(prepared, totalSteps, false);
         if (!_isImmediateDuplicateLine(
           _staticHeader,
@@ -6329,6 +6420,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _lastRenderedHeaderAt = Date.now();
         }
         _blinkHeaderRow = null;
+        _spinAnim = null;
       }
 
       // Print summaries below the header (skip ask_user — it renders its own UI)
@@ -6563,13 +6655,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // the edit once without hitting the "already read" block.
             const _editedPath = prep.args?.path || prep.args?.file_path;
             if (_editedPath) {
-              _setLoopCount(_sessionFileReadCounts, _editedPath, 1);
-              _sessionFileReadRanges.delete(_editedPath);
-              _editedFilesNotReread.add(_editedPath); // map-first: flag file as stale until re-read
+              if (prep.fnName === "write_file") {
+                _freshlyWrittenFiles.add(_editedPath);
+                _sessionFileReadCounts.delete(_editedPath);
+                _sessionFileReadRanges.delete(_editedPath);
+                _editedFilesNotReread.delete(_editedPath);
+              } else {
+                _freshlyWrittenFiles.delete(_editedPath);
+                _setLoopCount(_sessionFileReadCounts, _editedPath, 1);
+                _sessionFileReadRanges.delete(_editedPath);
+                _editedFilesNotReread.add(_editedPath); // map-first: flag file as stale until re-read
+              }
             }
           } else if (READ_ONLY_TOOLS.includes(prep.fnName)) {
             _readOnlyCallsSinceEdit++;
             if (_investigationCapFired) _readsSinceCapFired++;
+            if (
+              _phaseEnabled &&
+              _currentPhase === "implement" &&
+              prep.fnName === "read_file"
+            ) {
+              const _readPath = prep.args?.path || prep.args?.file_path || "";
+              if (_readPath && _freshlyWrittenFiles.has(_readPath)) {
+                const creationNudge = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] You just created and re-read "${_readPath}". ` +
+                    `Do NOT analyze further. Apply the requested refactor now with edit_file.`,
+                };
+                conversationMessages.push(creationNudge);
+                apiMessages.push(creationNudge);
+                debugLog(
+                  `${C.yellow}  ⚠ Fresh-write nudge: ${_readPath} — refactor directly after re-read${C.reset}`,
+                );
+              }
+            }
             // TODO observer: nudge model to edit (not re-read) files from the plan
             if (
               _phaseEnabled &&
@@ -7308,6 +7428,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (isOk && prep.fnName === "read_file") {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
+            _freshlyWrittenFiles.delete(prep.args.path);
             _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record the read range so overlap detection can catch duplicate reads.

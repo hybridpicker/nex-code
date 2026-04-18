@@ -6,6 +6,7 @@
 const { T } = require("./theme");
 const C = T;
 const path = require("path");
+const SECTION_DOT_FRAMES = ["⏺", "◉", "◎", "◉"];
 
 // Last 1-2 path segments for compact display: "src/utils/helper.js"
 function _shortPath(p) {
@@ -231,6 +232,128 @@ function _formatCodePreviewLines(filePath, numberedLines, options = {}) {
   return preview.join("\n");
 }
 
+function _truncatePreview(text, maxContent = 96) {
+  const value = String(text || "").replace(/\t/g, "  ").trimEnd();
+  return value.length > maxContent
+    ? value.substring(0, Math.max(1, maxContent - 1)) + "…"
+    : value;
+}
+
+function _pickPreviewLines(text, options = {}) {
+  const { maxLines = 3, maxContent = 96 } = options;
+  const rawLines = String(text || "").split("\n");
+  const filtered = rawLines.filter(
+    (line, idx, arr) => line.trim() || arr.length === 1 || idx === 0,
+  );
+  const shown = filtered
+    .slice(0, maxLines)
+    .map((line) => _truncatePreview(line, maxContent));
+  return {
+    shown,
+    more: Math.max(0, filtered.length - shown.length),
+  };
+}
+
+function _formatCommandPreview(command, options = {}) {
+  const { indent = "    ", maxLines = 2, maxContent = 100 } = options;
+  if (!command) return "";
+  const { shown, more } = _pickPreviewLines(command, { maxLines, maxContent });
+  if (shown.length === 0) return "";
+
+  const lines = shown.map((line, idx) =>
+    `${indent}${T.subtle}${idx === 0 ? "$" : ">"}${T.reset} ${T.muted}${line}${T.reset}`,
+  );
+  if (more > 0) {
+    lines.push(
+      `${indent}${T.subtle}… +${more} more command line${more !== 1 ? "s" : ""}${T.reset}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function _formatChangePreview(filePath, oldText, newText, options = {}) {
+  const {
+    indent = "    ",
+    maxLines = 3,
+    maxContent = 96,
+    includeLabels = true,
+  } = options;
+  const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
+  const lang = _dl(filePath || null);
+  const { shown: oldPreview, more: oldMore } = _pickPreviewLines(oldText, {
+    maxLines,
+    maxContent,
+  });
+  const { shown: newPreview, more: newMore } = _pickPreviewLines(newText, {
+    maxLines,
+    maxContent,
+  });
+
+  const lines = [];
+  if (oldPreview.length > 0 && includeLabels) {
+    lines.push(`${indent}${T.subtle}before${T.reset}`);
+  }
+  oldPreview.forEach((line) => {
+    lines.push(
+      `${indent}${T.diff_rem}- ${T.reset}${_hlLine(line, lang)}${T.reset}`,
+    );
+  });
+  if (oldMore > 0) {
+    lines.push(
+      `${indent}${T.subtle}… ${oldMore} more removed line${oldMore !== 1 ? "s" : ""}${T.reset}`,
+    );
+  }
+
+  if (newPreview.length > 0 && includeLabels) {
+    lines.push(`${indent}${T.subtle}after${T.reset}`);
+  }
+  newPreview.forEach((line) => {
+    lines.push(
+      `${indent}${T.diff_add}+ ${T.reset}${_hlLine(line, lang)}${T.reset}`,
+    );
+  });
+  if (newMore > 0) {
+    lines.push(
+      `${indent}${T.subtle}… ${newMore} more added line${newMore !== 1 ? "s" : ""}${T.reset}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function _formatPatchPreview(filePath, patches, options = {}) {
+  const {
+    indent = "    ",
+    maxPatches = 2,
+    maxLinesPerSide = 2,
+    maxContent = 92,
+  } = options;
+  if (!Array.isArray(patches) || patches.length === 0) return "";
+
+  const lines = [];
+  patches.slice(0, maxPatches).forEach((patch, index) => {
+    lines.push(`${indent}${T.subtle}patch ${index + 1}${T.reset}`);
+    const preview = _formatChangePreview(
+      filePath,
+      patch.old_text,
+      patch.new_text,
+      {
+        indent: indent + "  ",
+        maxLines: maxLinesPerSide,
+        maxContent,
+        includeLabels: false,
+      },
+    );
+    if (preview) lines.push(preview);
+  });
+  if (patches.length > maxPatches) {
+    lines.push(
+      `${indent}${T.subtle}… +${patches.length - maxPatches} more patches${T.reset}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function _buildFlowTitle(tools) {
   const seen = new Set();
   const stages = [];
@@ -254,7 +377,11 @@ function _dot(fnName, isError = false, frame = null) {
   if (isError) return `${T.error}⏺${T.reset}`;
   const col = TOOL_DOT_COLOR[fnName] || T.tool_default;
   if (frame === "blink") return `${col}\x1b[5m⏺\x1b[25m${T.reset}`;
-  const char = frame !== null ? frame : "⏺";
+  const char = typeof frame === "number"
+    ? SECTION_DOT_FRAMES[frame % SECTION_DOT_FRAMES.length]
+    : frame !== null
+      ? frame
+      : "⏺";
   return `${col}${char}${T.reset}`;
 }
 
@@ -299,7 +426,7 @@ function formatToolCall(name, args) {
       break;
     case "bash":
     case "ssh_exec":
-      primary = (args.command || "").substring(0, 80);
+      primary = (args.command || "").substring(0, 44);
       break;
     case "grep":
     case "search_files":
@@ -321,7 +448,42 @@ function formatToolCall(name, args) {
   }
   const label = TOOL_LABELS[name] || name.replace(/_/g, " ");
   const argStr = primary ? `(${C.dim}${primary}${C.reset})` : "";
-  return `${_dot(name)} ${C.bold}${label}${C.reset}${argStr}`;
+  const header = `${_dot(name)} ${C.bold}${label}${C.reset}${argStr}`;
+
+  if (name === "bash" || name === "ssh_exec") {
+    const commandPreview = _formatCommandPreview(args.command, {
+      indent: "    ",
+      maxLines: 2,
+      maxContent: 108,
+    });
+    return commandPreview ? `${header}\n${commandPreview}` : header;
+  }
+
+  if (name === "edit_file") {
+    const diffPreview = _formatChangePreview(
+      args.path,
+      args.old_text,
+      args.new_text,
+      {
+        indent: "    ",
+        maxLines: 2,
+        maxContent: 92,
+      },
+    );
+    return diffPreview ? `${header}\n${diffPreview}` : header;
+  }
+
+  if (name === "patch_file") {
+    const patchPreview = _formatPatchPreview(args.path, args.patches, {
+      indent: "    ",
+      maxPatches: 2,
+      maxLinesPerSide: 1,
+      maxContent: 90,
+    });
+    return patchPreview ? `${header}\n${patchPreview}` : header;
+  }
+
+  return header;
 }
 
 function formatResult(text, maxLines = 8) {
@@ -559,41 +721,21 @@ function formatToolSummary(name, args, result, isError) {
       const newLines = (args.new_text || "").split("\n");
       const removed = oldLines.length;
       const added = newLines.length;
-      const fname = args.path ? path.basename(args.path) : null;
+      const fname = args.path ? _shortPath(args.path) : null;
       const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : "";
-      // Highlight the diff preview lines
-      const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
-      const _lang = _dl(args.path || null);
-      const diffLines = [];
-      const oldPreview = oldLines
-        .filter((line, idx, arr) => line.trim() || arr.length === 1 || idx === 0)
-        .slice(0, 3);
-      const newPreview = newLines
-        .filter((line, idx, arr) => line.trim() || arr.length === 1 || idx === 0)
-        .slice(0, 3);
-      oldPreview.forEach((line) => {
-        diffLines.push(
-          `    ${T.diff_rem}- ${T.reset}${_hlLine(line.trimEnd().substring(0, 96), _lang)}${T.reset}`,
-        );
-      });
-      if (oldLines.length > oldPreview.length) {
-        diffLines.push(
-          `    ${T.subtle}… ${oldLines.length - oldPreview.length} more removed line${oldLines.length - oldPreview.length !== 1 ? "s" : ""}${T.reset}`,
-        );
-      }
-      newPreview.forEach((line) => {
-        diffLines.push(
-          `    ${T.diff_add}+ ${T.reset}${_hlLine(line.trimEnd().substring(0, 96), _lang)}${T.reset}`,
-        );
-      });
-      if (newLines.length > newPreview.length) {
-        diffLines.push(
-          `    ${T.subtle}… ${newLines.length - newPreview.length} more added line${newLines.length - newPreview.length !== 1 ? "s" : ""}${T.reset}`,
-        );
-      }
+      const diffPreview = _formatChangePreview(
+        args.path,
+        args.old_text,
+        args.new_text,
+        {
+          indent: "    ",
+          maxLines: 4,
+          maxContent: 96,
+        },
+      );
       summary =
         `${T.diff_rem}−${removed}${T.reset}  ${T.diff_add}+${added}${T.reset}${fnameStr}` +
-        (diffLines.length > 0 ? "\n" + diffLines.join("\n") : "");
+        (diffPreview ? "\n" + diffPreview : "");
       break;
     }
     case "patch_file": {
@@ -606,33 +748,16 @@ function formatToolSummary(name, args, result, isError) {
         (s, p) => s + (p.new_text || "").split("\n").length,
         0,
       );
-      const fname = args.path ? path.basename(args.path) : null;
+      const fname = args.path ? _shortPath(args.path) : null;
       const fnameStr = fname ? `  ${T.muted}${fname}${T.reset}` : "";
       summary = `${patches.length} patch${patches.length !== 1 ? "es" : ""}  ${T.diff_rem}−${totalRemoved}${T.reset}  ${T.diff_add}+${totalAdded}${T.reset}${fnameStr}`;
-      const patchPreview = [];
-      const { highlightLine: _hlLine, detectLang: _dl } = require("./syntax");
-      const _lang = _dl(args.path || null);
-      patches.slice(0, 2).forEach((patch, index) => {
-        const oldFirst = String(patch.old_text || "").split("\n").find(Boolean);
-        const newFirst = String(patch.new_text || "").split("\n").find(Boolean);
-        patchPreview.push(`    ${T.subtle}patch ${index + 1}${T.reset}`);
-        if (oldFirst) {
-          patchPreview.push(
-            `    ${T.diff_rem}- ${T.reset}${_hlLine(oldFirst.trimEnd().substring(0, 92), _lang)}${T.reset}`,
-          );
-        }
-        if (newFirst) {
-          patchPreview.push(
-            `    ${T.diff_add}+ ${T.reset}${_hlLine(newFirst.trimEnd().substring(0, 92), _lang)}${T.reset}`,
-          );
-        }
+      const patchPreview = _formatPatchPreview(args.path, patches, {
+        indent: "    ",
+        maxPatches: 3,
+        maxLinesPerSide: 2,
+        maxContent: 92,
       });
-      if (patches.length > 2) {
-        patchPreview.push(
-          `    ${T.subtle}… +${patches.length - 2} more patches${T.reset}`,
-        );
-      }
-      if (patchPreview.length > 0) summary += `\n${patchPreview.join("\n")}`;
+      if (patchPreview) summary += `\n${patchPreview}`;
       break;
     }
     case "bash": {
@@ -674,6 +799,12 @@ function formatToolSummary(name, args, result, isError) {
         }
         summary = lines.join("\n");
       }
+      const commandPreview = _formatCommandPreview(args.command, {
+        indent: "     ",
+        maxLines: 2,
+        maxContent: 108,
+      });
+      if (commandPreview) summary = `${commandPreview}\n${summary}`;
       break;
     }
     case "grep":

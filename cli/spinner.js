@@ -15,6 +15,7 @@ const BOUNCE_POSITIONS = (() => {
 })();
 
 const TASK_FRAMES = ["✽", "✦", "✧", "✦"];
+const MOTION_FRAMES = ["·  ", "·· ", "···", " ··"];
 
 function getSpinnerPhase(text = "") {
   const lower = String(text).toLowerCase();
@@ -54,6 +55,24 @@ function getSpinnerPhase(text = "") {
   return { glyph: "●", color: C.cyan, accent: "think" };
 }
 
+function renderMotionTrack(pos, glyph, color) {
+  let track = "";
+  for (let i = 0; i < BOUNCE_WIDTH; i++) {
+    if (i === pos) {
+      track += `${color}${glyph}${C.reset}`;
+    } else if (i === pos - 1 || i === pos + 1) {
+      track += `${C.dim}·${C.reset}`;
+    } else {
+      track += `${C.dim}·${C.reset}`;
+    }
+  }
+  return track;
+}
+
+function getMotionSuffix(frame) {
+  return `${C.dim}${MOTION_FRAMES[frame % MOTION_FRAMES.length]}${C.reset}`;
+}
+
 class Spinner {
   constructor(text = "Thinking...") {
     this.text = text;
@@ -66,11 +85,8 @@ class Spinner {
     if (this._stopped) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
     const phase = getSpinnerPhase(this.text);
-    // Build track: dim dots with a cyan ball at current position
-    let track = "";
-    for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${phase.color}${phase.glyph}${C.reset}` : " ";
-    }
+    const track = renderMotionTrack(pos, phase.glyph, phase.color);
+    const motion = getMotionSuffix(this.frame);
     let elapsed = "";
     if (this.startTime) {
       const totalSecs = Math.floor((Date.now() - this.startTime) / 1000);
@@ -83,7 +99,7 @@ class Spinner {
       }
     }
     process.stderr.write(
-      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset} ${track} ${C.dim}${this.text}${C.reset}${elapsed}`,
+      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset}${motion} ${track} ${C.dim}${this.text}${C.reset}${elapsed}`,
     );
     this.frame++;
   }
@@ -461,10 +477,8 @@ class ToolProgress {
     if (!process.stderr.isTTY) return;
     const pos = BOUNCE_POSITIONS[this.frame % BOUNCE_POSITIONS.length];
     const phase = getSpinnerPhase(this.message);
-    let track = "";
-    for (let i = 0; i < BOUNCE_WIDTH; i++) {
-      track += i === pos ? `${phase.color}${phase.glyph}${C.reset}` : " ";
-    }
+    const track = renderMotionTrack(pos, phase.glyph, phase.color);
+    const motion = getMotionSuffix(this.frame);
 
     let info = this.message;
     if (this.count > 0) {
@@ -480,7 +494,7 @@ class ToolProgress {
     }
 
     process.stderr.write(
-      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset} ${track} ${C.dim}${info}${C.reset}${elapsed}`,
+      `\x1b[2K\r${phase.color}${phase.accent.toUpperCase()}${C.reset}${motion} ${track} ${C.dim}${info}${C.reset}${elapsed}`,
     );
     this.frame++;
   }
