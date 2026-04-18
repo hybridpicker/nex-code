@@ -1,6 +1,6 @@
 {
   "name": "nex-code",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "description": "Run 400B+ open coding models on your codebase without the hardware bill. Ollama Cloud first — OpenAI, Anthropic, and Gemini when you need them.",
   "bin": {
     "nex-code": "./dist/nex-code.js"
