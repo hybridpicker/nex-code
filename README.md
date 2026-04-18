@@ -6,6 +6,8 @@
 
 ## Demo
 
+[![nex-code demo](./docs/assets/nex-code-demo.png)](./docs/assets/nex-code-demo.mp4)
+
 [Watch the demo video](./docs/assets/nex-code-demo.mp4)
 
 
