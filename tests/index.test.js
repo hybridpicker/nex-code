@@ -1346,6 +1346,17 @@ describe("index.js (REPL commands)", () => {
       expect(formatPlan).toHaveBeenCalled();
     });
 
+    it("does not auto-enter plan mode for conversational intro prompts", async () => {
+      const { setPlanMode } = require("../cli/planner");
+      const { startREPL } = require("../cli/index");
+      setPlanMode.mockClear();
+      if (typeof lineHandler !== "function") {
+        await startREPL();
+      }
+      await lineHandler("Introduce yourself");
+      expect(setPlanMode).not.toHaveBeenCalledWith(true);
+    });
+
     it("handles /plan approve with no plan", async () => {
       await lineHandler("/plan approve");
       const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
