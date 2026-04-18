@@ -6,9 +6,11 @@
 
 ## Demo
 
-[![nex-code demo](./docs/assets/nex-code-demo.png)](./docs/assets/nex-code-demo.mp4)
+[![nex-code demo](./docs/assets/nex-code-demo.png)](https://hybridpicker.github.io/nex-code/)
 
-[Watch the demo video](./docs/assets/nex-code-demo.mp4)
+[Play the demo](https://hybridpicker.github.io/nex-code/)
+
+[Download the MP4](./docs/assets/nex-code-demo.mp4)
 
 
 ## Overview
