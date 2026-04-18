@@ -1510,6 +1510,17 @@ function _shouldSkipPlanPhaseForDirectCreation(prompt) {
   return hasExplicitPath && (directCreateRefactor || directFileTask);
 }
 
+function _isConversationalPrompt(prompt) {
+  const text = String(prompt || "").trim();
+  if (!text) return false;
+  return (
+    /^(hi|hello|hey|yo)\b/i.test(text) ||
+    /\b(introduce yourself|who are you|what can you do|tell me about yourself)\b/i.test(
+      text,
+    )
+  );
+}
+
 function _normalizePromptPathMatch(value) {
   return String(value || "")
     .replace(/\\/g, "/")
@@ -3482,7 +3493,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // ─── Phase-based routing initialization ──────────────────────────────────
   // Skip phase routing when opts.skipPhaseRouting is set (skill command prompts
   // like /autoresearch need immediate tool access, not a plan phase)
-  if (conversationMessages.length <= 1 && !opts.skipPhaseRouting) {
+  if (
+    conversationMessages.length <= 1 &&
+    !opts.skipPhaseRouting &&
+    !_isConversationalPrompt(_firstUserText)
+  ) {
     _phaseEnabled = isPhaseRoutingEnabled();
     if (_phaseEnabled) {
       const _cat = detectCategory(_firstUserText);

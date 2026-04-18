@@ -1810,8 +1810,8 @@ describe("agent.js", () => {
       mockStream("ok");
       await processInput("what is in this folder?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("The current user message is in English.");
-      expect(sysMsg).toContain("You MUST answer this turn in English.");
+      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain("You MUST answer this turn in English");
     });
 
     it("keeps English when the project rules require English", async () => {
@@ -1821,18 +1821,32 @@ describe("agent.js", () => {
       mockStream("ok");
       await processInput("was ist in diesem ordner?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("The current user message is in English.");
-      expect(sysMsg).toContain("You MUST answer this turn in English.");
+      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain("Treat non-English input as content to answer");
     });
 
-    it("includes specific language when NEX_LANGUAGE is set", async () => {
+    it("overrides NEX_LANGUAGE when the project rules require English", async () => {
+      process.env.NEX_LANGUAGE = "German";
+      const agent = require("../cli/agent");
+      agent.invalidateSystemPromptCache();
+      mockStream("ok");
+      await processInput("stell dich bitte vor");
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).not.toContain("You MUST always respond in German");
+      delete process.env.NEX_LANGUAGE;
+      agent.invalidateSystemPromptCache();
+    });
+
+    it("ignores NEX_LANGUAGE when the project rules require English", async () => {
       process.env.NEX_LANGUAGE = "German";
       const agent = require("../cli/agent");
       agent.invalidateSystemPromptCache();
       mockStream("ok");
       await processInput("test");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("German");
+      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).not.toContain("You MUST always respond in German");
       delete process.env.NEX_LANGUAGE;
       agent.invalidateSystemPromptCache();
     });

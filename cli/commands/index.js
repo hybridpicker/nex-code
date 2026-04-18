@@ -4171,12 +4171,18 @@ async function startREPL() {
       const { invalidateSystemPromptCache: _inv } = require("../agent");
       const STRONG_IMPL = /\b(implement|refactor|migrate|redesign)\b/i;
       const WEAK_IMPL =
-        /\b(create|build|add|write|introduce|develop|set\s+up)\b/i;
+        /\b(create|build|add|write|develop|set\s+up)\b/i;
       const IS_QUESTION =
         /^(how|what|why|when|where|which|explain|show|list|tell|describe|can\s+you|could\s+you|do\s+you)\b/i;
+      const IS_CONVERSATIONAL =
+        /^(hi|hello|hey|yo)\b/i.test(input) ||
+        /\b(introduce yourself|who are you|what can you do|tell me about yourself)\b/i.test(
+          input,
+        );
       // Don't auto-plan when the user explicitly invokes spawn_agents or a swarm pattern
       const EXPLICIT_SPAWN = /\b(spawn[_\s]?agents?|swarm)\b/i;
       const isImplTask =
+        !IS_CONVERSATIONAL &&
         !IS_QUESTION.test(input) &&
         !EXPLICIT_SPAWN.test(input) &&
         (STRONG_IMPL.test(input) ||
