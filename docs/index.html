@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nex-code Demo</title>
+    <meta
+      name="description"
+      content="Watch the nex-code terminal demo with an inline video player."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0f14;
+        --panel: rgba(11, 19, 29, 0.84);
+        --panel-border: rgba(255, 255, 255, 0.1);
+        --text: #eef4fb;
+        --muted: #9eb0c2;
+        --accent: #7ee787;
+        --accent-strong: #2ea043;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "SF Mono", "Monaco", "Cascadia Code", "Roboto Mono",
+          "Menlo", monospace;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(46, 160, 67, 0.22), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(56, 139, 253, 0.2), transparent 28%),
+          linear-gradient(180deg, #0a0f14, #111827 58%, #0a0f14);
+        display: grid;
+        place-items: center;
+        padding: 32px 20px;
+      }
+
+      main {
+        width: min(1080px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        backdrop-filter: blur(18px);
+      }
+
+      .hero {
+        padding: 40px 40px 24px;
+        border-bottom: 1px solid var(--panel-border);
+      }
+
+      .eyebrow {
+        display: inline-block;
+        margin-bottom: 18px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #04140a;
+        background: linear-gradient(135deg, var(--accent), #58a6ff);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(32px, 5vw, 60px);
+        line-height: 0.94;
+      }
+
+      p {
+        margin: 0;
+        max-width: 720px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+
+      .player-wrap {
+        padding: 24px;
+      }
+
+      .player {
+        display: block;
+        width: 100%;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #000;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+      }
+
+      .actions {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 0 24px 32px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 13px 18px;
+        border-radius: 14px;
+        border: 1px solid var(--panel-border);
+        color: var(--text);
+        text-decoration: none;
+        transition:
+          transform 140ms ease,
+          border-color 140ms ease,
+          background 140ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+        border-color: rgba(126, 231, 135, 0.38);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .button-primary {
+        color: #04140a;
+        border-color: transparent;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      }
+
+      .button-primary:hover {
+        border-color: transparent;
+        background: linear-gradient(135deg, #95f19d, #38b350);
+      }
+
+      @media (max-width: 720px) {
+        .hero {
+          padding: 28px 22px 20px;
+        }
+
+        .player-wrap {
+          padding: 18px;
+        }
+
+        .actions {
+          padding: 0 18px 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="eyebrow">Terminal Demo</div>
+        <h1>nex-code</h1>
+        <p>
+          A short product demo showing the CLI workflow in motion. Press play to
+          watch it inline, or download the MP4 directly if you want the raw
+          file.
+        </p>
+      </section>
+
+      <div class="player-wrap">
+        <video
+          class="player"
+          controls
+          playsinline
+          preload="metadata"
+          poster="./assets/nex-code-demo.png"
+        >
+          <source src="./assets/nex-code-demo.mp4" type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
+      </div>
+
+      <div class="actions">
+        <a class="button button-primary" href="./assets/nex-code-demo.mp4">
+          Download MP4
+        </a>
+        <a class="button" href="https://github.com/hybridpicker/nex-code">
+          Back to Repository
+        </a>
+      </div>
+    </main>
+  </body>
+</html>
