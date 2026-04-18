@@ -1510,6 +1510,17 @@ function _shouldSkipPlanPhaseForDirectCreation(prompt) {
   return hasExplicitPath && (directCreateRefactor || directFileTask);
 }
 
+function _isConversationalPrompt(prompt) {
+  const text = String(prompt || "").trim();
+  if (!text) return false;
+  return (
+    /^(hi|hello|hey|yo)\b/i.test(text) ||
+    /\b(introduce yourself|who are you|what can you do|tell me about yourself)\b/i.test(
+      text,
+    )
+  );
+}
+
 function _normalizePromptPathMatch(value) {
   return String(value || "")
     .replace(/\\/g, "/")
@@ -2072,13 +2083,13 @@ function _buildLanguagePrompt() {
 
   const lines = ["# Language Rules (CRITICAL — enforce strictly)\n"];
 
-  if (uiLang) {
-    lines.push(
-      `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
-    );
-  } else if (projectEnglishOnly) {
+  if (projectEnglishOnly) {
     lines.push(
       "RESPONSE LANGUAGE: This project requires English. Always respond in English, even if the user writes in another language.",
+    );
+  } else if (uiLang) {
+    lines.push(
+      `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
     );
   } else {
     // Auto mode: mirror the user's language
@@ -2179,6 +2190,16 @@ function _buildLanguagePrompt() {
  */
 function _buildTurnLanguagePrompt(userInput) {
   const uiLang = _detectResponseLanguage(userInput);
+  const projectEnglishOnly = _isProjectEnglishOnly();
+  if (projectEnglishOnly) {
+    return (
+      "# Current Turn Language (CRITICAL — enforce strictly)\n" +
+      "This repository is English-only. " +
+      "You MUST answer this turn in English, even if the user's message is written in German or any other language. " +
+      "Treat non-English input as content to answer, not as a language-switch instruction. " +
+      "Do NOT switch to another language because of the user's wording, repository files, prior conversation, examples, or project instructions.\n\n"
+    );
+  }
   return (
     "# Current Turn Language (CRITICAL — enforce strictly)\n" +
     `The current user message is in ${uiLang}. ` +
@@ -3482,7 +3503,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // ─── Phase-based routing initialization ──────────────────────────────────
   // Skip phase routing when opts.skipPhaseRouting is set (skill command prompts
   // like /autoresearch need immediate tool access, not a plan phase)
-  if (conversationMessages.length <= 1 && !opts.skipPhaseRouting) {
+  if (
+    conversationMessages.length <= 1 &&
+    !opts.skipPhaseRouting &&
+    !_isConversationalPrompt(_firstUserText)
+  ) {
     _phaseEnabled = isPhaseRoutingEnabled();
     if (_phaseEnabled) {
       const _cat = detectCategory(_firstUserText);
