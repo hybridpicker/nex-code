@@ -2083,13 +2083,13 @@ function _buildLanguagePrompt() {
 
   const lines = ["# Language Rules (CRITICAL — enforce strictly)\n"];
 
-  if (uiLang) {
-    lines.push(
-      `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
-    );
-  } else if (projectEnglishOnly) {
+  if (projectEnglishOnly) {
     lines.push(
       "RESPONSE LANGUAGE: This project requires English. Always respond in English, even if the user writes in another language.",
+    );
+  } else if (uiLang) {
+    lines.push(
+      `RESPONSE LANGUAGE: You MUST always respond in ${uiLang}. This overrides any language defaults from your training. Never output Chinese, Japanese, or any other language in your responses — even when summarizing or thinking. ${uiLang} only.`,
     );
   } else {
     // Auto mode: mirror the user's language
@@ -2190,6 +2190,16 @@ function _buildLanguagePrompt() {
  */
 function _buildTurnLanguagePrompt(userInput) {
   const uiLang = _detectResponseLanguage(userInput);
+  const projectEnglishOnly = _isProjectEnglishOnly();
+  if (projectEnglishOnly) {
+    return (
+      "# Current Turn Language (CRITICAL — enforce strictly)\n" +
+      "This repository is English-only. " +
+      "You MUST answer this turn in English, even if the user's message is written in German or any other language. " +
+      "Treat non-English input as content to answer, not as a language-switch instruction. " +
+      "Do NOT switch to another language because of the user's wording, repository files, prior conversation, examples, or project instructions.\n\n"
+    );
+  }
   return (
     "# Current Turn Language (CRITICAL — enforce strictly)\n" +
     `The current user message is in ${uiLang}. ` +
