@@ -4,6 +4,11 @@
 
 `nex-code` is an AI-powered developer tool that works in the terminal, reasons through tasks in phases, and routes work across multiple model providers. It is built for engineers who want an assistant that can operate on a real codebase, use real tools, and stay aligned with the way software is actually built and maintained.
 
+## Demo
+
+[Watch the demo video](./docs/assets/nex-code-demo.mp4)
+
+
 ## Overview
 
 Most AI coding tools are optimized for short demos: generate a file, suggest a snippet, answer a question. Real development work is different. It involves understanding an existing repository, planning changes, editing carefully, running verification, and working with the operational tools around the code.
