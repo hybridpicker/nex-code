@@ -7,17 +7,21 @@
 const path = require("path");
 const os = require("os");
 
-// Load .env from CLI install dir (fallback) and project dir
-require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
-// Load from global ~/.nex-code/.env (benchmark routing, API keys).
-// override:true because this file is the authoritative nex-code config —
-// without it, a stale OLLAMA_API_KEY inherited from a long-running systemd
-// parent silently wins over a freshly-rotated key in the config file.
-require("dotenv").config({
-  path: path.join(os.homedir(), ".nex-code", ".env"),
-  override: true,
-});
-require("dotenv").config(); // Also check CWD (non-override — user project wins)
+// Load .env from CLI install dir (fallback) and project dir.
+// NEX_NO_DOTENV=1 skips all .env loading — used by interactive tests that
+// need a clean environment without host config leaking in.
+if (process.env.NEX_NO_DOTENV !== "1") {
+  require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+  // Load from global ~/.nex-code/.env (benchmark routing, API keys).
+  // override:true because this file is the authoritative nex-code config —
+  // without it, a stale OLLAMA_API_KEY inherited from a long-running systemd
+  // parent silently wins over a freshly-rotated key in the config file.
+  require("dotenv").config({
+    path: path.join(os.homedir(), ".nex-code", ".env"),
+    override: true,
+  });
+  require("dotenv").config(); // Also check CWD (non-override — user project wins)
+}
 
 const args = process.argv.slice(2);
 const jsonMode = args.includes("--json");

@@ -199,14 +199,21 @@ class CliSession {
  * Spawn the CLI as an interactive session.
  *
  * @param {string[]} args
- * @param {{ env?: object, cwd?: string }} [opts]
+ * @param {{
+ *   env?: object,         - extra env vars (merged into process.env)
+ *   cwd?: string,         - working directory
+ *   replaceEnv?: boolean, - when true, env REPLACES process.env instead
+ *                          of extending it. Useful for wizard/setup tests
+ *                          that must not inherit the host's API keys.
+ * }} [opts]
  * @returns {CliSession}
  */
 function spawnCli(args, opts = {}) {
-  const { env = {}, cwd } = opts;
+  const { env = {}, cwd, replaceEnv = false } = opts;
+  const finalEnv = replaceEnv ? { ...env } : { ...process.env, ...env };
   const child = spawn(NODE, [BIN, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ...env },
+    env: finalEnv,
     cwd,
   });
   return new CliSession(child);
