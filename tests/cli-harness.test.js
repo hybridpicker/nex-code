@@ -12,6 +12,8 @@ const { spawn } = require("child_process");
 const {
   runCli,
   spawnCli,
+  spawnCliPty,
+  hasPty,
   stripAnsi,
   CliSession,
 } = require("./helpers/cli-harness");
@@ -74,7 +76,7 @@ describe("cli-harness / CliSession (interactive)", () => {
     const s = spawnFixture();
     await s.waitFor(/ready>/, 3000);
     await expect(s.waitFor(/never-appears/, 200)).rejects.toThrow(
-      /waitFor timeout/,
+      /waitFor\[combined\] timeout/,
     );
     await s.close();
   });
@@ -87,12 +89,66 @@ describe("cli-harness / CliSession (interactive)", () => {
     expect(code).toBe(0);
   });
 
+  test("waitForExit resolves when process exits on its own", async () => {
+    const s = spawnFixture();
+    await s.waitFor(/ready>/, 3000);
+    s.send("quit");
+    const code = await s.waitForExit(3000);
+    expect(code).toBe(0);
+  });
+
   test("send after close throws", async () => {
     const s = spawnFixture();
     await s.waitFor(/ready>/, 3000);
     s.send("quit");
     await s.close();
     expect(() => s.send("x")).toThrow(/session closed/);
+  });
+
+  test("waitForStdout matches stdout only, ignores stderr", async () => {
+    const script =
+      'process.stderr.write("err-marker\\n");' +
+      'setTimeout(() => process.stdout.write("out-marker\\n"), 20);' +
+      "setTimeout(() => process.exit(0), 80);";
+    const child = spawn(process.execPath, ["-e", script], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const s = new CliSession(child);
+    await s.waitForStdout(/out-marker/, 3000);
+    expect(s.stdout).toContain("out-marker");
+    expect(s.stderr).toContain("err-marker");
+    // stdout waiter should not have been satisfied by the stderr-only marker
+    await expect(s.waitForStdout(/err-marker/, 100)).rejects.toThrow(
+      /timeout|closed/,
+    );
+    if (!s.closed) await s.close();
+  });
+
+  test("waitForStderr matches stderr only", async () => {
+    const script =
+      'process.stderr.write("boom\\n"); setTimeout(()=>process.exit(0),30);';
+    const child = spawn(process.execPath, ["-e", script], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const s = new CliSession(child);
+    await s.waitForStderr(/boom/, 3000);
+    expect(s.stderr).toContain("boom");
+    if (!s.closed) await s.close();
+  });
+});
+
+describe("cli-harness / PTY session", () => {
+  const ptyIt = hasPty() ? test : test.skip;
+  ptyIt("spawnCliPty drives the real CLI under a TTY", async () => {
+    const s = spawnCliPty(["--version"]);
+    const code = await s.waitForExit(10000);
+    expect(code).toBe(0);
+    expect(s.stdout).toMatch(/\d+\.\d+\.\d+/);
+  });
+
+  test("spawnCliPty throws a helpful error when node-pty is missing", () => {
+    if (hasPty()) return; // environment has it — nothing to assert
+    expect(() => spawnCliPty([])).toThrow(/node-pty/);
   });
 });
 
