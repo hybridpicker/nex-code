@@ -78,9 +78,13 @@ function askSecret(q, replRL) {
  */
 async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
   if (!force) {
+    // NEX_NO_DOTENV=1 tells the CLI to ignore any .env on disk. Respect it
+    // here too so interactive tests that set this flag still see the wizard.
+    const ignoreEnvFiles = process.env.NEX_NO_DOTENV === "1";
     const hasEnvFile =
-      fs.existsSync(path.join(process.cwd(), ".env")) ||
-      fs.existsSync(path.join(__dirname, "..", ".env"));
+      !ignoreEnvFiles &&
+      (fs.existsSync(path.join(process.cwd(), ".env")) ||
+        fs.existsSync(path.join(__dirname, "..", ".env")));
     const hasApiKey =
       process.env.ANTHROPIC_API_KEY ||
       process.env.OPENAI_API_KEY ||
