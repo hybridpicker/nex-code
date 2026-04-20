@@ -130,12 +130,10 @@ function sendMatrix(message) {
   }
 }
 
-// ── Plateau detection ────────────────────────────────────────────────────────
-function isScorePlateau(scores) {
-  if (scores.length < PLATEAU_COUNT + 1) return false;
-  const last = scores.slice(-PLATEAU_COUNT);
-  return last.every((s) => s === last[0]);
-}
+// ── Plateau / regression detection ──────────────────────────────────────────
+// Delegates to scripts/improve-stop-conditions.js so the logic can be
+// unit-tested without importing this long-running daemon.
+const { shouldStopImproving } = require("./improve-stop-conditions");
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 function log(...args) {
@@ -268,13 +266,14 @@ function onSessionChange() {
       return;
     }
 
-    if (isScorePlateau(state.scores)) {
+    const stopReason = shouldStopImproving(state.scores);
+    if (stopReason) {
       sendMatrix(
-        `📊 nex-code auto-improve: Score Plateau bei ${score}/10 (${PLATEAU_COUNT}× gleich).\n` +
+        `📊 nex-code auto-improve: gestoppt — ${stopReason}. Aktueller Score ${score}/10.\n` +
           `Pass ${state.pass}/${MAX_PASSES}. Weitere Fixes brauchen neue Sessions.\n` +
           `Devel bereit → \`nex-improve stop\` zum Mergen.`,
       );
-      log("Score plateau detected. Stopping improvement loop.");
+      log(`Stopping improvement loop: ${stopReason}.`);
       writeState({
         pass: 0,
         scores: [],
