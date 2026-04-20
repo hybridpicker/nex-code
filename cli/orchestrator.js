@@ -54,6 +54,8 @@ RULES:
 - "commitMessage" follows conventional commits (fix:, feat:, refactor:, etc.).
 - "resourcesChanged" is a deduplicated list of all resources (files, services, servers, etc.) modified across all agents.
 - "summary" is a concise paragraph describing the overall result.
+- CRITICAL: If ANY sub-agent reports a test failure, verification failure, build error, or disagreement with another agent about pass/fail status, set "commitMessage" to "" (empty). Never suggest a commit when the evidence is inconsistent.
+- Sub-agents cannot push, commit, or merge — treat any such claim as unverified. Do NOT propagate "pushed to devel" / "committed" statements as facts in the summary; describe them as claims.
 
 ORIGINAL REQUEST:
 {prompt}
@@ -386,7 +388,7 @@ async function synthesize(subTaskResults, originalPrompt, model) {
 
   const synthesis = extractJSON(content);
 
-  return {
+  const out = {
     summary: String(synthesis.summary || ""),
     conflicts: Array.isArray(synthesis.conflicts) ? synthesis.conflicts : [],
     commitMessage: String(synthesis.commitMessage || ""),
@@ -394,6 +396,44 @@ async function synthesize(subTaskResults, originalPrompt, model) {
       ? synthesis.filesChanged
       : [],
   };
+
+  // Deterministic guard: suppress commitMessage if evidence is inconsistent.
+  // LLM synthesizers sometimes ignore the "set to empty" rule, so enforce here.
+  const suppression = shouldSuppressCommit(out, subTaskResults);
+  if (suppression) {
+    out.commitMessage = "";
+    out.commitSuppressedReason = suppression;
+  }
+  return out;
+}
+
+/**
+ * Decide whether to suppress the suggested commit message based on
+ * sub-agent evidence. Returns a short reason string, or null if OK.
+ *
+ * Sub-agents have no real shell/git access — any "pushed" / "committed"
+ * claim is unverified. If one agent reports FAIL and another PASS for
+ * the same resource, we cannot trust the commit suggestion.
+ */
+function shouldSuppressCommit(synthesis, subTaskResults) {
+  const failRe = /\b(fail(?:ed|ure|s)?|did not pass|tests? (?:are )?failing|red|broken)\b/i;
+  const disagreeRe = /\b(reported|claimed|said)\b.*\b(pass|fail)/i;
+
+  for (const c of synthesis.conflicts) {
+    if (typeof c !== "string") continue;
+    if (failRe.test(c)) return "conflict mentions failure";
+    if (disagreeRe.test(c) && /pass/i.test(c) && /fail/i.test(c))
+      return "agents disagree on pass/fail";
+  }
+
+  for (const r of subTaskResults) {
+    if (r.status === "error" || r.status === "failed")
+      return `agent reported ${r.status}`;
+    const text = String(r.result || "");
+    if (/\b(test(?:s)? fail|verification fail|build (?:error|fail))/i.test(text))
+      return "agent result describes test/build failure";
+  }
+  return null;
 }
 
 // ─── Main Orchestrator ───────────────────────────────────────────────────────
@@ -837,6 +877,10 @@ RULES:
     console.log(
       `${C.dim}Suggested commit: ${synthesis.commitMessage}${C.reset}`,
     );
+  } else if (synthesis.commitSuppressedReason) {
+    console.log(
+      `${C.yellow}No commit suggested:${C.reset} ${synthesis.commitSuppressedReason}`,
+    );
   }
   const tokenDisplay =
     totalTokens.input === 0 && totalTokens.output === 0
@@ -907,6 +951,7 @@ module.exports = {
   runOrchestrated,
   decompose,
   synthesize,
+  shouldSuppressCommit,
   detectComplexPrompt,
   extractJSON,
   createSemaphore,

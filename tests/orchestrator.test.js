@@ -591,6 +591,71 @@ describe("synthesize", () => {
     expect(result.commitMessage).toBe("");
     expect(result.filesChanged).toEqual([]);
   });
+
+  test("suppresses commit when a conflict mentions FAIL", async () => {
+    mockSynthesizeResponse({
+      summary: "Agents disagreed",
+      conflicts: [
+        "tests/context-engine.test.js: Agent 5 reported FAIL, Agent 6 reported PASS",
+      ],
+      commitMessage: "fix: verify context compaction",
+      filesChanged: ["cli/context-engine.js"],
+    });
+
+    const result = await synthesize(
+      [
+        { task: "Run tests", status: "done", result: "2 tests failed", toolsUsed: [] },
+        { task: "Push fix", status: "done", result: "pushed to devel", toolsUsed: [] },
+      ],
+      "Improve context engine",
+      "test-model",
+    );
+
+    expect(result.commitMessage).toBe("");
+    expect(result.commitSuppressedReason).toBeTruthy();
+  });
+
+  test("suppresses commit when a sub-agent status is failed", async () => {
+    mockSynthesizeResponse({
+      summary: "Partial",
+      conflicts: [],
+      commitMessage: "feat: shipped it",
+      filesChanged: ["a.js"],
+    });
+
+    const result = await synthesize(
+      [
+        { task: "A", status: "done", result: "ok", toolsUsed: [] },
+        { task: "B", status: "failed", result: "exploded", toolsUsed: [] },
+      ],
+      "do it",
+      "test-model",
+    );
+
+    expect(result.commitMessage).toBe("");
+    expect(result.commitSuppressedReason).toMatch(/failed/);
+  });
+
+  test("keeps commit when all agents succeeded and conflicts are benign", async () => {
+    mockSynthesizeResponse({
+      summary: "Two edits",
+      conflicts: ["config.js: agent 1 and 2 both touched line 10"],
+      commitMessage: "fix: merge benign edits",
+      filesChanged: ["config.js"],
+    });
+
+    const result = await synthesize(
+      [
+        { task: "A", status: "done", result: "ok", toolsUsed: [] },
+        { task: "B", status: "done", result: "ok", toolsUsed: [] },
+      ],
+      "edit config",
+      "test-model",
+    );
+
+    expect(result.commitMessage).toBe("fix: merge benign edits");
+    expect(result.commitSuppressedReason).toBeUndefined();
+  });
 });
 
 // ─── runOrchestrated ─────────────────────────────────────────────────────────
