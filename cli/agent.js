@@ -65,6 +65,17 @@ function isTooShort(text) {
   return false;
 }
 
+function _looksLikeUserDirectedQuestion(text) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const tail = trimmed.slice(-300);
+  if (!tail.includes("?")) return false;
+  return /(?:would you like|do you want|should i|shall i|can you clarify|could you clarify|what would you like me to|which (?:one|option|area|approach)|how would you like me to)\b/i.test(
+    tail,
+  );
+}
+
 function isTextDeliverablePath(filePath) {
   if (!filePath || typeof filePath !== "string") return false;
   return /\.(?:md|mdx|txt|rst|adoc)$/i.test(filePath);
@@ -4748,6 +4759,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       // Build assistant message for history
+      if (
+        Array.isArray(tool_calls) &&
+        tool_calls.length > 0 &&
+        _looksLikeUserDirectedQuestion(content || "")
+      ) {
+        debugLog(
+          `${C.yellow}  ⚠ Assistant asked the user a direct question in text — dropping tool calls and waiting for user input${C.reset}`,
+        );
+        tool_calls = [];
+      }
+
       const assistantMsg = { role: "assistant", content: content || "" };
       if (tool_calls && tool_calls.length > 0) {
         assistantMsg.tool_calls = tool_calls;

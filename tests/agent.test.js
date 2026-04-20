@@ -652,6 +652,42 @@ describe("agent.js", () => {
       ).toBe(true);
     });
 
+    it("does not execute tool calls after a direct user question in assistant text", async () => {
+      mockStream(
+        "I found the relevant module and can explain the behavior. Would you like me to elaborate on the agent capabilities or show you how to interact with a specific feature?",
+        [
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: "/project/productivity-agent.js" },
+            },
+            id: "c1",
+          },
+        ],
+      );
+
+      await processInput("What can we do with this agent?");
+
+      expect(executeTool).not.toHaveBeenCalled();
+      expect(callStream).toHaveBeenCalledTimes(1);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Would you like me to elaborate"),
+        ),
+      ).toBe(true);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            Array.isArray(m.tool_calls) &&
+            m.tool_calls.length > 0,
+        ),
+      ).toBe(false);
+    });
+
     it("passes onToken and signal to callStream", async () => {
       const sig = { aborted: false };
       setAbortSignalGetter(() => sig);
