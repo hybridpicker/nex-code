@@ -256,9 +256,30 @@ describe("providers/registry.js", () => {
       const models = registry.listAllModels();
       const ollamaModel = models.find((m) => m.provider === "ollama");
       expect(ollamaModel.configured).toBe(true);
+      expect(ollamaModel).toHaveProperty("contextWindow");
+      expect(ollamaModel).toHaveProperty("recommendedFor");
 
       const openaiModel = models.find((m) => m.provider === "openai");
       expect(openaiModel.configured).toBe(false);
+    });
+  });
+
+  // ─── recommendModels ───────────────────────────────────────
+  describe("recommendModels()", () => {
+    it("returns curated Ollama Cloud recommendations", () => {
+      const models = registry.recommendModels("agentic", { limit: 3 });
+      expect(models).toHaveLength(3);
+      expect(models[0].spec).toMatch(/^ollama:/);
+      expect(models.map((m) => m.id)).toContain("qwen3-coder:480b");
+    });
+
+    it("can include unconfigured providers when requested", () => {
+      delete process.env.OLLAMA_API_KEY;
+      registry._reset();
+      const models = registry.recommendModels("coding", {
+        configuredOnly: false,
+      });
+      expect(models.some((m) => m.provider === "ollama")).toBe(true);
     });
   });
 
