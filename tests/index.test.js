@@ -59,6 +59,18 @@ jest.mock("../cli/providers/registry", () => ({
       configured: true,
     },
   ]),
+  recommendModels: jest.fn().mockReturnValue([
+    {
+      spec: "ollama:qwen3-coder:480b",
+      id: "qwen3-coder:480b",
+      name: "Qwen3 Coder 480B",
+      provider: "ollama",
+      configured: true,
+      contextWindow: 131072,
+      speed: "balanced",
+      capability: "agentic",
+    },
+  ]),
   setFallbackChain: jest.fn(),
   getFallbackChain: jest.fn().mockReturnValue([]),
   getProvider: jest.fn().mockReturnValue(null),
@@ -275,6 +287,7 @@ const {
   completer,
   completeFilePath,
   showProviders,
+  showModelRecommendations,
   showHelp,
   renderBar,
   hasPasteStart,
@@ -436,6 +449,16 @@ describe("index.js (REPL commands)", () => {
       expect(output).toContain("ollama");
       expect(output).toContain("active");
       expect(output).toContain("kimi-k2.5");
+    });
+  });
+
+  describe("showModelRecommendations()", () => {
+    it("shows recommended Ollama Cloud models", () => {
+      showModelRecommendations("coding");
+      const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Recommended models for coding");
+      expect(output).toContain("ollama:qwen3-coder:480b");
+      expect(output).toContain("agentic");
     });
   });
 

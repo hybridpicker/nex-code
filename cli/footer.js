@@ -547,11 +547,13 @@ class StickyFooter {
         _resizeCleanup = null;
         self._relayout("resize-cleanup");
       }, 300);
+      _resizeCleanup.unref?.();
     };
     const onResize = () => {
       self._dirty = true;
       if (_resizeTimer) clearTimeout(_resizeTimer);
       _resizeTimer = setTimeout(doResize, 80);
+      _resizeTimer.unref?.();
     };
     process.stdout.on("resize", onResize);
     this._offResize = () => {
@@ -594,6 +596,7 @@ class StickyFooter {
         self._relayout("consistency");
       }
     }, 800);
+    this._consistencyTimer.unref?.();
   }
 
   deactivate() {

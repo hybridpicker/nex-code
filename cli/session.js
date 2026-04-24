@@ -147,6 +147,7 @@ function autoSave(messages, meta = {}) {
     pendingMessages = null;
     pendingMeta = null;
   }, 5000);
+  autoSaveTimeout.unref?.();
 }
 
 /**
