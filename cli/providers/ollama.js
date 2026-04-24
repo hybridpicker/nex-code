@@ -29,30 +29,50 @@ const OLLAMA_MODELS = {
     name: "Qwen3 Coder 480B",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "agentic",
+    speed: "balanced",
+    quality: 98,
+    recommendedFor: ["coding", "agentic", "refactor"],
   },
   "qwen3-coder-next": {
     id: "qwen3-coder-next",
     name: "Qwen3 Coder Next",
     maxTokens: 16384,
     contextWindow: 262144,
+    capability: "agentic",
+    speed: "balanced",
+    quality: 97,
+    recommendedFor: ["coding", "agentic", "large-context"],
   },
   "devstral-2:123b": {
     id: "devstral-2:123b",
     name: "Devstral 2 123B",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "agentic",
+    speed: "balanced",
+    quality: 94,
+    recommendedFor: ["coding", "sysadmin", "agentic"],
   },
   "devstral-small-2:24b": {
     id: "devstral-small-2:24b",
     name: "Devstral Small 2 24B",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "fast-coding",
+    speed: "fast",
+    quality: 82,
+    recommendedFor: ["quick-fix", "sysadmin", "fallback"],
   },
   "minimax-m2.7:cloud": {
     id: "minimax-m2.7:cloud",
     name: "MiniMax M2.7 Cloud",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "general",
+    speed: "balanced",
+    quality: 90,
+    recommendedFor: ["coding", "reasoning"],
   },
   // Large general-purpose models
   "kimi-k2.5": {
@@ -60,24 +80,40 @@ const OLLAMA_MODELS = {
     name: "Kimi K2.5",
     maxTokens: 16384,
     contextWindow: 256000,
+    capability: "reasoning",
+    speed: "balanced",
+    quality: 96,
+    recommendedFor: ["reasoning", "large-context", "review"],
   },
   "kimi-k2:1t": {
     id: "kimi-k2:1t",
     name: "Kimi K2 1T",
     maxTokens: 16384,
     contextWindow: 256000,
+    capability: "reasoning",
+    speed: "deliberate",
+    quality: 99,
+    recommendedFor: ["reasoning", "architecture", "review"],
   },
   "kimi-k2-thinking": {
     id: "kimi-k2-thinking",
     name: "Kimi K2 Thinking",
     maxTokens: 16384,
     contextWindow: 256000,
+    capability: "reasoning",
+    speed: "deliberate",
+    quality: 98,
+    recommendedFor: ["reasoning", "debugging", "review"],
   },
   "deepseek-v3.2": {
     id: "deepseek-v3.2",
     name: "DeepSeek V3.2",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "general",
+    speed: "balanced",
+    quality: 94,
+    recommendedFor: ["coding", "reasoning", "fallback"],
   },
   "deepseek-v3.1:671b": {
     id: "deepseek-v3.1:671b",
@@ -97,6 +133,10 @@ const OLLAMA_MODELS = {
     name: "Qwen3.5 397B Cloud",
     maxTokens: 16384,
     contextWindow: 262144,
+    capability: "vision-language",
+    speed: "balanced",
+    quality: 95,
+    recommendedFor: ["frontend", "vision", "large-context"],
   },
   "qwen3.5:397b": {
     id: "qwen3.5:397b",
@@ -115,6 +155,10 @@ const OLLAMA_MODELS = {
     name: "Qwen3.5 35B-A3B",
     maxTokens: 16384,
     contextWindow: 262144,
+    capability: "fast-coding",
+    speed: "fast",
+    quality: 84,
+    recommendedFor: ["quick-fix", "coding", "fallback"],
   },
   "qwen3.5:27b": {
     id: "qwen3.5:27b",
@@ -128,6 +172,10 @@ const OLLAMA_MODELS = {
     name: "Qwen3 Next 80B",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "fast-coding",
+    speed: "fast",
+    quality: 86,
+    recommendedFor: ["quick-fix", "coding"],
   },
   "mistral-large-3:675b": {
     id: "mistral-large-3:675b",
@@ -140,6 +188,10 @@ const OLLAMA_MODELS = {
     name: "GPT-OSS 120B",
     maxTokens: 16384,
     contextWindow: 131072,
+    capability: "open-reasoning",
+    speed: "balanced",
+    quality: 88,
+    recommendedFor: ["open-source", "reasoning", "coding"],
   },
   "minimax-m2.5": {
     id: "minimax-m2.5",
@@ -225,12 +277,20 @@ const OLLAMA_MODELS = {
     name: "Ministral 3 14B",
     maxTokens: 8192,
     contextWindow: 131072,
+    capability: "fast-coding",
+    speed: "fast",
+    quality: 78,
+    recommendedFor: ["quick-fix", "fallback"],
   },
   "ministral-3:8b": {
     id: "ministral-3:8b",
     name: "Ministral 3 8B",
     maxTokens: 8192,
     contextWindow: 131072,
+    capability: "fast",
+    speed: "very-fast",
+    quality: 72,
+    recommendedFor: ["quick-fix", "fallback"],
   },
   // Gemma 4 family
   "gemma4:e2b": {
@@ -271,6 +331,31 @@ const OLLAMA_MODELS = {
     contextWindow: 131072,
   },
 };
+
+const OLLAMA_USE_CASES = {
+  coding: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b"],
+  agentic: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b"],
+  reasoning: ["kimi-k2:1t", "kimi-k2-thinking", "kimi-k2.5"],
+  "large-context": ["qwen3-coder-next", "qwen3.5:397b-cloud", "kimi-k2.5"],
+  frontend: ["qwen3.5:397b-cloud", "qwen3-coder-next", "qwen3-coder:480b"],
+  "quick-fix": ["devstral-small-2:24b", "qwen3-next:80b", "ministral-3:14b"],
+  fallback: ["devstral-small-2:24b", "deepseek-v3.2", "qwen3.5:35b-a3b"],
+  "open-source": ["qwen3-coder:480b", "devstral-2:123b", "gpt-oss:120b"],
+};
+
+function getOllamaRecommendations(useCase = "coding", limit = 5) {
+  const wanted = OLLAMA_USE_CASES[useCase] || OLLAMA_USE_CASES.coding;
+  const ranked = wanted
+    .map((id) => OLLAMA_MODELS[id])
+    .filter(Boolean)
+    .concat(
+      Object.values(OLLAMA_MODELS)
+        .filter((m) => !wanted.includes(m.id))
+        .filter((m) => (m.recommendedFor || []).includes(useCase)),
+    )
+    .sort((a, b) => (b.quality || 0) - (a.quality || 0));
+  return ranked.slice(0, limit);
+}
 
 class OllamaProvider extends BaseProvider {
   constructor(config = {}) {
@@ -471,7 +556,9 @@ class OllamaProvider extends BaseProvider {
       // Preserve error code so classifyError() in sub-agent.js can detect
       // retryable network/server errors (ECONNRESET, 502/503, etc.).
       const apiErr = new Error(`API Error${status}: ${msg}`);
-      apiErr.code = err.code || (err.response?.status ? `HTTP_${err.response.status}` : undefined);
+      apiErr.code =
+        err.code ||
+        (err.response?.status ? `HTTP_${err.response.status}` : undefined);
       throw apiErr;
     }
 
@@ -516,4 +603,9 @@ class OllamaProvider extends BaseProvider {
   }
 }
 
-module.exports = { OllamaProvider, OLLAMA_MODELS };
+module.exports = {
+  OllamaProvider,
+  OLLAMA_MODELS,
+  OLLAMA_USE_CASES,
+  getOllamaRecommendations,
+};

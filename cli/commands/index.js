@@ -12,6 +12,7 @@ const {
   listProviders,
   getActiveProviderName,
   listAllModels,
+  recommendModels,
   setFallbackChain,
   getFallbackChain,
   getProvider,
@@ -46,6 +47,8 @@ let _abortController = null;
 // ─── Session timing + identity ──────────────────────────────
 let _replStartTime = null;
 let _replSessionId = null;
+let _activeReplCleanup = null;
+const REPL_CLEANUP_KEY = Symbol.for("nex-code.replCleanup");
 
 function getAbortSignal() {
   return _abortController?.signal ?? null;
@@ -55,6 +58,7 @@ function getAbortSignal() {
 const SLASH_COMMANDS = [
   { cmd: "/help", desc: "Show full help" },
   { cmd: "/model", desc: "Show/switch model" },
+  { cmd: "/models", desc: "Recommend models by task type" },
   { cmd: "/routing", desc: "Show active model routing (per task category)" },
   { cmd: "/providers", desc: "List providers and models" },
   { cmd: "/fallback", desc: "Show/set fallback chain" },
@@ -263,6 +267,7 @@ function showHelp() {
 ${C.bold}${C.cyan}Commands:${C.reset}
   ${C.cyan}/help${C.reset}             ${C.dim}Show this help${C.reset}
   ${C.cyan}/model [spec]${C.reset}     ${C.dim}Show/switch model (e.g. openai:gpt-4o, claude-sonnet)${C.reset}
+  ${C.cyan}/models [type]${C.reset}    ${C.dim}Recommend Ollama Cloud models by task type${C.reset}
   ${C.cyan}/routing${C.reset}          ${C.dim}Show active model routing per task category${C.reset}
   ${C.cyan}/providers${C.reset}        ${C.dim}Show available providers and models${C.reset}
   ${C.cyan}/fallback [chain]${C.reset} ${C.dim}Show/set fallback chain (e.g. anthropic,openai,local)${C.reset}
@@ -367,6 +372,36 @@ function showProviders() {
   console.log();
 }
 
+function showModelRecommendations(useCase = "coding") {
+  const recommended = recommendModels(useCase, {
+    limit: 6,
+    configuredOnly: false,
+  });
+  const activeProvider = getActiveProviderName();
+  const activeModel = getActiveModel();
+
+  console.log(
+    `\n${C.bold}${C.cyan}Recommended models for ${useCase}:${C.reset}`,
+  );
+  for (const model of recommended) {
+    const marker =
+      model.provider === activeProvider && model.id === activeModel.id
+        ? ` ${C.yellow}◄${C.reset}`
+        : "";
+    const ctx = model.contextWindow
+      ? `${Math.round(model.contextWindow / 1000)}k ctx`
+      : "context unknown";
+    const speed = model.speed ? ` · ${model.speed}` : "";
+    const capability = model.capability ? ` · ${model.capability}` : "";
+    console.log(
+      `  ${C.green}${model.spec}${C.reset} ${C.dim}${ctx}${speed}${capability}${C.reset}${marker}`,
+    );
+  }
+  console.log(
+    `${C.gray}Use /model <provider:model> to switch. Types: coding, agentic, reasoning, large-context, frontend, quick-fix, fallback, open-source.${C.reset}\n`,
+  );
+}
+
 async function handleSlashCommand(input, rl) {
   const [cmd, ...rest] = input.split(/\s+/);
 
@@ -388,7 +423,7 @@ async function handleSlashCommand(input, rl) {
             `${C.bold}${C.cyan}Active model:${C.reset} ${C.dim}${providerName}:${model.id} (${model.name})${C.reset}`,
           );
           console.log(
-            `${C.gray}Use /model <provider:model> to switch. /providers to see all.${C.reset}`,
+            `${C.gray}Use /model <provider:model> to switch. /models for recommendations.${C.reset}`,
           );
         }
         return true;
@@ -406,9 +441,14 @@ async function handleSlashCommand(input, rl) {
       } else {
         console.log(`${C.red}Unknown model: ${name}${C.reset}`);
         console.log(
-          `${C.gray}Use /providers to see available models${C.reset}`,
+          `${C.gray}Use /models for recommendations or /providers to see everything.${C.reset}`,
         );
       }
+      return true;
+    }
+
+    case "/models": {
+      showModelRecommendations(rest.join(" ").trim() || "coding");
       return true;
     }
 
@@ -3538,7 +3578,14 @@ async function startREPL() {
   await printContext(CWD);
 
   // ─── Dream consolidation (non-blocking) ─────────────────────
-  setTimeout(() => {
+  const previousCleanup = globalThis[REPL_CLEANUP_KEY] || _activeReplCleanup;
+  if (previousCleanup) {
+    previousCleanup();
+    _activeReplCleanup = null;
+    globalThis[REPL_CLEANUP_KEY] = null;
+  }
+
+  const dreamTimer = setTimeout(() => {
     try {
       if (shouldConsolidate()) {
         const { insights } = consolidate();
@@ -3550,6 +3597,7 @@ async function startREPL() {
       }
     } catch { /* never break startup */ }
   }, 2000);
+  dreamTimer.unref?.();
 
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
@@ -3589,9 +3637,10 @@ async function startREPL() {
   process.on("SIGTERM", gracefulShutdown);
 
   // Also handle normal exit
-  process.on("exit", () => {
+  const flushOnExit = () => {
     flushAutoSave();
-  });
+  };
+  process.on("exit", flushOnExit);
 
   // Handle Ctrl+C via readline (fires on TTY before process SIGINT)
   rl.on("SIGINT", () => {
@@ -3625,11 +3674,12 @@ async function startREPL() {
         _sigintCount = 0;
         _exitPromptTimer = null;
       }, 2000);
+      _exitPromptTimer.unref?.();
     }
   });
 
   // Fallback SIGINT handler for non-TTY (e.g. piped input or external signals)
-  process.on("SIGINT", () => {
+  const fallbackSigint = () => {
     if (!process.stdin.isTTY) {
       gracefulShutdown();
     } else {
@@ -3638,7 +3688,8 @@ async function startREPL() {
       _sigintCount++;
       if (_sigintCount >= 2) gracefulShutdown();
     }
-  });
+  };
+  process.on("SIGINT", fallbackSigint);
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
   let _pasteActive = false;
@@ -3646,6 +3697,7 @@ async function startREPL() {
   let _pasteCount = 0;
   let _pastes = {}; // { 1: "full content", 2: "full content", ... }
   let _hadPaste = false;
+  let _restoreStdinEmit = null;
 
   /**
    * Complete a paste: append [Pasted content #N] label to existing rl.line so
@@ -3702,7 +3754,7 @@ async function startREPL() {
     process.stdout.write("\x1b[?2004h"); // enable bracketed paste
 
     const origEmit = process.stdin.emit.bind(process.stdin);
-    process.stdin.emit = function (event, ...args) {
+    const patchedEmit = function (event, ...args) {
       if (event !== "data") return origEmit.call(process.stdin, event, ...args);
 
       // Normalize: Buffer → string
@@ -3755,6 +3807,12 @@ async function startREPL() {
 
       // Normal data — pass through
       return origEmit.call(process.stdin, event, ...args);
+    };
+    process.stdin.emit = patchedEmit;
+    _restoreStdinEmit = () => {
+      if (process.stdin.emit === patchedEmit) {
+        process.stdin.emit = origEmit;
+      }
     };
   }
 
@@ -4260,7 +4318,27 @@ async function startREPL() {
     rl.prompt();
   });
 
+  const cleanupRepl = () => {
+    clearTimeout(dreamTimer);
+    if (_exitPromptTimer) {
+      clearTimeout(_exitPromptTimer);
+      _exitPromptTimer = null;
+    }
+    process.off("SIGTERM", gracefulShutdown);
+    process.off("exit", flushOnExit);
+    process.off("SIGINT", fallbackSigint);
+    if (_restoreStdinEmit) {
+      _restoreStdinEmit();
+      _restoreStdinEmit = null;
+    }
+  };
+  _activeReplCleanup = cleanupRepl;
+  globalThis[REPL_CLEANUP_KEY] = cleanupRepl;
+
   rl.on("close", () => {
+    cleanupRepl();
+    _activeReplCleanup = null;
+    globalThis[REPL_CLEANUP_KEY] = null;
     if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l"); // disable bracketed paste
     process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
     process.exit(0);
@@ -4279,6 +4357,7 @@ module.exports = {
   completeFilePath,
   handleSlashCommand,
   showProviders,
+  showModelRecommendations,
   showHelp,
   renderBar,
   hasPasteStart,

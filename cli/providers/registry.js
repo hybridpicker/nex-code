@@ -6,7 +6,7 @@
  * Short specs: 'model' (resolved against active provider)
  */
 
-const { OllamaProvider } = require("./ollama");
+const { OllamaProvider, getOllamaRecommendations } = require("./ollama");
 const { OpenAIProvider } = require("./openai");
 const { AnthropicProvider } = require("./anthropic");
 const { GeminiProvider } = require("./gemini");
@@ -41,7 +41,7 @@ const MODEL_EQUIVALENTS = {
 // Intra-provider model fallback for Ollama (tried before jumping to different provider)
 const OLLAMA_FALLBACK_MODELS = (process.env.OLLAMA_FALLBACK_CHAIN || "")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
 // Reverse lookup: model → tier
@@ -308,9 +308,61 @@ function listAllModels() {
         name: model.name,
         provider: provName,
         configured,
+        maxTokens: model.maxTokens,
+        contextWindow: model.contextWindow,
+        capability: model.capability,
+        speed: model.speed,
+        quality: model.quality,
+        recommendedFor: model.recommendedFor || [],
       });
     }
   }
+  return result;
+}
+
+/**
+ * Recommend configured models for a task use case.
+ * Ollama Cloud has curated capability metadata; other providers fall back to
+ * their defaults so model picking still works in mixed-provider setups.
+ *
+ * @param {string} useCase
+ * @param {{ limit?: number, configuredOnly?: boolean }} options
+ * @returns {Array<{ spec: string, id: string, name: string, provider: string, configured: boolean }>}
+ */
+function recommendModels(useCase = "coding", options = {}) {
+  initDefaults();
+  const limit = options.limit || 5;
+  const configuredOnly = options.configuredOnly !== false;
+  const result = [];
+
+  const ollama = providers.ollama;
+  if (ollama && (!configuredOnly || ollama.isConfigured())) {
+    for (const model of getOllamaRecommendations(useCase, limit)) {
+      result.push({
+        ...model,
+        spec: `ollama:${model.id}`,
+        provider: "ollama",
+        configured: ollama.isConfigured(),
+      });
+    }
+  }
+
+  if (result.length >= limit) return result.slice(0, limit);
+
+  for (const [providerName, provider] of Object.entries(providers)) {
+    if (providerName === "ollama") continue;
+    if (configuredOnly && !provider.isConfigured()) continue;
+    const model = provider.getModel(provider.defaultModel);
+    if (!model) continue;
+    result.push({
+      ...model,
+      spec: `${providerName}:${model.id}`,
+      provider: providerName,
+      configured: provider.isConfigured(),
+    });
+    if (result.length >= limit) break;
+  }
+
   return result;
 }
 
@@ -458,11 +510,15 @@ async function callStream(messages, tools, options = {}) {
   // so providers only receive the bare model ID they expect.
   const _rawModel = options.model;
   const _strippedModel = _rawModel
-    ? (() => { const { model: m } = parseModelSpec(_rawModel); return m || _rawModel; })()
+    ? (() => {
+        const { model: m } = parseModelSpec(_rawModel);
+        return m || _rawModel;
+      })()
     : undefined;
-  const _cleanOpts = _strippedModel !== _rawModel
-    ? { ...options, model: _strippedModel }
-    : options;
+  const _cleanOpts =
+    _strippedModel !== _rawModel
+      ? { ...options, model: _strippedModel }
+      : options;
   return _tryProviders((provider, _provName, model) =>
     provider.stream(messages, tools, {
       model,
@@ -565,6 +621,7 @@ module.exports = {
   parseModelSpec,
   listProviders,
   listAllModels,
+  recommendModels,
   callStream,
   callChat,
   getConfiguredProviders,
