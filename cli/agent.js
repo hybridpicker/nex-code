@@ -3843,6 +3843,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
         }
       }, 5000);
+      staleTimer.unref?.();
 
       // Token batching for streaming optimization
       let tokenBuffer = "";
@@ -3941,6 +3942,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   tokenBuffer = "";
                   flushTimeout = null;
                 }, 50);
+                flushTimeout.unref?.();
               }
             } else {
               stream.push(tokenBuffer);
@@ -6423,6 +6425,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             process.stdout.write(`\r\x1b[2K${_hdr}`);
           }
         }, 120);
+        _spinAnim.timer.unref?.();
       }
 
       const { results: toolMessages, summaries: batchSummaries } =
