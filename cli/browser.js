@@ -10,6 +10,7 @@
 let _playwright = null;
 let _browser = null;
 let _isAvailable = null;
+const BROWSER_EXIT_CLEANUP_KEY = Symbol.for("nex-code.browserExitCleanup");
 
 const INSTALL_MSG =
   "Playwright is not installed. Install with:\n  npm install playwright && npx playwright install chromium\nThen restart nex-code.";
@@ -38,13 +39,18 @@ async function closeBrowser() {
   if (_browser) {
     try {
       await _browser.close();
-    } catch (e) { console.error("closeBrowser failed:", e.message); }
+    } catch (e) {
+      console.error("closeBrowser failed:", e.message);
+    }
     _browser = null;
   }
 }
 
 // Register cleanup on exit
-process.on("exit", () => {
+if (globalThis[BROWSER_EXIT_CLEANUP_KEY]) {
+  process.off("exit", globalThis[BROWSER_EXIT_CLEANUP_KEY]);
+}
+const cleanupBrowserOnExit = () => {
   if (_browser) {
     try {
       _browser.close();
@@ -53,7 +59,9 @@ process.on("exit", () => {
       console.error("Error closing browser on exit:", err.message);
     }
   }
-});
+};
+globalThis[BROWSER_EXIT_CLEANUP_KEY] = cleanupBrowserOnExit;
+process.on("exit", cleanupBrowserOnExit);
 
 /**
  * Navigate to URL and return page content (title, text, links).

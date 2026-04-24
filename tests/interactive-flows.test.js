@@ -32,6 +32,14 @@ function isolatedEnv(tmpHome) {
   };
 }
 
+function configuredEnv(tmpHome) {
+  return {
+    ...isolatedEnv(tmpHome),
+    DEFAULT_PROVIDER: "ollama",
+    DEFAULT_MODEL: "devstral-small-2:24b",
+  };
+}
+
 function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -97,3 +105,44 @@ describe("interactive: setup wizard", () => {
 // considered but dropped — checkLocalOllama() in cli/commands/index.js
 // hardcodes http://localhost:11434, so the outcome depends on whether a
 // local Ollama daemon happens to be running. Not a reliable unit-test signal.
+
+describe("interactive: repl slash commands", () => {
+  let tmpHome, tmpCwd;
+
+  beforeEach(() => {
+    tmpHome = mkTmp("nex-repl-home-");
+    tmpCwd = mkTmp("nex-repl-cwd-");
+  });
+
+  afterEach(() => {
+    for (const d of [tmpHome, tmpCwd]) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+      } catch {}
+    }
+  });
+
+  test("supports /help followed by /exit in a real REPL session", async () => {
+    const s = spawnCli([], {
+      env: configuredEnv(tmpHome),
+      cwd: tmpCwd,
+      replaceEnv: true,
+    });
+    try {
+      await s.waitFor(/›/, 12000);
+      s.send("/help");
+      await s.waitFor(/Commands:/, 4000);
+      expect(s.stdout).toContain("/help");
+      expect(s.stdout).toContain("/exit");
+
+      s.send("/exit");
+      const code = await s.waitForExit(4000);
+      expect(code).toBe(0);
+    } finally {
+      if (!s.closed) {
+        s.kill();
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+  }, 20000);
+});

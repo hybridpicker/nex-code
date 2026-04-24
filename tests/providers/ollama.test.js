@@ -6,7 +6,12 @@ jest.mock("axios", () => ({
 }));
 const axios = require("axios");
 
-const { OllamaProvider, OLLAMA_MODELS } = require("../../cli/providers/ollama");
+const {
+  OllamaProvider,
+  OLLAMA_MODELS,
+  OLLAMA_USE_CASES,
+  getOllamaRecommendations,
+} = require("../../cli/providers/ollama");
 
 describe("providers/ollama.js", () => {
   let provider;
@@ -94,6 +99,8 @@ describe("providers/ollama.js", () => {
       expect(OLLAMA_MODELS["qwen3-coder:480b"]).toMatchObject({
         id: "qwen3-coder:480b",
         name: "Qwen3 Coder 480B",
+        capability: "agentic",
+        recommendedFor: expect.arrayContaining(["coding", "agentic"]),
       });
     });
 
@@ -109,6 +116,25 @@ describe("providers/ollama.js", () => {
         id: "devstral-2:123b",
         name: "Devstral 2 123B",
       });
+    });
+  });
+
+  describe("getOllamaRecommendations()", () => {
+    it("recommends strong coding models by default", () => {
+      const models = getOllamaRecommendations();
+      expect(models.map((m) => m.id)).toContain("qwen3-coder:480b");
+      expect(models[0]).toHaveProperty("quality");
+    });
+
+    it("recommends fast models for quick fixes", () => {
+      const models = getOllamaRecommendations("quick-fix", 2);
+      expect(models).toHaveLength(2);
+      expect(models[0].recommendedFor).toContain("quick-fix");
+    });
+
+    it("exports known use cases", () => {
+      expect(OLLAMA_USE_CASES).toHaveProperty("agentic");
+      expect(OLLAMA_USE_CASES).toHaveProperty("open-source");
     });
   });
 
@@ -469,15 +495,18 @@ describe("providers/ollama.js", () => {
       const mockStream = new (require("events").EventEmitter)();
       axios.post.mockResolvedValueOnce({ data: mockStream });
 
-      const promise = provider.stream(
-        [{ role: "user", content: "Hi" }],
-        [],
-        { onToken: () => {} },
-      );
+      const promise = provider.stream([{ role: "user", content: "Hi" }], [], {
+        onToken: () => {},
+      });
 
       // Emit done to resolve the stream
       process.nextTick(() => {
-        mockStream.emit("data", Buffer.from(JSON.stringify({ done: true, message: { content: "" } }) + "\n"));
+        mockStream.emit(
+          "data",
+          Buffer.from(
+            JSON.stringify({ done: true, message: { content: "" } }) + "\n",
+          ),
+        );
         mockStream.emit("end");
       });
 
