@@ -1,9 +1,12 @@
 "use strict";
 
 const {
+  collectConfiguredOllamaModels,
   evaluateGateRegression,
+  findUnavailableOllamaModels,
   getBaselineContext,
   routingSignature,
+  shouldUseGateCache,
   summarizeGateBaseline,
 } = require("../scripts/benchmark-gate");
 
@@ -22,8 +25,73 @@ describe("benchmark-gate helpers", () => {
 
     expect(context.harnessVersion).toBe("2026-04-13.1");
     expect(context.baselineKey).toContain("hv-2026-04-13-1");
-    expect(context.baselineKey).toContain("routing-bugfix-qwen3-next-80b-feature-glm-4-6");
+    expect(context.baselineKey).toContain(
+      "routing-bugfix-qwen3-next-80b-feature-glm-4-6",
+    );
     expect(context.baselinePath).toContain(context.baselineKey);
+  });
+
+  it("uses cached gate results only for clean committed state", () => {
+    expect(
+      shouldUseGateCache({
+        sha: "abc123",
+        updateBaseline: false,
+        workingTreeClean: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseGateCache({
+        sha: "abc123",
+        updateBaseline: false,
+        workingTreeClean: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseGateCache({
+        sha: "abc123",
+        updateBaseline: true,
+        workingTreeClean: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseGateCache({
+        sha: null,
+        updateBaseline: false,
+        workingTreeClean: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("collects configured Ollama models from defaults and routing", () => {
+    expect(
+      collectConfiguredOllamaModels({
+        routing: {
+          agentic: "ministral-3:14b",
+          phases: {
+            plan: "ollama:qwen3-coder:480b",
+          },
+        },
+        env: {
+          DEFAULT_PROVIDER: "ollama",
+          DEFAULT_MODEL: "deepseek-v4-flash:cloud",
+          NEX_ROUTE_CODING: "qwen3-coder-next",
+        },
+      }),
+    ).toEqual([
+      "deepseek-v4-flash:cloud",
+      "ministral-3:14b",
+      "qwen3-coder-next",
+      "qwen3-coder:480b",
+    ]);
+  });
+
+  it("treats untagged Ollama model names as matching loaded tags", () => {
+    expect(
+      findUnavailableOllamaModels(
+        ["qwen3-coder", "deepseek-v4-flash:cloud", "missing:latest"],
+        ["qwen3-coder:480b", "deepseek-v4-flash:cloud"],
+      ),
+    ).toEqual(["missing:latest"]);
   });
 
   it("fails when timeout rate regresses sharply even if score is stable", () => {
@@ -51,7 +119,9 @@ describe("benchmark-gate helpers", () => {
     );
 
     expect(result.pass).toBe(false);
-    expect(result.reasons).toContain("Timeout rate increased 25 points (10% -> 35%)");
+    expect(result.reasons).toContain(
+      "Timeout rate increased 25 points (10% -> 35%)",
+    );
     expect(result.severity).toBe("severe");
   });
 
@@ -175,7 +245,9 @@ describe("benchmark-gate helpers", () => {
     expect(result.pass).toBe(true);
     expect(result.severity).toBe("transient");
     expect(result.warning).toContain("5-run median baseline");
-    expect(result.warningReasons).toContain('Category "bugfix" dropped 11 points (90 -> 79)');
+    expect(result.warningReasons).toContain(
+      'Category "bugfix" dropped 11 points (90 -> 79)',
+    );
   });
 
   it("fails when the same soft regression happens twice in a row", () => {
@@ -234,7 +306,9 @@ describe("benchmark-gate helpers", () => {
 
     expect(result.pass).toBe(false);
     expect(result.severity).toBe("repeat");
-    expect(result.reasons).toContain('Category "bugfix" dropped 11 points (90 -> 79)');
+    expect(result.reasons).toContain(
+      'Category "bugfix" dropped 11 points (90 -> 79)',
+    );
   });
 
   it("fails immediately when the harness telemetry is invalid", () => {
@@ -263,6 +337,8 @@ describe("benchmark-gate helpers", () => {
 
     expect(result.pass).toBe(false);
     expect(result.severity).toBe("severe");
-    expect(result.reasons).toContain("Harness telemetry failed for 1 task(s) (14% invalid)");
+    expect(result.reasons).toContain(
+      "Harness telemetry failed for 1 task(s) (14% invalid)",
+    );
   });
 });

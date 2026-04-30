@@ -35,6 +35,7 @@ beforeEach(() => {
   // Save and clear relevant env vars
   for (const key of [
     "ANTHROPIC_API_KEY",
+    "OLLAMA_API_KEY",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "OPENROUTER_API_KEY",
@@ -73,6 +74,16 @@ describe("runSetupWizard", () => {
 
   test("early return when ANTHROPIC_API_KEY is set", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test-123";
+    const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+    await runSetupWizard();
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Welcome to nex-code"),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  test("early return when OLLAMA_API_KEY is set", async () => {
+    process.env.OLLAMA_API_KEY = "ollama-test-key";
     const consoleSpy = jest.spyOn(console, "log").mockImplementation();
     await runSetupWizard();
     expect(consoleSpy).not.toHaveBeenCalledWith(

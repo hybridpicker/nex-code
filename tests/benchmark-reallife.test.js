@@ -1,17 +1,28 @@
 "use strict";
 
 const {
+  analyzeBenchmarkQualitySignals,
   extractBenchmarkMetrics,
   extractUsageFromDoneEvent,
   parseJsonEventStream,
+  terminateProcessWithGrace,
 } = require("../scripts/benchmark-reallife");
 
 describe("benchmark reallife parser", () => {
   test("parses current JSON event stream for tool calls and usage", () => {
     const stdout = [
       JSON.stringify({ type: "token", text: "I" }),
-      JSON.stringify({ type: "tool_start", tool: "read_file", args: { path: "package.json" } }),
-      JSON.stringify({ type: "tool_end", tool: "read_file", summary: "Inspect · Read 10 lines", ok: true }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "read_file",
+        args: { path: "package.json" },
+      }),
+      JSON.stringify({
+        type: "tool_end",
+        tool: "read_file",
+        summary: "Inspect · Read 10 lines",
+        ok: true,
+      }),
       JSON.stringify({
         type: "done",
         success: true,
@@ -50,7 +61,7 @@ describe("benchmark reallife parser", () => {
   });
 
   test("falls back to legacy tool detection when no JSON events are present", () => {
-    const stdout = "{\"type\":\"tool_call\"}\n";
+    const stdout = '{"type":"tool_call"}\n';
     expect(extractBenchmarkMetrics(stdout, "")).toEqual({
       toolCalls: 1,
       tokens: { input: 0, output: 0 },
@@ -72,7 +83,11 @@ describe("benchmark reallife parser", () => {
 
   test("marks partial JSON streams without a done event as invalid telemetry", () => {
     const stdout = [
-      JSON.stringify({ type: "tool_start", tool: "read_file", args: { path: "package.json" } }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "read_file",
+        args: { path: "package.json" },
+      }),
       JSON.stringify({ type: "tool_end", tool: "read_file", ok: true }),
     ].join("\n");
 
@@ -92,5 +107,107 @@ describe("benchmark reallife parser", () => {
         stderrBytes: 0,
       },
     });
+  });
+
+  test("measures missing verification and false success claims", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "tool_start",
+        tool: "edit_file",
+        args: { path: "src/app.js" },
+      }),
+      JSON.stringify({ type: "tool_end", tool: "edit_file", ok: true }),
+      JSON.stringify({
+        type: "done",
+        success: true,
+        response:
+          "Implemented the fix, verified all checks passed, and the task is complete.",
+      }),
+    ].join("\n");
+
+    const signals = analyzeBenchmarkQualitySignals(stdout, "", {
+      maxToolCalls: 10,
+    });
+
+    expect(signals.missingVerification).toBe(true);
+    expect(signals.falseSuccessClaim).toBe(true);
+    expect(signals.verificationRan).toBe(false);
+  });
+
+  test("measures verification, tool overuse, and context selection", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "tool_start",
+        tool: "read_file",
+        args: { path: "AGENTS.md" },
+      }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "read_file",
+        args: { path: "package.json" },
+      }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "bash",
+        args: { command: "git status --short" },
+      }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "bash",
+        args: { command: "npm test" },
+      }),
+      JSON.stringify({
+        type: "done",
+        success: true,
+        response: "PASS: npm test passed.",
+      }),
+    ].join("\n");
+
+    const signals = analyzeBenchmarkQualitySignals(stdout, "", {
+      maxToolCalls: 2,
+    });
+
+    expect(signals.verificationRan).toBe(true);
+    expect(signals.toolOveruse).toBe(true);
+    expect(signals.contextSelection.readProjectInstructions).toBe(true);
+    expect(signals.contextSelection.readPackageConfig).toBe(true);
+    expect(signals.contextSelection.inspectedGitState).toBe(true);
+    expect(signals.falseSuccessClaim).toBe(false);
+  });
+
+  test("hard-kills benchmark children that ignore termination", () => {
+    jest.useFakeTimers();
+    const signals = [];
+    const proc = {
+      kill: jest.fn((signal) => {
+        signals.push(signal);
+        return true;
+      }),
+    };
+
+    terminateProcessWithGrace(proc, () => false, 1000);
+
+    expect(signals).toEqual(["SIGTERM"]);
+    jest.advanceTimersByTime(999);
+    expect(signals).toEqual(["SIGTERM"]);
+    jest.advanceTimersByTime(1);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    jest.useRealTimers();
+  });
+
+  test("does not hard-kill benchmark children that already exited", () => {
+    jest.useFakeTimers();
+    let closed = false;
+    const proc = {
+      kill: jest.fn(),
+    };
+
+    terminateProcessWithGrace(proc, () => closed, 1000);
+    closed = true;
+    jest.advanceTimersByTime(1000);
+
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    jest.useRealTimers();
   });
 });

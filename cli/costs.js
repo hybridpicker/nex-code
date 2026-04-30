@@ -58,11 +58,62 @@ const PRICING = {
   local: {},
 };
 
+const AFFORDABLE_PROVIDERS = new Set(["ollama", "local"]);
+const PREMIUM_PROVIDERS = new Set(["openai", "anthropic", "gemini"]);
+
 // Session usage accumulator
 let usageLog = [];
 
 // Per-provider cost limits (e.g. { anthropic: 5.00, openai: 10.00 })
 let costLimits = {};
+
+// Avoid printing the same soft warning on every call once a provider crosses 80%.
+let budgetWarningState = new Set();
+
+function getProviderCostMode(provider) {
+  const name = String(provider || "").toLowerCase();
+  if (AFFORDABLE_PROVIDERS.has(name)) {
+    return {
+      provider: name,
+      tier: "affordable",
+      paid: false,
+      label: name === "local" ? "local open model" : "open-model path",
+      detail:
+        name === "local"
+          ? "runs through a local Ollama server with no per-token API charge"
+          : "recommended affordable path for open coding models",
+    };
+  }
+  if (PREMIUM_PROVIDERS.has(name)) {
+    return {
+      provider: name,
+      tier: "premium",
+      paid: true,
+      label: "premium paid provider",
+      detail: "may incur per-token API charges; use /budget to cap spend",
+    };
+  }
+  return {
+    provider: name,
+    tier: "unknown",
+    paid: null,
+    label: "cost unknown",
+    detail: "pricing is not known to nex-code",
+  };
+}
+
+function isAffordableProvider(provider) {
+  return getProviderCostMode(provider).tier === "affordable";
+}
+
+function isPremiumProvider(provider) {
+  return getProviderCostMode(provider).tier === "premium";
+}
+
+function formatProviderCostMode(provider) {
+  const mode = getProviderCostMode(provider);
+  return `${mode.label} — ${mode.detail}`;
+}
 
 /**
  * Track token usage for a single API call.
@@ -71,8 +122,20 @@ let costLimits = {};
  * @param {number} inputTokens
  * @param {number} outputTokens
  */
-function trackUsage(provider, model, inputTokens, outputTokens, cacheReadTokens = 0) {
-  usageLog.push({ provider, model, input: inputTokens, output: outputTokens, cacheRead: cacheReadTokens });
+function trackUsage(
+  provider,
+  model,
+  inputTokens,
+  outputTokens,
+  cacheReadTokens = 0,
+) {
+  usageLog.push({
+    provider,
+    model,
+    input: inputTokens,
+    output: outputTokens,
+    cacheRead: cacheReadTokens,
+  });
 
   // Check budget after tracking
   if (costLimits[provider] !== undefined) {
@@ -81,6 +144,14 @@ function trackUsage(provider, model, inputTokens, outputTokens, cacheReadTokens 
       process.stderr.write(
         `${T.yellow}\u26a0 Budget limit reached for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)}${T.reset}\n`,
       );
+    } else if (budget.limit > 0 && budget.spent >= budget.limit * 0.8) {
+      const warningKey = `${provider}:${budget.limit}:80`;
+      if (!budgetWarningState.has(warningKey)) {
+        budgetWarningState.add(warningKey);
+        process.stderr.write(
+          `${T.yellow}Budget warning for ${provider}: $${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)} used. Use /budget ${provider} <amount> to raise the cap or /model ollama:<model> for the affordable path.${T.reset}\n`,
+        );
+      }
     }
   }
 }
@@ -138,7 +209,10 @@ function getSessionCosts() {
   const totalCost = breakdown.reduce((sum, b) => sum + b.cost, 0);
   const totalInput = breakdown.reduce((sum, b) => sum + b.input, 0);
   const totalOutput = breakdown.reduce((sum, b) => sum + b.output, 0);
-  const totalCacheRead = breakdown.reduce((sum, b) => sum + (b.cacheRead || 0), 0);
+  const totalCacheRead = breakdown.reduce(
+    (sum, b) => sum + (b.cacheRead || 0),
+    0,
+  );
 
   return { totalCost, totalInput, totalOutput, totalCacheRead, breakdown };
 }
@@ -160,7 +234,9 @@ function formatCosts() {
 
   for (const b of breakdown) {
     const costStr = b.cost > 0 ? `$${b.cost.toFixed(4)}` : "free";
+    const mode = getProviderCostMode(b.provider);
     lines.push(`  ${b.provider}:${b.model}`);
+    lines.push(`    Path:   ${mode.label}`);
     lines.push(`    Input:  ${b.input.toLocaleString()} tokens`);
     lines.push(`    Output: ${b.output.toLocaleString()} tokens`);
     lines.push(`    Cost:   ${costStr}`);
@@ -202,6 +278,7 @@ function formatCostHint(provider, model, inputTokens, outputTokens) {
  */
 function resetCosts() {
   usageLog = [];
+  budgetWarningState = new Set();
 }
 
 // ─── Cost Limits ───────────────────────────────────────────────
@@ -305,6 +382,7 @@ function saveCostLimits() {
  */
 function resetCostLimits() {
   costLimits = {};
+  budgetWarningState = new Set();
 }
 
 // Load cost limits on init
@@ -323,6 +401,10 @@ module.exports = {
   getCostLimits,
   getProviderSpend,
   checkBudget,
+  getProviderCostMode,
+  formatProviderCostMode,
+  isAffordableProvider,
+  isPremiumProvider,
   loadCostLimits,
   saveCostLimits,
   resetCostLimits,
