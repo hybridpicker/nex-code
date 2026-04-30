@@ -1,21 +1,23 @@
 # nex-code
 
-**A CLI coding assistant for production development workflows.**
+**An open-model-first CLI coding assistant for production development workflows.**
 
-`nex-code` is an AI-powered developer tool that works in the terminal, reasons through tasks in phases, and routes work across multiple model providers. It is built for engineers who want an assistant that can operate on a real codebase, use real tools, and stay aligned with the way software is actually built and maintained.
+`nex-code` is a terminal coding assistant built around affordable open-model workflows. It works directly in real repositories, reasons through tasks in phases, and routes work across Ollama, Ollama Cloud, local models, and optional premium providers.
 
 ## Overview
 
-Most AI coding tools are optimized for short demos: generate a file, suggest a snippet, answer a question. Real development work is different. It involves understanding an existing repository, planning changes, editing carefully, running verification, and working with the operational tools around the code.
+Most coding assistants are optimized for short demos: generate a file, suggest a snippet, answer a question. Real development work is different. It involves understanding an existing repository, planning changes, editing carefully, running verification, and working with the operational tools around the code.
 
 `nex-code` exists to close that gap. It is designed as a serious CLI-first system that can:
 
-- work across OpenAI, Anthropic, Gemini, Ollama, and local models
+- make Ollama, Ollama Cloud, and local open models the recommended path
+- keep premium providers such as OpenAI, Anthropic, and Gemini optional
+- show token usage, cost mode, budget state, and fallback behavior
 - move through a structured plan -> implement -> verify loop
 - use developer tooling such as Git, SSH, Docker, and Kubernetes
 - adapt model choice to the kind of work being done
 
-The result is not just "chat in the terminal." It is an agentic workflow engine for software delivery.
+The result is not just "chat in the terminal." It is a CLI workflow engine for software delivery that keeps model cost visible.
 
 ## Core Concept
 
@@ -29,22 +31,25 @@ The result is not just "chat in the terminal." It is an agentic workflow engine 
 
 This matters because the failure mode of many coding assistants is not generation quality alone. It is premature action. A useful assistant must know when to inspect first, when to change code, and when to stop and verify before claiming success.
 
-### Multi-Model Routing
+### Open-Model-First Routing
 
 Different models are good at different things. Some are better at fast repo exploration, some at careful implementation, and some at structured verification or longer-context reasoning.
 
-`nex-code` is built around that reality. Instead of binding the entire session to one model, it can route work by phase, task type, or provider availability. In practice, this means:
+`nex-code` is built around that reality while treating open and affordable models as first-class defaults. Instead of binding the entire session to one model, it can route work by phase, task type, provider availability, and configured budget. In practice, this means:
 
 - using one model for planning and another for implementation
-- switching providers without changing the workflow model
-- falling back across providers when a model is unavailable or unsuitable
+- preferring Ollama Cloud or local Ollama where possible
+- falling back to premium providers only when configured
 - benchmarking configured models to improve routing decisions over time
+- warning when paid-provider budgets are near their limits
 
-The goal is not provider abstraction for its own sake. The goal is to make model choice operational rather than ideological.
+The goal is not provider abstraction for its own sake. The goal is to make model choice operational, reliable, and cost-aware.
 
 ## Key Features
 
 - **CLI-first operation** with low overhead and a workflow that fits existing terminal habits
+- **Open-model-first defaults** for Ollama Cloud, local Ollama, and strong open coding models
+- **Cost visibility** for token usage, provider cost mode, budget warnings, and fallback routing
 - **Phase-based execution** that separates planning, implementation, and verification
 - **Multi-provider support** for OpenAI, Anthropic, Gemini, Ollama Cloud, and local Ollama
 - **Tool-integrated execution** across files, shell commands, Git, SSH, Docker, and Kubernetes
@@ -128,21 +133,23 @@ nex-code
 Basic requirements:
 
 - Node.js 18+
-- at least one configured provider key, or a local Ollama setup
+- Ollama Cloud key, or a local Ollama setup
+- optional premium provider keys for fallback or specialized use
 
 Typical environment configuration:
 
 ```env
 OLLAMA_API_KEY=your-key
+DEFAULT_PROVIDER=ollama
+DEFAULT_MODEL=qwen3-coder:480b
+
+# Optional premium fallbacks:
 OPENAI_API_KEY=your-key
 ANTHROPIC_API_KEY=your-key
 GEMINI_API_KEY=your-key
-
-DEFAULT_PROVIDER=ollama
-DEFAULT_MODEL=devstral-2:123b
 ```
 
-On first launch, `nex-code` can guide setup interactively. More detailed installation, provider setup, and advanced runtime configuration can be expanded here as the project documentation matures.
+On first launch, `nex-code` guides setup interactively and recommends Ollama Cloud or local Ollama first. Use `/models coding` for cost-aware model recommendations, `/budget` to cap premium spend, and `/fallback` to decide when paid providers may be used.
 
 ## Future Direction
 
@@ -156,4 +163,4 @@ Likely areas of continued investment include:
 - tighter verification loops for tests, diffs, and deployment workflows
 - better support for persistent project knowledge and reusable team workflows
 
-The direction is clear: make AI assistance behave more like a disciplined engineering system and less like an isolated chat interface.
+The direction is clear: make model-assisted development behave more like a disciplined engineering system and less like an isolated chat interface, while keeping costs controllable.

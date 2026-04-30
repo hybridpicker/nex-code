@@ -11,7 +11,11 @@ const { OpenAIProvider } = require("./openai");
 const { AnthropicProvider } = require("./anthropic");
 const { GeminiProvider } = require("./gemini");
 const { LocalProvider } = require("./local");
-const { checkBudget } = require("../costs");
+const {
+  checkBudget,
+  formatProviderCostMode,
+  getProviderCostMode,
+} = require("../costs");
 
 // ─── Model Equivalence Map ─────────────────────────────────────
 // Maps models across providers by capability tier (top/strong/fast).
@@ -66,6 +70,15 @@ function resolveModelForProvider(sourceModel, targetProviderName) {
   if (!tier) return sourceModel; // Unknown model — pass through unchanged
   const equivalent = MODEL_EQUIVALENTS[tier][targetProviderName];
   return equivalent || sourceModel; // No mapping for this provider — pass through
+}
+
+function buildNoConfiguredProviderError() {
+  return [
+    "No configured provider available.",
+    "Lowest-cost path: run /setup and choose Ollama Cloud, or set OLLAMA_API_KEY plus DEFAULT_PROVIDER=ollama.",
+    "Local free path: start Ollama locally, pull a coding model, then use /model local:<model>.",
+    "Premium fallback: set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY and use /fallback only when you want paid backup.",
+  ].join("\n");
 }
 
 // ─── Registry State ────────────────────────────────────────────
@@ -459,8 +472,9 @@ async function _tryProviders(callFn) {
       const model = isFallback
         ? resolveModelForProvider(activeModelId, provName)
         : activeModelId;
-      if (isFallback && model !== activeModelId) {
-        process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
+      if (isFallback) {
+        const mode = getProviderCostMode(provName).label;
+        process.stderr.write(`  [fallback: ${provName}:${model} · ${mode}]\n`);
       }
       return await callFn(provider, provName, model);
     } catch (err) {
@@ -494,9 +508,9 @@ async function _tryProviders(callFn) {
     );
   }
   if (configuredCount === 0) {
-    throw new Error("No configured provider available");
+    throw new Error(buildNoConfiguredProviderError());
   }
-  throw lastError || new Error("No configured provider available");
+  throw lastError || new Error(buildNoConfiguredProviderError());
 }
 
 /**
@@ -540,7 +554,11 @@ async function callChat(messages, tools, options = {}) {
   if (options.provider) {
     const provider = providers[options.provider];
     if (!provider || !provider.isConfigured()) {
-      throw new Error(`Provider '${options.provider}' is not available`);
+      const mode = formatProviderCostMode(options.provider);
+      throw new Error(
+        `Provider '${options.provider}' is not available (${mode}).\n` +
+          buildNoConfiguredProviderError(),
+      );
     }
     const chatOpts = { model: options.model || activeModelId, ...options };
     try {
@@ -628,6 +646,7 @@ module.exports = {
   setFallbackChain,
   getFallbackChain,
   resolveModelForProvider,
+  buildNoConfiguredProviderError,
   MODEL_EQUIVALENTS,
   OLLAMA_FALLBACK_MODELS,
   _reset,

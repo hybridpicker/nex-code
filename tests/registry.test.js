@@ -210,6 +210,47 @@ describe("registry.js", () => {
         "No configured provider",
       );
     });
+
+    it("explains the Ollama-first setup path when no provider is configured", async () => {
+      registry._reset();
+      delete process.env.OLLAMA_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+
+      await expect(registry.callStream([], [])).rejects.toThrow(
+        /Lowest-cost path: run \/setup and choose Ollama Cloud/,
+      );
+    });
+
+    it("labels premium fallback routing in stderr", async () => {
+      const stderrSpy = jest
+        .spyOn(process.stderr, "write")
+        .mockImplementation();
+      process.env.OPENAI_API_KEY = "sk-test";
+      registry.getActiveProviderName();
+      registry.setFallbackChain(["openai"]);
+
+      const ollama = registry.getProvider("ollama");
+      const openai = registry.getProvider("openai");
+
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("503 Service Unavailable"));
+      jest.spyOn(openai, "isConfigured").mockReturnValue(true);
+      jest.spyOn(openai, "stream").mockResolvedValueOnce({ ok: true });
+
+      await registry.callStream([], []);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("premium paid provider"),
+      );
+
+      ollama.stream.mockRestore();
+      openai.stream.mockRestore();
+      openai.isConfigured.mockRestore();
+      stderrSpy.mockRestore();
+    });
   });
 
   // ─── callChat fallback logic ───────────────────────────────

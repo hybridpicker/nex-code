@@ -71,16 +71,24 @@ function detectFrameworks(files) {
   const fileSet = new Set(files);
   const frameworks = new Set();
   for (const signal of FRAMEWORK_SIGNALS) {
-    if (fileSet.has(signal.file) || [...fileSet].some((f) => f.startsWith(`${signal.file}/`))) {
+    if (
+      fileSet.has(signal.file) ||
+      [...fileSet].some((f) => f.startsWith(`${signal.file}/`))
+    ) {
       frameworks.add(signal.label);
     }
   }
 
   if (fileSet.has("package.json")) frameworks.add("Node.js");
-  if ([...fileSet].some((f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f))) {
+  if (
+    [...fileSet].some(
+      (f) => /^tests?\//.test(f) || /\.test\./.test(f) || /\.spec\./.test(f),
+    )
+  ) {
     frameworks.add("Tests");
   }
-  if ([...fileSet].some((f) => f.startsWith("vscode/"))) frameworks.add("VS Code Extension");
+  if ([...fileSet].some((f) => f.startsWith("vscode/")))
+    frameworks.add("VS Code Extension");
 
   return [...frameworks];
 }
@@ -195,9 +203,12 @@ async function buildRepoIntelligence(cwd) {
       `REPO MAP: ${files.length} indexed files${frameworks.length ? ` | stack: ${frameworks.join(", ")}` : ""}`,
     ];
     if (topDirs.length > 0) lines.push(`WORK AREAS: ${topDirs.join(", ")}`);
-    if (entryPoints.length > 0) lines.push(`LIKELY ENTRY POINTS: ${entryPoints.join(", ")}`);
-    if (workspaces.length > 0) lines.push(`WORKSPACES: ${workspaces.join(", ")}`);
-    if (testCount > 0) lines.push(`TEST FOOTPRINT: ${testCount} test files detected`);
+    if (entryPoints.length > 0)
+      lines.push(`LIKELY ENTRY POINTS: ${entryPoints.join(", ")}`);
+    if (workspaces.length > 0)
+      lines.push(`WORKSPACES: ${workspaces.join(", ")}`);
+    if (testCount > 0)
+      lines.push(`TEST FOOTPRINT: ${testCount} test files detected`);
     if (testMap.length > 0) lines.push(`TEST MAP: ${testMap.join(" | ")}`);
     if (hotspotLine) lines.push(hotspotLine);
     if (moduleHubLine) lines.push(moduleHubLine);
@@ -336,6 +347,7 @@ async function isContextCacheValid() {
   const filesToCheck = [
     path.join(process.cwd(), "package.json"),
     path.join(process.cwd(), "README.md"),
+    path.join(process.cwd(), "AGENTS.md"),
     path.join(process.cwd(), ".gitignore"),
   ];
 
@@ -376,6 +388,7 @@ async function updateContextMtimes() {
   const filesToTrack = [
     path.join(process.cwd(), "package.json"),
     path.join(process.cwd(), "README.md"),
+    path.join(process.cwd(), "AGENTS.md"),
     path.join(process.cwd(), ".gitignore"),
     path.join(process.cwd(), ".git", "HEAD"),
     path.join(process.cwd(), "CLAUDE.md"),
@@ -426,6 +439,23 @@ async function gatherProjectContext(cwd) {
         if (pkg.devDependencies)
           info.devDeps = Object.keys(pkg.devDependencies).length;
         parts.push(`PACKAGE: ${JSON.stringify(info)}`);
+        if (pkg.scripts) {
+          const keyScripts = [
+            "test",
+            "build",
+            "lint",
+            "typecheck",
+            "check",
+            "benchmark:gate",
+            "benchmark",
+          ]
+            .filter((name) => pkg.scripts[name])
+            .map((name) => `${name}=${pkg.scripts[name]}`)
+            .slice(0, 8);
+          if (keyScripts.length > 0) {
+            parts.push(`PACKAGE SCRIPTS:\n${keyScripts.join("\n")}`);
+          }
+        }
       } catch {
         /* ignore corrupt package.json */
       }
@@ -458,6 +488,20 @@ async function gatherProjectContext(cwd) {
     if (giExists) {
       const content = await fs.readFile(giPath, "utf-8");
       parts.push(`GITIGNORE:\n${content.trim()}`);
+    }
+
+    // AGENTS.md — agent/project rules used by several coding CLIs.
+    const agentsMdPath = path.join(cwd, "AGENTS.md");
+    const agentsMdExists = await safe(() =>
+      fs
+        .access(agentsMdPath)
+        .then(() => true)
+        .catch(() => false),
+    );
+    if (agentsMdExists) {
+      const content = await fs.readFile(agentsMdPath, "utf-8");
+      if (content.trim())
+        parts.push(`PROJECT INSTRUCTIONS (AGENTS.md):\n${content.trim()}`);
     }
 
     // CLAUDE.md — project-level instructions (Claude Code compatible, gitignored)
@@ -503,13 +547,17 @@ async function gatherProjectContext(cwd) {
   // Git state rarely changes between loop iterations (same session),
   // and the 4 exec() calls add 200-800ms per uncached call.
   const gitParts = [fileContext];
-  let branch, status, log, conflicts;
+  let branch, status, log, diffStat, conflicts;
 
-  if (_gitCache.result && Date.now() < _gitCache.expiry && _gitCache.cwd === cwd) {
-    ({ branch, status, log, conflicts } = _gitCache.result);
+  if (
+    _gitCache.result &&
+    Date.now() < _gitCache.expiry &&
+    _gitCache.cwd === cwd
+  ) {
+    ({ branch, status, log, diffStat, conflicts } = _gitCache.result);
   } else {
     // Run all git operations in parallel for maximum performance
-    [branch, status, log, conflicts] = await Promise.all([
+    [branch, status, log, diffStat, conflicts] = await Promise.all([
       safe(async () => {
         const { stdout } = await exec("git branch --show-current", {
           cwd,
@@ -534,13 +582,27 @@ async function gatherProjectContext(cwd) {
         return stdout.trim();
       }),
 
+      safe(async () => {
+        const { stdout } = await exec("git diff --stat -- .", {
+          cwd,
+          timeout: 5000,
+          maxBuffer: 20000,
+        });
+        return stdout.trim();
+      }),
+
       getMergeConflicts(),
     ]);
-    _gitCache = { result: { branch, status, log, conflicts }, expiry: Date.now() + CACHE_TTL_MS, cwd };
+    _gitCache = {
+      result: { branch, status, log, diffStat, conflicts },
+      expiry: Date.now() + CACHE_TTL_MS,
+      cwd,
+    };
   }
 
   if (branch) gitParts.push(`GIT BRANCH: ${branch}`);
   if (status) gitParts.push(`GIT STATUS:\n${status}`);
+  if (diffStat) gitParts.push(`GIT DIFF STAT:\n${diffStat}`);
   if (log) gitParts.push(`RECENT COMMITS:\n${log}`);
 
   if (conflicts && conflicts.length > 0) {

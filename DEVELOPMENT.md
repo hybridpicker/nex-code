@@ -13,8 +13,8 @@
 3. Merge completed features into `devel`
 4. Thoroughly test in `devel` environment
 5. Run the build process: `npm run build` to ensure the bundle is updated
-6. When ready for release, merge `devel` into `main`
-7. Tag releases and publish to npm from `main`
+6. When ready for release, run `npm run merge-to-main` from a clean `devel`
+7. Let GitHub Actions publish releases; do not publish locally
 
 ## Version Management
 
@@ -33,13 +33,11 @@
 ## Release Process
 
 1. Ensure all tests pass in `devel`
-2. Merge `devel` into `main`: `git checkout main && git merge devel`
-3. Version is automatically bumped (patch) by the `post-merge` hook
-4. For minor/major bumps: manually run `npm version minor` or `npm version major`
-5. Create git tag: `git tag -a vX.Y.Z -m "Release X.Y.Z"`
-6. Push to repository: `git push origin main --tags`
-7. Publish to npm: `npm publish`
-8. Return to development: `git checkout devel && git merge main`
+2. Run `npm run benchmark:gate`
+3. Run `npm run merge-to-main` from `devel`
+4. The release workflow merges only after CI is green
+5. GitHub Actions publishes to npm automatically
+6. Continue development on `devel`
 
 ## Improvement Loop
 
@@ -52,6 +50,7 @@ npm run benchmark:reallife   # run 35-task benchmark only
 ```
 
 **How it works:**
+
 1. `scripts/benchmark-reallife.js` runs 35 commit-sized tasks across 7 categories in temp directories using nex-code headless mode
 2. Results are scored with a weighted composite: taskCompletion (40%) + editPrecision (25%) + efficiency (20%) + quality (15%)
 3. `scripts/improve.js` clusters failures, picks the top pattern, runs nex-code to implement ONE fix
@@ -63,27 +62,42 @@ Real-life benchmark telemetry is validated before a run counts toward the score.
 The pre-push smoke gate (`npm run benchmark:gate`) compares the current run against a rolling median baseline from recent matching gate runs. A single soft regression is surfaced as a warning; clear outliers and repeated regressions still block the push.
 
 **Safety bounds** are enforced before every commit:
+
 - SSH_STORM_WARN: [6, 12], SSH_STORM_ABORT: [8, 18]
 - INVESTIGATION_CAP: [10, 18], POST_WIPE_BUDGET: [10, 17]
 
 ## Phase-Based Routing
 
-Each task runs through plan → implement → verify, each with a different model optimized for that phase. Auto-enabled on Ollama Cloud; see `docs/MODEL-SELECTION.md` for details.
+Each task runs through plan → implement → verify, each with a different model optimized for that phase. Auto-enabled on Ollama Cloud because the default product path is open-model-first and affordable by default; see `docs/MODEL-SELECTION.md` for details.
 
 Key files: `cli/task-router.js` (routing config + phase resolution), `cli/agent.js` (phase state machine + transitions), `cli/benchmark.js` (phase-specific scoring tasks).
 
 Disable: `NEX_PHASE_ROUTING=0`. Force-enable on non-Ollama: `NEX_PHASE_ROUTING=1`.
 
+## Cost-Aware Provider Workflow
+
+Ollama Cloud and local Ollama are the recommended default paths. OpenAI, Anthropic, and Gemini remain supported as optional premium providers or fallbacks.
+
+Useful commands:
+
+- `/models coding` shows cost-aware model recommendations
+- `/providers` labels affordable/open-model paths and premium paid providers
+- `/budget` sets per-provider spend caps
+- `/costs` summarizes session tokens and estimated cost
+- `/fallback local,openai` keeps an affordable provider before paid backup
+
+Final task summaries should state what changed, which verification ran, and any remaining risk. If verification was not run, the summary must say that explicitly.
+
 ## Model Profiles
 
 `cli/model-profiles.js` provides per-model guard thresholds. Each model family gets tuned stale timeouts and investigation caps:
 
-| Model | staleWarn | staleAbort | investigationCap | postEditCap |
-|-------|-----------|------------|------------------|-------------|
-| devstral-2 | 30s | 90s | 12 | 10 |
-| devstral-small | 20s | 60s | 10 | 8 |
-| qwen3-coder | 60s | 180s | 15 | 12 |
-| kimi-k2 | 45s | 120s | 15 | 12 |
+| Model          | staleWarn | staleAbort | investigationCap | postEditCap |
+| -------------- | --------- | ---------- | ---------------- | ----------- |
+| devstral-2     | 30s       | 90s        | 12               | 10          |
+| devstral-small | 20s       | 60s        | 10               | 8           |
+| qwen3-coder    | 60s       | 180s       | 15               | 12          |
+| kimi-k2        | 45s       | 120s       | 15               | 12          |
 
 ENV overrides (`NEX_STALE_WARN_MS`, `NEX_STALE_ABORT_MS`) always take precedence.
 
