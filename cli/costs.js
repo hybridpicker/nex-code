@@ -49,6 +49,8 @@ const PRICING = {
     "devstral-small-2:24b": { input: 0, output: 0 },
     "kimi-k2.5": { input: 0, output: 0 },
     "kimi-k2:1t": { input: 0, output: 0 },
+    "deepseek-v4-pro:cloud": { input: 0, output: 0 },
+    "deepseek-v4-flash:cloud": { input: 0, output: 0 },
     "deepseek-v3.2": { input: 0, output: 0 },
     "minimax-m2.5": { input: 0, output: 0 },
     "glm-5": { input: 0, output: 0 },

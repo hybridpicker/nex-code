@@ -251,6 +251,53 @@ describe("registry.js", () => {
       openai.isConfigured.mockRestore();
       stderrSpy.mockRestore();
     });
+
+    it("tries configured Ollama model fallbacks before provider fallback", async () => {
+      const stderrSpy = jest
+        .spyOn(process.stderr, "write")
+        .mockImplementation();
+      const originalFallbackModels = [...registry.OLLAMA_FALLBACK_MODELS];
+      process.env.OPENAI_API_KEY = "sk-test";
+      registry.getActiveProviderName();
+      registry.setFallbackChain(["openai"]);
+      registry.OLLAMA_FALLBACK_MODELS.splice(
+        0,
+        registry.OLLAMA_FALLBACK_MODELS.length,
+        "devstral-small-2:24b",
+      );
+
+      const ollama = registry.getProvider("ollama");
+      const openai = registry.getProvider("openai");
+
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("503 Service Unavailable"))
+        .mockResolvedValueOnce({ ok: true });
+      jest.spyOn(openai, "isConfigured").mockReturnValue(true);
+      jest.spyOn(openai, "stream").mockResolvedValueOnce({ ok: false });
+
+      try {
+        const result = await registry.callStream([], []);
+        expect(result).toEqual({ ok: true });
+        expect(ollama.stream).toHaveBeenNthCalledWith(
+          2,
+          [],
+          [],
+          expect.objectContaining({ model: "devstral-small-2:24b" }),
+        );
+        expect(openai.stream).not.toHaveBeenCalled();
+      } finally {
+        registry.OLLAMA_FALLBACK_MODELS.splice(
+          0,
+          registry.OLLAMA_FALLBACK_MODELS.length,
+          ...originalFallbackModels,
+        );
+        ollama.stream.mockRestore();
+        openai.stream.mockRestore();
+        openai.isConfigured.mockRestore();
+        stderrSpy.mockRestore();
+      }
+    });
   });
 
   // ─── callChat fallback logic ───────────────────────────────
