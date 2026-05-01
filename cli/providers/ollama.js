@@ -105,6 +105,26 @@ const OLLAMA_MODELS = {
     quality: 98,
     recommendedFor: ["reasoning", "debugging", "review"],
   },
+  "deepseek-v4-pro:cloud": {
+    id: "deepseek-v4-pro:cloud",
+    name: "DeepSeek V4 Pro",
+    maxTokens: 16384,
+    contextWindow: 1048576,
+    capability: "general",
+    speed: "balanced",
+    quality: 96,
+    recommendedFor: ["coding", "reasoning", "review"],
+  },
+  "deepseek-v4-flash:cloud": {
+    id: "deepseek-v4-flash:cloud",
+    name: "DeepSeek V4 Flash",
+    maxTokens: 16384,
+    contextWindow: 1048576,
+    capability: "general",
+    speed: "fast",
+    quality: 90,
+    recommendedFor: ["coding", "quick-fix", "fallback"],
+  },
   "deepseek-v3.2": {
     id: "deepseek-v3.2",
     name: "DeepSeek V3.2",
@@ -333,13 +353,13 @@ const OLLAMA_MODELS = {
 };
 
 const OLLAMA_USE_CASES = {
-  coding: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b"],
-  agentic: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b"],
+  coding: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b", "deepseek-v4-pro:cloud"],
+  agentic: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b", "deepseek-v4-pro:cloud"],
   reasoning: ["kimi-k2:1t", "kimi-k2-thinking", "kimi-k2.5"],
   "large-context": ["qwen3-coder-next", "qwen3.5:397b-cloud", "kimi-k2.5"],
   frontend: ["qwen3.5:397b-cloud", "qwen3-coder-next", "qwen3-coder:480b"],
-  "quick-fix": ["devstral-small-2:24b", "qwen3-next:80b", "ministral-3:14b"],
-  fallback: ["devstral-small-2:24b", "deepseek-v3.2", "qwen3.5:35b-a3b"],
+  "quick-fix": ["devstral-small-2:24b", "qwen3-next:80b", "ministral-3:14b", "deepseek-v4-flash:cloud"],
+  fallback: ["devstral-small-2:24b", "deepseek-v4-flash:cloud", "deepseek-v3.2", "qwen3.5:35b-a3b"],
   "open-source": ["qwen3-coder:480b", "devstral-2:123b", "gpt-oss:120b"],
 };
 
