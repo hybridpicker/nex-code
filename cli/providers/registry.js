@@ -467,11 +467,12 @@ async function _tryProviders(callFn) {
       continue;
     }
 
+    const isFallback = idx > 0;
+    const model = isFallback
+      ? resolveModelForProvider(activeModelId, provName)
+      : activeModelId;
+
     try {
-      const isFallback = idx > 0;
-      const model = isFallback
-        ? resolveModelForProvider(activeModelId, provName)
-        : activeModelId;
       if (isFallback) {
         const mode = getProviderCostMode(provName).label;
         process.stderr.write(`  [fallback: ${provName}:${model} · ${mode}]\n`);
@@ -483,9 +484,7 @@ async function _tryProviders(callFn) {
 
       // Intra-provider fallback: try alternative Ollama models before jumping provider
       if (provName === "ollama" && OLLAMA_FALLBACK_MODELS.length > 0) {
-        const tried = isFallback
-          ? resolveModelForProvider(activeModelId, provName)
-          : activeModelId;
+        const tried = model;
         for (const altModel of OLLAMA_FALLBACK_MODELS) {
           if (altModel === tried) continue;
           try {
