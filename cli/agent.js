@@ -2366,6 +2366,42 @@ function _detectTextLanguage(text) {
   return "English";
 }
 
+function _looksLikeDirectAnswerProcessLeak(userInput, assistantText) {
+  if (typeof assistantText !== "string" || typeof userInput !== "string")
+    return false;
+
+  const userLower = userInput.toLowerCase();
+  const textLower = assistantText.toLowerCase();
+
+  // If the user explicitly asked for a shell snippet/script, allow shell fences.
+  const userWantsShell =
+    /\b(bash|shell|sh)\b/.test(userLower) ||
+    /\b(one-?liner|pre-commit)\b/.test(userLower);
+
+  // If the user asked for a Dockerfile, Makefile, cron expressions, or SQL, allow fences.
+  const userWantsCommands =
+    /\b(dockerfile|makefile|cron|crontab|sql)\b/.test(userLower);
+
+  if (!userWantsShell && !userWantsCommands) {
+    if (/```bash\b/.test(textLower) || /```sh\b/.test(textLower)) return true;
+  }
+
+  // Strip code blocks for prose-only heuristics.
+  const prose = assistantText
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .toLowerCase();
+
+  return [
+    /\b(let me|i(?:'|’)ll|i will)\s+(check|search|look)\b/,
+    /\bfirst,\s*let me\b/,
+    /\bsince i (?:do not|don’t|don't) see\b/,
+    /\b(let me|i(?:'|’)ll|i will)\s+(?:run|execute)\b/,
+    /\bsearch(?:ing)?\s+for\b/,
+    /\bcheck if there(?: is| are)\b/,
+  ].some((re) => re.test(prose));
+}
+
 function _isSimpleDirectAnswerPrompt(userInput) {
   const text = String(userInput || "").trim();
   if (!text || text.length > 2500) return false;
@@ -5373,14 +5409,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (
           directAnswerMode &&
           hasText &&
-          expectedTurnLanguage === "English" &&
-          _detectTextLanguage(content || streamedText || "") !== "English"
+          ((expectedTurnLanguage === "English" &&
+            _detectTextLanguage(content || streamedText || "") !== "English") ||
+            _looksLikeDirectAnswerProcessLeak(
+              userInput,
+              content || streamedText || "",
+            ))
         ) {
           try {
             const rewritePrompt =
-              "Rewrite the text below in English. " +
-              "Keep any code blocks exactly the same (do not change code). " +
-              "Translate only the prose/explanations. Output ONLY the rewritten text.";
+              "Rewrite the text below to be a clean, direct answer.\n" +
+              "- Keep any code blocks exactly the same (do not change code).\n" +
+              "- Remove any claims about inspecting the workspace, running commands, searching files, creating files, installing packages, or other internal process.\n" +
+              "- If any prose is not in English, translate the prose to English.\n" +
+              "- Output ONLY the rewritten text.";
             const rewriteMessages = [
               apiMessages[0],
               {
