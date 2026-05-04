@@ -1987,6 +1987,26 @@ describe("agent.js", () => {
           "Write a JavaScript function flattenDeep(input) that preserves order.",
         ),
       ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'Refactor this JavaScript code from callbacks to async/await:\nfs.readFile("a.txt", (err, data) => { if(err) throw err; fs.writeFile("b.txt", data, (err) => { if(err) throw err; console.log("done"); }); });',
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'Add proper error handling to this Express route:\napp.get("/user/:id", async (req, res) => { const user = await db.find(req.params.id); res.json(user); });',
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Identify and fix the memory leak in this Node.js code:\nconst emitter = new EventEmitter();",
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Convert this Python class to a dataclass with validation (raise ValueError if age<0 or name is empty):\nclass Person:\n  def __init__(self, name, age):\n    self.name = name\n    self.age = age",
+        ),
+      ).toBe(true);
       expect(agent._isSimpleDirectAnswerPrompt("Reply exactly OK.")).toBe(
         true,
       );
