@@ -5,6 +5,7 @@ export interface AgentEnv {
   NEX_MODEL?: string;
   OLLAMA_BASE_URL?: string;
   OLLAMA_API_KEY?: string;
+  DEEPSEEK_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
   GEMINI_API_KEY?: string;
@@ -52,6 +53,11 @@ export class ConfigManager {
     const anthropicKey = cfg.get<string>("anthropicApiKey", "");
     if (anthropicKey) {
       env.ANTHROPIC_API_KEY = anthropicKey;
+    }
+
+    const deepseekKey = cfg.get<string>("deepseekApiKey", "");
+    if (deepseekKey) {
+      env.DEEPSEEK_API_KEY = deepseekKey;
     }
 
     const openaiKey = cfg.get<string>("openaiApiKey", "");

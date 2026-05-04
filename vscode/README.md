@@ -6,7 +6,7 @@ Agentic AI coding assistant powered by [nex-code](https://github.com/hybridpicke
 
 - Sidebar chat panel with full agentic loop
 - Tool use: file read/write, shell commands, web search, browser control
-- Multi-provider support: Ollama, Anthropic, OpenAI, Gemini
+- Multi-provider support: Ollama, DeepSeek, Anthropic, OpenAI, Gemini
 - Session branching, context compression, visual dev tools
 
 ## Requirements

@@ -3485,7 +3485,7 @@ async function startREPL() {
             `${C.green}✓ Local Ollama detected — using local models${C.reset}`,
           );
           console.log(
-            `${C.dim}Tip: Set API keys for cloud providers for more model options (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`,
+            `${C.dim}Tip: Set API keys for cloud providers for more model options (DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`,
           );
           return true;
         }
