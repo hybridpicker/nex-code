@@ -2289,6 +2289,83 @@ function _detectResponseLanguage(userInput) {
   return "English";
 }
 
+function _detectTextLanguage(text) {
+  const stripped = String(text || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .toLowerCase();
+  const words = stripped.match(/[a-zäöüß]+/gi) || [];
+  if (words.length === 0) return "English";
+
+  const englishWords = new Set([
+    "the",
+    "and",
+    "or",
+    "for",
+    "with",
+    "without",
+    "write",
+    "create",
+    "explain",
+    "refactor",
+    "query",
+    "function",
+    "makefile",
+    "dockerfile",
+    "healthcheck",
+    "preserve",
+    "return",
+    "input",
+    "output",
+    "using",
+    "should",
+    "must",
+    "please",
+    "this",
+    "that",
+    "it",
+    "is",
+    "are",
+    "as",
+    "in",
+  ]);
+  const germanWords = new Set([
+    "der",
+    "die",
+    "das",
+    "und",
+    "oder",
+    "ist",
+    "sind",
+    "nicht",
+    "bitte",
+    "ich",
+    "habe",
+    "wir",
+    "du",
+    "sie",
+    "es",
+    "diese",
+    "dieser",
+    "dass",
+    "wird",
+    "wurde",
+    "um",
+    "mit",
+    "ohne",
+    "danke",
+  ]);
+  let english = 0;
+  let german = 0;
+  for (const word of words) {
+    if (englishWords.has(word)) english++;
+    if (germanWords.has(word)) german++;
+  }
+
+  if (german >= 3 && german > english * 1.4) return "German";
+  return "English";
+}
+
 function _isSimpleDirectAnswerPrompt(userInput) {
   const text = String(userInput || "").trim();
   if (!text || text.length > 2500) return false;
@@ -3550,6 +3627,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     typeof userInput === "string" ? detectRuntimeDebugTarget(userInput) : null;
   const directAnswerMode =
     typeof userInput === "string" && _isSimpleDirectAnswerPrompt(userInput);
+  const expectedTurnLanguage =
+    typeof userInput === "string" ? _detectResponseLanguage(userInput) : "English";
 
   let userContent = buildUserContent(_resolvedInput);
   // buildUserContent may return a Promise when remote URLs or clipboard are involved
@@ -5288,6 +5367,43 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       if (!tool_calls || tool_calls.length === 0) {
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        // Direct-answer guard: enforce the current turn language even if the model
+        // drifts due to multilingual project context. For snippet prompts this is
+        // pure presentation quality (no tools) and fixes frequent benchmark dings.
+        if (
+          directAnswerMode &&
+          hasText &&
+          expectedTurnLanguage === "English" &&
+          _detectTextLanguage(content || streamedText || "") !== "English"
+        ) {
+          try {
+            const rewritePrompt =
+              "Rewrite the text below in English. " +
+              "Keep any code blocks exactly the same (do not change code). " +
+              "Translate only the prose/explanations. Output ONLY the rewritten text.";
+            const rewriteMessages = [
+              apiMessages[0],
+              {
+                role: "user",
+                content:
+                  rewritePrompt + "\n\n---\n\n" + (content || streamedText || ""),
+              },
+            ];
+            const rewriteRes = await callStream(rewriteMessages, [], {});
+            const rewritten = (rewriteRes?.content || "").trim();
+            if (rewritten) {
+              // Replace the assistant message we just appended for this turn.
+              const last = conversationMessages[conversationMessages.length - 1];
+              if (last && last.role === "assistant") last.content = rewritten;
+              const lastApi = apiMessages[apiMessages.length - 1];
+              if (lastApi && lastApi.role === "assistant")
+                lastApi.content = rewritten;
+              console.log(`\\n${rewritten}`);
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
         // Text-only response after SSH storm: agent synthesized, unblock SSH for follow-up.
         // After the 2nd storm, SSH stays permanently blocked — no more unblocking.
         // After the 1st storm, give a reduced budget (SSH_STORM_WARN - 3) instead of full reset.
