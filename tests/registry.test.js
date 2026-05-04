@@ -7,6 +7,7 @@ describe("registry.js", () => {
     registry._reset();
     // Ensure at least ollama is configured
     process.env.OLLAMA_API_KEY = "test-key";
+    delete process.env.DEEPSEEK_API_KEY;
   });
 
   afterEach(() => {
@@ -203,6 +204,7 @@ describe("registry.js", () => {
       registry._reset();
       delete process.env.OLLAMA_API_KEY;
       delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.GEMINI_API_KEY;
       delete process.env.GOOGLE_API_KEY;
@@ -216,6 +218,7 @@ describe("registry.js", () => {
       registry._reset();
       delete process.env.OLLAMA_API_KEY;
       delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.GEMINI_API_KEY;
       delete process.env.GOOGLE_API_KEY;
@@ -445,6 +448,7 @@ describe("registry.js", () => {
 
     it("does not include unconfigured providers", () => {
       delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.GEMINI_API_KEY;
       delete process.env.GOOGLE_API_KEY;
@@ -458,6 +462,7 @@ describe("registry.js", () => {
       // local is always configured (no API key needed)
       expect(providerNames).toContain("local");
       expect(providerNames).not.toContain("openai");
+      expect(providerNames).not.toContain("deepseek");
       expect(providerNames).not.toContain("anthropic");
     });
   });

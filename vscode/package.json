@@ -72,6 +72,7 @@
           "type": "string",
           "enum": [
             "ollama",
+            "deepseek",
             "anthropic",
             "openai",
             "gemini"
@@ -98,6 +99,11 @@
           "type": "string",
           "default": "",
           "description": "Anthropic API key"
+        },
+        "nexCode.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API key"
         },
         "nexCode.openaiApiKey": {
           "type": "string",

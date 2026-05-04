@@ -51,6 +51,13 @@ describe("costs.js", () => {
       expect(PRICING.gemini["gemini-2.0-flash-lite"].input).toBe(0.075);
     });
 
+    it("has pricing for DeepSeek models", () => {
+      expect(PRICING.deepseek["deepseek-v4-flash"].input).toBe(0.14);
+      expect(PRICING.deepseek["deepseek-v4-flash"].output).toBe(0.28);
+      expect(PRICING.deepseek["deepseek-v4-pro"].input).toBe(0.435);
+      expect(PRICING.deepseek["deepseek-v4-pro"].output).toBe(0.87);
+    });
+
     it("has pricing for new openai models", () => {
       expect(PRICING.openai["gpt-4.1"].input).toBe(2.0);
       expect(PRICING.openai["gpt-4.1"].output).toBe(8.0);
@@ -201,6 +208,7 @@ describe("costs.js", () => {
 
     it("classifies premium API providers as paid", () => {
       expect(isPremiumProvider("openai")).toBe(true);
+      expect(isPremiumProvider("deepseek")).toBe(true);
       expect(isPremiumProvider("anthropic")).toBe(true);
       expect(isPremiumProvider("gemini")).toBe(true);
       expect(getProviderCostMode("openai").detail).toContain("/budget");

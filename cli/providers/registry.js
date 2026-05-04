@@ -8,6 +8,7 @@
 
 const { OllamaProvider, getOllamaRecommendations } = require("./ollama");
 const { OpenAIProvider } = require("./openai");
+const { DeepSeekProvider } = require("./deepseek");
 const { AnthropicProvider } = require("./anthropic");
 const { GeminiProvider } = require("./gemini");
 const { LocalProvider } = require("./local");
@@ -25,18 +26,21 @@ const MODEL_EQUIVALENTS = {
   top: {
     ollama: "kimi-k2:1t",
     openai: "gpt-4.1",
+    deepseek: "deepseek-v4-pro",
     anthropic: "claude-sonnet-4-5",
     gemini: "gemini-2.5-pro",
   },
   strong: {
     ollama: "qwen3-coder:480b",
     openai: "gpt-4o",
+    deepseek: "deepseek-v4-pro",
     anthropic: "claude-sonnet",
     gemini: "gemini-2.5-flash",
   },
   fast: {
     ollama: "devstral-small-2:24b",
     openai: "gpt-4.1-mini",
+    deepseek: "deepseek-v4-flash",
     anthropic: "claude-haiku",
     gemini: "gemini-2.0-flash",
   },
@@ -77,7 +81,7 @@ function buildNoConfiguredProviderError() {
     "No configured provider available.",
     "Lowest-cost path: run /setup and choose Ollama Cloud, or set OLLAMA_API_KEY plus DEFAULT_PROVIDER=ollama.",
     "Local free path: start Ollama locally, pull a coding model, then use /model local:<model>.",
-    "Premium fallback: set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY and use /fallback only when you want paid backup.",
+    "Paid fallback: set DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY and use /fallback only when you want paid backup.",
   ].join("\n");
 }
 
@@ -95,6 +99,7 @@ function initDefaults() {
 
   registerProvider("ollama", new OllamaProvider());
   registerProvider("openai", new OpenAIProvider());
+  registerProvider("deepseek", new DeepSeekProvider());
   registerProvider("anthropic", new AnthropicProvider());
   registerProvider("gemini", new GeminiProvider());
   registerProvider("local", new LocalProvider());
@@ -188,7 +193,9 @@ function parseModelSpec(spec) {
     // Only treat as provider:model if prefix is a known provider name
     if (
       providers[prefix] ||
-      ["ollama", "openai", "anthropic", "gemini", "local"].includes(prefix)
+      ["ollama", "openai", "deepseek", "anthropic", "gemini", "local"].includes(
+        prefix,
+      )
     ) {
       return { provider: prefix, model: spec.slice(colonIdx + 1) };
     }

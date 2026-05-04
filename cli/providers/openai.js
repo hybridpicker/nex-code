@@ -191,20 +191,27 @@ class OpenAIProvider extends BaseProvider {
     return { role: msg.role, content: msg.content };
   }
 
+  prepareRequestBody(body, _options = {}) {
+    return body;
+  }
+
   async chat(messages, tools, options = {}) {
     const model = options.model || this.defaultModel;
     const modelInfo = this.getModel(model);
     const maxTokens = options.maxTokens || modelInfo?.maxTokens || 16384;
     const { messages: formatted } = this.formatMessages(messages);
 
-    const body = openaiProtocol.buildRequestBody({
-      model,
-      messages: formatted,
-      tools,
-      maxTokens,
-      temperature: options.temperature ?? this.temperature,
-      stream: false,
-    });
+    const body = this.prepareRequestBody(
+      openaiProtocol.buildRequestBody({
+        model,
+        messages: formatted,
+        tools,
+        maxTokens,
+        temperature: options.temperature ?? this.temperature,
+        stream: false,
+      }),
+      options,
+    );
 
     let response;
     try {
@@ -243,14 +250,17 @@ class OpenAIProvider extends BaseProvider {
     const onToken = options.onToken || (() => {});
     const { messages: formatted } = this.formatMessages(messages);
 
-    const body = openaiProtocol.buildRequestBody({
-      model,
-      messages: formatted,
-      tools,
-      maxTokens,
-      temperature: options.temperature ?? this.temperature,
-      stream: true,
-    });
+    const body = this.prepareRequestBody(
+      openaiProtocol.buildRequestBody({
+        model,
+        messages: formatted,
+        tools,
+        maxTokens,
+        temperature: options.temperature ?? this.temperature,
+        stream: true,
+      }),
+      options,
+    );
 
     let response;
     try {
