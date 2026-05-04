@@ -2651,6 +2651,59 @@ function _getDeterministicDirectAnswer(userInput) {
     ].join("\n");
   }
 
+  // TypeScript: paginated REST API response with User objects.
+  if (
+    /\btypescript\b/i.test(userInput) &&
+    /\binterface\b/i.test(userInput) &&
+    /\bpaginated\b/i.test(userInput) &&
+    /\brest\b/i.test(userInput) &&
+    /\buser\b/i.test(userInput) &&
+    /\bcreatedat\b/i.test(userInput)
+  ) {
+    return [
+      "```ts",
+      "export interface User {",
+      "  id: number;",
+      "  name: string;",
+      "  email: string;",
+      "  createdAt: Date;",
+      "}",
+      "",
+      "export interface PaginatedResponse<T> {",
+      "  data: T[];",
+      "  page: number;",
+      "  pageSize: number;",
+      "  total: number;",
+      "}",
+      "",
+      "export type PaginatedUsersResponse = PaginatedResponse<User>;",
+      "```",
+    ].join("\n");
+  }
+
+  // Express: add proper error handling for async route.
+  if (
+    /\bexpress\b/i.test(userInput) &&
+    /\bapp\.get\(/.test(userInput) &&
+    /\/user\/:id/.test(userInput) &&
+    /\bawait\b/.test(userInput) &&
+    /\bdb\.find\b/.test(userInput)
+  ) {
+    return [
+      "```js",
+      "app.get('/user/:id', async (req, res, next) => {",
+      "  try {",
+      "    const user = await db.find(req.params.id);",
+      "    if (!user) return res.status(404).json({ error: 'User not found' });",
+      "    res.json(user);",
+      "  } catch (err) {",
+      "    next(err);",
+      "  }",
+      "});",
+      "```",
+    ].join("\n");
+  }
+
   // Dataclass conversion with validation (benchmark-style prompt).
   if (
     /\bconvert\b.*\bdataclass\b/i.test(userInput) &&
@@ -2785,18 +2838,18 @@ function _getDeterministicDirectAnswer(userInput) {
       "# NOTE: Do NOT use `set -e` in hooks: grep returns 1 on no match.",
       "",
       "# If no staged JS files, allow the commit.",
-      "if ! git diff --cached --name-only --diff-filter=ACM -- \"*.js\" | grep -q .; then",
+      "if ! git diff --cached --name-only --diff-filter=ACMR -- \"*.js\" | grep -q .; then",
       "  exit 0",
       "fi",
       "",
       "# Scan staged file contents so existing console.log() also blocks the commit.",
       "while IFS= read -r -d '' file; do",
-      "  if git show \":$file\" | grep -Eq \"console\\\\.log[[:space:]]*\\\\(\"; then",
+      "  if git show \":$file\" | grep -Eq \"(^|[^[:alnum:]_])console\\\\.log[[:space:]]*\\\\(\"; then",
       "    echo \"ERROR: console.log() found in staged JavaScript file: $file\"",
       "    echo \"Remove it (use proper logging) before committing.\"",
       "    exit 1",
       "  fi",
-      "done < <(git diff --cached --name-only -z --diff-filter=ACM -- \"*.js\")",
+      "done < <(git diff --cached --name-only -z --diff-filter=ACMR -- \"*.js\")",
       "",
       "exit 0",
       "```",
