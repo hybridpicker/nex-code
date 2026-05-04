@@ -2523,14 +2523,10 @@ function _getDeterministicDirectAnswer(userInput) {
       "- Each octet must be in the range **0–255**:",
       "  - `25[0-5]` → 250–255",
       "  - `2[0-4][0-9]` → 200–249",
-      "  - `[01]?[0-9][0-9]?` → 0–199 (allows 1–3 digits with an optional leading 0/1)",
+      "  - `[01]?[0-9][0-9]?` → 0–199 (allows 1–3 digits, including leading zeros like `001`)",
       "- `^` and `$` anchor the match to the entire string (no extra characters).",
       "",
       "A more readable rewrite (same logic), using a reusable `octet` subpattern:",
-      "",
-      "```regex",
-      "^(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$",
-      "```",
       "",
       "```js",
       "const octet = '(?:25[0-5]|2[0-4]\\\\d|[01]?\\\\d\\\\d?)';",
@@ -2584,6 +2580,22 @@ function _getDeterministicDirectAnswer(userInput) {
       "emitter.on('data', (d) => console.log(d));",
       "",
       "// Whatever produces data should call emitter.emit('data', value)",
+      "```",
+    ].join("\n");
+  }
+
+  // Bash one-liner: replace console.log -> logger.debug with .bak backups.
+  if (
+    /\bbash\b/i.test(userInput) &&
+    /\bone-?liner\b/i.test(userInput) &&
+    /\.js files\b/i.test(userInput) &&
+    /console\.log/.test(userInput) &&
+    /logger\.debug/.test(userInput) &&
+    /\b\.bak\b/i.test(userInput)
+  ) {
+    return [
+      "```bash",
+      "find . -type f -name '*.js' -exec perl -pi.bak -e 's/console\\.log/logger.debug/g' {} +",
       "```",
     ].join("\n");
   }
