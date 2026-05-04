@@ -164,6 +164,64 @@ const TOOL_STAGES = {
   git_stash: { label: "Sync", accent: T.tool_git, icon: "✓" },
 };
 
+function stripAnsiControlSequences(text) {
+  return String(text || "")
+    // OSC, PM, APC and related string controls.
+    .replace(/\x1B(?:\][^\x07]*(?:\x07|\x1B\\)|[PX^_][\s\S]*?\x1B\\)/g, "")
+    // CSI, ESC single-character and 8-bit C1 controls.
+    .replace(/[\x1B\x9B][[\]()#;?]*(?:\d{1,4}(?:;\d{0,4})*)?[0-9A-ORZcf-nq-uy=><]/g, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function _isInternalOutputLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+
+  const normalized = trimmed
+    .replace(/^[│┃┆┊>↩✓✗⚠◆●◉◎⏺◌✦▣•\-\s]+/, "")
+    .trim();
+
+  if (
+    /^(INSPECT|SHAPE|EXECUTE|EXPLORE|VERIFY|OPERATE|SHIP|SYNC|COMMIT|RUN|CAPTURE|INTERACT)\b/i.test(
+      normalized,
+    )
+  )
+    return true;
+  if (/^Step\s+\d+\b/i.test(normalized)) return true;
+  if (/^(Read|Write|Edit|Patch|Bash|Grep|Search|Glob|WebFetch|WebSearch|TaskList|Agent|AskUser)\b.*\s→\s/i.test(normalized))
+    return true;
+  if (/^(Reading|Writing|Editing|Patching|Running|Searching|Listing|Fetching|Delegating|Switching)\b/i.test(normalized))
+    return true;
+  if (/^\[(?:context|auto|pre-flight|pre-stop|debug|system)\b/i.test(normalized))
+    return true;
+  if (/\b(?:auto-abort|Ctrl\+C to abort|Headless early exit|Phase transition|tool budget|model metadata|orchestration log)\b/i.test(normalized))
+    return true;
+  if (/^(?:Thinking|Analyzing|Planning|Implementing|Verifying|Working)(?:[.\s]|$)/i.test(normalized))
+    return true;
+  if (/^(?:Model|Provider|Tokens|Cost|Usage):\s/i.test(normalized))
+    return true;
+  return false;
+}
+
+function sanitizeFinalAnswer(text) {
+  const clean = stripAnsiControlSequences(text);
+  const out = [];
+  let inFence = false;
+
+  for (const line of clean.split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      out.push(line.replace(/[ \t]+$/g, ""));
+      continue;
+    }
+
+    if (!inFence && _isInternalOutputLine(line)) continue;
+    out.push(line.replace(/[ \t]+$/g, ""));
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function getToolStage(fnName) {
   return TOOL_STAGES[fnName] || {
     label: "Run",
@@ -1120,6 +1178,8 @@ module.exports = {
   formatToolSummary,
   formatSectionHeader,
   formatMilestone,
+  stripAnsiControlSequences,
+  sanitizeFinalAnswer,
   getThinkingVerb,
   setActiveModelForSpinner,
   THINKING_VERBS,

@@ -191,6 +191,8 @@ describe("memory.js", () => {
       expect(ctx).toContain("Project Memory Index");
       expect(ctx).toContain("framework");
       expect(ctx).toContain("style");
+      expect(ctx).toContain("ACTIVE MEMORY EXCERPTS");
+      expect(ctx).toContain("React");
     });
 
     it("includes both NEX.md and memories", () => {
@@ -234,18 +236,52 @@ describe("memory.js", () => {
       // Write a large NEX.md (6000 chars) + memories
       const bigContent = "X".repeat(6000);
       fs.writeFileSync(nexMdPath, bigContent, "utf-8");
-      memory.saveMemory("project", "test-mem", "This is a test memory entry for truncation testing");
+      memory.saveMemory(
+        "project",
+        "test-mem",
+        "This is a test memory entry for truncation testing",
+      );
       const ctx = memory.getMemoryContext();
       // NEX.md must be fully present
       expect(ctx).toContain(bigContent);
       // Memory hint must still appear
       expect(ctx).toContain("save_memory");
     });
+
+    it("includes typed memory excerpts, not only the index", () => {
+      memory.saveMemory(
+        "project",
+        "verification-rule",
+        "After editing code, run the narrowest available test before claiming the task is complete.",
+        "Coding completion rule",
+      );
+
+      const ctx = memory.getMemoryContext();
+
+      expect(ctx).toContain("Project Memory Index");
+      expect(ctx).toContain("ACTIVE MEMORY EXCERPTS");
+      expect(ctx).toContain("verification-rule");
+      expect(ctx).toContain("run the narrowest available test");
+    });
+
+    it("keeps memory excerpts inside the provided budget", () => {
+      memory.saveMemory("project", "large-a", "A".repeat(900), "Large A");
+      memory.saveMemory("project", "large-b", "B".repeat(900), "Large B");
+
+      const section = memory._buildMemoryPromptSection(700);
+
+      expect(section.length).toBeLessThanOrEqual(700);
+      expect(section).toContain("Project Memory Index");
+    });
   });
 
   describe("saveMemory()", () => {
     it("creates typed .md file with frontmatter", () => {
-      const result = memory.saveMemory("user", "test-pref", "Prefers dark mode");
+      const result = memory.saveMemory(
+        "user",
+        "test-pref",
+        "Prefers dark mode",
+      );
       expect(result.ok).toBe(true);
       expect(fs.existsSync(result.path)).toBe(true);
       const content = fs.readFileSync(result.path, "utf-8");
@@ -267,20 +303,32 @@ describe("memory.js", () => {
 
     it("deduplicates identical content", () => {
       memory.saveMemory("project", "dup-test", "Exactly the same content here");
-      const result = memory.saveMemory("project", "dup-test", "Exactly the same content here");
+      const result = memory.saveMemory(
+        "project",
+        "dup-test",
+        "Exactly the same content here",
+      );
       expect(result.ok).toBe(true);
       expect(result.updated).toBe(false);
     });
 
     it("updates when content changes", () => {
       memory.saveMemory("project", "change-test", "Original content value");
-      const result = memory.saveMemory("project", "change-test", "Updated content value now");
+      const result = memory.saveMemory(
+        "project",
+        "change-test",
+        "Updated content value now",
+      );
       expect(result.ok).toBe(true);
       expect(result.updated).toBe(true);
     });
 
     it("sanitizes name to safe slug", () => {
-      const result = memory.saveMemory("user", "My Cool Pref!", "Content for testing");
+      const result = memory.saveMemory(
+        "user",
+        "My Cool Pref!",
+        "Content for testing",
+      );
       expect(result.ok).toBe(true);
       expect(result.path).toContain("my-cool-pref");
     });
@@ -303,7 +351,11 @@ describe("memory.js", () => {
     });
 
     it("updates index after deletion", () => {
-      memory.saveMemory("project", "will-delete", "Temporary memory for deletion test");
+      memory.saveMemory(
+        "project",
+        "will-delete",
+        "Temporary memory for deletion test",
+      );
       expect(memory.loadMemoryIndex()).toContain("will-delete");
       memory.deleteMemory("project", "will-delete");
       expect(memory.loadMemoryIndex()).not.toContain("will-delete");

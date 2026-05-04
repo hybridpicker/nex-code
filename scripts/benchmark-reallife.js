@@ -321,6 +321,11 @@ function getToolEventArgs(event) {
   return event.args || event.input || {};
 }
 
+function getToolEventPath(event) {
+  const args = getToolEventArgs(event);
+  return args.path || args.file || args.file_path || "";
+}
+
 function analyzeBenchmarkQualitySignals(
   stdout,
   stderr,
@@ -346,6 +351,23 @@ function analyzeBenchmarkQualitySignals(
   const editEvents = toolStarts.filter((event) =>
     ["write_file", "edit_file", "patch_file"].includes(event.tool),
   );
+  const editedPaths = new Set();
+  const postEditReadPaths = [];
+  for (const event of toolStarts) {
+    const eventPath = getToolEventPath(event);
+    if (
+      eventPath &&
+      ["write_file", "edit_file", "patch_file"].includes(event.tool)
+    ) {
+      editedPaths.add(eventPath);
+      continue;
+    }
+    if (event.tool === "read_file" && eventPath && editedPaths.has(eventPath)) {
+      postEditReadPaths.push(eventPath);
+    }
+  }
+  const verificationRan =
+    verificationCommands.length > 0 || postEditReadPaths.length > 0;
   const changedFiles = tmpDir ? filesChanged(tmpDir) : [];
   const expectedFiles = task?.expectedFiles || task?.expectedTouchedFiles || [];
   const unnecessaryFileEdits =
@@ -358,13 +380,16 @@ function analyzeBenchmarkQualitySignals(
   });
 
   return {
-    verificationRan: verificationCommands.length > 0,
+    verificationRan,
     verificationCommands,
-    missingVerification:
-      editEvents.length > 0 && verificationCommands.length === 0,
+    verificationReads: postEditReadPaths,
+    missingVerification: editEvents.length > 0 && !verificationRan,
     falseSuccessClaim:
-      claimsVerifiedOrComplete(responseText) &&
-      verificationCommands.length === 0,
+      claimsVerifiedOrComplete(responseText) && !verificationRan,
+    weakVerificationOnly:
+      editEvents.length > 0 &&
+      verificationCommands.length === 0 &&
+      postEditReadPaths.length > 0,
     toolOveruse: task?.maxToolCalls
       ? toolStarts.length > task.maxToolCalls
       : false,
@@ -448,6 +473,13 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
   // Tasks that completed the work but timed out still get credit for completion
   if (measuredCompletionReason === "timeout") {
     score = Math.round(score * 0.7);
+  }
+  if (qualitySignals.falseSuccessClaim) {
+    score = Math.min(score, 55);
+  } else if (qualitySignals.missingVerification) {
+    score = Math.min(score, 70);
+  } else if (qualitySignals.weakVerificationOnly) {
+    score = Math.min(score, 90);
   }
 
   return {

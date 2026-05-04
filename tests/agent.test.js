@@ -370,6 +370,7 @@ describe("agent.js", () => {
     callStream.mockReset();
     executeTool.mockReset();
     jest.clearAllMocks();
+    getAutoConfirm.mockReturnValue(false);
     setAbortSignalGetter(() => null);
     restoreTimeout(); // ensure clean timer state
     // Clear system prompt and tool filter caches
@@ -1969,6 +1970,35 @@ describe("agent.js", () => {
       delete process.env.NEX_COMMIT_LANGUAGE;
       agent.invalidateSystemPromptCache();
     });
+
+    it("detects English despite a trailing German word", () => {
+      const { _detectResponseLanguage } = require("../cli/agent");
+      expect(
+        _detectResponseLanguage(
+          "Write a JavaScript function that flattens nested arrays without mutating input. Danke",
+        ),
+      ).toBe("English");
+    });
+
+    it("keeps self-contained simple prompts tool-free", async () => {
+      const agent = require("../cli/agent");
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Write a JavaScript function flattenDeep(input) that preserves order.",
+        ),
+      ).toBe(true);
+
+      mockStream("function flattenDeep(input) { return input; }");
+      await processInput(
+        "Write a JavaScript function flattenDeep(input) that preserves order.",
+      );
+
+      expect(callStream.mock.calls[0][1]).toEqual([]);
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain("Current Turn Direct Answer Mode");
+      expect(sysMsg).toContain("preserve left-to-right order");
+      expect(sysMsg).toContain("must not mutate");
+    });
   });
 
   // ─── plan mode text response ───────────────────────────────
@@ -3344,8 +3374,20 @@ describe("agent.js", () => {
         },
       ]);
       executeTool.mockResolvedValueOnce("OK");
-      // Then a text-only turn → headless early exit (existing logic: filesModified > 0 + text)
-      mockStream("Done with the fix.");
+      // Then verification resets the post-edit completion guard.
+      mockStream("PASS: ran the narrow verification command", [
+        {
+          function: { name: "bash", arguments: { command: "npm test" } },
+          id: "verify-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS");
+      mockStream(
+        "Done with the fix. I re-read /fix.js after the edit and confirmed the updated branch is present, so the headless run can finish without entering a read-only stagnation loop.",
+      );
+      mockStream(
+        "The fix is complete after a post-edit read of /fix.js. The write reset the read-only stagnation counter, and verification evidence was collected before the final summary.",
+      );
 
       await processInput("Fix the bug");
 
@@ -3353,7 +3395,7 @@ describe("agent.js", () => {
       const hasDone = msgs.some(
         (m) =>
           typeof m.content === "string" &&
-          m.content.includes("Done with the fix"),
+          m.content.includes("headless run can finish"),
       );
       expect(hasDone).toBe(true);
     });
@@ -3474,7 +3516,7 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
-    it("exits cleanly in headless implement phase after a substantive summary", async () => {
+    it("continues from headless implement summary into verification", async () => {
       clearConversation();
       process.env.NEX_PHASE_ROUTING = "1";
       getAutoConfirm.mockReturnValue(true);
@@ -3492,17 +3534,27 @@ describe("agent.js", () => {
       mockStream(
         "Updated /fix.js to handle the missing branch correctly and kept the existing API shape intact. The change is in place and ready for the next benchmark step.",
       );
+      mockStream("PASS: re-read the edited file after the change.", [
+        {
+          function: { name: "read_file", arguments: { path: "/fix.js" } },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("updated file");
+      mockStream(
+        "PASS: I re-read /fix.js after the edit and confirmed the corrected branch is present. The implementation is verified with the edited file, and there are no additional changes needed for this task.",
+      );
 
       await processInput("Fix the bug in fix.js");
 
-      expect(callStream).toHaveBeenCalledTimes(3);
+      expect(callStream).toHaveBeenCalledTimes(5);
       const msgs = getConversationMessages();
       expect(
         msgs.some(
           (m) =>
             m.role === "assistant" &&
             typeof m.content === "string" &&
-            m.content.includes("ready for the next benchmark step"),
+            m.content.includes("implementation is verified"),
         ),
       ).toBe(true);
       expect(
@@ -3512,7 +3564,7 @@ describe("agent.js", () => {
             typeof m.content === "string" &&
             m.content.includes("[PHASE: VERIFICATION]"),
         ),
-      ).toBe(false);
+      ).toBe(true);
     });
 
     it("exits after a substantive analysis answer instead of entering implement phase", async () => {
