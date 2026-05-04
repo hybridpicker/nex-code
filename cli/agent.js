@@ -2228,7 +2228,92 @@ function _detectResponseLanguage(userInput) {
   const text = String(userInput || "").trim();
   if (!text) return "English";
 
+  const stripped = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .toLowerCase();
+  const words = stripped.match(/[a-zäöüß]+/gi) || [];
+  const englishWords = new Set([
+    "the",
+    "and",
+    "or",
+    "for",
+    "with",
+    "without",
+    "write",
+    "create",
+    "explain",
+    "refactor",
+    "query",
+    "function",
+    "makefile",
+    "dockerfile",
+    "healthcheck",
+    "preserve",
+    "return",
+    "input",
+    "output",
+    "using",
+    "should",
+    "must",
+    "please",
+  ]);
+  const germanWords = new Set([
+    "der",
+    "die",
+    "das",
+    "und",
+    "oder",
+    "ist",
+    "sind",
+    "nicht",
+    "bitte",
+    "erstelle",
+    "schreibe",
+    "erkläre",
+    "funktion",
+    "abfrage",
+    "datei",
+    "zurück",
+    "mit",
+    "ohne",
+    "danke",
+  ]);
+  let english = 0;
+  let german = 0;
+  for (const word of words) {
+    if (englishWords.has(word)) english++;
+    if (germanWords.has(word)) german++;
+  }
+  if (german >= 3 && german > english * 1.4) return "German";
   return "English";
+}
+
+function _isSimpleDirectAnswerPrompt(userInput) {
+  const text = String(userInput || "").trim();
+  if (!text || text.length > 2500) return false;
+  const lower = text.toLowerCase();
+
+  if (
+    /\b(?:repo|repository|project|codebase|existing|current workspace|this workspace|edit|modify|update|fix|patch|change)\b/.test(
+      lower,
+    ) ||
+    /\b(?:create|write|save)\s+(?:a\s+)?file\b/.test(lower) ||
+    /\b(?:read|search|inspect|look through|find in|run|install)\b/.test(lower)
+  ) {
+    return false;
+  }
+
+  return [
+    /\b(?:sql\s+query|select\s+.+\s+from)\b/i,
+    /\b(?:cron(?:\s+expression)?|crontab)\b/i,
+    /\bregex\b.*\b(?:explain|refactor|rewrite|readable)\b/i,
+    /\b(?:small|simple|minimal)?\s*makefile\b/i,
+    /\b(?:small|simple|minimal)?\s*dockerfile\b/i,
+    /\b(?:docker\s+healthcheck|healthcheck)\b/i,
+    /\b(?:javascript|js|python)\s+function\b/i,
+    /\bfunction\s+\w+\s*\(/i,
+  ].some((re) => re.test(text));
 }
 
 /**
@@ -2272,9 +2357,9 @@ function _buildLanguagePrompt() {
     "  • ALWAYS show actual code when explaining implementations — never describe without showing",
   );
   if (getAutoConfirm()) {
-    // Headless/auto mode: files ARE the deliverable — always write to disk
+    // Headless/auto mode: files are deliverables only when explicitly requested.
     lines.push(
-      "  • FILE CREATION TASKS (Makefile, Dockerfile, config files, documentation): ALWAYS use write_file to create the file on disk. In auto mode the user cannot see your text output — only files on disk matter.",
+      "  • FILE CREATION TASKS (Makefile, Dockerfile, config files, documentation): create or edit files only when the user explicitly asks for files or the existing workflow clearly requires files. For self-contained snippet requests, answer in text only.",
     );
   } else {
     lines.push(
@@ -2315,13 +2400,16 @@ function _buildLanguagePrompt() {
     "  • For iterative array-flattening (flattenDeep): use push() and reverse() at the end — NEVER unshift(). unshift is O(n) per call making the whole function O(n^2). The iterative version MUST use a loop (while/for) and an explicit stack array — zero recursive calls. If a function calls itself, it is recursive regardless of its name. Never label a recursive function as iterative.",
   );
   lines.push(
+    "  • Iterative deep flatten must preserve left-to-right order and must not mutate the caller's input. Initialize the stack with a shallow copy such as input.slice(), pop values, push child array contents onto the stack in their existing order, collect scalar values with push(), then reverse the result once at the end.",
+  );
+  lines.push(
     "  • FORBIDDEN: when refactoring callbacks to async/await, NEVER write try { ... } catch(e) { throw e } — this is an explicit anti-pattern. WRONG: async function f() { try { const d = await readFile(..); await writeFile(.., d); } catch(e) { throw e; } } — RIGHT: async function f() { const d = await readFile(..); await writeFile(.., d); } — omit the try-catch entirely, let rejections propagate.",
   );
   lines.push(
     "  • Express/fetch error handling: When adding error handling to an Express route that fetches by ID: (1) validate the ID parameter first (check it exists and is a valid format), (2) wrap fetch in try-catch, (3) check response.ok and handle 404 specifically, (4) call next(error) to pass errors to Express error‑handling middleware — do not just send a raw 500 response.",
   );
   lines.push(
-    '  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. Also note that curl may not be available in minimal Node.js images — offer wget or "node -e" as alternatives.',
+    '  • Docker HEALTHCHECK: always include --start-period=30s (or appropriate startup time) so the container has time to initialise before failures are counted. In Alpine or minimal images, do not assume wget or curl exists unless the Dockerfile installs it; either install the tool explicitly or use a dependency-free command such as "node -e" when Node is present.',
   );
   lines.push(
     '  • When fixing a bash word-splitting bug like "for f in $(ls *.txt)": replace the entire $(ls *.txt) with a bare glob directly — "for f in *.txt". The fix is eliminating the ls command and $() subshell entirely. Emphasise this in the explanation: the glob in the for loop prevents word splitting because the shell expands the glob into separate words before the loop — there is no subshell output to split. CRITICAL: NEVER suggest "ls -N" or any ls variant as a fix — ls -N outputs filenames one per line, but word splitting still occurs on each line when used in a subshell expansion. The only correct fix is the bare glob pattern.',
@@ -2461,6 +2549,7 @@ PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
 ${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Should I...?", "Would you like me to...?", or similar permission prompts.\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n## Match the task type — do NOT escalate analysis into edits\n- **Analysis / explanation / exploration tasks** ("analyze", "explain", "describe", "list", "summarize", "what is", "how does", "review", "audit") → produce the analysis/answer as text and STOP. Do NOT then start editing files. Do NOT invent a follow-up "implementation phase" that the user did not ask for. The analysis IS the deliverable.\n- **Implementation tasks** ("fix", "add", "create", "change", "refactor", "implement", "rewrite", "update", "migrate") → execute immediately, no proposals, no questions.\n- The user's ORIGINAL prompt determines the mode. Do not escalate from analysis to implementation in the same turn unless the user explicitly says so in a NEW message.\n\n- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH on a FIX request: IMMEDIATELY fix it (edit file + restart service). Do NOT ask for permission or offer alternatives first.\n- **File creation override** (only for implementation tasks): In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
+${getAutoConfirm() ? `# Direct Answer Override\n\nFor self-contained tasks asking for a SQL query, cron expression, regex explanation/refactor, small Makefile, Dockerfile snippet, or small JS/Python function, this overrides the file creation rule above: answer in text only. Do not inspect the workspace, create files, run commands, or install packages unless the user explicitly asks for those actions. Never install Node.js built-in modules such as fs, path, events, http, https, crypto, stream, util, or os.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
 # Plan Mode
@@ -2509,6 +2598,7 @@ Response patterns by request type:
 - **Hook implementations (Git, bash scripts)**: Answer ENTIRELY in text — do NOT use any tools. Write the complete, correct script in your first and only response. Think through ALL edge cases (e.g. console.log in comments or strings vs real calls) before writing — handle them in the initial script, never iterate. Show the full file content and how to install it (chmod +x, correct .git/hooks/ path). For pre-commit hooks that check staged content: always use 'git diff --cached' to get only staged changes — never grep full file content, which would catch unstaged lines. Use '--diff-filter=ACM' to target added/copied/modified files — NEVER use '--diff-filter=D' (that shows ONLY deleted files, opposite of intent). NEVER use 'set -e' in pre-commit hooks — grep exits 1 on no match, which kills the entire script under set -e. Use explicit 'if git diff --cached ... | grep -q ...; then' flow control instead, and check exit codes explicitly. REGEX FALSE POSITIVES IN DIFF OUTPUT: Diff lines start with '+' (added) or '-' (removed) — the actual code content comes AFTER the leading '+'/'-'. This means 'grep -v "^\s*//"' does NOT exclude comment lines in diff output because the line starts with '+', not with whitespace. CORRECT pipeline for detecting console.log in staged .js changes while excluding comment lines: 'git diff --cached -- "*.js" | grep "^+" | grep -v "^+++" | grep -v "^\+[[:space:]]*//" | grep -q "console\.log"'. The key pattern is '^\+[[:space:]]*//' — match lines where after the '+' prefix comes optional whitespace then '//'. Always use this exact pipeline, never 'grep -v "^\s*//"' on diff output. CONSOLE METHODS: When a task asks to block console.log, explicitly address whether console.warn, console.error, console.debug, and console.info should also be blocked — if the intent is "no console output in production", block all console methods with a single pattern like 'console\.\(log\|warn\|error\|debug\|info\)'.
 - **Memory leak explanations**: Show the problematic code, then present the primary fix (move emitter.on() outside the loop, registered once) with the original setInterval kept intact for its intended purpose. Then briefly mention 2 alternatives: (1) emitter.once() if only one event needs handling, (2) removeAllListeners() (or emitter.off(event, handler)) BEFORE re-registering inside the loop. CRITICAL for alternative 2: you MUST call removeAllListeners() or off() BEFORE the new emitter.on() — if you call emitter.on() inside an interval without first removing the previous listener, a new listener accumulates on every tick, which is the same leak as the original. Always show the removal step explicitly. Do NOT replace the setInterval body with an empty callback — keep the interval doing its original work.
 - **Makefile tasks**: ALWAYS follow this exact order: (1) paste the COMPLETE Makefile in a fenced code block in your text response FIRST, (2) THEN optionally write it to a file with a tool. The user cannot see files you write — your text response is the ONLY output they receive. Calling write_file does NOT substitute for pasting the code in your response. Never describe the Makefile in prose — paste the actual code. Every target, every recipe, every .PHONY line. Use EXACTLY the tools specified (jest means jest directly, not npm test; tsc means tsc, never npx tsc). Never put glob patterns like src/**/*.ts in prerequisites — make does not expand them. MAKEFILE SYNTAX RULES (hard requirements): (a) Recipe lines MUST be indented with a real TAB character — never spaces; a space-indented recipe causes "missing separator" errors. CRITICAL: commands go on the NEXT LINE after the target, indented with a TAB — NEVER on the same line. WRONG: "build: tsc" (puts tsc as a file dependency, does nothing). RIGHT: "build:\n\ttsc" (TAB then tsc on the line below). (b) Declare ALL phony targets in a SINGLE .PHONY line at the top — NEVER split .PHONY across multiple declarations. (c) NEVER define the same target name twice — duplicate targets silently override each other and produce contradictory behaviour. (d) Do NOT add @echo lines unless the task explicitly asks for output messages. (e) DEPENDENCY CHAIN: if the task describes a test target that runs tests after compilation/building, the test target MUST declare an explicit dependency on build (e.g. "test: build") — otherwise make test runs against stale or missing binaries. When in doubt, add the dependency; omitting it is always the wrong default. (f) 'all' target ordering: NEVER write "all: clean build test" and rely on make's left-to-right execution — with parallel make (-j) this is not guaranteed. Instead, encode the sequence via individual target dependencies: "test: build", "build: dist" (if clean→build→test is the intent), so the chain is enforced regardless of parallelism. Or use ordered prerequisites with .NOTPARALLEL if the task explicitly requires strict ordering. NEVER make 'build' depend on 'clean' — this causes 'build' to always wipe the output directory, and 'all' will trigger 'clean' twice due to redundant dependency chaining.
+- **Makefile dependency quality**: Avoid redundant dependency chains. If \`test: build\` already ensures tests build first, do not also list both \`build\` and \`test\` under \`all\` unless \`all\` genuinely needs both as independent goals. Keep dependencies minimal while preserving required order.
 - **Dataclass definitions**: Paste the COMPLETE dataclass code directly in your text response — @dataclass decorator, all fields with type annotations and defaults, full __post_init__ validation block. The code must appear verbatim in your chat text. Writing a file with a tool does NOT satisfy this — always also paste the code in text.
 - **Cron expressions**: Before writing each expression, quote the exact constraint from the task, then derive the expression. Double-check boundary values match exactly what was asked. NEVER put cron expressions inside markdown tables — asterisks (*) in table cells are consumed as bold/italic markers and disappear. Always present each cron expression in its own fenced code block. For "every N minutes between X-Yh": only present both interpretations (inclusive vs. exclusive endpoint) when the task is genuinely ambiguous about whether the endpoint fires. If the task explicitly states "8-18h" or "until 18h" without qualification, write the expression with 8-18 directly — do NOT second-guess or add a confusing dual-interpretation note that contradicts the explicit request. The note is only appropriate when the task says something like "during business hours" or "until approximately 18h" where intent is unclear. CRITICAL OFF-BY-ONE: "8-18h" means the hour field is 8-18 (runs fire AT 18:00 are INCLUDED). Writing 8-17 silently drops the 18:00 run — this is WRONG. If you notice mid-response that you wrote 8-17 for an 8-18h spec, CORRECT THE EXPRESSION in-place immediately — do NOT leave both versions and add a contradictory note. When correcting, explicitly state the fix: "8-18h → 8-18" to avoid any ambiguity.
 - **Express/fetch error handling**: When adding error handling to an Express route that fetches by ID: (1) validate the ID parameter first (check it exists and is a valid format), (2) wrap fetch in try-catch, (3) check response.ok and handle 404 specifically, (4) call next(error) to pass errors to Express error-handling middleware — do not just send a raw 500 response.
@@ -3398,6 +3488,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   }
   const runtimeDebugTarget =
     typeof userInput === "string" ? detectRuntimeDebugTarget(userInput) : null;
+  const directAnswerMode =
+    typeof userInput === "string" && _isSimpleDirectAnswerPrompt(userInput);
   let userContent = buildUserContent(_resolvedInput);
   // buildUserContent may return a Promise when remote URLs or clipboard are involved
   if (userContent && typeof userContent.then === "function") {
@@ -3513,6 +3605,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   }
 
   effectiveSystemPrompt += "\n" + _buildTurnLanguagePrompt(userInput);
+  if (directAnswerMode) {
+    effectiveSystemPrompt +=
+      "\n# Current Turn Direct Answer Mode\n" +
+      "This request is self-contained. Answer directly with the requested content. " +
+      "Do not inspect the workspace, create files, run commands, install packages, or mention internal process unless the user explicitly asked for that.\n";
+  }
 
   const fullMessages = [
     { role: "system", content: effectiveSystemPrompt },
@@ -3529,7 +3627,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Start pre-scan concurrently on the FIRST message of a new conversation.
   // Results fill the "Thinking..." dead time with useful project context.
   const isFirstMessage = conversationMessages.length === 1;
-  const preScanPromise = isFirstMessage
+  const preScanPromise = isFirstMessage && !directAnswerMode
     ? _runPreScan().catch(() => null)
     : Promise.resolve(null);
   const urlProbePromise = isFirstMessage
@@ -3539,7 +3637,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     : Promise.resolve(null);
 
   // Context-aware compression: fit messages into context window
-  const allTools = getAllToolDefinitions();
+  const allTools = directAnswerMode ? [] : getAllToolDefinitions();
   const [
     { messages: fittedMessages, compressed, compacted, tokensRemoved },
     preScanResult,
@@ -3779,6 +3877,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const filesModified = new Set();
   const filesRead = new Set();
   const verificationCommandsRun = [];
+  const verificationReadsRun = [];
   const _editedFilesNotReread = new Set(); // files edited but not re-read — block second edit until re-read
   let _readOnlyToolStreak = 0; // consecutive read-only tool iterations (no file writes)
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
@@ -3786,6 +3885,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
+  const _hasPostEditVerificationEvidence = () =>
+    verificationCommandsRun.length > 0 || verificationReadsRun.length > 0;
   // Loop detection: use session-level Maps so counters persist across REPL turns.
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
@@ -4075,7 +4176,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       let flushTimeout = null;
 
       try {
-        const baseTools = getCachedFilteredTools(getAllToolDefinitions());
+        const baseTools = directAnswerMode
+          ? []
+          : getCachedFilteredTools(getAllToolDefinitions());
         const PHASE_PLAN_TOOLS = new Set([
           "read_file",
           "list_directory",
@@ -5234,14 +5337,44 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             continue; // retry without counting as a step
           }
         }
+
+        if (
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          !_phaseEnabled &&
+          (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+          _postEditVerifyPending &&
+          !_hasPostEditVerificationEvidence() &&
+          _postEditVerifyNudges < 2
+        ) {
+          _postEditVerifyNudges++;
+          const suggestedChecks =
+            await _inferVerificationCommands(filesModified);
+          const relatedTests = await _inferRelevantTests(filesModified);
+          const verifyMsg = {
+            role: "user",
+            content:
+              _buildPostEditVerifyPrompt(
+                filesModified,
+                suggestedChecks,
+                relatedTests,
+              ) +
+              "\nDo not write a final completion summary until this verification evidence exists.",
+          };
+          conversationMessages.push(verifyMsg);
+          apiMessages.push(verifyMsg);
+          debugLog(
+            `${C.yellow}  ⚠ Headless completion blocked — verification required (${_postEditVerifyNudges}/2)${C.reset}`,
+          );
+          continue;
+        }
+
         // ─── Early exit in headless mode ──────────────────────────────────────
         // When running in auto/headless mode (benchmarks, improvement loop), once
         // the model has edited files and produces a substantive text-only response,
-        // the task is usually done. Forcing a separate verify pass after a clean
-        // implementation summary often burns the remaining budget and converts a
-        // useful run into a timeout. Keep verify-phase behavior unchanged, but let
-        // implementation-phase sessions finish cleanly once they have already
-        // produced useful work and a real wrap-up.
+        // the task is usually done only after at least one verification signal.
+        // This preserves benchmark efficiency while blocking cheap false-success
+        // endings where code changed but no check or post-edit read happened.
         const _canHeadlessEarlyExit =
           getAutoConfirm() &&
           !opts.skillLoop &&
@@ -5249,7 +5382,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           hasText &&
           !isTooShort(content || streamedText || "") &&
           totalSteps >= 1 &&
-          (!_phaseEnabled || _currentPhase === "implement");
+          (!_postEditVerifyPending || _hasPostEditVerificationEvidence()) &&
+          !_phaseEnabled;
         if (_canHeadlessEarlyExit) {
           debugLog(
             `${C.green}  ✓ Headless early exit: ${filesModified.size} file(s) modified (+ ${_bashModifiedFiles} bash writes), substantive text response received${C.reset}`,
@@ -5818,7 +5952,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Does NOT use processInput() to avoid touching conversationMessages.
         const _needsVerificationDisclosure =
           (filesModified.size > 0 || _bashModifiedFiles > 0) &&
-          verificationCommandsRun.length === 0 &&
+          !_hasPostEditVerificationEvidence() &&
           _claimsVerificationOrCompletion(content || streamedText || "") &&
           !_statesVerificationGap(content || streamedText || "");
         if (
@@ -5835,7 +5969,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 ? [
                     "Write a closing summary (3+ sentences) with:",
                     `- changed files: ${[...filesModified].slice(0, 8).join(", ") || "files changed by shell commands"}`,
-                    `- verification: ${verificationCommandsRun.length > 0 ? verificationCommandsRun.join(" | ") : "not run; state this explicitly and do not claim tests/build/checks passed"}`,
+                    `- verification: ${
+                      verificationCommandsRun.length > 0
+                        ? verificationCommandsRun.join(" | ")
+                        : verificationReadsRun.length > 0
+                          ? `post-edit read: ${verificationReadsRun.slice(0, 4).join(", ")}`
+                          : "not run; state this explicitly and do not claim tests/build/checks passed"
+                    }`,
                     "- remaining risk or follow-up, if any.",
                   ].join("\n")
                 : "Write a closing diagnosis (3+ sentences): what you investigated, what you found, and what the user should do next or what the root cause is.";
@@ -7968,6 +8108,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (isOk && prep.fnName === "read_file") {
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
+            if (
+              filesModified.has(prep.args.path) ||
+              _freshlyWrittenFiles.has(prep.args.path) ||
+              _editedFilesNotReread.has(prep.args.path)
+            ) {
+              verificationReadsRun.push(prep.args.path);
+              _postEditVerifyPending = false;
+              _postEditVerifyNudges = 0;
+            }
             _freshlyWrittenFiles.delete(prep.args.path);
             _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
@@ -8485,6 +8634,8 @@ module.exports = {
   _inferRelevantTests,
   _inferSymbolTargets,
   _buildSymbolHintBlock,
+  _detectResponseLanguage,
+  _isSimpleDirectAnswerPrompt,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   // Export for testing

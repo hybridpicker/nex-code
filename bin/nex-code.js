@@ -257,7 +257,22 @@ function emitJsonLine(obj, write = process.stdout.write.bind(process.stdout)) {
 }
 
 function stripAnsi(text) {
-  return String(text || "").replace(/\x1B\[[0-9;]*m/g, "");
+  const { stripAnsiControlSequences } = require("../cli/format");
+  return stripAnsiControlSequences(text);
+}
+
+function getAssistantText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      if (!block) return "";
+      if (typeof block === "string") return block;
+      if (block.type === "text") return block.text || "";
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function cleanToolSummary(summary) {
@@ -350,6 +365,50 @@ function createJsonModeHooks() {
   };
 }
 
+function createPlainHeadlessHooks() {
+  process.env.NEX_SERVER = "1";
+
+  const originalConsole = {
+    log: console.log,
+    warn: console.warn,
+    info: console.info,
+    error: console.error,
+  };
+  const passthroughStdout = process.stdout.write;
+  const passthroughStderr = process.stderr.write;
+
+  function swallowWrite(_chunk, encoding, cb) {
+    let callback = cb;
+    if (typeof encoding === "function") callback = encoding;
+    if (typeof callback === "function") callback();
+    return true;
+  }
+
+  process.stdout.write = swallowWrite;
+  process.stderr.write = swallowWrite;
+  console.log = () => {};
+  console.warn = () => {};
+  console.info = () => {};
+  console.error = () => {};
+
+  return {
+    hooks: {
+      onToken() {},
+      onThinkingToken() {},
+      onToolStart() {},
+      onToolEnd() {},
+    },
+    restore() {
+      process.stdout.write = passthroughStdout;
+      process.stderr.write = passthroughStderr;
+      console.log = originalConsole.log;
+      console.warn = originalConsole.warn;
+      console.info = originalConsole.info;
+      console.error = originalConsole.error;
+    },
+  };
+}
+
 // ─── helper: run headless task ───────────────────────────────
 function runHeadlessTask(task) {
   if (args.includes("--auto")) {
@@ -377,23 +436,31 @@ function runHeadlessTask(task) {
   const orchestratorModel =
     orchModelIdx !== -1 ? args[orchModelIdx + 1] : undefined;
   const jsonModeState = jsonMode ? createJsonModeHooks() : null;
-  const agentHooks = jsonModeState ? jsonModeState.hooks : null;
+  let plainModeState = null;
+  let agentHooks = jsonModeState ? jsonModeState.hooks : null;
 
   function finishSuccess(getMessages) {
+    const { sanitizeFinalAnswer } = require("../cli/format");
+    const msgs = getMessages();
+    const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
+    const response = sanitizeFinalAnswer(getAssistantText(lastAssistant?.content));
+
     if (!jsonModeState) {
+      if (plainModeState) {
+        plainModeState.restore();
+        if (response) process.stdout.write(response + "\n");
+      }
       process.exit(0);
       return;
     }
 
     const { getSessionCosts } = require("../cli/costs");
-    const msgs = getMessages();
-    const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
     const costs = getSessionCosts();
     jsonModeState.restore();
     emitJsonLine({
       type: "done",
       success: true,
-      response: lastAssistant?.content || "",
+      response,
       usage: {
         input: costs.totalInput || 0,
         output: costs.totalOutput || 0,
@@ -406,6 +473,7 @@ function runHeadlessTask(task) {
 
   function finishError(err) {
     if (!jsonModeState) {
+      if (plainModeState) plainModeState.restore();
       console.error(err.message);
       process.exit(1);
       return;
@@ -452,6 +520,10 @@ function runHeadlessTask(task) {
   }
 
   const { processInput, getConversationMessages } = require("../cli/agent");
+  if (!jsonModeState) {
+    plainModeState = createPlainHeadlessHooks();
+    agentHooks = plainModeState.hooks;
+  }
   processInput(task, agentHooks, { autoOrchestrate, orchestratorModel })
     .then(() => {
       // Write dream log for session consolidation

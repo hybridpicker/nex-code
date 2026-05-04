@@ -128,6 +128,7 @@ describe("registry.js", () => {
     it("retries on 503 server error", async () => {
       process.env.OPENAI_API_KEY = "sk-test";
       registry.getActiveProviderName();
+      registry.setActiveModel("ollama:kimi-k2.5");
       registry.setFallbackChain(["openai"]);
 
       const ollama = registry.getProvider("ollama");
@@ -259,6 +260,7 @@ describe("registry.js", () => {
       const originalFallbackModels = [...registry.OLLAMA_FALLBACK_MODELS];
       process.env.OPENAI_API_KEY = "sk-test";
       registry.getActiveProviderName();
+      registry.setActiveModel("ollama:kimi-k2.5");
       registry.setFallbackChain(["openai"]);
       registry.OLLAMA_FALLBACK_MODELS.splice(
         0,

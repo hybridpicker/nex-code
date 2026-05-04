@@ -40,6 +40,7 @@ const {
   formatToolSummary,
   formatSectionHeader,
   formatMilestone,
+  sanitizeFinalAnswer,
 } = require("../cli/format");
 
 // ─── formatToolCall ──────────────────────────────────────────
@@ -962,5 +963,29 @@ describe("formatMilestone()", () => {
     );
     expect(out).toContain("1 file modified");
     expect(out).not.toContain("1 files");
+  });
+});
+
+// ─── final answer sanitizer ─────────────────────────────────
+describe("sanitizeFinalAnswer()", () => {
+  it("removes internal tool UI logs and ANSI sequences", () => {
+    const raw = [
+      "\x1b[36m◌ INSPECT src/index.js\x1b[0m",
+      "  ✓ Bash → ok",
+      "Here is the query:",
+      "```sql",
+      "SELECT 'INSPECT should stay inside code' AS label;",
+      "```",
+      "  💡 Ctrl+C to abort · auto-abort in ~12s",
+      "Use it as-is.",
+    ].join("\n");
+
+    const out = sanitizeFinalAnswer(raw);
+    expect(out).not.toContain("\x1b");
+    expect(out).not.toContain("INSPECT src/index.js");
+    expect(out).not.toContain("auto-abort");
+    expect(out).toContain("Here is the query:");
+    expect(out).toContain("SELECT 'INSPECT should stay inside code' AS label;");
+    expect(out).toContain("Use it as-is.");
   });
 });

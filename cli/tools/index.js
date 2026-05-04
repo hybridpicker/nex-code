@@ -51,6 +51,55 @@ const INTERACTIVE_CMDS =
 // `ssh host "cmd"` / `ssh host cmd` are non-interactive — output must be captured.
 const SSH_INTERACTIVE_RE = /^ssh\s/;
 const SSH_HAS_REMOTE_CMD_RE = /^ssh(?:\s+-\S+)*\s+\S+@?\S+\s+["']?[^-]/;
+const NODE_BUILTIN_MODULES = new Set([
+  "assert",
+  "buffer",
+  "child_process",
+  "cluster",
+  "crypto",
+  "dns",
+  "events",
+  "fs",
+  "http",
+  "https",
+  "module",
+  "net",
+  "os",
+  "path",
+  "perf_hooks",
+  "process",
+  "querystring",
+  "readline",
+  "stream",
+  "timers",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "vm",
+  "zlib",
+]);
+
+function getNodeBuiltinInstallAttempt(command) {
+  const cmd = String(command || "");
+  const match = cmd.match(
+    /\b(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\s+([^;&|]+)/i,
+  );
+  if (!match) return null;
+  const packages = match[1]
+    .split(/\s+/)
+    .map((pkg) => pkg.trim())
+    .filter(
+      (pkg) =>
+        pkg &&
+        !pkg.startsWith("-") &&
+        !pkg.includes("=") &&
+        pkg !== "." &&
+        pkg !== "./",
+    )
+    .map((pkg) => pkg.replace(/^node:/, "").replace(/@[^/]+$/, ""));
+  return packages.find((pkg) => NODE_BUILTIN_MODULES.has(pkg)) || null;
+}
 
 /** Check if a file exists (async). */
 async function fileExists(fp) {
@@ -2494,6 +2543,10 @@ async function _executeToolInner(name, args, options = {}) {
   switch (name) {
     case "bash": {
       const cmd = args.command;
+      const builtinInstall = getNodeBuiltinInstallAttempt(cmd);
+      if (builtinInstall) {
+        return `BLOCKED: ${builtinInstall} is a Node.js built-in module and must not be installed. Import it directly instead.`;
+      }
       const forbidden = isForbidden(cmd);
       if (forbidden) {
         const hint = getBlockedHint(cmd);
@@ -5996,6 +6049,7 @@ module.exports = {
   autoFixPath,
   autoFixEdit,
   enrichBashError,
+  getNodeBuiltinInstallAttempt,
   cancelPendingAskUser,
   setAskUserHandler,
   fileExists,

@@ -2,6 +2,7 @@
 
 const {
   analyzeBenchmarkQualitySignals,
+  evaluateTask,
   extractBenchmarkMetrics,
   extractUsageFromDoneEvent,
   parseJsonEventStream,
@@ -173,6 +174,66 @@ describe("benchmark reallife parser", () => {
     expect(signals.contextSelection.readPackageConfig).toBe(true);
     expect(signals.contextSelection.inspectedGitState).toBe(true);
     expect(signals.falseSuccessClaim).toBe(false);
+  });
+
+  test("counts post-edit reads as weak verification evidence", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "tool_start",
+        tool: "edit_file",
+        args: { path: "src/app.js" },
+      }),
+      JSON.stringify({
+        type: "tool_start",
+        tool: "read_file",
+        args: { path: "src/app.js" },
+      }),
+      JSON.stringify({
+        type: "done",
+        success: true,
+        response: "Implemented the fix and verified the edited file.",
+      }),
+    ].join("\n");
+
+    const signals = analyzeBenchmarkQualitySignals(stdout, "", {
+      maxToolCalls: 10,
+    });
+
+    expect(signals.verificationRan).toBe(true);
+    expect(signals.verificationReads).toEqual(["src/app.js"]);
+    expect(signals.weakVerificationOnly).toBe(true);
+    expect(signals.falseSuccessClaim).toBe(false);
+  });
+
+  test("caps false-success scores when edits have no verification", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "tool_start",
+        tool: "edit_file",
+        args: { path: "src/app.js" },
+      }),
+      JSON.stringify({
+        type: "done",
+        success: true,
+        response:
+          "Implemented the fix, verified tests passed, and the task is complete.",
+      }),
+    ].join("\n");
+    const task = {
+      id: "false-success",
+      category: "coding",
+      maxToolCalls: 10,
+      evaluateFn: () => ({
+        taskCompletion: 100,
+        editPrecision: 100,
+        quality: 100,
+      }),
+    };
+
+    const result = evaluateTask(task, null, stdout, "", 1000, "success");
+
+    expect(result.score).toBe(55);
+    expect(result.details.qualitySignals.falseSuccessClaim).toBe(true);
   });
 
   test("hard-kills benchmark children that ignore termination", () => {
