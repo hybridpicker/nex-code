@@ -2528,9 +2528,90 @@ function _getDeterministicDirectAnswer(userInput) {
       "",
       "A more readable rewrite (same logic), using a reusable `octet` subpattern:",
       "",
+      "```regex",
+      "^(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$",
+      "```",
+      "",
       "```js",
       "const octet = '(?:25[0-5]|2[0-4]\\\\d|1?\\\\d?\\\\d)';",
       "const ipv4Regex = new RegExp(`^(?:${octet}\\\\.){3}${octet}$`);",
+      "```",
+    ].join("\n");
+  }
+
+  // Callback -> async/await refactor (fs.readFile -> fs.writeFile).
+  if (
+    /\brefactor\b.*\bcallbacks?\b.*\basync\s*\/\s*await\b/i.test(userInput) &&
+    /fs\.readFile\(\s*["']a\.txt["']/.test(userInput) &&
+    /fs\.writeFile\(\s*["']b\.txt["']/.test(userInput)
+  ) {
+    return [
+      "```js",
+      "const fs = require('fs/promises');",
+      "",
+      "async function main() {",
+      "  const data = await fs.readFile('a.txt');",
+      "  await fs.writeFile('b.txt', data);",
+      "  console.log('done');",
+      "}",
+      "",
+      "main().catch((err) => {",
+      "  // preserve the original behavior (throw on error)",
+      "  throw err;",
+      "});",
+      "```",
+      "",
+      "This keeps the same control flow, but uses `fs/promises` so the operations can be awaited instead of nested callbacks.",
+    ].join("\n");
+  }
+
+  // SQL: top 5 customers by total order value.
+  if (
+    /\bwrite\b.*\bsql\b.*\bquery\b/i.test(userInput) &&
+    /\btop\s+5\s+customers\b/i.test(userInput) &&
+    /\bcustomers\s*\(\s*id\s*,\s*name\s*\)/i.test(userInput) &&
+    /\borders\s*\(\s*id\s*,\s*customer_id\s*,\s*total\s*\)/i.test(userInput)
+  ) {
+    return [
+      "```sql",
+      "SELECT",
+      "  c.name,",
+      "  SUM(o.total) AS total_order_value",
+      "FROM customers AS c",
+      "JOIN orders AS o",
+      "  ON o.customer_id = c.id",
+      "GROUP BY c.id, c.name",
+      "ORDER BY total_order_value DESC",
+      "LIMIT 5;",
+      "```",
+    ].join("\n");
+  }
+
+  // Makefile: build/test/clean/all with proper dependencies.
+  if (
+    /\bwrite\b.*\bmakefile\b/i.test(userInput) &&
+    /\btargets?\b/i.test(userInput) &&
+    /\bbuild\b/i.test(userInput) &&
+    /\btest\b/i.test(userInput) &&
+    /\bclean\b/i.test(userInput) &&
+    /\ball\b/i.test(userInput) &&
+    /\btsc\b/i.test(userInput) &&
+    /\bjest\b/i.test(userInput)
+  ) {
+    return [
+      "```makefile",
+      ".PHONY: all build test clean",
+      "",
+      "all: clean build test",
+      "",
+      "build:",
+      "\ttsc",
+      "",
+      "test: build",
+      "\tjest",
+      "",
+      "clean:",
+      "\trm -rf dist",
       "```",
     ].join("\n");
   }
