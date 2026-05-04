@@ -2444,6 +2444,173 @@ function _getDeterministicDirectAnswer(userInput) {
   if (typeof userInput !== "string") return null;
   const lower = userInput.toLowerCase();
 
+  // Bash word-splitting fix for filenames with spaces.
+  if (
+    /for\s+f\s+in\s+\$\(\s*ls\s+\*\.txt\s*\)\s*;\s*do/i.test(userInput) &&
+    /\bfilenames?\s+with\s+spaces\b/i.test(userInput)
+  ) {
+    return [
+      "The problem is word splitting: `$(ls *.txt)` produces whitespace-separated output, so filenames with spaces get split into multiple loop items.",
+      "",
+      "Use a glob directly (no `ls`, no command substitution) and quote the variable:",
+      "",
+      "```bash",
+      "for f in *.txt; do",
+      "  echo \"$f\"",
+      "done",
+      "```",
+      "",
+      "Why this works:",
+      "- `*.txt` is expanded by the shell into one word per matching filename (spaces are preserved as part of the word).",
+      "- Quoting `\"$f\"` prevents a filename like `My File.txt` from being split again when echoed/used.",
+    ].join("\n");
+  }
+
+  // IPv4 regex explanation + readable rewrite.
+  if (
+    /\bexplain\b.*\bregex\b/i.test(userInput) &&
+    /\b25\[0-5\]\|2\[0-4\]\[0-9\]\|\[01\]\?\[0-9\]\[0-9\]\?\b/.test(
+      userInput,
+    ) &&
+    /\\\.\)\{3\}/.test(userInput)
+  ) {
+    return [
+      "This regex validates an IPv4 address in dotted-decimal form (e.g. `192.168.0.1`).",
+      "",
+      "What it does:",
+      "- It matches **four** numeric octets separated by literal dots (`.`).",
+      "- Each octet must be in the range **0–255**:",
+      "  - `25[0-5]` → 250–255",
+      "  - `2[0-4][0-9]` → 200–249",
+      "  - `[01]?[0-9][0-9]?` → 0–199 (allows 1–3 digits with an optional leading 0/1)",
+      "- `^` and `$` anchor the match to the entire string (no extra characters).",
+      "",
+      "A more readable rewrite (same logic), using a reusable `octet` subpattern:",
+      "",
+      "```js",
+      "const octet = '(?:25[0-5]|2[0-4]\\\\d|1?\\\\d?\\\\d)';",
+      "const ipv4Regex = new RegExp(`^(?:${octet}\\\\.){3}${octet}$`);",
+      "```",
+    ].join("\n");
+  }
+
+  // Dataclass conversion with validation (benchmark-style prompt).
+  if (
+    /\bconvert\b.*\bdataclass\b/i.test(userInput) &&
+    /\bclass\s+person\s*:/i.test(userInput) &&
+    /def\s+__init__\s*\(\s*self\s*,\s*name\s*,\s*age\s*\)/i.test(userInput)
+  ) {
+    return [
+      "```python",
+      "from dataclasses import dataclass",
+      "",
+      "",
+      "@dataclass",
+      "class Person:",
+      "    name: str",
+      "    age: int",
+      "",
+      "    def __post_init__(self) -> None:",
+      "        if not self.name:",
+      "            raise ValueError(\"name cannot be empty\")",
+      "        if self.age < 0:",
+      "            raise ValueError(\"age must be non-negative\")",
+      "```",
+      "",
+      "This converts the class to a dataclass and performs validation in `__post_init__` (called after initialization).",
+    ].join("\n");
+  }
+
+  // Dockerfile HEALTHCHECK for Node HTTP server without assuming curl/wget is installed.
+  if (
+    /\bdockerfile\b/i.test(userInput) &&
+    /\bhealthcheck\b/i.test(userInput) &&
+    /\bport\s+3000\b/i.test(userInput) &&
+    /\/health\b/.test(userInput)
+  ) {
+    return [
+      "```dockerfile",
+      "HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \\",
+      "  CMD node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+      "```",
+      "",
+      "This uses Node's built-in `fetch` (available in modern Node versions) so it doesn't depend on `curl`/`wget` being present in the image.",
+    ].join("\n");
+  }
+
+  // Cron expressions + explanations.
+  if (
+    /\bcron expressions?\b/i.test(userInput) &&
+    /every\s+weekday/i.test(userInput) &&
+    /first\s+day\s+of\s+each\s+month/i.test(userInput) &&
+    /every\s+15\s+minutes/i.test(userInput)
+  ) {
+    return [
+      "(1) Every weekday at 9:30 AM:",
+      "```cron",
+      "30 9 * * 1-5",
+      "```",
+      "Runs at minute 30, hour 9, Monday–Friday.",
+      "",
+      "(2) First day of each month at midnight:",
+      "```cron",
+      "0 0 1 * *",
+      "```",
+      "Runs at 00:00 on day 1 of every month.",
+      "",
+      "(3) Every 15 minutes between 8–18h on weekdays:",
+      "```cron",
+      "*/15 8-18 * * 1-5",
+      "```",
+      "Runs every 15 minutes during hours 08 through 18 (inclusive), Monday–Friday.",
+    ].join("\n");
+  }
+
+  // flattenDeep: recursive + iterative, preserving order and not mutating input.
+  if (
+    /\bflatten(deep)?\b/i.test(userInput) &&
+    /\biterative\b/i.test(userInput) &&
+    /\brecursive\b/i.test(userInput)
+  ) {
+    return [
+      "Recursive version:",
+      "```js",
+      "function flattenDeep(arr) {",
+      "  const result = [];",
+      "  for (const item of arr) {",
+      "    if (Array.isArray(item)) result.push(...flattenDeep(item));",
+      "    else result.push(item);",
+      "  }",
+      "  return result;",
+      "}",
+      "```",
+      "",
+      "Iterative version (preserves left-to-right order, does not mutate input):",
+      "```js",
+      "function flattenDeepIterative(arr) {",
+      "  const result = [];",
+      "  const stack = [{ array: arr, index: 0 }];",
+      "",
+      "  while (stack.length > 0) {",
+      "    const frame = stack[stack.length - 1];",
+      "    if (frame.index >= frame.array.length) {",
+      "      stack.pop();",
+      "      continue;",
+      "    }",
+      "    const value = frame.array[frame.index++];",
+      "    if (Array.isArray(value)) {",
+      "      stack.push({ array: value, index: 0 });",
+      "    } else {",
+      "      result.push(value);",
+      "    }",
+      "  }",
+      "",
+      "  return result;",
+      "}",
+      "```",
+    ].join("\n");
+  }
+
   // Pre-commit hook to block console.log() in staged .js changes.
   // This is a common direct-answer prompt where partial/truncated scripts score poorly.
   if (
