@@ -2305,6 +2305,7 @@ function _isSimpleDirectAnswerPrompt(userInput) {
   }
 
   return [
+    /\b(?:reply|respond|answer)\b.*\bexactly\b/i,
     /\b(?:sql\s+query|select\s+.+\s+from)\b/i,
     /\b(?:cron(?:\s+expression)?|crontab)\b/i,
     /\bregex\b.*\b(?:explain|refactor|rewrite|readable)\b/i,
@@ -3742,16 +3743,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
   // Pre-flight context check — compress immediately if already over threshold
   {
-    const _preCtx = getUsage(apiMessages, getAllToolDefinitions());
+    const _preCtx = getUsage(apiMessages, allTools);
     if (_preCtx.percentage >= 65) {
       const { messages: _compressed, tokensRemoved: _freed } = forceCompress(
         apiMessages,
-        getAllToolDefinitions(),
+        allTools,
       );
       if (_freed > 0) {
         apiMessages = _compressed;
         console.log(
-          `${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, getAllToolDefinitions()).percentage)}% used]${C.reset}`,
+          `${C.dim}  [pre-flight compress — ${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, allTools).percentage)}% used]${C.reset}`,
         );
       }
     }
@@ -5336,6 +5337,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             conversationMessages.push(continueNudge);
             continue; // retry without counting as a step
           }
+        }
+
+        if (
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          filesRead.size === 0 &&
+          totalSteps === 0 &&
+          hasText &&
+          !_phaseEnabled
+        ) {
+          debugLog(
+            `${C.green}  ✓ Headless direct response exit: text-only response received${C.reset}`,
+          );
+          saveNow(conversationMessages);
+          break outer;
         }
 
         if (
