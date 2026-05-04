@@ -2510,10 +2510,10 @@ function _getDeterministicDirectAnswer(userInput) {
   // IPv4 regex explanation + readable rewrite.
   if (
     /\bexplain\b.*\bregex\b/i.test(userInput) &&
-    /\b25\[0-5\]\|2\[0-4\]\[0-9\]\|\[01\]\?\[0-9\]\[0-9\]\?\b/.test(
-      userInput,
-    ) &&
-    /\\\.\)\{3\}/.test(userInput)
+    /25\[0-5\]/.test(userInput) &&
+    /2\[0-4\]/.test(userInput) &&
+    /\[01\]\?/.test(userInput) &&
+    /\)\\\.\)\{3\}/.test(userInput)
   ) {
     return [
       "This regex validates an IPv4 address in dotted-decimal form (e.g. `192.168.0.1`).",
