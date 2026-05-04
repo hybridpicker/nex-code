@@ -144,6 +144,7 @@ DEFAULT_PROVIDER=ollama
 DEFAULT_MODEL=qwen3-coder:480b
 
 # Optional premium fallbacks:
+DEEPSEEK_API_KEY=your-key
 OPENAI_API_KEY=your-key
 ANTHROPIC_API_KEY=your-key
 GEMINI_API_KEY=your-key

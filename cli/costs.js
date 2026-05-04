@@ -29,6 +29,10 @@ const PRICING = {
     "o3-mini": { input: 1.1, output: 4.4 },
     "o4-mini": { input: 1.1, output: 4.4 },
   },
+  deepseek: {
+    "deepseek-v4-flash": { input: 0.14, output: 0.28 },
+    "deepseek-v4-pro": { input: 0.435, output: 0.87 },
+  },
   anthropic: {
     "claude-sonnet": { input: 3.0, output: 15.0 },
     "claude-opus": { input: 5.0, output: 25.0 },
@@ -61,7 +65,12 @@ const PRICING = {
 };
 
 const AFFORDABLE_PROVIDERS = new Set(["ollama", "local"]);
-const PREMIUM_PROVIDERS = new Set(["openai", "anthropic", "gemini"]);
+const PREMIUM_PROVIDERS = new Set([
+  "openai",
+  "deepseek",
+  "anthropic",
+  "gemini",
+]);
 
 // Session usage accumulator
 let usageLog = [];

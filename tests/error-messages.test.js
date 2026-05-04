@@ -366,6 +366,7 @@ const x = 5;`;
         "ANTHROPIC_API_KEY not set",
         "GEMINI_API_KEY not set",
         "OLLAMA_API_KEY not set",
+        "DEEPSEEK_API_KEY not set",
         "OPENAI_API_KEY not set",
       ];
       for (const error of errors) {
@@ -394,7 +395,7 @@ const x = 5;`;
         "No provider configured and no local Ollama running.",
         "Options:",
         "  1. Install Ollama: https://ollama.com/download",
-        "  2. Set an API key: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or OLLAMA_API_KEY",
+        "  2. Set an API key: DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or OLLAMA_API_KEY",
       ];
       expect(lines[0]).toContain("No provider configured");
       expect(lines[1]).toContain("Options");

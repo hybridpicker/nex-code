@@ -81,7 +81,7 @@ describe("interactive: setup wizard", () => {
     }
   }, 15000);
 
-  test("choosing 5 (Skip) cancels cleanly and falls through", async () => {
+  test("choosing 6 (Skip) cancels cleanly and falls through", async () => {
     const s = spawnCli([], {
       env: isolatedEnv(tmpHome),
       cwd: tmpCwd,
@@ -89,7 +89,7 @@ describe("interactive: setup wizard", () => {
     });
     try {
       await s.waitFor(/Which model provider/, 8000);
-      s.send("5");
+      s.send("6");
       await s.waitFor(/Cancelled — no changes made/, 4000);
       // After cancel the CLI will try to start the REPL without a provider
       // configured and must exit with an explanatory error. That path is
