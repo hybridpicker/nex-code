@@ -96,16 +96,36 @@ const _geminiModeEarly =
   args.includes("--gemini") ||
   args.includes("-gemini") ||
   _geminiModelIdxEarly !== -1;
+const _modelIdxEarly = args.indexOf("--model");
+const _modelSpecEarly =
+  _modelIdxEarly !== -1 && args[_modelIdxEarly + 1]
+    ? args[_modelIdxEarly + 1]
+    : "";
+const _modelProviderEarly = (() => {
+  const prefix = _modelSpecEarly.split(":")[0];
+  return ["ollama", "openai", "deepseek", "anthropic", "gemini", "local"].includes(
+    prefix,
+  )
+    ? prefix
+    : null;
+})();
+const _defaultProviderEarly = process.env.DEFAULT_PROVIDER || "ollama";
+const _autoFlatrateAllowed =
+  _modelProviderEarly !== null
+    ? _modelProviderEarly === "ollama"
+    : _defaultProviderEarly === "ollama";
 
 // ─── Flatrate mode ────────────────────────────────────────────
 // Auto-activates when OLLAMA_API_KEY is set (Ollama Cloud flatrate plan)
 // or via explicit --flatrate flag. Shifts optimization from "minimize tokens"
 // to "maximize correctness": more iterations, more parallel agents, more retries.
-// Skipped under --gemini since flatrate is an Ollama-Cloud-specific plan.
+// Skipped under non-Ollama providers since flatrate is an Ollama-Cloud-specific plan.
 const flatrateMode =
   !_geminiModeEarly &&
   (args.includes("--flatrate") ||
-    (!!process.env.OLLAMA_API_KEY && !process.env.NEX_NO_FLATRATE));
+    (!!process.env.OLLAMA_API_KEY &&
+      !process.env.NEX_NO_FLATRATE &&
+      _autoFlatrateAllowed));
 if (flatrateMode) {
   // Set env vars before any module loads — sub-agent.js and orchestrator.js
   // read these at require-time to configure their constants.
@@ -127,7 +147,32 @@ if (flatrateMode) {
 const modelIdx = args.indexOf("--model");
 if (modelIdx !== -1 && args[modelIdx + 1]) {
   const { setActiveModel } = require("../cli/providers/registry");
-  setActiveModel(args[modelIdx + 1]);
+  const modelSpec = args[modelIdx + 1];
+  const ok = setActiveModel(modelSpec);
+  if (!ok) {
+    console.error(`\x1b[31mError:\x1b[0m Unknown model '${modelSpec}'.`);
+    process.exit(1);
+  }
+  const parsedProvider = (() => {
+    const prefix = modelSpec.split(":")[0];
+    return [
+      "ollama",
+      "openai",
+      "deepseek",
+      "anthropic",
+      "gemini",
+      "local",
+    ].includes(prefix)
+      ? prefix
+      : null;
+  })();
+  const bareModel = parsedProvider
+    ? modelSpec.slice(parsedProvider.length + 1)
+    : modelSpec;
+  process.env.NEX_FORCE_MODEL = bareModel;
+  process.env.NEX_PHASE_ROUTING = "0";
+  process.env.DEFAULT_MODEL = bareModel;
+  if (parsedProvider) process.env.DEFAULT_PROVIDER = parsedProvider;
 }
 
 // ─── --gemini / -gemini (local Gemini test mode) ─────────────

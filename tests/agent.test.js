@@ -1987,6 +1987,9 @@ describe("agent.js", () => {
           "Write a JavaScript function flattenDeep(input) that preserves order.",
         ),
       ).toBe(true);
+      expect(agent._isSimpleDirectAnswerPrompt("Reply exactly OK.")).toBe(
+        true,
+      );
 
       mockStream("function flattenDeep(input) { return input; }");
       await processInput(
