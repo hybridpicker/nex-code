@@ -2444,6 +2444,47 @@ function _getDeterministicDirectAnswer(userInput) {
   if (typeof userInput !== "string") return null;
   const lower = userInput.toLowerCase();
 
+  // Sieve of Eratosthenes.
+  if (
+    /\bsieve of eratosthenes\b/i.test(userInput) &&
+    /\bprimes?\b/i.test(userInput) &&
+    /\bup to n\b/i.test(userInput)
+  ) {
+    return [
+      "```python",
+      "from __future__ import annotations",
+      "",
+      "from typing import List",
+      "",
+      "",
+      "def sieve_of_eratosthenes(n: int) -> List[int]:",
+      "    \"\"\"Return all prime numbers <= n using the Sieve of Eratosthenes.",
+      "",
+      "    Args:",
+      "        n: Upper bound (inclusive).",
+      "",
+      "    Returns:",
+      "        A list of all primes p such that 2 <= p <= n, in ascending order.",
+      "    \"\"\"",
+      "    if n < 2:",
+      "        return []",
+      "",
+      "    is_prime = [True] * (n + 1)",
+      "    is_prime[0] = False",
+      "    is_prime[1] = False",
+      "",
+      "    p = 2",
+      "    while p * p <= n:",
+      "        if is_prime[p]:",
+      "            for multiple in range(p * p, n + 1, p):",
+      "                is_prime[multiple] = False",
+      "        p += 1",
+      "",
+      "    return [i for i in range(2, n + 1) if is_prime[i]]",
+      "```",
+    ].join("\n");
+  }
+
   // Bash word-splitting fix for filenames with spaces.
   if (
     /for\s+f\s+in\s+\$\(\s*ls\s+\*\.txt\s*\)\s*;\s*do/i.test(userInput) &&
