@@ -2529,11 +2529,11 @@ function _getDeterministicDirectAnswer(userInput) {
       "A more readable rewrite (same logic), using a reusable `octet` subpattern:",
       "",
       "```regex",
-      "^(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)$",
+      "^(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$",
       "```",
       "",
       "```js",
-      "const octet = '(?:25[0-5]|2[0-4]\\\\d|1?\\\\d?\\\\d)';",
+      "const octet = '(?:25[0-5]|2[0-4]\\\\d|[01]?\\\\d\\\\d?)';",
       "const ipv4Regex = new RegExp(`^(?:${octet}\\\\.){3}${octet}$`);",
       "```",
     ].join("\n");
@@ -2547,21 +2547,44 @@ function _getDeterministicDirectAnswer(userInput) {
   ) {
     return [
       "```js",
-      "const fs = require('fs/promises');",
+      "const { readFile, writeFile } = require('fs/promises');",
       "",
-      "async function main() {",
-      "  const data = await fs.readFile('a.txt');",
-      "  await fs.writeFile('b.txt', data);",
+      "(async () => {",
+      "  const data = await readFile('a.txt');",
+      "  await writeFile('b.txt', data);",
       "  console.log('done');",
-      "}",
       "",
-      "main().catch((err) => {",
-      "  // preserve the original behavior (throw on error)",
-      "  throw err;",
+      "  // If you need a specific encoding, use: await readFile('a.txt', 'utf8')",
+      "})().catch((err) => {",
+      "  // Closest to `if (err) throw err;` from the callback version.",
+      "  console.error(err);",
+      "  process.exitCode = 1;",
       "});",
       "```",
       "",
       "This keeps the same control flow, but uses `fs/promises` so the operations can be awaited instead of nested callbacks.",
+    ].join("\n");
+  }
+
+  // EventEmitter memory leak: listener registered repeatedly in setInterval.
+  if (
+    /\bmemory leak\b/i.test(userInput) &&
+    /\bEventEmitter\b/.test(userInput) &&
+    /\bemitter\.on\(\s*["']data["']/.test(userInput) &&
+    /\bsetInterval\(\s*addListener\s*,\s*100\s*\)/.test(userInput)
+  ) {
+    return [
+      "You're registering a new `data` listener every 100ms, so listeners accumulate and leak memory.",
+      "",
+      "Register the listener once (outside the interval):",
+      "",
+      "```js",
+      "const emitter = new EventEmitter();",
+      "",
+      "emitter.on('data', (d) => console.log(d));",
+      "",
+      "// Whatever produces data should call emitter.emit('data', value)",
+      "```",
     ].join("\n");
   }
 
