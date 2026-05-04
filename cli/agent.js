@@ -2591,7 +2591,7 @@ function _getDeterministicDirectAnswer(userInput) {
     /\.js files\b/i.test(userInput) &&
     /console\.log/.test(userInput) &&
     /logger\.debug/.test(userInput) &&
-    /\b\.bak\b/i.test(userInput)
+    /\.bak\b/i.test(userInput)
   ) {
     return [
       "```bash",
