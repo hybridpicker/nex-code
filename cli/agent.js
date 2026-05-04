@@ -2295,7 +2295,7 @@ function _isSimpleDirectAnswerPrompt(userInput) {
   const lower = text.toLowerCase();
 
   if (
-    /\b(?:repo|repository|project|codebase|existing|current workspace|this workspace|edit|modify|update|fix|patch|change)\b/.test(
+    /\b(?:repo|repository|project|codebase|existing|current workspace|this workspace)\b/.test(
       lower,
     ) ||
     /\b(?:create|write|save)\s+(?:a\s+)?file\b/.test(lower) ||
@@ -2312,6 +2312,16 @@ function _isSimpleDirectAnswerPrompt(userInput) {
     /\b(?:small|simple|minimal)?\s*makefile\b/i,
     /\b(?:small|simple|minimal)?\s*dockerfile\b/i,
     /\b(?:docker\s+healthcheck|healthcheck)\b/i,
+    // Snippet-only refactors and quick scripts should be tool-free.
+    /\brefactor\b.*\bcallbacks?\b.*\basync\s*\/\s*await\b/i,
+    /\bcallbacks?\b.*\basync\s*\/\s*await\b/i,
+    /\btypescript\b.*\binterface\b/i,
+    /\b(?:debug|fix)\b.*\bbash\b.*\bscript\b/i,
+    /\bpre-commit\s+hook\b/i,
+    /\bbash\s+one-?liner\b/i,
+    /\bdataclass\b/i,
+    /\bexpress\b.*\broute\b/i,
+    /\beventemitter\b/i,
     /\b(?:javascript|js|python)\s+function\b/i,
     /\bfunction\s+\w+\s*\(/i,
   ].some((re) => re.test(text));
