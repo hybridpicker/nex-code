@@ -1612,10 +1612,9 @@ function _shouldFastTrackPlanBlock(fnName) {
 function _shouldSkipPlanPhaseForDirectCreation(prompt) {
   const text = String(prompt || "");
   if (!text) return false;
-  const hasExplicitPath =
-    /(?:^|\s)(?:\.{1,2}\/)?[\w./-]+\.(?:js|ts|tsx|jsx|py|md|json|yml|yaml|sh|css|html)\b/i.test(
-      text,
-    );
+  if (_hasAutomationOrPreflightGate(text)) return false;
+  const directTaskPaths = _extractDirectTaskPaths(text);
+  if (directTaskPaths.length !== 1) return false;
   const directCreateRefactor =
     /\b(create|write|add|make|build|scaffold)\b[\s\S]{0,160}\b(refactor|rename|improve|update|change|edit)\b/i.test(
       text,
@@ -1627,7 +1626,24 @@ function _shouldSkipPlanPhaseForDirectCreation(prompt) {
     /\b(create|write|add|make|build|refactor|update|change|edit)\b[\s\S]{0,160}\bfile\b/i.test(
       text,
     );
-  return hasExplicitPath && (directCreateRefactor || directFileTask);
+  return directCreateRefactor || directFileTask;
+}
+
+function _hasAutomationOrPreflightGate(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  return (
+    /\bAutomation(?:\s+ID)?\b|\bLast run:\b/i.test(text) ||
+    /\b(work from main|at the start|current branch|git status|worktree|dirty|unrelated changes?|pull\/rebase|before changing|before editing)\b/i.test(
+      text,
+    ) ||
+    /\b(if|when)\b[\s\S]{0,120}\b(stop|abort|do not|don't|without editing|without committing|without pushing)\b/i.test(
+      text,
+    ) ||
+    /\b(backlog|primary backlog|pick (?:at most )?one|at most one|choose (?:one|a task)|priority order|verification is mandatory|stage only|commit and push|push main|push devel)\b/i.test(
+      text,
+    )
+  );
 }
 
 function _isConversationalPrompt(prompt) {
@@ -9276,6 +9292,9 @@ module.exports = {
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _shouldSkipPlanPhaseForDirectCreation,
+  _hasAutomationOrPreflightGate,
+  _extractDirectTaskPaths,
   // Export for testing
   buildUserContent,
   _detectImageURLs,
