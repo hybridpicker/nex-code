@@ -3683,4 +3683,71 @@ describe("agent.js", () => {
       ).toBe(false);
     });
   });
+
+  describe("gated automation preflight guard", () => {
+    const gatedPrompt =
+      "Automation: MuseScore parity and UX improvements\n" +
+      "Work from main only. At the start of each run, inspect git status and the current branch. " +
+      "If the worktree is dirty with unrelated changes, stop without editing, committing, or pushing. " +
+      "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+      "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
+
+    it("runs git status preflight before executing write tools", async () => {
+      mockStream("Ok", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: { path: "cli/agent.js" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("OK"); // edit_file result
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+    });
+
+    it("stops immediately when preflight shows a dirty worktree", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n M cli/agent.js\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("[PRECHECK BLOCKED]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("stops immediately when not on the required branch", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+  });
 });
