@@ -67,7 +67,7 @@ describe("interactive: setup wizard", () => {
       replaceEnv: true,
     });
     try {
-      await s.waitFor(/Which AI provider/, 8000);
+      await s.waitFor(/Which model provider/, 8000);
       // Wait until the full menu (last line is "Enter number") has been
       // flushed — the wizard prints options one at a time.
       await s.waitFor(/Enter number/, 4000);
@@ -81,15 +81,15 @@ describe("interactive: setup wizard", () => {
     }
   }, 15000);
 
-  test("choosing 5 (Skip) cancels cleanly and falls through", async () => {
+  test("choosing 6 (Skip) cancels cleanly and falls through", async () => {
     const s = spawnCli([], {
       env: isolatedEnv(tmpHome),
       cwd: tmpCwd,
       replaceEnv: true,
     });
     try {
-      await s.waitFor(/Which AI provider/, 8000);
-      s.send("5");
+      await s.waitFor(/Which model provider/, 8000);
+      s.send("6");
       await s.waitFor(/Cancelled — no changes made/, 4000);
       // After cancel the CLI will try to start the REPL without a provider
       // configured and must exit with an explanatory error. That path is

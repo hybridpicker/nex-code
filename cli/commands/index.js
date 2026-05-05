@@ -34,9 +34,42 @@ const {
   setAllowAlwaysHandler,
 } = require("../safety");
 const { StickyFooter } = require("../footer");
+const { getProviderCostMode: _getProviderCostMode } = require("../costs");
 // Lazy-loaded imports in startREPL or handlers
 
 const CWD = process.cwd();
+
+function getProviderMode(provider) {
+  if (typeof _getProviderCostMode === "function") {
+    return _getProviderCostMode(provider);
+  }
+  return {
+    tier:
+      provider === "ollama" || provider === "local" ? "affordable" : "premium",
+    label:
+      provider === "ollama" || provider === "local"
+        ? "open-model path"
+        : "premium paid provider",
+  };
+}
+
+function isTestRuntime() {
+  return process.env.NODE_ENV === "test" || !!process.env.JEST_WORKER_ID;
+}
+
+function shouldUseTerminalUi(rl) {
+  return (
+    process.stdin.isTTY &&
+    process.stdout.isTTY &&
+    !isTestRuntime() &&
+    rl &&
+    typeof rl.setPrompt === "function" &&
+    typeof rl.prompt === "function" &&
+    typeof rl.question === "function" &&
+    typeof rl._ttyWrite === "function" &&
+    typeof process.stdin.setRawMode === "function"
+  );
+}
 
 // ─── Session Tree State ─────────────────────────────────────
 let _sessionTree = null;
@@ -357,11 +390,15 @@ function showProviders() {
   console.log(`\n${C.bold}${C.cyan}Providers:${C.reset}`);
   for (const p of providerList) {
     const isActive = p.provider === activeProvider;
+    const mode = getProviderMode(p.provider);
     const status = p.configured
       ? `${C.green}✓${C.reset}`
       : `${C.red}✗${C.reset}`;
     const marker = isActive ? ` ${C.cyan}(active)${C.reset}` : "";
-    console.log(`  ${status} ${C.bold}${p.provider}${C.reset}${marker}`);
+    const modeColor = mode.tier === "premium" ? C.yellow : C.green;
+    console.log(
+      `  ${status} ${C.bold}${p.provider}${C.reset}${marker} ${modeColor}${mode.label}${C.reset}`,
+    );
 
     for (const m of p.models) {
       const modelMarker =
@@ -369,6 +406,9 @@ function showProviders() {
       console.log(`    ${C.dim}${m.id}${C.reset} — ${m.name}${modelMarker}`);
     }
   }
+  console.log(
+    `${C.gray}Ollama Cloud and local Ollama are the recommended affordable/open-model paths. OpenAI, Anthropic, and Gemini are premium paid options.${C.reset}`,
+  );
   console.log();
 }
 
@@ -393,12 +433,20 @@ function showModelRecommendations(useCase = "coding") {
       : "context unknown";
     const speed = model.speed ? ` · ${model.speed}` : "";
     const capability = model.capability ? ` · ${model.capability}` : "";
+    const mode = getProviderMode(model.provider);
+    const modeText =
+      mode.tier === "premium"
+        ? `${C.yellow}${mode.label}${C.reset}`
+        : `${C.green}${mode.label}${C.reset}`;
+    const configured = model.configured
+      ? ""
+      : ` ${C.dim}(not configured)${C.reset}`;
     console.log(
-      `  ${C.green}${model.spec}${C.reset} ${C.dim}${ctx}${speed}${capability}${C.reset}${marker}`,
+      `  ${C.green}${model.spec}${C.reset} ${C.dim}${ctx}${speed}${capability}${C.reset} · ${modeText}${configured}${marker}`,
     );
   }
   console.log(
-    `${C.gray}Use /model <provider:model> to switch. Types: coding, agentic, reasoning, large-context, frontend, quick-fix, fallback, open-source.${C.reset}\n`,
+    `${C.gray}Use /model <provider:model> to switch. Types: coding, agentic, reasoning, large-context, frontend, quick-fix, fallback, open-source. Use /budget for premium caps.${C.reset}\n`,
   );
 }
 
@@ -456,23 +504,43 @@ async function handleSlashCommand(input, rl) {
       const { loadRoutingConfig } = require("../task-router");
       const routing = loadRoutingConfig();
       const os = require("os");
-      const routingPath = require("path").join(os.homedir(), ".nex-code", "model-routing.json");
-      console.log(`\n${C.bold}${C.cyan}Model Routing${C.reset}  ${C.dim}(${routingPath})${C.reset}\n`);
-      const categories = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
+      const routingPath = require("path").join(
+        os.homedir(),
+        ".nex-code",
+        "model-routing.json",
+      );
+      console.log(
+        `\n${C.bold}${C.cyan}Model Routing${C.reset}  ${C.dim}(${routingPath})${C.reset}\n`,
+      );
+      const categories = [
+        "coding",
+        "frontend",
+        "sysadmin",
+        "data",
+        "agentic",
+        "plan",
+        "verify",
+      ];
       for (const cat of categories) {
         const model = routing[cat];
         if (model) {
-          console.log(`  ${C.dim}${cat.padEnd(12)}${C.reset} ${C.green}${model}${C.reset}`);
+          console.log(
+            `  ${C.dim}${cat.padEnd(12)}${C.reset} ${C.green}${model}${C.reset}`,
+          );
         }
       }
       const phases = routing.phases;
       if (phases && Object.keys(phases).length > 0) {
         console.log(`\n  ${C.bold}${C.dim}Phases:${C.reset}`);
         for (const [phase, model] of Object.entries(phases)) {
-          console.log(`  ${C.dim}${phase.padEnd(12)}${C.reset} ${C.cyan}${model}${C.reset}`);
+          console.log(
+            `  ${C.dim}${phase.padEnd(12)}${C.reset} ${C.cyan}${model}${C.reset}`,
+          );
         }
       }
-      console.log(`\n${C.dim}Run /benchmark --all to update routing${C.reset}\n`);
+      console.log(
+        `\n${C.dim}Run /benchmark --all to update routing${C.reset}\n`,
+      );
       return true;
     }
 
@@ -487,7 +555,7 @@ async function handleSlashCommand(input, rl) {
         if (chain.length === 0) {
           console.log(`${C.dim}No fallback chain configured${C.reset}`);
           console.log(
-            `${C.dim}Use /fallback anthropic,openai,local to set${C.reset}`,
+            `${C.dim}Use /fallback local,openai to keep an affordable path before premium paid backup.${C.reset}`,
           );
         } else {
           console.log(
@@ -859,10 +927,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case "/branches": {
-      const {
-        initTree,
-        renderTree,
-      } = require("../session-tree");
+      const { initTree, renderTree } = require("../session-tree");
       const { getConversationMessages } = require("../agent");
       const messages = getConversationMessages();
       if (messages.length === 0) {
@@ -879,10 +944,7 @@ async function handleSlashCommand(input, rl) {
     }
 
     case "/timeline": {
-      const {
-        initTree,
-        renderTimeline,
-      } = require("../session-tree");
+      const { initTree, renderTimeline } = require("../session-tree");
       const { getConversationMessages } = require("../agent");
       const messages = getConversationMessages();
       if (messages.length === 0) {
@@ -903,8 +965,10 @@ async function handleSlashCommand(input, rl) {
 
     case "/goto": {
       const streeGoto = require("../session-tree");
-      const { getConversationMessages, setConversationMessages: setMsgsGoto } =
-        require("../agent");
+      const {
+        getConversationMessages,
+        setConversationMessages: setMsgsGoto,
+      } = require("../agent");
       const messages = getConversationMessages();
       if (messages.length === 0) {
         console.log(`${C.yellow}No conversation yet${C.reset}`);
@@ -913,9 +977,7 @@ async function handleSlashCommand(input, rl) {
       const gotoIdx = parseInt(rest[0], 10);
       if (isNaN(gotoIdx)) {
         console.log(`${C.red}Usage: /goto <message-index>${C.reset}`);
-        console.log(
-          `${C.dim}Use /timeline to see message indices${C.reset}`,
-        );
+        console.log(`${C.dim}Use /timeline to see message indices${C.reset}`);
         return true;
       }
       if (!_sessionTree) {
@@ -940,8 +1002,10 @@ async function handleSlashCommand(input, rl) {
 
     case "/fork": {
       const streeFork = require("../session-tree");
-      const { getConversationMessages, setConversationMessages: setMsgsFork } =
-        require("../agent");
+      const {
+        getConversationMessages,
+        setConversationMessages: setMsgsFork,
+      } = require("../agent");
       const messages = getConversationMessages();
       if (messages.length === 0) {
         console.log(`${C.yellow}No conversation yet${C.reset}`);
@@ -951,9 +1015,7 @@ async function handleSlashCommand(input, rl) {
         _sessionTree = streeFork.initTree({ messages });
       }
       streeFork.setActiveMessages(_sessionTree, messages);
-      const forkIdx = rest[0]
-        ? parseInt(rest[0], 10)
-        : messages.length - 1;
+      const forkIdx = rest[0] ? parseInt(rest[0], 10) : messages.length - 1;
       const forkName = rest[1] || undefined;
       if (isNaN(forkIdx)) {
         console.log(
@@ -995,9 +1057,7 @@ async function handleSlashCommand(input, rl) {
       streeSw.setActiveMessages(_sessionTree, getConversationMessages());
       const swName = rest.join(" ").trim();
       if (!swName) {
-        console.log(
-          `${C.red}Usage: /switch-branch <name>${C.reset}`,
-        );
+        console.log(`${C.red}Usage: /switch-branch <name>${C.reset}`);
         console.log(
           `${C.dim}Available: ${Object.keys(_sessionTree.branches).join(", ")}${C.reset}`,
         );
@@ -1026,16 +1086,12 @@ async function handleSlashCommand(input, rl) {
       }
       const delName = rest.join(" ").trim();
       if (!delName) {
-        console.log(
-          `${C.red}Usage: /delete-branch <name>${C.reset}`,
-        );
+        console.log(`${C.red}Usage: /delete-branch <name>${C.reset}`);
         return true;
       }
       try {
         streeDel.deleteBranch(_sessionTree, delName);
-        console.log(
-          `${C.green}Deleted branch "${delName}"${C.reset}`,
-        );
+        console.log(`${C.green}Deleted branch "${delName}"${C.reset}`);
       } catch (err) {
         console.log(`${C.red}${err.message}${C.reset}`);
       }
@@ -2680,12 +2736,7 @@ For each issue, include:
         const os = require("os");
         const resultsDir =
           process.env.NEX_BENCHMARK_HISTORY_DIR ||
-          path.join(
-            os.homedir(),
-            "Coding",
-            "nex-code-benchmarks",
-            "results",
-          );
+          path.join(os.homedir(), "Coding", "nex-code-benchmarks", "results");
         if (!fs.existsSync(resultsDir)) {
           console.log(
             `${C.yellow}No nightly results at ${resultsDir}${C.reset}`,
@@ -2815,9 +2866,7 @@ For each issue, include:
               ? `  ${C.dim}(${skipped.length} blacklisted: ${skipped.join(", ")})${C.reset}`
               : ""),
         );
-        console.log(
-          `${C.dim}Models: ${modelList.join(", ")}${C.reset}`,
-        );
+        console.log(`${C.dim}Models: ${modelList.join(", ")}${C.reset}`);
         console.log(
           `${C.dim}${taskCount} tasks · ${parallelModels} parallel · ~${estimatedMinutes}min estimated${C.reset}\n`,
         );
@@ -2874,7 +2923,9 @@ For each issue, include:
         const envResult = updateModelsEnv(summary);
 
         if (readmeUpdated)
-          console.log(`\n${C.green}README.md benchmark table updated${C.reset}`);
+          console.log(
+            `\n${C.green}README.md benchmark table updated${C.reset}`,
+          );
         if (envResult.updated)
           console.log(
             `${C.green}DEFAULT_MODEL: ${envResult.previousModel} → ${envResult.newModel}${C.reset}`,
@@ -3145,7 +3196,9 @@ For each issue, include:
       } = require("../harness-optimization");
       const lastIndex = rest.indexOf("--last");
       const lastN =
-        lastIndex !== -1 ? Math.max(1, parseInt(rest[lastIndex + 1], 10) || 5) : 5;
+        lastIndex !== -1
+          ? Math.max(1, parseInt(rest[lastIndex + 1], 10) || 5)
+          : 5;
       const includePrompt = rest.includes("--prompt");
       const history = readHistory(CWD);
       const latestRun = readLatestResult(CWD);
@@ -3158,8 +3211,13 @@ For each issue, include:
       console.log(report);
       if (rest.includes("--verify")) {
         const verifySourceRun = readLatestProblematicResult(CWD);
-        console.log(`${C.dim}Running focused tests and a priority benchmark slice...${C.reset}\n`);
-        if (verifySourceRun?.runId && verifySourceRun.runId !== latestRun?.runId) {
+        console.log(
+          `${C.dim}Running focused tests and a priority benchmark slice...${C.reset}\n`,
+        );
+        if (
+          verifySourceRun?.runId &&
+          verifySourceRun.runId !== latestRun?.runId
+        ) {
           console.log(
             `${C.dim}Using latest problematic run for verification: ${verifySourceRun.runId}${C.reset}`,
           );
@@ -3169,7 +3227,10 @@ For each issue, include:
           rootDir: CWD,
           latestRun: verifySourceRun,
           onProgress(update) {
-            const percent = Math.max(0, Math.min(100, Math.round(update.percent || 0)));
+            const percent = Math.max(
+              0,
+              Math.min(100, Math.round(update.percent || 0)),
+            );
             if (percent === lastProgress && update.phase !== "done") return;
             lastProgress = percent;
             console.log(
@@ -3378,7 +3439,9 @@ async function startREPL() {
     const { randomBytes } = require("crypto");
     _replSessionId = randomBytes(4).toString("hex");
   } catch {
-    _replSessionId = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
+    _replSessionId = Math.floor(Math.random() * 0xffffffff)
+      .toString(16)
+      .padStart(8, "0");
   }
 
   const {
@@ -3393,52 +3456,66 @@ async function startREPL() {
   const providerList = listProviders();
   const hasConfigured = providerList.some((p) => p.configured);
 
-  // Parallelize initial checks and loading
-  const loadPromise = (async () => {
+  let loadInfo;
+  let ollamaReady;
+  let versionInfo;
+
+  if (isTestRuntime()) {
     loadAllSkills();
-    const model = getActiveModel();
-    const providerName = getActiveProviderName();
-    return { model, providerName };
-  })();
+    loadInfo = {
+      model: getActiveModel(),
+      providerName: getActiveProviderName(),
+    };
+    ollamaReady = hasConfigured;
+    versionInfo = { hasNewVersion: false };
+  } else {
+    // Parallelize initial checks and loading
+    const loadPromise = (async () => {
+      loadAllSkills();
+      const model = getActiveModel();
+      const providerName = getActiveProviderName();
+      return { model, providerName };
+    })();
 
-  const ollamaPromise = (async () => {
-    if (!hasConfigured) {
-      const detected = await checkLocalOllama();
-      if (detected) {
-        console.log(
-          `${C.green}✓ Local Ollama detected — using local models${C.reset}`,
-        );
-        console.log(
-          `${C.dim}Tip: Set API keys for cloud providers for more model options (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`,
-        );
-        return true;
+    const ollamaPromise = (async () => {
+      if (!hasConfigured) {
+        const detected = await checkLocalOllama();
+        if (detected) {
+          console.log(
+            `${C.green}✓ Local Ollama detected — using local models${C.reset}`,
+          );
+          console.log(
+            `${C.dim}Tip: Set API keys for cloud providers for more model options (DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)${C.reset}\n`,
+          );
+          return true;
+        }
+        return false;
       }
-      return false;
-    }
-    return true;
-  })();
+      return true;
+    })();
 
-  // Check for new version (non-blocking)
-  const versionCheckPromise = (async () => {
-    // Skip version check if disabled by environment variable
-    if (process.env.NEX_DISABLE_UPDATE_CHECK === "1") {
-      return { hasNewVersion: false };
-    }
+    // Check for new version (non-blocking)
+    const versionCheckPromise = (async () => {
+      // Skip version check if disabled by environment variable
+      if (process.env.NEX_DISABLE_UPDATE_CHECK === "1") {
+        return { hasNewVersion: false };
+      }
 
-    try {
-      const { checkForNewVersion } = require("../version-check");
-      return await checkForNewVersion();
-    } catch (error) {
-      // Silently ignore version check errors
-      return { hasNewVersion: false };
-    }
-  })();
+      try {
+        const { checkForNewVersion } = require("../version-check");
+        return await checkForNewVersion();
+      } catch (error) {
+        // Silently ignore version check errors
+        return { hasNewVersion: false };
+      }
+    })();
 
-  const [loadInfo, ollamaReady, versionInfo] = await Promise.all([
-    loadPromise,
-    ollamaPromise,
-    versionCheckPromise,
-  ]);
+    [loadInfo, ollamaReady, versionInfo] = await Promise.all([
+      loadPromise,
+      ollamaPromise,
+      versionCheckPromise,
+    ]);
+  }
 
   if (!ollamaReady && !hasConfigured) {
     console.error(
@@ -3446,6 +3523,7 @@ async function startREPL() {
     );
     // ... (rest of error message)
     process.exit(1);
+    return;
   }
 
   // Load persistent undo history from previous sessions
@@ -3453,10 +3531,12 @@ async function startREPL() {
     loadPersistedHistory,
     pruneHistory: pruneUndoHistory,
   } = require("../file-history");
-  loadPersistedHistory().then((count) => {
-    // suppressed: undo entries startup message
-  });
-  pruneUndoHistory().catch(() => {});
+  if (!isTestRuntime()) {
+    loadPersistedHistory().then((count) => {
+      // suppressed: undo entries startup message
+    });
+    pruneUndoHistory().catch(() => {});
+  }
 
   // Create readline + activate sticky footer BEFORE banner so all output
   // (including the banner) flows through wrappedLog and is tracked from row 1.
@@ -3470,6 +3550,7 @@ async function startREPL() {
     history,
     historySize: HISTORY_MAX,
   });
+  const useTerminalUi = shouldUseTerminalUi(rl);
 
   setReadlineInterface(rl);
 
@@ -3490,7 +3571,7 @@ async function startREPL() {
       process.stdout.write(`  ${C_cyan}${i + 1}${C_reset}  ${opt}\n`);
     });
     process.stdout.write(
-      `  ${C_dim}${options.length + 1}${C_reset}  ${C_dim}Eigene Antwort…${C_reset}\n`,
+      `  ${C_dim}${options.length + 1}${C_reset}  ${C_dim}Custom answer...${C_reset}\n`,
     );
     process.stdout.write(`\n  ${C_cyan}[1-${options.length + 1}]${C_reset} › `);
 
@@ -3504,7 +3585,7 @@ async function startREPL() {
           process.stdout.write(`\n`);
           resolve(options[n - 1]);
         } else if (n === options.length + 1 || trimmed === "") {
-          // "Eigene Antwort" or blank → prompt for free text
+          // "Custom answer" or blank -> prompt for free text
           process.stdout.write(`  ${C_cyan}›${C_reset} `);
           rl.once("line", (line2) => {
             process.stdout.write("\n");
@@ -3520,16 +3601,22 @@ async function startREPL() {
   });
 
   const footer = new StickyFooter();
-  footer.activate(rl);
+  if (useTerminalUi) {
+    footer.activate(rl);
+  }
   global._nexFooter = footer; // expose for task-router model switch
   // Expose rawWrite so confirm dialogs can erase their menu lines without
   // inflating _lastOutputRow (the patched stdout tracks newlines for layout).
-  global._nexRawWrite = (data) => footer.rawWrite(data);
+  if (useTerminalUi) {
+    global._nexRawWrite = (data) => footer.rawWrite(data);
+  } else {
+    delete global._nexRawWrite;
+  }
   // Keep footer mode badge in sync when user chooses "Always allow" in a confirm menu.
   setAllowAlwaysHandler(() => _updateFooterMode());
 
   // Clear terminal on startup so previous shell output doesn't bleed through
-  if (process.stdout.isTTY) {
+  if (useTerminalUi) {
     process.stdout.write("\x1b[H\x1b[2J\x1b[3J");
   }
 
@@ -3551,21 +3638,23 @@ async function startREPL() {
       project: path.basename(CWD),
     });
     // Async git branch fetch — updates footer when ready
-    const { execFile: _execFile } = require("child_process");
-    _execFile(
-      "git",
-      ["rev-parse", "--abbrev-ref", "HEAD"],
-      { encoding: "utf8" },
-      (err, stdout) => {
-        if (!err && stdout) {
-          footer.setStatusInfo({
-            model: bannerModel,
-            branch: stdout.trim(),
-            project: path.basename(CWD),
-          });
-        }
-      },
-    );
+    if (!isTestRuntime()) {
+      const { execFile: _execFile } = require("child_process");
+      _execFile(
+        "git",
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        { encoding: "utf8" },
+        (err, stdout) => {
+          if (!err && stdout) {
+            footer.setStatusInfo({
+              model: bannerModel,
+              branch: stdout.trim(),
+              project: path.basename(CWD),
+            });
+          }
+        },
+      );
+    }
   }
 
   // Display version update notification if available
@@ -3585,19 +3674,23 @@ async function startREPL() {
     globalThis[REPL_CLEANUP_KEY] = null;
   }
 
-  const dreamTimer = setTimeout(() => {
-    try {
-      if (shouldConsolidate()) {
-        const { insights } = consolidate();
-        if (insights.length > 0 && isDebug()) {
-          process.stdout.write(
-            `${C.dim}💭 Dream consolidated ${insights.length} insight(s) from recent sessions${C.reset}\n`,
-          );
+  const dreamTimer = isTestRuntime()
+    ? null
+    : setTimeout(() => {
+        try {
+          if (shouldConsolidate()) {
+            const { insights } = consolidate();
+            if (insights.length > 0 && isDebug()) {
+              process.stdout.write(
+                `${C.dim}💭 Dream consolidated ${insights.length} insight(s) from recent sessions${C.reset}\n`,
+              );
+            }
+          }
+        } catch {
+          /* never break startup */
         }
-      }
-    } catch { /* never break startup */ }
-  }, 2000);
-  dreamTimer.unref?.();
+      }, 2000);
+  dreamTimer?.unref?.();
 
   // ─── SIGINT (Ctrl+C) Handler ────────────────────────────────
   let _processing = false;
@@ -3615,10 +3708,12 @@ async function startREPL() {
       const { getConversationMessages } = require("../agent");
       conversationMessages = getConversationMessages();
       writeDreamLog(conversationMessages);
-    } catch { /* non-critical — never block exit */ }
+    } catch {
+      /* non-critical — never block exit */
+    }
     footer.deactivate();
     cleanupTerminal();
-    if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l");
+    if (useTerminalUi) process.stdout.write("\x1b[?2004l");
     // Show goodbye screen (replaces the plain terminal clear)
     try {
       const { showGoodbyeScreen } = require("../goodbye");
@@ -3627,20 +3722,25 @@ async function startREPL() {
         sessionId: _replSessionId || "--------",
         messages: conversationMessages,
       });
-    } catch { /* non-critical — fall back to plain clear */
+    } catch {
+      /* non-critical — fall back to plain clear */
       process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
     }
     process.exit(0);
   }
 
   // Register exit handlers
-  process.on("SIGTERM", gracefulShutdown);
+  if (!isTestRuntime()) {
+    process.on("SIGTERM", gracefulShutdown);
+  }
 
   // Also handle normal exit
   const flushOnExit = () => {
     flushAutoSave();
   };
-  process.on("exit", flushOnExit);
+  if (!isTestRuntime()) {
+    process.on("exit", flushOnExit);
+  }
 
   // Handle Ctrl+C via readline (fires on TTY before process SIGINT)
   rl.on("SIGINT", () => {
@@ -3689,7 +3789,9 @@ async function startREPL() {
       if (_sigintCount >= 2) gracefulShutdown();
     }
   };
-  process.on("SIGINT", fallbackSigint);
+  if (!isTestRuntime()) {
+    process.on("SIGINT", fallbackSigint);
+  }
 
   // ─── Bracketed Paste Mode ──────────────────────────────────
   let _pasteActive = false;
@@ -3750,7 +3852,7 @@ async function startREPL() {
     _hadPaste = false;
   }
 
-  if (process.stdin.isTTY) {
+  if (useTerminalUi) {
     process.stdout.write("\x1b[?2004h"); // enable bracketed paste
 
     const origEmit = process.stdin.emit.bind(process.stdin);
@@ -3818,8 +3920,8 @@ async function startREPL() {
 
   // ─── Inline slash-command suggestions (live while typing) ───
   let _sugN = 0;
-  let _sugIdx = -1;   // currently highlighted row (-1 = none)
-  let _sugHits = [];  // full hit list for the current query
+  let _sugIdx = -1; // currently highlighted row (-1 = none)
+  let _sugHits = []; // full hit list for the current query
   let _sugQuery = ""; // what the user had typed before navigating
 
   function _eraseSugDisplay() {
@@ -3847,7 +3949,11 @@ async function startREPL() {
     const hits = [...SLASH_COMMANDS, ...getSkillCommands()].filter((c) =>
       c.cmd.startsWith(line),
     );
-    if (!hits.length || (hits.length === 1 && hits[0].cmd === line && selectedIdx < 0)) return;
+    if (
+      !hits.length ||
+      (hits.length === 1 && hits[0].cmd === line && selectedIdx < 0)
+    )
+      return;
     const scrollEnd = footer._scrollEnd;
     const maxShow = Math.min(10, scrollEnd - 2);
     if (maxShow < 1) return;
@@ -3866,10 +3972,10 @@ async function startREPL() {
     for (let i = 0; i < show.length; i++) {
       const { cmd, desc } = show[i];
       let gapLen = Math.max(0, padLen - cmd.length + 2);
-      
+
       const prefixLen = 2 + cmd.length + gapLen;
       let displayDesc = desc;
-      
+
       if (prefixLen + desc.length > maxLen) {
         const avail = Math.max(0, maxLen - prefixLen - 3);
         if (avail > 0) {
@@ -3879,7 +3985,7 @@ async function startREPL() {
           gapLen = 1;
         }
       }
-      
+
       const gap = " ".repeat(gapLen);
 
       if (i === selectedIdx) {
@@ -3898,7 +4004,7 @@ async function startREPL() {
     footer.rawWrite(buf);
   }
 
-  if (process.stdin.isTTY) {
+  if (useTerminalUi) {
     // Monkey-patch rl._ttyWrite so we can intercept arrow keys when suggestions
     // are visible. readline's own keypress listener calls _ttyWrite before our
     // keypress listener fires, so this runs first.
@@ -4160,13 +4266,18 @@ async function startREPL() {
         handleSlashCommand._pendingAgentPrompt = null;
         // Skill prompts need full tool access — disable plan mode if active
         try {
-          const { isPlanMode: _isPM, setPlanMode: _setPM } = require("../planner");
+          const {
+            isPlanMode: _isPM,
+            setPlanMode: _setPM,
+          } = require("../planner");
           const { invalidateSystemPromptCache: _inv } = require("../agent");
           if (_isPM()) {
             _setPM(false);
             _inv();
           }
-        } catch { /* planner not available — no-op */ }
+        } catch {
+          /* planner not available — no-op */
+        }
         // Feed the prompt to the agent as if the user typed it
         _processing = true;
         rl.prompt();
@@ -4207,7 +4318,7 @@ async function startREPL() {
       const echoLines = input.split("\n");
       // Move cursor up to overwrite readline's plain prompt line(s)
       // so we don't get a duplicate › character
-      if (process.stdout.isTTY) {
+      if (useTerminalUi) {
         process.stdout.write(`\x1b[${echoLines.length}A`);
       }
       echoLines.forEach((l, i) => {
@@ -4228,8 +4339,7 @@ async function startREPL() {
       const { isPlanMode: _isPM, setPlanMode: _setPM } = require("../planner");
       const { invalidateSystemPromptCache: _inv } = require("../agent");
       const STRONG_IMPL = /\b(implement|refactor|migrate|redesign)\b/i;
-      const WEAK_IMPL =
-        /\b(create|build|add|write|develop|set\s+up)\b/i;
+      const WEAK_IMPL = /\b(create|build|add|write|develop|set\s+up)\b/i;
       const IS_QUESTION =
         /^(how|what|why|when|where|which|explain|show|list|tell|describe|can\s+you|could\s+you|do\s+you)\b/i;
       const IS_CONVERSATIONAL =
@@ -4319,7 +4429,7 @@ async function startREPL() {
   });
 
   const cleanupRepl = () => {
-    clearTimeout(dreamTimer);
+    if (dreamTimer) clearTimeout(dreamTimer);
     if (_exitPromptTimer) {
       clearTimeout(_exitPromptTimer);
       _exitPromptTimer = null;
@@ -4339,7 +4449,7 @@ async function startREPL() {
     cleanupRepl();
     _activeReplCleanup = null;
     globalThis[REPL_CLEANUP_KEY] = null;
-    if (process.stdin.isTTY) process.stdout.write("\x1b[?2004l"); // disable bracketed paste
+    if (useTerminalUi) process.stdout.write("\x1b[?2004l"); // disable bracketed paste
     process.stdout.write("\x1b[r\x1b[H\x1b[2J\x1b[3J");
     process.exit(0);
   });

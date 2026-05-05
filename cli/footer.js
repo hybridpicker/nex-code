@@ -127,8 +127,12 @@ class StickyFooter {
 
     // Build colored left info segment
     const divider = ` ${T.footer_divider}│${C_RESET} `;
-    const branchChip = branch ? `${T.footer_branch}git:${branch}${C_RESET}` : "";
-    const projectChip = project ? `${T.footer_project}${project}${C_RESET}` : "";
+    const branchChip = branch
+      ? `${T.footer_branch}git:${branch}${C_RESET}`
+      : "";
+    const projectChip = project
+      ? `${T.footer_project}${project}${C_RESET}`
+      : "";
     const parts = [];
     if (model) parts.push(`${T.footer_model}${model}${C_RESET}`);
     if (branchChip) parts.push(branchChip);
@@ -251,6 +255,13 @@ class StickyFooter {
 
   activate(rl) {
     if (!process.stdout.isTTY) return;
+    if (
+      !rl ||
+      typeof rl.setPrompt !== "function" ||
+      typeof rl.prompt !== "function"
+    ) {
+      return;
+    }
     this._rl = rl;
     this._origWrite = process.stdout.write.bind(process.stdout);
     this._active = true;
@@ -433,21 +444,23 @@ class StickyFooter {
     };
 
     // ── rl.question ───────────────────────────────────────────────────────
-    const origQuestion = rl.question.bind(rl);
-    rl.question = function (prompt, callback) {
-      if (!self._active) {
-        return origQuestion(prompt, callback);
-      }
-      rawWrite(self._goto(self._rowInput) + "\x1b[2K");
-      rl.prevRows = 0;
-      self._cursorOnInputRow = true;
-      origQuestion(prompt, (answer) => {
+    if (typeof rl.question === "function") {
+      const origQuestion = rl.question.bind(rl);
+      rl.question = function (prompt, callback) {
+        if (!self._active) {
+          return origQuestion(prompt, callback);
+        }
         rawWrite(self._goto(self._rowInput) + "\x1b[2K");
-        self._cursorOnInputRow = false;
-        self.drawFooter();
-        callback(answer);
-      });
-    };
+        rl.prevRows = 0;
+        self._cursorOnInputRow = true;
+        origQuestion(prompt, (answer) => {
+          rawWrite(self._goto(self._rowInput) + "\x1b[2K");
+          self._cursorOnInputRow = false;
+          self.drawFooter();
+          callback(answer);
+        });
+      };
+    }
 
     // ── _refreshLine patch (via Symbol) ───────────────────────────────────
     const proto = Object.getPrototypeOf(rl);

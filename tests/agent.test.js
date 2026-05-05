@@ -323,6 +323,8 @@ const {
   _inferRelevantTests,
   _inferSymbolTargets,
   _buildSymbolHintBlock,
+  _claimsVerificationOrCompletion,
+  _statesVerificationGap,
 } = require("../cli/agent");
 const {
   callStream,
@@ -368,6 +370,7 @@ describe("agent.js", () => {
     callStream.mockReset();
     executeTool.mockReset();
     jest.clearAllMocks();
+    getAutoConfirm.mockReturnValue(false);
     setAbortSignalGetter(() => null);
     restoreTimeout(); // ensure clean timer state
     // Clear system prompt and tool filter caches
@@ -621,7 +624,10 @@ describe("agent.js", () => {
           id: "c1",
         },
         {
-          function: { name: "bash", arguments: { command: "echo should-wait" } },
+          function: {
+            name: "bash",
+            arguments: { command: "echo should-wait" },
+          },
           id: "c2",
         },
       ]);
@@ -1135,7 +1141,9 @@ describe("agent.js", () => {
         },
       ]);
       mockStreamSilent("", []); // empty — triggers nudge
-      mockStream("Here is the summary of what was done, including the output from the bash command and the final result.");
+      mockStream(
+        "Here is the summary of what was done, including the output from the bash command and the final result.",
+      );
       executeTool.mockResolvedValueOnce("output");
       await processInput("test");
       expect(callStream).toHaveBeenCalledTimes(3);
@@ -1144,6 +1152,50 @@ describe("agent.js", () => {
       );
       expect(nudge).toBeDefined();
       expect(nudge.content).toContain("summarize");
+    });
+  });
+
+  describe("verification-aware final summaries", () => {
+    it("detects completion claims and explicit verification gaps", () => {
+      expect(
+        _claimsVerificationOrCompletion("The fix is complete and ready."),
+      ).toBe(true);
+      expect(_claimsVerificationOrCompletion("Tests passed.")).toBe(true);
+      expect(
+        _statesVerificationGap("Verification not run; npm test was not run."),
+      ).toBe(true);
+    });
+
+    it("requests a corrected summary when files changed but verification was not run", async () => {
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream(
+        "Implemented the fix and verified everything is complete. All checks passed and the change is ready.",
+      );
+      mockStream(
+        "Updated /fix.js to apply the requested fix. Verification not run, so tests and build checks are not confirmed. Remaining risk is limited to the edited branch.",
+      );
+
+      await processInput("Fix the bug in fix.js");
+
+      expect(callStream).toHaveBeenCalledTimes(3);
+      const summaryMessages = callStream.mock.calls[2][0];
+      expect(summaryMessages[summaryMessages.length - 1].content).toContain(
+        "not run; state this explicitly",
+      );
+      expect(getConversationMessages()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "assistant",
+            content: expect.stringContaining("Verification not run"),
+          }),
+        ]),
+      );
     });
   });
 
@@ -1846,7 +1898,9 @@ describe("agent.js", () => {
       mockStream("ok");
       await processInput("what is in this folder?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain(
+        "RESPONSE LANGUAGE: This project requires English.",
+      );
       expect(sysMsg).toContain("You MUST answer this turn in English");
     });
 
@@ -1855,9 +1909,11 @@ describe("agent.js", () => {
       const agent = require("../cli/agent");
       agent.invalidateSystemPromptCache();
       mockStream("ok");
-      await processInput("was ist in diesem ordner?");
+      await processInput("what is in this folder?");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain(
+        "RESPONSE LANGUAGE: This project requires English.",
+      );
       expect(sysMsg).toContain("Treat non-English input as content to answer");
     });
 
@@ -1866,9 +1922,11 @@ describe("agent.js", () => {
       const agent = require("../cli/agent");
       agent.invalidateSystemPromptCache();
       mockStream("ok");
-      await processInput("stell dich bitte vor");
+      await processInput("introduce yourself");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain(
+        "RESPONSE LANGUAGE: This project requires English.",
+      );
       expect(sysMsg).not.toContain("You MUST always respond in German");
       delete process.env.NEX_LANGUAGE;
       agent.invalidateSystemPromptCache();
@@ -1881,7 +1939,9 @@ describe("agent.js", () => {
       mockStream("ok");
       await processInput("test");
       const sysMsg = callStream.mock.calls[0][0][0].content;
-      expect(sysMsg).toContain("RESPONSE LANGUAGE: This project requires English.");
+      expect(sysMsg).toContain(
+        "RESPONSE LANGUAGE: This project requires English.",
+      );
       expect(sysMsg).not.toContain("You MUST always respond in German");
       delete process.env.NEX_LANGUAGE;
       agent.invalidateSystemPromptCache();
@@ -1909,6 +1969,58 @@ describe("agent.js", () => {
       expect(sysMsg).toContain("Spanish");
       delete process.env.NEX_COMMIT_LANGUAGE;
       agent.invalidateSystemPromptCache();
+    });
+
+    it("detects English despite a trailing German word", () => {
+      const { _detectResponseLanguage } = require("../cli/agent");
+      expect(
+        _detectResponseLanguage(
+          "Write a JavaScript function that flattens nested arrays without mutating input. Danke",
+        ),
+      ).toBe("English");
+    });
+
+    it("keeps self-contained simple prompts tool-free", async () => {
+      const agent = require("../cli/agent");
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Write a JavaScript function flattenDeep(input) that preserves order.",
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'Refactor this JavaScript code from callbacks to async/await:\nfs.readFile("a.txt", (err, data) => { if(err) throw err; fs.writeFile("b.txt", data, (err) => { if(err) throw err; console.log("done"); }); });',
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'Add proper error handling to this Express route:\napp.get("/user/:id", async (req, res) => { const user = await db.find(req.params.id); res.json(user); });',
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Identify and fix the memory leak in this Node.js code:\nconst emitter = new EventEmitter();",
+        ),
+      ).toBe(true);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          "Convert this Python class to a dataclass with validation (raise ValueError if age<0 or name is empty):\nclass Person:\n  def __init__(self, name, age):\n    self.name = name\n    self.age = age",
+        ),
+      ).toBe(true);
+      expect(agent._isSimpleDirectAnswerPrompt("Reply exactly OK.")).toBe(
+        true,
+      );
+
+      mockStream("function flattenDeep(input) { return input; }");
+      await processInput(
+        "Write a JavaScript function flattenDeep(input) that preserves order.",
+      );
+
+      expect(callStream.mock.calls[0][1]).toEqual([]);
+      const sysMsg = callStream.mock.calls[0][0][0].content;
+      expect(sysMsg).toContain("Current Turn Direct Answer Mode");
+      expect(sysMsg).toContain("preserve left-to-right order");
+      expect(sysMsg).toContain("must not mutate");
     });
   });
 
@@ -2011,7 +2123,10 @@ describe("agent.js", () => {
           // read bypasses that block and lets the map-first gate flag get cleared.
           mockStream("", [
             {
-              function: { name: "read_file", arguments: { path: "loop.js", line_start: 1, line_end: 50 } },
+              function: {
+                name: "read_file",
+                arguments: { path: "loop.js", line_start: 1, line_end: 50 },
+              },
               id: `r${i}`,
             },
           ]);
@@ -2048,8 +2163,18 @@ describe("agent.js", () => {
       process.env.NEX_DEBUG = "true";
       // 10 consecutive errors to trigger warning (LOOP_WARN_ERRORS = 10)
       // Alternate tool names to avoid same-command loop detection
-      const tools = ["grep", "read_file", "glob", "search_files", "list_directory",
-                     "find_files", "grep", "read_file", "glob", "search_files"];
+      const tools = [
+        "grep",
+        "read_file",
+        "glob",
+        "search_files",
+        "list_directory",
+        "find_files",
+        "grep",
+        "read_file",
+        "glob",
+        "search_files",
+      ];
       for (let i = 0; i < 10; i++) {
         mockStream("", [
           {
@@ -2069,9 +2194,23 @@ describe("agent.js", () => {
       process.env.NEX_DEBUG = "true";
       // 15 consecutive errors to trigger abort (LOOP_ABORT_ERRORS = 15)
       // Alternate tool names to avoid same-command loop detection
-      const tools = ["grep", "read_file", "glob", "search_files", "list_directory",
-                     "find_files", "grep", "read_file", "glob", "search_files",
-                     "list_directory", "find_files", "grep", "read_file", "glob"];
+      const tools = [
+        "grep",
+        "read_file",
+        "glob",
+        "search_files",
+        "list_directory",
+        "find_files",
+        "grep",
+        "read_file",
+        "glob",
+        "search_files",
+        "list_directory",
+        "find_files",
+        "grep",
+        "read_file",
+        "glob",
+      ];
       for (let i = 0; i < 15; i++) {
         mockStream("", [
           {
@@ -2297,31 +2436,37 @@ describe("agent.js", () => {
     });
   });
 
-describe("_inferVerificationCommands", () => {
+  describe("_inferVerificationCommands", () => {
     it("prefers package scripts and ts-focused checks for TS edits", async () => {
       const fs = require("fs");
       const path = require("path");
       const pkgPath = path.join(process.cwd(), "package.json");
-      const existsSpy = jest.spyOn(fs, "existsSync").mockImplementation((candidate) => {
-        if (candidate === pkgPath) return true;
-        return false;
-      });
-      const readSpy = jest.spyOn(fs, "readFileSync").mockImplementation((candidate) => {
-        if (candidate === pkgPath) {
-          return JSON.stringify({
-            name: "agent-test",
-            scripts: {
-              test: "jest",
-              lint: "eslint .",
-              typecheck: "tsc --noEmit",
-            },
-          });
-        }
-        throw new Error(`unexpected read: ${candidate}`);
-      });
+      const existsSpy = jest
+        .spyOn(fs, "existsSync")
+        .mockImplementation((candidate) => {
+          if (candidate === pkgPath) return true;
+          return false;
+        });
+      const readSpy = jest
+        .spyOn(fs, "readFileSync")
+        .mockImplementation((candidate) => {
+          if (candidate === pkgPath) {
+            return JSON.stringify({
+              name: "agent-test",
+              scripts: {
+                test: "jest",
+                lint: "eslint .",
+                typecheck: "tsc --noEmit",
+              },
+            });
+          }
+          throw new Error(`unexpected read: ${candidate}`);
+        });
 
       try {
-        const commands = await _inferVerificationCommands(new Set(["src/app.ts"]));
+        const commands = await _inferVerificationCommands(
+          new Set(["src/app.ts"]),
+        );
         expect(commands).toContain("npm test");
         expect(commands).toContain("npm run lint");
         expect(commands).toContain("npm run typecheck");
@@ -2335,29 +2480,38 @@ describe("_inferVerificationCommands", () => {
       const fs = require("fs");
       const path = require("path");
       const pkgPath = path.join(process.cwd(), "package.json");
-      const existsSpy = jest.spyOn(fs, "existsSync").mockImplementation((candidate) => {
-        if (candidate === pkgPath) return true;
-        if (String(candidate).includes("jest.config")) return true;
-        return false;
-      });
-      const readSpy = jest.spyOn(fs, "readFileSync").mockImplementation((candidate) => {
-        if (candidate === pkgPath) {
-          return JSON.stringify({
-            name: "agent-test",
-            scripts: { test: "jest", lint: "eslint ." },
-          });
-        }
-        throw new Error(`unexpected read: ${candidate}`);
-      });
+      const existsSpy = jest
+        .spyOn(fs, "existsSync")
+        .mockImplementation((candidate) => {
+          if (candidate === pkgPath) return true;
+          if (String(candidate).includes("jest.config")) return true;
+          return false;
+        });
+      const readSpy = jest
+        .spyOn(fs, "readFileSync")
+        .mockImplementation((candidate) => {
+          if (candidate === pkgPath) {
+            return JSON.stringify({
+              name: "agent-test",
+              scripts: { test: "jest", lint: "eslint ." },
+            });
+          }
+          throw new Error(`unexpected read: ${candidate}`);
+        });
       const indexEngine = require("../cli/index-engine");
-      const indexSpy = jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
-        "src/app.ts",
-        "tests/app.test.js",
-      ]);
+      const indexSpy = jest
+        .spyOn(indexEngine, "getFileIndex")
+        .mockReturnValue(["src/app.ts", "tests/app.test.js"]);
 
       try {
-        const commands = await _inferVerificationCommands(new Set(["src/app.ts"]));
-        expect(commands.some((cmd) => cmd.includes("npx jest --runInBand tests/app.test.js"))).toBe(true);
+        const commands = await _inferVerificationCommands(
+          new Set(["src/app.ts"]),
+        );
+        expect(
+          commands.some((cmd) =>
+            cmd.includes("npx jest --runInBand tests/app.test.js"),
+          ),
+        ).toBe(true);
       } finally {
         existsSpy.mockRestore();
         readSpy.mockRestore();
@@ -2366,15 +2520,19 @@ describe("_inferVerificationCommands", () => {
     });
   });
 
-describe("_inferRelevantTests", () => {
+  describe("_inferRelevantTests", () => {
     it("maps modified files to matching tests by basename", async () => {
       const indexEngine = require("../cli/index-engine");
-      jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
-        "src/app.ts",
-        "tests/app.test.js",
-        "tests/other.test.js",
-      ]);
-      jest.spyOn(indexEngine, "buildContentIndex").mockResolvedValue({ files: {} });
+      jest
+        .spyOn(indexEngine, "getFileIndex")
+        .mockReturnValue([
+          "src/app.ts",
+          "tests/app.test.js",
+          "tests/other.test.js",
+        ]);
+      jest
+        .spyOn(indexEngine, "buildContentIndex")
+        .mockResolvedValue({ files: {} });
       jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue([]);
       jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([]);
 
@@ -2388,12 +2546,14 @@ describe("_inferRelevantTests", () => {
 
     it("pulls in tests from related symbols and neighboring modules", async () => {
       const indexEngine = require("../cli/index-engine");
-      jest.spyOn(indexEngine, "getFileIndex").mockReturnValue([
-        "src/app.ts",
-        "src/router.ts",
-        "tests/router.test.ts",
-        "tests/run-app.integration.test.ts",
-      ]);
+      jest
+        .spyOn(indexEngine, "getFileIndex")
+        .mockReturnValue([
+          "src/app.ts",
+          "src/router.ts",
+          "tests/router.test.ts",
+          "tests/run-app.integration.test.ts",
+        ]);
       jest.spyOn(indexEngine, "buildContentIndex").mockResolvedValue({
         files: {
           "src/app.ts": {
@@ -2404,9 +2564,15 @@ describe("_inferRelevantTests", () => {
           },
         },
       });
-      jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue(["src/router.ts"]);
+      jest
+        .spyOn(indexEngine, "getRelatedFiles")
+        .mockResolvedValue(["src/router.ts"]);
       jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([
-        { file: "tests/run-app.integration.test.ts", line: 8, context: "runApp();" },
+        {
+          file: "tests/run-app.integration.test.ts",
+          line: 8,
+          context: "runApp();",
+        },
       ]);
 
       const tests = await _inferRelevantTests(new Set(["src/app.ts"]));
@@ -2423,13 +2589,19 @@ describe("_inferRelevantTests", () => {
   describe("_inferSymbolTargets", () => {
     it("returns likely definitions for task identifiers", async () => {
       const indexEngine = require("../cli/index-engine");
-      const spy = jest.spyOn(indexEngine, "searchContentIndex").mockResolvedValue([
-        { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
-      ]);
+      const spy = jest
+        .spyOn(indexEngine, "searchContentIndex")
+        .mockResolvedValue([
+          { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
+        ]);
 
       const hits = await _inferSymbolTargets("fix runApp timeout handling");
       expect(hits[0]).toEqual(
-        expect.objectContaining({ file: "cli/app.js", name: "runApp", line: 12 }),
+        expect.objectContaining({
+          file: "cli/app.js",
+          name: "runApp",
+          line: 12,
+        }),
       );
       spy.mockRestore();
     });
@@ -2438,24 +2610,33 @@ describe("_inferRelevantTests", () => {
   describe("_buildSymbolHintBlock", () => {
     it("includes related follow-up files and likely callers when graph neighbors exist", async () => {
       const indexEngine = require("../cli/index-engine");
-      const searchSpy = jest.spyOn(indexEngine, "searchContentIndex").mockResolvedValue([
-        { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
-      ]);
-      const relatedSpy = jest.spyOn(indexEngine, "getRelatedFiles").mockResolvedValue([
-        "cli/router.js",
-        "tests/app.test.js",
-      ]);
-      const refsSpy = jest.spyOn(indexEngine, "findSymbolReferences").mockResolvedValue([
-        { file: "cli/index.js", line: 44, context: "runApp();" },
-        { file: "tests/app.test.js", line: 10, context: "runApp();" },
-      ]);
+      const searchSpy = jest
+        .spyOn(indexEngine, "searchContentIndex")
+        .mockResolvedValue([
+          { file: "cli/app.js", type: "function", name: "runApp", line: 12 },
+        ]);
+      const relatedSpy = jest
+        .spyOn(indexEngine, "getRelatedFiles")
+        .mockResolvedValue(["cli/router.js", "tests/app.test.js"]);
+      const refsSpy = jest
+        .spyOn(indexEngine, "findSymbolReferences")
+        .mockResolvedValue([
+          { file: "cli/index.js", line: 44, context: "runApp();" },
+          { file: "tests/app.test.js", line: 10, context: "runApp();" },
+        ]);
 
       try {
-        const block = await _buildSymbolHintBlock("fix runApp timeout handling");
+        const block = await _buildSymbolHintBlock(
+          "fix runApp timeout handling",
+        );
         expect(block).toContain("Likely symbol targets:");
         expect(block).toContain("read_file(path='cli/app.js'");
-        expect(block).toContain("Follow-up files: cli/router.js, tests/app.test.js");
-        expect(block).toContain("Likely callers/usages: cli/index.js:44, tests/app.test.js:10");
+        expect(block).toContain(
+          "Follow-up files: cli/router.js, tests/app.test.js",
+        );
+        expect(block).toContain(
+          "Likely callers/usages: cli/index.js:44, tests/app.test.js:10",
+        );
       } finally {
         searchSpy.mockRestore();
         relatedSpy.mockRestore();
@@ -2486,7 +2667,8 @@ describe("_inferRelevantTests", () => {
 
     it("returns full prompt as dynamic when no boundary marker", () => {
       const agent = require("../cli/agent");
-      const { dynamic, static: staticPart } = agent.splitSystemPrompt("No boundary here");
+      const { dynamic, static: staticPart } =
+        agent.splitSystemPrompt("No boundary here");
       expect(dynamic).toBe("No boundary here");
       expect(staticPart).toBe("");
     });
@@ -2745,7 +2927,10 @@ describe("_inferRelevantTests", () => {
   describe("creation task guard", () => {
     function readCall(n) {
       return {
-        function: { name: "read_file", arguments: { path: `/src/file${n}.js` } },
+        function: {
+          name: "read_file",
+          arguments: { path: `/src/file${n}.js` },
+        },
         id: `r${n}`,
       };
     }
@@ -2820,7 +3005,9 @@ describe("_inferRelevantTests", () => {
       const hasCapMsg = msgs.some(
         (m) =>
           typeof m.content === "string" &&
-          m.content.includes("You have enough evidence to write the requested summary/document now"),
+          m.content.includes(
+            "You have enough evidence to write the requested summary/document now",
+          ),
       );
       expect(hasCapMsg).toBe(true);
     });
@@ -2858,7 +3045,9 @@ describe("_inferRelevantTests", () => {
       const msgs = getConversationMessages();
       expect(
         msgs.some(
-          (m) => typeof m.content === "string" && m.content.includes("SHOULD NOT REACH"),
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("SHOULD NOT REACH"),
         ),
       ).toBe(false);
     });
@@ -2884,7 +3073,9 @@ describe("_inferRelevantTests", () => {
         msgs.some(
           (m) =>
             typeof m.content === "string" &&
-            m.content.includes("BLOCKED: You already have enough evidence to produce the requested summary/document"),
+            m.content.includes(
+              "BLOCKED: You already have enough evidence to produce the requested summary/document",
+            ),
         ),
       ).toBe(true);
     });
@@ -2902,7 +3093,9 @@ describe("_inferRelevantTests", () => {
       const hasBlockMsg = msgs.some(
         (m) =>
           typeof m.content === "string" &&
-          m.content.includes("Inspect https://jarvis.schoensgibl.com/guitar-mentor/ with browser_open first"),
+          m.content.includes(
+            "Inspect https://jarvis.schoensgibl.com/guitar-mentor/ with browser_open first",
+          ),
       );
       expect(hasBlockMsg).toBe(true);
     });
@@ -2916,8 +3109,12 @@ describe("_inferRelevantTests", () => {
       executeTool.mockResolvedValueOnce("written: /src/out1.js");
       // Turn 3: 6 reads → post-edit cap = 6, fires cap message on 6th read
       mockStream("checking again", [
-        readCall(3), readCall(4), readCall(5),
-        readCall(6), readCall(7), readCall(8),
+        readCall(3),
+        readCall(4),
+        readCall(5),
+        readCall(6),
+        readCall(7),
+        readCall(8),
       ]);
       executeTool.mockResolvedValue("content");
       // Turn 4: 1 more read → hard-blocked (cap fired + creation + edits >= 1)
@@ -3009,8 +3206,7 @@ describe("_inferRelevantTests", () => {
 
       const msgs = getConversationMessages();
       const blocked = msgs.some(
-        (m) =>
-          typeof m.content === "string" && m.content.includes("glob"),
+        (m) => typeof m.content === "string" && m.content.includes("glob"),
       );
       expect(blocked).toBe(true);
       const bashCalls = executeTool.mock.calls.filter((c) => c[0] === "bash");
@@ -3084,10 +3280,18 @@ describe("_inferRelevantTests", () => {
       mockStream("Done!");
       // Model responds to verification injection by bootstrapping
       mockStream("Running npm install", [
-        { function: { name: "bash", arguments: JSON.stringify({ command: "npm install" }) }, id: "b1" },
+        {
+          function: {
+            name: "bash",
+            arguments: JSON.stringify({ command: "npm install" }),
+          },
+          id: "b1",
+        },
       ]);
       executeTool.mockResolvedValue("added 42 packages");
-      mockStream("npm install completed. The Express server project is ready in /project. Run `node server.js` to start.");
+      mockStream(
+        "npm install completed. The Express server project is ready in /project. Run `node server.js` to start.",
+      );
 
       await processInput("Create an Express server");
 
@@ -3144,7 +3348,13 @@ describe("_inferRelevantTests", () => {
       // Set up 9 consecutive read-only tool iterations (8 triggers exit)
       for (let n = 0; n < 9; n++) {
         mockStream("reading", [
-          { function: { name: "read_file", arguments: { path: `/file${n}.js` } }, id: `c${n}` },
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `/file${n}.js` },
+            },
+            id: `c${n}`,
+          },
         ]);
         executeTool.mockResolvedValueOnce(`content of file${n}`);
       }
@@ -3155,7 +3365,9 @@ describe("_inferRelevantTests", () => {
 
       const msgs = getConversationMessages();
       const hasUnreached = msgs.some(
-        (m) => typeof m.content === "string" && m.content.includes("SHOULD NOT REACH"),
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("SHOULD NOT REACH"),
       );
       expect(hasUnreached).toBe(false);
     });
@@ -3167,23 +3379,46 @@ describe("_inferRelevantTests", () => {
       // 5 read-only iterations
       for (let n = 0; n < 5; n++) {
         mockStream("reading", [
-          { function: { name: "read_file", arguments: { path: `/file${n}.js` } }, id: `r${n}` },
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `/file${n}.js` },
+            },
+            id: `r${n}`,
+          },
         ]);
         executeTool.mockResolvedValueOnce(`content`);
       }
       // 1 write iteration → resets counter
       mockStream("editing", [
-        { function: { name: "edit_file", arguments: { path: "/fix.js" } }, id: "w1" },
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "w1",
+        },
       ]);
       executeTool.mockResolvedValueOnce("OK");
-      // Then a text-only turn → headless early exit (existing logic: filesModified > 0 + text)
-      mockStream("Done with the fix.");
+      // Then verification resets the post-edit completion guard.
+      mockStream("PASS: ran the narrow verification command", [
+        {
+          function: { name: "bash", arguments: { command: "npm test" } },
+          id: "verify-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS");
+      mockStream(
+        "Done with the fix. I re-read /fix.js after the edit and confirmed the updated branch is present, so the headless run can finish without entering a read-only stagnation loop.",
+      );
+      mockStream(
+        "The fix is complete after a post-edit read of /fix.js. The write reset the read-only stagnation counter, and verification evidence was collected before the final summary.",
+      );
 
       await processInput("Fix the bug");
 
       const msgs = getConversationMessages();
       const hasDone = msgs.some(
-        (m) => typeof m.content === "string" && m.content.includes("Done with the fix"),
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("headless run can finish"),
       );
       expect(hasDone).toBe(true);
     });
@@ -3194,7 +3429,10 @@ describe("_inferRelevantTests", () => {
 
       // In interactive mode, first text-only response exits via normal path
       mockStream("reading", [
-        { function: { name: "read_file", arguments: { path: "/a.js" } }, id: "c1" },
+        {
+          function: { name: "read_file", arguments: { path: "/a.js" } },
+          id: "c1",
+        },
       ]);
       executeTool.mockResolvedValueOnce("content");
       mockStream("Here is what I found.");
@@ -3244,7 +3482,9 @@ describe("_inferRelevantTests", () => {
           (m) =>
             m.role === "user" &&
             typeof m.content === "string" &&
-            m.content.includes("[SYSTEM] Verification is incomplete: run at least one verification tool"),
+            m.content.includes(
+              "[SYSTEM] Verification is incomplete: run at least one verification tool",
+            ),
         ),
       ).toBe(true);
     });
@@ -3252,7 +3492,10 @@ describe("_inferRelevantTests", () => {
     it("exits cleanly in headless verify phase after verification evidence and a substantive summary", async () => {
       clearConversation();
       callStream.mockReset();
-      callStream.mockImplementation(async () => ({ content: "FALLBACK", tool_calls: [] }));
+      callStream.mockImplementation(async () => ({
+        content: "FALLBACK",
+        tool_calls: [],
+      }));
       process.env.NEX_PHASE_ROUTING = "1";
       getAutoConfirm.mockReturnValue(true);
 
@@ -3296,12 +3539,14 @@ describe("_inferRelevantTests", () => {
       ).toBe(false);
     });
 
-    it("exits cleanly in headless implement phase after a substantive summary", async () => {
+    it("continues from headless implement summary into verification", async () => {
       clearConversation();
       process.env.NEX_PHASE_ROUTING = "1";
       getAutoConfirm.mockReturnValue(true);
 
-      mockStream("Plan: update /fix.js after checking the current implementation.");
+      mockStream(
+        "Plan: update /fix.js after checking the current implementation.",
+      );
       mockStream("Implemented the fix.", [
         {
           function: { name: "edit_file", arguments: { path: "/fix.js" } },
@@ -3312,17 +3557,27 @@ describe("_inferRelevantTests", () => {
       mockStream(
         "Updated /fix.js to handle the missing branch correctly and kept the existing API shape intact. The change is in place and ready for the next benchmark step.",
       );
+      mockStream("PASS: re-read the edited file after the change.", [
+        {
+          function: { name: "read_file", arguments: { path: "/fix.js" } },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("updated file");
+      mockStream(
+        "PASS: I re-read /fix.js after the edit and confirmed the corrected branch is present. The implementation is verified with the edited file, and there are no additional changes needed for this task.",
+      );
 
       await processInput("Fix the bug in fix.js");
 
-      expect(callStream).toHaveBeenCalledTimes(3);
+      expect(callStream).toHaveBeenCalledTimes(5);
       const msgs = getConversationMessages();
       expect(
         msgs.some(
           (m) =>
             m.role === "assistant" &&
             typeof m.content === "string" &&
-            m.content.includes("ready for the next benchmark step"),
+            m.content.includes("implementation is verified"),
         ),
       ).toBe(true);
       expect(
@@ -3332,7 +3587,7 @@ describe("_inferRelevantTests", () => {
             typeof m.content === "string" &&
             m.content.includes("[PHASE: VERIFICATION]"),
         ),
-      ).toBe(false);
+      ).toBe(true);
     });
 
     it("exits after a substantive analysis answer instead of entering implement phase", async () => {
@@ -3349,7 +3604,7 @@ describe("_inferRelevantTests", () => {
       executeTool.mockResolvedValueOnce('{ "name": "demo" }');
       mockStream(
         "The project is organized around a CLI entrypoint in dist/, core runtime logic in cli/, and Jest-based regression coverage in tests/. " +
-        "The control flow starts in the command layer, delegates to the agent loop for tool-driven work, and uses provider abstractions to swap model backends cleanly.",
+          "The control flow starts in the command layer, delegates to the agent loop for tool-driven work, and uses provider abstractions to swap model backends cleanly.",
       );
 
       await processInput("Understand the project structure", null, {
@@ -3363,7 +3618,9 @@ describe("_inferRelevantTests", () => {
         msgs.some(
           (m) =>
             typeof m.content === "string" &&
-            m.content.includes("The project is organized around a CLI entrypoint"),
+            m.content.includes(
+              "The project is organized around a CLI entrypoint",
+            ),
         ),
       ).toBe(true);
       expect(

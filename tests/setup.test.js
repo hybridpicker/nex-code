@@ -35,6 +35,8 @@ beforeEach(() => {
   // Save and clear relevant env vars
   for (const key of [
     "ANTHROPIC_API_KEY",
+    "OLLAMA_API_KEY",
+    "DEEPSEEK_API_KEY",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "OPENROUTER_API_KEY",
@@ -81,6 +83,26 @@ describe("runSetupWizard", () => {
     consoleSpy.mockRestore();
   });
 
+  test("early return when OLLAMA_API_KEY is set", async () => {
+    process.env.OLLAMA_API_KEY = "ollama-test-key";
+    const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+    await runSetupWizard();
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Welcome to nex-code"),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  test("early return when DEEPSEEK_API_KEY is set", async () => {
+    process.env.DEEPSEEK_API_KEY = "deepseek-test-key";
+    const consoleSpy = jest.spyOn(console, "log").mockImplementation();
+    await runSetupWizard();
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Welcome to nex-code"),
+    );
+    consoleSpy.mockRestore();
+  });
+
   test("early return when DEFAULT_PROVIDER is set", async () => {
     process.env.DEFAULT_PROVIDER = "ollama";
     const consoleSpy = jest.spyOn(console, "log").mockImplementation();
@@ -91,10 +113,10 @@ describe("runSetupWizard", () => {
     consoleSpy.mockRestore();
   });
 
-  test("cancel choice (5) writes no .env", async () => {
+  test("cancel choice (6) writes no .env", async () => {
     const readline = require("readline");
     readline.createInterface.mockReturnValue({
-      question: jest.fn((prompt, cb) => cb("5")),
+      question: jest.fn((prompt, cb) => cb("6")),
       close: jest.fn(),
       pause: jest.fn(),
       resume: jest.fn(),
@@ -111,10 +133,10 @@ describe("runSetupWizard", () => {
   test("force flag bypasses early return with .env present", async () => {
     fs.writeFileSync(path.join(tmpDir, ".env"), "FOO=bar\n");
 
-    // Mock readline to answer '5' (cancel) so wizard doesn't hang
+    // Mock readline to answer '6' (cancel) so wizard doesn't hang
     const readline = require("readline");
     readline.createInterface.mockReturnValue({
-      question: jest.fn((prompt, cb) => cb("5")),
+      question: jest.fn((prompt, cb) => cb("6")),
       close: jest.fn(),
       pause: jest.fn(),
       resume: jest.fn(),

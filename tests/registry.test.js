@@ -7,6 +7,7 @@ describe("registry.js", () => {
     registry._reset();
     // Ensure at least ollama is configured
     process.env.OLLAMA_API_KEY = "test-key";
+    delete process.env.DEEPSEEK_API_KEY;
   });
 
   afterEach(() => {
@@ -128,6 +129,7 @@ describe("registry.js", () => {
     it("retries on 503 server error", async () => {
       process.env.OPENAI_API_KEY = "sk-test";
       registry.getActiveProviderName();
+      registry.setActiveModel("ollama:kimi-k2.5");
       registry.setFallbackChain(["openai"]);
 
       const ollama = registry.getProvider("ollama");
@@ -202,6 +204,7 @@ describe("registry.js", () => {
       registry._reset();
       delete process.env.OLLAMA_API_KEY;
       delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.GEMINI_API_KEY;
       delete process.env.GOOGLE_API_KEY;
@@ -209,6 +212,96 @@ describe("registry.js", () => {
       await expect(registry.callStream([], [])).rejects.toThrow(
         "No configured provider",
       );
+    });
+
+    it("explains the Ollama-first setup path when no provider is configured", async () => {
+      registry._reset();
+      delete process.env.OLLAMA_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+
+      await expect(registry.callStream([], [])).rejects.toThrow(
+        /Lowest-cost path: run \/setup and choose Ollama Cloud/,
+      );
+    });
+
+    it("labels premium fallback routing in stderr", async () => {
+      const stderrSpy = jest
+        .spyOn(process.stderr, "write")
+        .mockImplementation();
+      process.env.OPENAI_API_KEY = "sk-test";
+      registry.getActiveProviderName();
+      registry.setFallbackChain(["openai"]);
+
+      const ollama = registry.getProvider("ollama");
+      const openai = registry.getProvider("openai");
+
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("503 Service Unavailable"));
+      jest.spyOn(openai, "isConfigured").mockReturnValue(true);
+      jest.spyOn(openai, "stream").mockResolvedValueOnce({ ok: true });
+
+      await registry.callStream([], []);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("premium paid provider"),
+      );
+
+      ollama.stream.mockRestore();
+      openai.stream.mockRestore();
+      openai.isConfigured.mockRestore();
+      stderrSpy.mockRestore();
+    });
+
+    it("tries configured Ollama model fallbacks before provider fallback", async () => {
+      const stderrSpy = jest
+        .spyOn(process.stderr, "write")
+        .mockImplementation();
+      const originalFallbackModels = [...registry.OLLAMA_FALLBACK_MODELS];
+      process.env.OPENAI_API_KEY = "sk-test";
+      registry.getActiveProviderName();
+      registry.setActiveModel("ollama:kimi-k2.5");
+      registry.setFallbackChain(["openai"]);
+      registry.OLLAMA_FALLBACK_MODELS.splice(
+        0,
+        registry.OLLAMA_FALLBACK_MODELS.length,
+        "devstral-small-2:24b",
+      );
+
+      const ollama = registry.getProvider("ollama");
+      const openai = registry.getProvider("openai");
+
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("503 Service Unavailable"))
+        .mockResolvedValueOnce({ ok: true });
+      jest.spyOn(openai, "isConfigured").mockReturnValue(true);
+      jest.spyOn(openai, "stream").mockResolvedValueOnce({ ok: false });
+
+      try {
+        const result = await registry.callStream([], []);
+        expect(result).toEqual({ ok: true });
+        expect(ollama.stream).toHaveBeenNthCalledWith(
+          2,
+          [],
+          [],
+          expect.objectContaining({ model: "devstral-small-2:24b" }),
+        );
+        expect(openai.stream).not.toHaveBeenCalled();
+      } finally {
+        registry.OLLAMA_FALLBACK_MODELS.splice(
+          0,
+          registry.OLLAMA_FALLBACK_MODELS.length,
+          ...originalFallbackModels,
+        );
+        ollama.stream.mockRestore();
+        openai.stream.mockRestore();
+        openai.isConfigured.mockRestore();
+        stderrSpy.mockRestore();
+      }
     });
   });
 
@@ -355,6 +448,7 @@ describe("registry.js", () => {
 
     it("does not include unconfigured providers", () => {
       delete process.env.OPENAI_API_KEY;
+      delete process.env.DEEPSEEK_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.GEMINI_API_KEY;
       delete process.env.GOOGLE_API_KEY;
@@ -368,6 +462,7 @@ describe("registry.js", () => {
       // local is always configured (no API key needed)
       expect(providerNames).toContain("local");
       expect(providerNames).not.toContain("openai");
+      expect(providerNames).not.toContain("deepseek");
       expect(providerNames).not.toContain("anthropic");
     });
   });
