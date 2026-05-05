@@ -4242,9 +4242,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Hard safety gate: prompts that declare git/worktree workflow gates must
   // run through phased execution (plan → implement → verify) and the git
   // preflight guard below. Auto-orchestrating would bypass that guard.
-  const _isGatedAutomationPrompt =
-    conversationMessages.length <= 1 &&
-    _shouldRequireGitPreflight(typeof userContent === "string" ? userContent : "");
+  const _gatedPromptText =
+    typeof userContent === "string"
+      ? userContent
+      : typeof userInput === "string"
+        ? userInput
+        : "";
+  const _isGatedAutomationPrompt = _shouldRequireGitPreflight(_gatedPromptText);
 
   try {
     const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
@@ -4618,9 +4622,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Prompts that declare git/worktree safety gates must not enter implementation
   // without concrete evidence from a git status/branch check. Footer branch info
   // is not sufficient because it may be cached or missing dirty-file details.
-  if (conversationMessages.length <= 1 && _shouldRequireGitPreflight(_firstUserText)) {
+  if (_shouldRequireGitPreflight(_gatedPromptText)) {
+    // Force a fresh git status read on each gated prompt. Long-running automation
+    // threads may contain multiple runs; caching preflight across turns is unsafe.
+    _gitPreflight = null;
     const preflight = await _runGitPreflightIfNeeded(
-      _firstUserText,
+      _gatedPromptText,
       apiMessages,
       conversationMessages,
     );
