@@ -237,6 +237,22 @@ function loadRouting() {
   }
 }
 
+function loadGateEnvironment({
+  homeDir = os.homedir(),
+  env = process.env,
+  dotenv = require("dotenv"),
+} = {}) {
+  if (env.NEX_NO_DOTENV === "1") return false;
+  const envPath = path.join(homeDir, ".nex-code", ".env");
+  if (!fs.existsSync(envPath)) return false;
+
+  const parsed = dotenv.parse(fs.readFileSync(envPath));
+  for (const [key, value] of Object.entries(parsed)) {
+    env[key] = value;
+  }
+  return true;
+}
+
 function normalizeOllamaModelName(model) {
   if (typeof model !== "string") return null;
   const trimmed = model.trim();
@@ -359,7 +375,15 @@ function summarizeGateBaseline(
         categoryScores: baseline.categoryScores || {},
       }
     : null;
-  const recent = history.slice(-Math.max(0, windowSize - (seedEntry ? 1 : 0)));
+  const comparableHistory = history.filter((entry) =>
+    !entry.outcome ||
+    ["baseline", "baseline-update", "pass", "transient-warning"].includes(
+      entry.outcome,
+    ),
+  );
+  const recent = comparableHistory.slice(
+    -Math.max(0, windowSize - (seedEntry ? 1 : 0)),
+  );
   const entries = [...(seedEntry ? [seedEntry] : []), ...recent].filter(
     Boolean,
   );
@@ -418,6 +442,32 @@ function summarizeGateBaseline(
     categoryRanges,
     windowSize: entries.length,
   };
+}
+
+function findPreviousComparableRun(history = [], sha = null) {
+  if (!sha) return null;
+  for (let index = history.length - 1; index >= 0; index--) {
+    const entry = history[index];
+    if (entry?.sha === sha) return entry;
+  }
+  return null;
+}
+
+function findPassingHistoryRun(history = [], { sha = null, baselineKey = null } = {}) {
+  if (!sha || !baselineKey) return null;
+  for (let index = history.length - 1; index >= 0; index--) {
+    const entry = history[index];
+    if (entry?.sha !== sha || entry?.baselineKey !== baselineKey) continue;
+    if (
+      ["baseline", "baseline-update", "pass", "transient-warning"].includes(
+        entry.outcome,
+      )
+    ) {
+      return entry;
+    }
+    return null;
+  }
+  return null;
 }
 
 function classifyRegressionSeverity(current, baselineSummary, reasons = []) {
@@ -577,6 +627,8 @@ async function runParallel(tasks, model, concurrency) {
 // --- Main -------------------------------------------------------------
 
 async function main() {
+  loadGateEnvironment();
+
   const args = process.argv.slice(2);
   const updateBaseline = args.includes("--update-baseline");
   const fullRun = args.includes("--full");
@@ -671,7 +723,20 @@ async function main() {
   const baselineSummary = baseline
     ? summarizeGateBaseline(baseline, gateHistory)
     : null;
-  const previousComparableRun = gateHistory[gateHistory.length - 1] || null;
+  const previousComparableRun = findPreviousComparableRun(gateHistory, sha);
+  if (shouldUseGateCache({ sha, updateBaseline, workingTreeClean })) {
+    const historyPass = findPassingHistoryRun(gateHistory, {
+      sha,
+      baselineKey,
+    });
+    if (historyPass) {
+      console.log(`\n  Gate: PASS (history cached for ${sha.slice(0, 8)})`);
+      console.log(
+        `  Score: ${historyPass.finalScore}/100, Avg: ${(historyPass.avgElapsed / 1000).toFixed(1)}s\n`,
+      );
+      process.exit(0);
+    }
+  }
 
   // Select tasks
   const taskIds = fullRun ? TASKS.map((t) => t.id) : SMOKE_TASK_IDS;
@@ -883,6 +948,9 @@ module.exports = {
   getBaselineContext,
   getGateHistoryPath,
   hashBaseline,
+  findPassingHistoryRun,
+  findPreviousComparableRun,
+  loadGateEnvironment,
   loadGateHistory,
   main,
   routingSignature,
