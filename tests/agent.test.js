@@ -3701,6 +3701,19 @@ describe("agent.js", () => {
       "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
       "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
 
+    it("runs preflight for branch-only gates (no explicit git-status wording)", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+    });
+
     it("runs git status preflight before executing write tools", async () => {
       mockStream("Ok", [
         {
