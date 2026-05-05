@@ -179,6 +179,15 @@ function detectComplexPrompt(prompt) {
     reasons.push(`${alsoMatches.length} transition keywords`);
   }
 
+  const criticalPath = detectCriticalPathPrompt(prompt);
+  if (criticalPath.isCriticalPath) {
+    return {
+      isComplex: false,
+      estimatedGoals: goals,
+      reason: `critical path workflow: ${criticalPath.reason}`,
+    };
+  }
+
   const threshold = parseInt(process.env.NEX_ORCHESTRATE_THRESHOLD || "3", 10);
   const isComplex = goals >= threshold;
   return {
@@ -186,6 +195,55 @@ function detectComplexPrompt(prompt) {
     estimatedGoals: goals,
     reason: reasons.length > 0 ? reasons.join(", ") : "single goal",
   };
+}
+
+/**
+ * Detect prompts that describe ordered safety gates or release workflows.
+ * Those tasks may contain many goals, but they are unsafe to parallelize because
+ * later work depends on earlier state checks.
+ *
+ * @param {string} prompt
+ * @returns {{ isCriticalPath: boolean, reason: string }}
+ */
+function detectCriticalPathPrompt(prompt) {
+  if (!prompt || typeof prompt !== "string") {
+    return { isCriticalPath: false, reason: "" };
+  }
+
+  const text = prompt.toLowerCase();
+  const ordered =
+    /\b(at the start|before|after|in order|mandatory|must|only when|do not proceed|don't proceed|then)\b/i.test(
+      text,
+    );
+  const stopGate =
+    /\b(if|when)\b[\s\S]{0,100}\b(stop|abort|do not|don't|without editing|without committing|without pushing)\b/i.test(
+      text,
+    );
+  const gitGateTerms = [
+    /\bgit status\b/i,
+    /\bcurrent branch\b/i,
+    /\bworktree\b/i,
+    /\bdirty\b/i,
+    /\bunrelated changes?\b/i,
+    /\bclean working tree\b/i,
+    /\bpull\/rebase\b/i,
+    /\brebase\b/i,
+    /\bcommit\b/i,
+    /\bpush\b/i,
+    /\bmerge-to-main\b/i,
+  ].filter((re) => re.test(text)).length;
+  const releaseGate =
+    /\b(verification passes|tests? pass|build passes|stage only|never stage|never push|do not commit|do not push)\b/i.test(
+      text,
+    );
+
+  if ((ordered || stopGate) && gitGateTerms >= 2) {
+    return { isCriticalPath: true, reason: "ordered git safety gates" };
+  }
+  if (stopGate && releaseGate) {
+    return { isCriticalPath: true, reason: "explicit stop condition" };
+  }
+  return { isCriticalPath: false, reason: "" };
 }
 
 // ─── JSON Extraction ─────────────────────────────────────────────────────────
@@ -427,7 +485,7 @@ function shouldSuppressCommit(synthesis, subTaskResults) {
   }
 
   for (const r of subTaskResults) {
-    if (r.status === "error" || r.status === "failed")
+    if (r.status === "error" || r.status === "failed" || r.status === "skipped")
       return `agent reported ${r.status}`;
     const text = String(r.result || "");
     if (/\b(test(?:s)? fail|verification fail|build (?:error|fail))/i.test(text))
@@ -588,12 +646,11 @@ CRITICAL RULE: Do not search for whether something exists before acting.
 - If your task says "ensure X is in file Y" → read Y, add X if missing, done.
 - If your task says "document X" → write the documentation now.
 - Searching is only allowed to find WHERE to insert content, not WHETHER to insert.
-- After max 3 tool calls: you must write/edit something or you have failed.
 
 RULES:
 - NEVER use external CLI tools for analysis (aspell, jq, sed, awk, grep for reading).
   Use read_file + your own reasoning instead.
-- Be PROACTIVE: if something is missing, ADD it. Do not just search and report.
+- Be PROACTIVE in implementation tasks: if something is missing, ADD it. Do not just search and report.
 - If your task says "fix typos" — read the file, find typos yourself, edit them.
 - If your task says "add X to README" — add it, don't check if it exists first.
 - Max 10 tool calls. If you need more, you are doing too much — narrow your scope.
@@ -601,7 +658,7 @@ RULES:
 - You are part of a team of agents. Respect file ownership strictly: write only to files you own; other scoped files are read-only context.
 - Start with symbol-aware reads inside your scope: locate the target function/class/module, then read the exact section instead of scanning broadly.
 - Before finishing, run the smallest relevant verification for your scope and report any residual risk explicitly.
-- If your sub-task is review/audit/verify-oriented, output findings first with severity, file, and impact. If nothing is wrong, say so explicitly and mention remaining risk.
+- If your sub-task is review/audit/verify/preflight-oriented, do not edit files. Output findings or the blocker first with severity, file/resource, and impact. If nothing is wrong, say so explicitly and mention remaining risk.
 `;
 
   // Group sub-tasks by priority level — execute each wave before starting the next.
@@ -614,6 +671,7 @@ RULES:
   }
   const sortedPriorities = [...priorityWaves.keys()].sort((a, b) => a - b);
   const allResults = new Array(subTasks.length);
+  let aborted = null;
 
   for (const prio of sortedPriorities) {
     const wave = priorityWaves.get(prio);
@@ -630,7 +688,33 @@ RULES:
         release();
       }
     });
-    await Promise.all(wavePromises);
+    const waveResults = await Promise.all(wavePromises);
+    const failedBlocking = waveResults.find((r) =>
+      _shouldAbortAfterWave(subTasks[r?._idx], r, prio, sortedPriorities),
+    );
+    if (failedBlocking) {
+      const failedTask = subTasks[failedBlocking._idx];
+      aborted = {
+        task: failedTask?.task || failedBlocking.task || "unknown task",
+        result: failedBlocking.result || "",
+      };
+      break;
+    }
+  }
+
+  if (aborted) {
+    for (let i = 0; i < allResults.length; i++) {
+      if (allResults[i]) continue;
+      allResults[i] = {
+        task: subTasks[i].task,
+        status: "skipped",
+        result: `Skipped because prerequisite failed: ${aborted.task}`,
+        toolsUsed: [],
+        tokensUsed: { input: 0, output: 0 },
+        _scope: subTasks[i].scope,
+        _idx: i,
+      };
+    }
   }
 
   // Agent execution extracted into helper to avoid deep nesting
@@ -650,7 +734,12 @@ RULES:
         .filter(([, owner]) => owner !== idx)
         .map(([p]) => p);
 
+      // Determine sub-agent type from task description.
+      // Research/analysis tasks get read-only tool access; implementation gets full access.
+      const agentType = _classifyWorkerType(st.task);
+
       const contextParts = [
+        `Worker mode: ${agentType}`,
         priorFindings ? `Prior agent findings:\n${priorFindings}\n` : "",
         st.scope.length > 0 ? `Focus on files: ${st.scope.join(", ")}` : "",
         _ownedFiles.length > 0
@@ -660,10 +749,6 @@ RULES:
           ? `READ ONLY (owned by other agents, do NOT write): ${_readOnlyFiles.join(", ")}`
           : "",
       ].filter(Boolean);
-
-      // Determine sub-agent type from task description.
-      // Research/analysis tasks get read-only tool access; implementation gets full access.
-      const agentType = _classifyWorkerType(st.task);
 
       // Model for this specific sub-task (routed by category)
       const taskModel = subTaskModels[idx];
@@ -791,6 +876,8 @@ RULES:
         result: `Error: ${err.message}`,
         toolsUsed: [],
         tokensUsed: { input: 0, output: 0 },
+        _scope: st.scope,
+        _idx: idx,
       };
     }
   }
@@ -840,18 +927,29 @@ RULES:
   console.log(`${C.dim}Phase 3: Synthesizing results...${C.reset}`);
 
   let synthesis;
-  try {
-    synthesis = await synthesize(results, prompt, orchestratorModel);
-  } catch (err) {
-    console.log(
-      `${C.yellow}Synthesize failed: ${err.message} — using raw results.${C.reset}`,
-    );
+  if (aborted) {
     synthesis = {
-      summary: results.map((r) => r.result).join("\n"),
+      summary: `Stopped before continuing because prerequisite sub-task failed: ${aborted.task}. ${aborted.result}`,
       conflicts: [],
       commitMessage: "",
+      commitSuppressedReason: "prerequisite sub-task failed",
+      filesChanged: [],
       resourcesChanged: [],
     };
+  } else {
+    try {
+      synthesis = await synthesize(results, prompt, orchestratorModel);
+    } catch (err) {
+      console.log(
+        `${C.yellow}Synthesize failed: ${err.message} — using raw results.${C.reset}`,
+      );
+      synthesis = {
+        summary: results.map((r) => r.result).join("\n"),
+        conflicts: [],
+        commitMessage: "",
+        resourcesChanged: [],
+      };
+    }
   }
 
   // Detect whether agents shared context (findings from multiple agents
@@ -929,6 +1027,32 @@ function _shouldRunFollowUpReview(agentType, result, task, ownedFiles) {
   return scopeCount + modifiedCount + ownedCount > 0;
 }
 
+function _shouldAbortAfterWave(task, result, priority, sortedPriorities) {
+  if (!_isFailedResult(result)) return false;
+  if (_isBlockingTask(task)) return true;
+  const hasLaterWave = sortedPriorities.some((p) => p > priority);
+  return hasLaterWave && priority === sortedPriorities[0];
+}
+
+function _isFailedResult(result) {
+  return (
+    result &&
+    (result.status === "failed" ||
+      result.status === "error" ||
+      result.status === "skipped")
+  );
+}
+
+function _isBlockingTask(task) {
+  const taskText =
+    typeof task === "string"
+      ? task
+      : `${task?.task || ""} ${(task?.scope || []).join(" ")}`;
+  return /\b(preflight|git status|current branch|worktree|dirty|unrelated changes?|clean working tree|pull\/rebase|rebase|before changing|before editing|stop without|abort|blocker|verification gate|release gate)\b/i.test(
+    taskText,
+  );
+}
+
 /**
  * Classify a sub-task as explore/review (read-only) or implement (full access).
  * Tasks that only need investigation get restricted tool access.
@@ -953,6 +1077,7 @@ module.exports = {
   synthesize,
   shouldSuppressCommit,
   detectComplexPrompt,
+  detectCriticalPathPrompt,
   extractJSON,
   createSemaphore,
   DECOMPOSE_PROMPT,
@@ -965,4 +1090,6 @@ module.exports = {
   _classifyWorkerType,
   _hasMaterialReviewFindings,
   _shouldRunFollowUpReview,
+  _shouldAbortAfterWave,
+  _isBlockingTask,
 };

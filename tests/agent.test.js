@@ -325,6 +325,7 @@ const {
   _buildSymbolHintBlock,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
+  _shouldAutoOrchestrate,
 } = require("../cli/agent");
 const {
   callStream,
@@ -1394,7 +1395,10 @@ describe("agent.js", () => {
     });
 
     it("includes plan mode prompt", async () => {
-      isPlanMode.mockReturnValueOnce(true);
+      isPlanMode
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false);
       getPlanModePrompt.mockReturnValueOnce("Plan mode active");
       mockStream("ok");
       await processInput("test");
@@ -2099,6 +2103,17 @@ describe("agent.js", () => {
       expect(logOutput()).toContain("blocked");
       isPlanMode.mockReturnValue(false);
       getPlanModePrompt.mockReturnValue("");
+    });
+
+    it("does not allow auto-orchestration while plan mode is active", () => {
+      expect(
+        _shouldAutoOrchestrate(
+          true,
+          { isComplex: true, estimatedGoals: 5 },
+          3,
+          true,
+        ),
+      ).toBe(false);
     });
   });
 

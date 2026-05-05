@@ -60,6 +60,9 @@ const {
   withRetry,
   _shouldRunFollowUpReview,
   _hasMaterialReviewFindings,
+  detectCriticalPathPrompt,
+  _shouldAbortAfterWave,
+  _isBlockingTask,
 } = require("../cli/orchestrator");
 
 // Suppress console output during tests
@@ -242,6 +245,26 @@ describe("detectComplexPrompt", () => {
     const prompt = "1. Fix login\n2. Fix logout";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(false);
+  });
+
+  test("ordered git safety gates are not auto-orchestration candidates", () => {
+    const prompt =
+      "1. Inspect git status and current branch\n" +
+      "2. If the worktree is dirty, stop without editing\n" +
+      "3. Pull/rebase before changing anything\n" +
+      "4. After verification passes, commit and push";
+    const r = detectComplexPrompt(prompt);
+    expect(r.isComplex).toBe(false);
+    expect(r.estimatedGoals).toBeGreaterThanOrEqual(4);
+    expect(r.reason).toContain("critical path workflow");
+  });
+
+  test("detects critical-path prompts with explicit git stop gates", () => {
+    const r = detectCriticalPathPrompt(
+      "At the start, run git status. If dirty with unrelated changes, stop without committing or pushing.",
+    );
+    expect(r.isCriticalPath).toBe(true);
+    expect(r.reason).toBe("ordered git safety gates");
   });
 
   test("respects NEX_ORCHESTRATE_THRESHOLD=2: two items become complex", () => {
@@ -769,6 +792,38 @@ describe("runOrchestrated", () => {
     expect(result.results[0].status).toBe("failed");
   });
 
+  test("aborts later waves when a prerequisite wave fails", async () => {
+    mockDecompose([
+      {
+        id: "t1",
+        task: "Inspect git status and current branch before editing",
+        scope: ["git", "worktree"],
+        estimatedCalls: 3,
+        priority: 1,
+      },
+      {
+        id: "t2",
+        task: "Implement the selected UI improvement",
+        scope: ["src/components"],
+        estimatedCalls: 3,
+        priority: 2,
+      },
+    ]);
+    callStream
+      .mockRejectedValueOnce(new Error("git status API error"))
+      .mockRejectedValueOnce(new Error("git status API error"));
+
+    const result = await runOrchestrated("fix app workflow");
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].status).toBe("failed");
+    expect(result.results[1].status).toBe("skipped");
+    expect(result.synthesis.summary).toContain("Stopped before continuing");
+    expect(result.synthesis.commitSuppressedReason).toBe(
+      "prerequisite sub-task failed",
+    );
+  });
+
   test("aggregates token counts", async () => {
     mockDecompose([
       { id: "t1", task: "Task 1", scope: [], estimatedCalls: 3, priority: 1 },
@@ -802,6 +857,37 @@ describe("runOrchestrated", () => {
     expect(result.results).toHaveLength(1);
     // Should have fallback synthesis
     expect(result.synthesis.summary).toBeTruthy();
+  });
+});
+
+describe("orchestrator prerequisite handling", () => {
+  test("treats git preflight tasks as blocking", () => {
+    expect(
+      _isBlockingTask({
+        task: "Inspect git status and current branch",
+        scope: ["worktree"],
+      }),
+    ).toBe(true);
+  });
+
+  test("aborts when the first priority wave fails before later waves", () => {
+    expect(
+      _shouldAbortAfterWave(
+        { task: "Run prerequisite check", scope: [] },
+        { status: "failed" },
+        1,
+        [1, 2],
+      ),
+    ).toBe(true);
+  });
+
+  test("worker instructions do not force edits for review or preflight tasks", () => {
+    const source = require("fs").readFileSync(
+      require("path").join(__dirname, "../cli/orchestrator.js"),
+      "utf8",
+    );
+    expect(source).not.toContain("After max 3 tool calls");
+    expect(source).toContain("review/audit/verify/preflight-oriented, do not edit files");
   });
 });
 
