@@ -4063,9 +4063,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
   // Auto-orchestrate for complex multi-goal prompts (default: on).
   // Disable with NEX_AUTO_ORCHESTRATE=false or --no-auto-orchestrate.
+  const planModeActive = isPlanMode();
   const autoOrch =
     opts.autoOrchestrate !== false &&
-    process.env.NEX_AUTO_ORCHESTRATE !== "false";
+    process.env.NEX_AUTO_ORCHESTRATE !== "false" &&
+    !planModeActive;
   const orchThreshold = parseInt(
     process.env.NEX_ORCHESTRATE_THRESHOLD || "3",
     10,
@@ -4077,11 +4079,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       typeof userInput === "string" ? userInput : "",
     );
 
-    if (
-      autoOrch &&
-      complexity.isComplex &&
-      complexity.estimatedGoals >= orchThreshold
-    ) {
+    if (!autoOrch && planModeActive && complexity.isComplex) {
+      console.log(
+        `${C.dim}Plan mode active: auto-orchestrate disabled until /plan approve${C.reset}`,
+      );
+    }
+
+    if (_shouldAutoOrchestrate(autoOrch, complexity, orchThreshold, planModeActive)) {
       console.log(
         `${C.yellow}⚡ Auto-orchestrate: ${complexity.estimatedGoals} goals → parallel agents${C.reset}`,
       );
@@ -9236,6 +9240,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   await _awaitAndDrainBackgroundJobs();
 }
 
+function _shouldAutoOrchestrate(autoOrch, complexity, threshold, planModeActive = false) {
+  return (
+    !planModeActive &&
+    autoOrch &&
+    complexity &&
+    complexity.isComplex &&
+    complexity.estimatedGoals >= threshold
+  );
+}
+
 module.exports = {
   processInput,
   clearConversation,
@@ -9261,6 +9275,7 @@ module.exports = {
   _isSimpleDirectAnswerPrompt,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
+  _shouldAutoOrchestrate,
   // Export for testing
   buildUserContent,
   _detectImageURLs,
