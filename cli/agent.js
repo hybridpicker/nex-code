@@ -1693,7 +1693,10 @@ function _shouldRequireGitPreflight(prompt) {
   const text = String(prompt || "");
   if (!text) return false;
   if (!_hasAutomationOrPreflightGate(text)) return false;
-  // Require at least one explicit git/worktree gate term.
+  // If the prompt requires working from a specific branch ("Work from main only"),
+  // we must preflight to get concrete branch + worktree evidence.
+  if (_extractRequiredBranch(text)) return true;
+  // Otherwise require at least one explicit git/worktree gate term.
   return /\b(git status|current branch|worktree|dirty|pull\/rebase|rebase|commit|push)\b/i.test(
     text,
   );
@@ -1746,9 +1749,16 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
     _gitPreflight.ok = false;
     return _gitPreflight;
   }
-  if (requiredBranch && parsed.branch && parsed.branch !== requiredBranch) {
-    _gitPreflight.ok = false;
-    return _gitPreflight;
+  if (requiredBranch) {
+    // Branch-only gated prompts still require concrete, parseable evidence.
+    if (!parsed.branch) {
+      _gitPreflight.ok = false;
+      return _gitPreflight;
+    }
+    if (parsed.branch !== requiredBranch) {
+      _gitPreflight.ok = false;
+      return _gitPreflight;
+    }
   }
 
   _gitPreflight.ok = true;
