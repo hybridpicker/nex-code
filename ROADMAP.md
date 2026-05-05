@@ -1,11 +1,25 @@
 # nex-code Roadmap
 
-This roadmap reflects the features most requested by users and gaps identified in competitive analysis.
+This roadmap reflects the features most requested by users and the reliability gaps that matter for production CLI coding workflows.
 Items are ordered by expected impact. Community contributions are welcome on all of them.
 
 ---
 
 ## Priority 1 — High Impact
+
+### Open-Model-First Reliability
+
+Make Ollama Cloud, local Ollama, and strong open coding models feel as dependable as premium coding tools while keeping cost predictable.
+
+- Status: **In progress**
+- Focus: setup defaults, cost-aware routing, actionable missing-provider errors, verification summaries, and benchmark coverage for false success claims
+
+### Cost Control and Transparency
+
+Developers should always understand which provider/model is active, whether it is an affordable/open-model path or a premium paid path, and what fallback or budget behavior occurred.
+
+- Status: **In progress**
+- Focus: token/cost summaries, provider cost labels, budget warnings, fallback labels, and JSON benchmark usage telemetry
 
 ### VS Code Extension
 
@@ -53,11 +67,11 @@ First-class remote server management for AlmaLinux 9 and macOS, plus Docker and 
 
 ## Priority 3 — Nice to Have
 
-| Feature                              | Notes                                           |
-| ------------------------------------ | ----------------------------------------------- |
-| Web dashboard for sessions/costs     | Browser UI showing session history, token spend |
-| Multi-repo agent                     | Span agent context across multiple git repos    |
-| Kubernetes tools (`kubectl` wrapper) | First-class K8s workflow support                |
+| Feature                              | Notes                                                  |
+| ------------------------------------ | ------------------------------------------------------ |
+| Session/cost reports                 | CLI-first summaries of session history and token spend |
+| Multi-repo agent                     | Span agent context across multiple git repos           |
+| Kubernetes tools (`kubectl` wrapper) | First-class K8s workflow support                       |
 
 ---
 

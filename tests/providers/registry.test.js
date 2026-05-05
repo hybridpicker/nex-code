@@ -7,6 +7,7 @@ describe("providers/registry.js", () => {
     registry._reset();
     process.env.OLLAMA_API_KEY = "test-key";
     delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GOOGLE_API_KEY;
@@ -17,6 +18,7 @@ describe("providers/registry.js", () => {
   afterEach(() => {
     delete process.env.OLLAMA_API_KEY;
     delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GOOGLE_API_KEY;
@@ -28,10 +30,11 @@ describe("providers/registry.js", () => {
   describe("initialization", () => {
     it("auto-initializes with default providers", () => {
       const providers = registry.listProviders();
-      expect(providers).toHaveLength(5);
+      expect(providers).toHaveLength(6);
       expect(providers.map((p) => p.provider)).toEqual([
         "ollama",
         "openai",
+        "deepseek",
         "anthropic",
         "gemini",
         "local",
@@ -53,6 +56,15 @@ describe("providers/registry.js", () => {
 
       expect(registry.getActiveProviderName()).toBe("openai");
       expect(registry.getActiveModelId()).toBe("gpt-4o");
+    });
+
+    it("uses DeepSeek as DEFAULT_PROVIDER from env", () => {
+      registry._reset();
+      process.env.DEFAULT_PROVIDER = "deepseek";
+      process.env.DEEPSEEK_API_KEY = "deepseek-test";
+
+      expect(registry.getActiveProviderName()).toBe("deepseek");
+      expect(registry.getActiveModelId()).toBe("deepseek-v4-flash");
     });
 
     it("uses DEFAULT_MODEL from env", () => {
@@ -118,6 +130,13 @@ describe("providers/registry.js", () => {
       expect(registry.parseModelSpec("openai:gpt-4o")).toEqual({
         provider: "openai",
         model: "gpt-4o",
+      });
+    });
+
+    it("parses DeepSeek provider specs", () => {
+      expect(registry.parseModelSpec("deepseek:deepseek-v4-pro")).toEqual({
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
       });
     });
 
@@ -203,6 +222,7 @@ describe("providers/registry.js", () => {
       expect(names).toContain("kimi-k2.5");
       expect(names).toContain("qwen3-coder:480b");
       expect(names).toContain("gpt-4o");
+      expect(names).toContain("deepseek-v4-flash");
       expect(names).toContain("claude-sonnet");
     });
 
@@ -219,9 +239,11 @@ describe("providers/registry.js", () => {
       const list = registry.listProviders();
       const ollama = list.find((p) => p.provider === "ollama");
       const openai = list.find((p) => p.provider === "openai");
+      const deepseek = list.find((p) => p.provider === "deepseek");
 
       expect(ollama.configured).toBe(true);
       expect(openai.configured).toBe(false);
+      expect(deepseek.configured).toBe(false);
     });
 
     it("marks active model", () => {

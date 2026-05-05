@@ -86,6 +86,8 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
       (fs.existsSync(path.join(process.cwd(), ".env")) ||
         fs.existsSync(path.join(__dirname, "..", ".env")));
     const hasApiKey =
+      process.env.OLLAMA_API_KEY ||
+      process.env.DEEPSEEK_API_KEY ||
       process.env.ANTHROPIC_API_KEY ||
       process.env.OPENAI_API_KEY ||
       process.env.GEMINI_API_KEY ||
@@ -118,21 +120,24 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
   );
   if (isFirstRun) console.log(`  Let's set you up in 60 seconds.\n`);
 
-  console.log(`  ${B}Which AI provider do you want to use?${R}\n`);
+  console.log(`  ${B}Which model provider do you want to use?${R}\n`);
   console.log(
-    `  ${G}1)${R} ${B}Ollama Cloud${R}  ${D}recommended — devstral-2:123b, no API key needed${R}`,
+    `  ${G}1)${R} ${B}Ollama Cloud / local Ollama${R}  ${D}recommended affordable open-model path${R}`,
   );
-  console.log(`  ${D}   (also works with a local Ollama server)${R}`);
-  console.log(`  ${D}2)  Anthropic     Claude (claude-sonnet-4-6 etc.)${R}`);
-  console.log(`  ${D}3)  OpenAI        GPT-4o, GPT-4.1 etc.${R}`);
-  console.log(`  ${D}4)  Gemini        Google Gemini 2.x${R}`);
-  console.log(`  ${D}5)  Skip / Cancel${R}`);
+  console.log(
+    `  ${D}   Ollama Cloud runs strong open models without local GPU hardware; local Ollama has no per-token API charge.${R}`,
+  );
+  console.log(`  ${D}2)  Anthropic     premium paid fallback/provider${R}`);
+  console.log(`  ${D}3)  DeepSeek      low-cost paid fallback/provider${R}`);
+  console.log(`  ${D}4)  OpenAI        premium paid fallback/provider${R}`);
+  console.log(`  ${D}5)  Gemini        premium paid fallback/provider${R}`);
+  console.log(`  ${D}6)  Skip / Cancel${R}`);
   console.log();
 
   const choice = await ask("Enter number", "1");
   const envLines = [];
 
-  if (choice === "5") {
+  if (choice === "6") {
     if (ownRL) rl.close();
     console.log(`\n${D}  Cancelled — no changes made.${R}\n`);
     return;
@@ -141,10 +146,13 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
   if (choice === "1") {
     console.log();
     console.log(
-      `\n  ${G}Ollama Cloud${R} ${D}(recommended): uses ollama.com API — flat-rate, 47+ models.${R}`,
+      `\n  ${G}Ollama${R} ${D}(recommended): open-model-first and cost-aware by default.${R}`,
     );
     console.log(
-      `  ${D}Get your API key at: https://ollama.com/settings/api-keys${R}\n`,
+      `  ${D}Ollama Cloud: get a key at https://ollama.com/settings/api-keys${R}`,
+    );
+    console.log(
+      `  ${D}Local Ollama: leave the key blank and keep the host at http://localhost:11434${R}\n`,
     );
     const cloudKey = await askSecret(
       "OLLAMA_API_KEY (leave blank for local)",
@@ -155,7 +163,7 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
       : await ask("Ollama host", "http://localhost:11434");
     const model = await ask(
       "Default model",
-      cloudKey ? "devstral-2:123b" : "qwen3-coder",
+      cloudKey ? "qwen3-coder:480b" : "qwen3-coder",
     );
     envLines.push(
       "DEFAULT_PROVIDER=ollama",
@@ -189,6 +197,24 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
     process.env.ANTHROPIC_API_KEY = key;
   } else if (choice === "3") {
     console.log();
+    console.log(`  ${D}Get your key: https://platform.deepseek.com${R}`);
+    const key = await askSecret("DEEPSEEK_API_KEY", replRL);
+    if (!key) {
+      if (ownRL) rl.close();
+      console.log(`\n${Y}  No key entered — cancelled.${R}\n`);
+      return;
+    }
+    const model = await ask("Default model", "deepseek-v4-flash");
+    envLines.push(
+      "DEFAULT_PROVIDER=deepseek",
+      `DEFAULT_MODEL=${model}`,
+      `DEEPSEEK_API_KEY=${key}`,
+    );
+    process.env.DEFAULT_PROVIDER = "deepseek";
+    process.env.DEFAULT_MODEL = model;
+    process.env.DEEPSEEK_API_KEY = key;
+  } else if (choice === "4") {
+    console.log();
     console.log(`  ${D}Get your key: https://platform.openai.com/api-keys${R}`);
     const key = await askSecret("OPENAI_API_KEY", replRL);
     if (!key) {
@@ -205,7 +231,7 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
     process.env.DEFAULT_PROVIDER = "openai";
     process.env.DEFAULT_MODEL = model;
     process.env.OPENAI_API_KEY = key;
-  } else if (choice === "4") {
+  } else if (choice === "5") {
     console.log();
     console.log(
       `  ${D}Get your key: https://aistudio.google.com/app/apikey${R}`,
@@ -255,8 +281,14 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
     const existing = fs.existsSync(envPath)
       ? fs.readFileSync(envPath, "utf-8").trimEnd() + "\n\n"
       : "";
-    fs.writeFileSync(envPath, existing + envLines.join("\n") + "\n", { mode: 0o600 });
-    try { fs.chmodSync(envPath, 0o600); } catch { /* best-effort */ }
+    fs.writeFileSync(envPath, existing + envLines.join("\n") + "\n", {
+      mode: 0o600,
+    });
+    try {
+      fs.chmodSync(envPath, 0o600);
+    } catch {
+      /* best-effort */
+    }
     // auto-add .env to .gitignore
     const gitignorePath = path.join(process.cwd(), ".gitignore");
     if (fs.existsSync(gitignorePath)) {
@@ -287,7 +319,7 @@ async function runSetupWizard({ rl: replRL = null, force = false } = {}) {
 
   console.log(`\n${G}  ✓ Setup complete!${R}`);
   console.log(
-    `\n${CY}💡 Tip: Run ${B}/benchmark${R} ${CY}to automatically find and use the best models for your tasks.${R}\n`
+    `\n${CY}Tip: Run ${B}/models coding${R} ${CY}to see cost-aware open-model recommendations, or ${B}/benchmark${R} to tune routing for your tasks.${R}\n`,
   );
 }
 

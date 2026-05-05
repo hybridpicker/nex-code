@@ -89,6 +89,21 @@ describe("benchmark-shared", () => {
     expect(summary.harnessFailureRate).toBe(50);
   });
 
+  it("computes timeout rate only across valid benchmark entries", () => {
+    const summary = computeBenchmarkScore(
+      [
+        { category: "bugfix", score: 70, elapsed: 1000, completionReason: "timeout" },
+        { category: "feature", score: 0, elapsed: 10, completionReason: "setup-error" },
+        { category: "docs", score: 0, elapsed: 10, completionReason: "setup-error" },
+      ],
+      { bugfix: 1 },
+    );
+
+    expect(summary.validCount).toBe(1);
+    expect(summary.skippedCount).toBe(2);
+    expect(summary.timeoutRate).toBe(100);
+  });
+
   it("reads both modern and legacy benchmark score fields", () => {
     expect(getBenchmarkScore({ finalScore: 91 })).toBe(91);
     expect(getBenchmarkScore({ average: 77 })).toBe(77);

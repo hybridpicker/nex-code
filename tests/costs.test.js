@@ -12,6 +12,10 @@ const {
   getProviderSpend,
   checkBudget,
   resetCostLimits,
+  getProviderCostMode,
+  formatProviderCostMode,
+  isAffordableProvider,
+  isPremiumProvider,
 } = require("../cli/costs");
 
 describe("costs.js", () => {
@@ -45,6 +49,13 @@ describe("costs.js", () => {
       expect(PRICING.gemini["gemini-2.5-flash"].input).toBe(0.15);
       expect(PRICING.gemini["gemini-2.0-flash"].input).toBe(0.1);
       expect(PRICING.gemini["gemini-2.0-flash-lite"].input).toBe(0.075);
+    });
+
+    it("has pricing for DeepSeek models", () => {
+      expect(PRICING.deepseek["deepseek-v4-flash"].input).toBe(0.14);
+      expect(PRICING.deepseek["deepseek-v4-flash"].output).toBe(0.28);
+      expect(PRICING.deepseek["deepseek-v4-pro"].input).toBe(0.435);
+      expect(PRICING.deepseek["deepseek-v4-pro"].output).toBe(0.87);
     });
 
     it("has pricing for new openai models", () => {
@@ -181,6 +192,26 @@ describe("costs.js", () => {
       trackUsage("ollama", "kimi-k2.5", 10000, 5000);
       const output = formatCosts();
       expect(output).toContain("free");
+      expect(output).toContain("open-model path");
+    });
+  });
+
+  describe("provider cost modes", () => {
+    it("classifies Ollama and local as affordable paths", () => {
+      expect(isAffordableProvider("ollama")).toBe(true);
+      expect(isAffordableProvider("local")).toBe(true);
+      expect(getProviderCostMode("ollama").label).toBe("open-model path");
+      expect(formatProviderCostMode("local")).toContain(
+        "no per-token API charge",
+      );
+    });
+
+    it("classifies premium API providers as paid", () => {
+      expect(isPremiumProvider("openai")).toBe(true);
+      expect(isPremiumProvider("deepseek")).toBe(true);
+      expect(isPremiumProvider("anthropic")).toBe(true);
+      expect(isPremiumProvider("gemini")).toBe(true);
+      expect(getProviderCostMode("openai").detail).toContain("/budget");
     });
   });
 
@@ -339,9 +370,7 @@ describe("costs.js", () => {
       expect(stderrSpy).toHaveBeenCalledWith(
         expect.stringContaining("Budget limit reached"),
       );
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining("openai"),
-      );
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("openai"));
       stderrSpy.mockRestore();
     });
 
@@ -352,9 +381,25 @@ describe("costs.js", () => {
       setCostLimit("openai", 100.0);
       trackUsage("openai", "gpt-4o", 1000, 500);
       const budgetCalls = stderrSpy.mock.calls.filter(
-        ([msg]) => typeof msg === "string" && msg.includes("Budget limit reached"),
+        ([msg]) =>
+          typeof msg === "string" && msg.includes("Budget limit reached"),
       );
       expect(budgetCalls).toHaveLength(0);
+      stderrSpy.mockRestore();
+    });
+
+    it("writes a one-time warning when premium spend reaches 80 percent", () => {
+      const stderrSpy = jest
+        .spyOn(process.stderr, "write")
+        .mockImplementation();
+      setCostLimit("openai", 15.0);
+      trackUsage("openai", "gpt-4o", 1_000_000, 1_000_000);
+      trackUsage("openai", "gpt-4o", 1_000, 1_000);
+      const warnings = stderrSpy.mock.calls.filter(
+        ([msg]) => typeof msg === "string" && msg.includes("Budget warning"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("/model ollama");
       stderrSpy.mockRestore();
     });
   });

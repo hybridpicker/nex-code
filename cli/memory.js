@@ -78,13 +78,21 @@ function migrateIfNeeded() {
   const keys = Object.keys(data);
   if (keys.length === 0) {
     // empty file — just rename
-    try { fs.renameSync(jsonFile, jsonFile + ".bak"); } catch { /* ignore */ }
+    try {
+      fs.renameSync(jsonFile, jsonFile + ".bak");
+    } catch {
+      /* ignore */
+    }
     return;
   }
   for (const key of keys) {
     const entry = data[key];
     const value = entry.value || String(entry);
-    const slug = key.replace(/[^a-z0-9_-]/gi, "-").toLowerCase().replace(/-+/g, "-").replace(/^-|-$/g, "");
+    const slug = key
+      .replace(/[^a-z0-9_-]/gi, "-")
+      .toLowerCase()
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
     if (!slug) continue;
     // Write directly to bypass validation (legacy entries can be short)
     const dir = ensureTypeDir("project");
@@ -94,7 +102,11 @@ function migrateIfNeeded() {
     atomicWrite(filePath, md);
   }
   rebuildIndex();
-  try { fs.renameSync(jsonFile, jsonFile + ".bak"); } catch { /* ignore */ }
+  try {
+    fs.renameSync(jsonFile, jsonFile + ".bak");
+  } catch {
+    /* ignore */
+  }
 }
 
 // ─── Typed .md file memory ──────────────────────────────────────
@@ -109,18 +121,34 @@ function migrateIfNeeded() {
  */
 function saveMemory(type, name, content, description) {
   if (!VALID_TYPES.includes(type)) {
-    return { ok: false, path: "", error: `Invalid type: ${type}. Must be one of: ${VALID_TYPES.join(", ")}` };
+    return {
+      ok: false,
+      path: "",
+      error: `Invalid type: ${type}. Must be one of: ${VALID_TYPES.join(", ")}`,
+    };
   }
   if (!name || typeof name !== "string") {
     return { ok: false, path: "", error: "name must be a non-empty string" };
   }
   if (!content || typeof content !== "string" || content.trim().length < 5) {
-    return { ok: false, path: "", error: "content must be at least 5 characters" };
+    return {
+      ok: false,
+      path: "",
+      error: "content must be at least 5 characters",
+    };
   }
   // Sanitize slug: only ASCII alphanumeric, dashes, underscores
-  const slug = name.replace(/[^a-z0-9_-]/gi, "-").toLowerCase().replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const slug = name
+    .replace(/[^a-z0-9_-]/gi, "-")
+    .toLowerCase()
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
   if (!slug) {
-    return { ok: false, path: "", error: "name produces empty slug after sanitization" };
+    return {
+      ok: false,
+      path: "",
+      error: "name produces empty slug after sanitization",
+    };
   }
   const dir = ensureTypeDir(type);
   const filePath = path.join(dir, `${slug}.md`);
@@ -132,7 +160,9 @@ function saveMemory(type, name, content, description) {
       if (existing.body.slice(0, 200) === content.slice(0, 200)) {
         return { ok: true, path: filePath, updated: false };
       }
-    } catch { /* overwrite on parse error */ }
+    } catch {
+      /* overwrite on parse error */
+    }
   }
 
   const desc = description || content.split("\n")[0].slice(0, 100);
@@ -176,36 +206,147 @@ function parseMemoryFile(raw) {
     const m = fm.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
     return m ? m[1].trim() : "";
   };
-  return { name: get("name"), description: get("description"), type: get("type"), body };
+  return {
+    name: get("name"),
+    description: get("description"),
+    type: get("type"),
+    body,
+  };
 }
 
 /**
  * Scan all typed memory files and return metadata.
  * @returns {Array<{ type: string, name: string, description: string, filePath: string }>}
  */
-function scanMemories() {
+function scanMemoryEntries({ includeBody = false } = {}) {
   const entries = [];
   const baseDir = getMemoryDir();
   for (const type of VALID_TYPES) {
     const dir = path.join(baseDir, type);
     if (!fs.existsSync(dir)) continue;
     let files;
-    try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { continue; }
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+    } catch {
+      continue;
+    }
     for (const file of files) {
       const filePath = path.join(dir, file);
       try {
         const raw = fs.readFileSync(filePath, "utf-8");
         const parsed = parseMemoryFile(raw);
-        entries.push({
+        let stat = null;
+        try {
+          stat = fs.statSync(filePath);
+        } catch {
+          stat = null;
+        }
+        const entry = {
           type,
           name: parsed.name || path.basename(file, ".md"),
           description: parsed.description,
           filePath,
-        });
-      } catch { /* skip unreadable files */ }
+          updatedAt: stat ? stat.mtimeMs : 0,
+        };
+        if (includeBody) entry.body = parsed.body;
+        entries.push(entry);
+      } catch {
+        /* skip unreadable files */
+      }
     }
   }
   return entries;
+}
+
+function scanMemories() {
+  return scanMemoryEntries();
+}
+
+function normalizeMemoryBody(body) {
+  return String(body || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clipMemoryText(text, maxChars) {
+  const normalized = normalizeMemoryBody(text);
+  if (normalized.length <= maxChars) return normalized;
+  return (
+    normalized.slice(0, Math.max(0, maxChars - 15)).trimEnd() + " [truncated]"
+  );
+}
+
+function appendWithinBudget(lines, line, budget) {
+  const current = lines.join("\n").length;
+  if (current + line.length + 1 > budget) return false;
+  lines.push(line);
+  return true;
+}
+
+function buildMemoryPromptSection(memoryBudget) {
+  if (memoryBudget <= 200) return "";
+
+  const index = loadMemoryIndex();
+  const typedEntries = scanMemoryEntries({ includeBody: true });
+
+  if (!index && typedEntries.length === 0) {
+    const memories = listMemories();
+    if (memories.length === 0) return "";
+    const lines = ["PROJECT MEMORY:"];
+    for (const m of memories) {
+      if (!appendWithinBudget(lines, `  ${m.key}: ${m.value}`, memoryBudget)) {
+        lines.push(
+          "[Memory truncated - use delete_memory to prune old entries]",
+        );
+        break;
+      }
+    }
+    return lines.join("\n");
+  }
+
+  const lines = [];
+  if (index) {
+    const indexBudget = Math.max(350, Math.floor(memoryBudget * 0.45));
+    const indexLines = index.split("\n");
+    for (const line of indexLines) {
+      if (!appendWithinBudget(lines, line, indexBudget)) {
+        lines.push(
+          "[Memory index truncated - use delete_memory to prune old entries]",
+        );
+        break;
+      }
+    }
+  }
+
+  const entriesWithBody = typedEntries
+    .filter((entry) => normalizeMemoryBody(entry.body).length > 0)
+    .sort((a, b) => {
+      const typeRank =
+        VALID_TYPES.indexOf(a.type) - VALID_TYPES.indexOf(b.type);
+      if (typeRank !== 0) return typeRank;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+
+  if (
+    entriesWithBody.length > 0 &&
+    lines.join("\n").length < memoryBudget - 220
+  ) {
+    if (lines.length > 0) lines.push("");
+    lines.push("ACTIVE MEMORY EXCERPTS:");
+    for (const entry of entriesWithBody) {
+      const remaining = memoryBudget - lines.join("\n").length - 1;
+      if (remaining < 180) break;
+      const excerptBudget = Math.min(520, Math.max(120, remaining - 90));
+      const label = `${entry.type}/${path.basename(entry.filePath)}`;
+      const desc = entry.description ? ` - ${entry.description}` : "";
+      const body = clipMemoryText(entry.body, excerptBudget);
+      const line = `- ${entry.name} (${label})${desc}: ${body}`;
+      if (!appendWithinBudget(lines, line, memoryBudget)) break;
+    }
+  }
+
+  if (lines.length === 0) return "";
+  return lines.join("\n");
 }
 
 /**
@@ -218,7 +359,9 @@ function rebuildIndex() {
   for (const e of entries) {
     if (lines.length >= MAX_INDEX_LINES + 2) break; // +2 for header
     const relPath = `${e.type}/${path.basename(e.filePath)}`;
-    lines.push(`- [${e.name}](${relPath}) — ${e.description || "(no description)"}`);
+    lines.push(
+      `- [${e.name}](${relPath}) — ${e.description || "(no description)"}`,
+    );
   }
   ensureDir();
   atomicWrite(getIndexPath(), lines.join("\n") + "\n");
@@ -335,7 +478,9 @@ function getMemoryContext() {
 
   const globalInstructions = loadGlobalInstructions();
   if (globalInstructions) {
-    instructionParts.push(`GLOBAL INSTRUCTIONS (~/.nex/NEX.md):\n${globalInstructions}`);
+    instructionParts.push(
+      `GLOBAL INSTRUCTIONS (~/.nex/NEX.md):\n${globalInstructions}`,
+    );
   }
 
   const instructions = loadProjectInstructions();
@@ -343,39 +488,18 @@ function getMemoryContext() {
     instructionParts.push(`PROJECT INSTRUCTIONS (NEX.md):\n${instructions}`);
   }
 
-  // Build memory section (lower priority — truncated if needed)
-  let memorySection = "";
-  const index = loadMemoryIndex();
-  if (index) {
-    memorySection = index;
-  } else {
-    const memories = listMemories();
-    if (memories.length > 0) {
-      const memStr = memories.map((m) => `  ${m.key}: ${m.value}`).join("\n");
-      memorySection = `PROJECT MEMORY:\n${memStr}`;
-    }
-  }
-
   const instructionText = instructionParts.join("\n\n");
-  const hint = "You can save insights with save_memory(type, name, content) and remove them with delete_memory(type, name).";
+  const hint =
+    "You can save insights with save_memory(type, name, content) and remove them with delete_memory(type, name).";
 
   // Budget: memory index always gets at least 1500 chars (even with large NEX.md)
   const MIN_MEMORY_BUDGET = 1500;
   const MAX_TOTAL = 16000;
-  const memoryBudget = Math.max(MIN_MEMORY_BUDGET, MAX_TOTAL - instructionText.length - hint.length - 10);
-
-  if (memorySection.length > memoryBudget && memoryBudget > 200) {
-    // Truncate memory index, keeping first N lines
-    const lines = memorySection.split("\n");
-    let truncated = "";
-    for (const line of lines) {
-      if (truncated.length + line.length + 1 > memoryBudget - 60) break;
-      truncated += line + "\n";
-    }
-    memorySection = truncated.trimEnd() + "\n[Memory index truncated — use delete_memory to prune old entries]";
-  } else if (memorySection.length > memoryBudget) {
-    memorySection = ""; // no space at all
-  }
+  const memoryBudget = Math.max(
+    MIN_MEMORY_BUDGET,
+    MAX_TOTAL - instructionText.length - hint.length - 10,
+  );
+  const memorySection = buildMemoryPromptSection(memoryBudget);
 
   const parts = [...instructionParts];
   if (memorySection) parts.push(memorySection);
@@ -406,6 +530,7 @@ module.exports = {
   _getMemoryFile: getMemoryFile,
   _getGlobalNexMdPath: getGlobalNexMdPath,
   _parseMemoryFile: parseMemoryFile,
+  _buildMemoryPromptSection: buildMemoryPromptSection,
   _migrateIfNeeded: migrateIfNeeded,
   VALID_TYPES,
 };

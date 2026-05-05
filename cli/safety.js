@@ -374,7 +374,13 @@ function confirm(question, opts = {}) {
   if (_confirmHook) return _confirmHook(question, opts);
 
   // Non-TTY fallback (piped input, test environment)
-  if (!process.stdout.isTTY || !process.stdin.isTTY) {
+  if (
+    !process.stdout.isTTY ||
+    !process.stdin.isTTY ||
+    process.env.NODE_ENV === "test" ||
+    process.env.JEST_WORKER_ID ||
+    typeof process.stdin.setRawMode !== "function"
+  ) {
     return _confirmText(question, opts);
   }
 
@@ -383,7 +389,7 @@ function confirm(question, opts = {}) {
   return new Promise((resolve) => {
     let selected = 0;
 
-    if (_rl) _rl.pause();
+    if (_rl && typeof _rl.pause === "function") _rl.pause();
 
     const raw = global._nexRawWrite || ((d) => process.stdout.write(d));
 
@@ -420,7 +426,9 @@ function confirm(question, opts = {}) {
     };
 
     const cleanup = (result) => {
-      process.stdin.setRawMode(false);
+      if (typeof process.stdin.setRawMode === "function") {
+        process.stdin.setRawMode(false);
+      }
       process.stdin.pause();
       process.stdin.removeListener("data", onKey);
       // Erase each dialog row via absolute positioning — no \n, no cursor-relative
@@ -438,7 +446,7 @@ function confirm(question, opts = {}) {
       }
       // Redraw footer in case a previous (broken) render overlapped it.
       if (global._nexFooter) global._nexFooter.drawFooter();
-      if (_rl) _rl.resume();
+      if (_rl && typeof _rl.resume === "function") _rl.resume();
       resolve(result);
     };
 

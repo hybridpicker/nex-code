@@ -60,7 +60,12 @@ jest.mock("../cli/deploy-config", () => ({
   loadDeployConfigs: mockLoadDeployConfigs,
 }));
 
-const { TOOL_DEFINITIONS, executeTool, resolvePath } = require("../cli/tools");
+const {
+  TOOL_DEFINITIONS,
+  executeTool,
+  resolvePath,
+  getNodeBuiltinInstallAttempt,
+} = require("../cli/tools");
 const { confirmFileChange } = require("../cli/diff");
 const { ToolProgress } = require("../cli/spinner");
 
@@ -83,6 +88,24 @@ describe("tools.js", () => {
     mockResolveDeployConfig.mockReset();
     mockResolveDeployConfig.mockImplementation((name) => {
       throw new Error(`Deploy config "${name}" not found`);
+    });
+  });
+
+  describe("Node built-in install guard", () => {
+    it("detects attempts to install runtime built-ins", () => {
+      expect(getNodeBuiltinInstallAttempt("npm install fs path events")).toBe(
+        "fs",
+      );
+      expect(getNodeBuiltinInstallAttempt("pnpm add node:crypto lodash")).toBe(
+        "crypto",
+      );
+      expect(getNodeBuiltinInstallAttempt("npm install lodash")).toBe(null);
+    });
+
+    it("blocks npm install for built-in modules", async () => {
+      const result = await executeTool("bash", { command: "npm install fs" });
+      expect(result).toContain("BLOCKED");
+      expect(result).toContain("Node.js built-in");
     });
   });
 

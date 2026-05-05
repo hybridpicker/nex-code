@@ -17,7 +17,12 @@ const os = require("os");
 const { spawn } = require("child_process");
 const { computeBenchmarkScore, makeRunId } = require("./benchmark-shared");
 
-const { HARNESS_VERSION, TASKS, CATEGORY_WEIGHTS } = require("./benchmark-reallife-tasks");
+const {
+  HARNESS_VERSION,
+  TASKS,
+  CATEGORY_WEIGHTS,
+  filesChanged,
+} = require("./benchmark-reallife-tasks");
 
 const NEX_CODE = path.join(__dirname, "..", "dist", "nex-code.js");
 
@@ -31,7 +36,10 @@ if (!process.env.OLLAMA_HOST) {
       if (line.startsWith("#") || !line.includes("=")) continue;
       const eqIdx = line.indexOf("=");
       const key = line.slice(0, eqIdx).trim();
-      const val = line.slice(eqIdx + 1).split("#")[0].trim();
+      const val = line
+        .slice(eqIdx + 1)
+        .split("#")[0]
+        .trim();
       if ((key === "OLLAMA_HOST" || key === "OLLAMA_API_KEY") && val) {
         process.env[key] = val;
       }
@@ -39,12 +47,37 @@ if (!process.env.OLLAMA_HOST) {
   }
 }
 const RESULTS_DIR = path.join(__dirname, "benchmark-results");
+const DEFAULT_TASK_TIMEOUT_MS = 180000;
+const TASK_TERMINATION_GRACE_MS = 5000;
 
 // ─── Task Runner ────────────────────────────────────────────────
 
+function terminateProcessWithGrace(
+  proc,
+  isClosed,
+  graceMs = TASK_TERMINATION_GRACE_MS,
+) {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    /* ignore */
+  }
+
+  return setTimeout(() => {
+    if (isClosed()) return;
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* ignore */
+    }
+  }, graceMs);
+}
+
 function runTask(task, model) {
   return new Promise((resolve) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nex-reallife-${task.id}-`));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), `nex-reallife-${task.id}-`),
+    );
 
     // Setup the task environment
     try {
@@ -66,10 +99,12 @@ function runTask(task, model) {
 
     const args = [
       NEX_CODE,
-      "--task", task.description,
+      "--task",
+      task.description,
       "--auto",
       "--json",
-      "--max-turns", String(task.maxTurns || 20),
+      "--max-turns",
+      String(task.maxTurns || 20),
     ];
     if (model) args.push("--model", model);
 
@@ -77,6 +112,9 @@ function runTask(task, model) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let closed = false;
+    let hardKillTimer = null;
+    const timeoutMs = task.timeoutMs || DEFAULT_TASK_TIMEOUT_MS;
 
     // Restrict env to safe vars only — prevent secret leakage to subprocesses
     const safeEnv = {
@@ -99,7 +137,7 @@ function runTask(task, model) {
     safeEnv.NEX_SKIP_BUILTIN_SKILLS = "1";
     safeEnv.NEX_AUTO_ORCHESTRATE = "false";
     safeEnv.NEX_SKIP_COMPACTOR = "1";
-    safeEnv.NEX_TASK_TIMEOUT_MS = String(task.timeoutMs || 180000);
+    safeEnv.NEX_TASK_TIMEOUT_MS = String(timeoutMs);
 
     const proc = spawn(process.execPath, args, {
       cwd: tmpDir,
@@ -108,24 +146,51 @@ function runTask(task, model) {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      proc.kill("SIGTERM");
-    }, task.timeoutMs || 180000);
+      hardKillTimer = terminateProcessWithGrace(proc, () => closed);
+    }, timeoutMs);
 
-    proc.stdout.on("data", (d) => { stdout += d; });
-    proc.stderr.on("data", (d) => { stderr += d; });
+    proc.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    proc.stderr.on("data", (d) => {
+      stderr += d;
+    });
 
     proc.on("close", (code) => {
+      closed = true;
       clearTimeout(timer);
+      if (hardKillTimer) clearTimeout(hardKillTimer);
       const elapsed = Date.now() - startTime;
-      const completionReason = timedOut ? "timeout" : code === 0 ? "success" : "error";
-      const result = evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason);
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      const completionReason = timedOut
+        ? "timeout"
+        : code === 0
+          ? "success"
+          : "error";
+      const result = evaluateTask(
+        task,
+        tmpDir,
+        stdout,
+        stderr,
+        elapsed,
+        completionReason,
+      );
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
       resolve(result);
     });
 
     proc.on("error", (err) => {
+      closed = true;
       clearTimeout(timer);
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      if (hardKillTimer) clearTimeout(hardKillTimer);
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
       resolve({
         id: task.id,
         category: task.category,
@@ -181,8 +246,12 @@ function extractUsageFromDoneEvent(doneEvent) {
 
 function extractBenchmarkMetrics(stdout, stderr) {
   const events = parseJsonEventStream(stdout);
-  const toolStartCount = events.filter((event) => event.type === "tool_start").length;
-  const doneEvent = [...events].reverse().find((event) => event.type === "done");
+  const toolStartCount = events.filter(
+    (event) => event.type === "tool_start",
+  ).length;
+  const doneEvent = [...events]
+    .reverse()
+    .find((event) => event.type === "done");
   const usage = extractUsageFromDoneEvent(doneEvent);
   const diagnostics = {
     jsonEventCount: events.length,
@@ -194,7 +263,8 @@ function extractBenchmarkMetrics(stdout, stderr) {
 
   if (toolStartCount > 0 || usage.input > 0 || usage.output > 0) {
     return {
-      toolCalls: toolStartCount > 0 ? toolStartCount : Number(doneEvent?.toolCalls) || 0,
+      toolCalls:
+        toolStartCount > 0 ? toolStartCount : Number(doneEvent?.toolCalls) || 0,
       tokens: usage,
       telemetry: {
         valid: Boolean(doneEvent),
@@ -209,7 +279,9 @@ function extractBenchmarkMetrics(stdout, stderr) {
   const stderrMarkers = (stderr || "").match(/✓\s+\w+\(/g);
   if (stderrMarkers) fallbackToolCalls = stderrMarkers.length;
   if (fallbackToolCalls === 0) {
-    const toolUseMatches = (stdout || "").match(/"type"\s*:\s*"function"|"tool_use"|"tool_call"/g);
+    const toolUseMatches = (stdout || "").match(
+      /"type"\s*:\s*"function"|"tool_use"|"tool_call"/g,
+    );
     if (toolUseMatches) fallbackToolCalls = toolUseMatches.length;
   }
   if (fallbackToolCalls === 0) {
@@ -232,8 +304,126 @@ function extractBenchmarkMetrics(stdout, stderr) {
   };
 }
 
+function isVerificationCommand(command) {
+  return /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check|node\s+[\w./-]+\.js)\b/i.test(
+    String(command || ""),
+  );
+}
+
+function claimsVerifiedOrComplete(text) {
+  return /\b(done|complete|completed|fixed|implemented|ready|verified|verification complete|tests? pass(?:ed)?|build pass(?:ed)?|all checks pass(?:ed)?|all good)\b/i.test(
+    String(text || ""),
+  );
+}
+
+function getToolEventArgs(event) {
+  if (!event || typeof event !== "object") return {};
+  return event.args || event.input || {};
+}
+
+function getToolEventPath(event) {
+  const args = getToolEventArgs(event);
+  return args.path || args.file || args.file_path || "";
+}
+
+function analyzeBenchmarkQualitySignals(
+  stdout,
+  stderr,
+  task = null,
+  tmpDir = null,
+) {
+  const events = parseJsonEventStream(stdout);
+  const toolStarts = events.filter((event) => event.type === "tool_start");
+  const doneEvent = [...events]
+    .reverse()
+    .find((event) => event.type === "done");
+  const responseText = doneEvent?.response || "";
+  const verificationCommands = toolStarts
+    .filter((event) => {
+      const args = getToolEventArgs(event);
+      return (
+        ["bash", "ssh_exec"].includes(event.tool) &&
+        isVerificationCommand(args.command)
+      );
+    })
+    .map((event) => getToolEventArgs(event).command)
+    .filter(Boolean);
+  const editEvents = toolStarts.filter((event) =>
+    ["write_file", "edit_file", "patch_file"].includes(event.tool),
+  );
+  const editedPaths = new Set();
+  const postEditReadPaths = [];
+  for (const event of toolStarts) {
+    const eventPath = getToolEventPath(event);
+    if (
+      eventPath &&
+      ["write_file", "edit_file", "patch_file"].includes(event.tool)
+    ) {
+      editedPaths.add(eventPath);
+      continue;
+    }
+    if (event.tool === "read_file" && eventPath && editedPaths.has(eventPath)) {
+      postEditReadPaths.push(eventPath);
+    }
+  }
+  const verificationRan =
+    verificationCommands.length > 0 || postEditReadPaths.length > 0;
+  const changedFiles = tmpDir ? filesChanged(tmpDir) : [];
+  const expectedFiles = task?.expectedFiles || task?.expectedTouchedFiles || [];
+  const unnecessaryFileEdits =
+    expectedFiles.length > 0
+      ? changedFiles.filter((file) => !expectedFiles.includes(file))
+      : [];
+  const firstToolPaths = toolStarts.slice(0, 8).map((event) => {
+    const args = getToolEventArgs(event);
+    return args.path || args.file || args.file_path || args.command || "";
+  });
+
+  return {
+    verificationRan,
+    verificationCommands,
+    verificationReads: postEditReadPaths,
+    missingVerification: editEvents.length > 0 && !verificationRan,
+    falseSuccessClaim:
+      claimsVerifiedOrComplete(responseText) && !verificationRan,
+    weakVerificationOnly:
+      editEvents.length > 0 &&
+      verificationCommands.length === 0 &&
+      postEditReadPaths.length > 0,
+    toolOveruse: task?.maxToolCalls
+      ? toolStarts.length > task.maxToolCalls
+      : false,
+    changedFiles,
+    unnecessaryFileEdits,
+    contextSelection: {
+      readProjectInstructions: firstToolPaths.some((value) =>
+        /(^|\/)AGENTS\.md$/.test(String(value)),
+      ),
+      readPackageConfig: firstToolPaths.some((value) =>
+        /(^|\/)package\.json$/.test(String(value)),
+      ),
+      inspectedGitState: toolStarts.some((event) => {
+        const args = getToolEventArgs(event);
+        return (
+          event.tool === "git_status" ||
+          event.tool === "git_diff" ||
+          /\bgit\s+(status|diff)\b/.test(String(args.command || ""))
+        );
+      }),
+    },
+    stderrBytes: Buffer.byteLength(String(stderr || ""), "utf8"),
+  };
+}
+
 function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
-  const { toolCalls, tokens, telemetry, harnessDiagnostics } = extractBenchmarkMetrics(stdout, stderr);
+  const { toolCalls, tokens, telemetry, harnessDiagnostics } =
+    extractBenchmarkMetrics(stdout, stderr);
+  const qualitySignals = analyzeBenchmarkQualitySignals(
+    stdout,
+    stderr,
+    task,
+    tmpDir,
+  );
   const measuredCompletionReason =
     completionReason === "success" && telemetry?.valid === false
       ? "harness-failure"
@@ -244,7 +434,12 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
   try {
     evalResult = task.evaluateFn(tmpDir, stdout, stderr);
   } catch (err) {
-    evalResult = { taskCompletion: 0, editPrecision: 0, quality: 0, error: err.message };
+    evalResult = {
+      taskCompletion: 0,
+      editPrecision: 0,
+      quality: 0,
+      error: err.message,
+    };
   }
 
   // Efficiency: time-based when tool counting is unavailable (0 tools reported),
@@ -253,7 +448,10 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
   const timeoutMs = task.timeoutMs || 180000;
   let efficiency;
   if (toolCalls > 0) {
-    efficiency = Math.max(0, 1 - Math.max(0, toolCalls - task.maxToolCalls) / task.maxToolCalls);
+    efficiency = Math.max(
+      0,
+      1 - Math.max(0, toolCalls - task.maxToolCalls) / task.maxToolCalls,
+    );
   } else {
     const timeRatio = elapsed / timeoutMs;
     if (timeRatio <= 0.7) {
@@ -265,16 +463,23 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
 
   // Composite score: completion(40%) + precision(25%) + efficiency(20%) + quality(15%)
   let score = Math.round(
-    (evalResult.taskCompletion || 0) * 0.40 +
-    (evalResult.editPrecision || 0) * 0.25 +
-    efficiency * 100 * 0.20 +
-    (evalResult.quality || 0) * 0.15
+    (evalResult.taskCompletion || 0) * 0.4 +
+      (evalResult.editPrecision || 0) * 0.25 +
+      efficiency * 100 * 0.2 +
+      (evalResult.quality || 0) * 0.15,
   );
 
   // Penalty: proportional reduction for timeout (not hard cap)
   // Tasks that completed the work but timed out still get credit for completion
   if (measuredCompletionReason === "timeout") {
     score = Math.round(score * 0.7);
+  }
+  if (qualitySignals.falseSuccessClaim) {
+    score = Math.min(score, 55);
+  } else if (qualitySignals.missingVerification) {
+    score = Math.min(score, 70);
+  } else if (qualitySignals.weakVerificationOnly) {
+    score = Math.min(score, 90);
   }
 
   return {
@@ -300,6 +505,7 @@ function evaluateTask(task, tmpDir, stdout, stderr, elapsed, completionReason) {
       efficiency: Math.round(efficiency * 100),
       quality: evalResult.quality || 0,
       error: evalResult.error,
+      qualitySignals,
     },
   };
 }
@@ -320,15 +526,21 @@ function printReport(results, elapsed) {
   console.log("  ══════════════════════════════════════════════════\n");
 
   // Per-task results
-  for (const cat of Object.keys(byCategory).sort((a, b) => a.localeCompare(b))) {
+  for (const cat of Object.keys(byCategory).sort((a, b) =>
+    a.localeCompare(b),
+  )) {
     const tasks = [...byCategory[cat]].sort((a, b) => a.id.localeCompare(b.id));
     const weight = CATEGORY_WEIGHTS[cat] || 0;
     const avg = categoryScores[cat];
-    console.log(`  ── ${cat} (weight: ${(weight * 100).toFixed(0)}%, avg: ${avg}/100) ──`);
+    console.log(
+      `  ── ${cat} (weight: ${(weight * 100).toFixed(0)}%, avg: ${avg}/100) ──`,
+    );
     for (const t of tasks) {
       const status = t.score >= 80 ? "✓" : t.score >= 50 ? "~" : "✗";
       const time = (t.elapsed / 1000).toFixed(1);
-      console.log(`    ${status} ${t.id}: ${t.score}/100 (${time}s, ${t.toolCalls} tools)`);
+      console.log(
+        `    ${status} ${t.id}: ${t.score}/100 (${time}s, ${t.toolCalls} tools)`,
+      );
       if (t.score < 80 && t.details.error) {
         console.log(`      Error: ${t.details.error}`);
       }
@@ -339,9 +551,13 @@ function printReport(results, elapsed) {
   console.log("  ── Summary ──");
   console.log(`  Final Weighted Score: ${finalScore}/100`);
   console.log(`  Total Tasks: ${results.length}`);
-  console.log(`  Passing (>=80): ${results.filter(r => r.score >= 80).length}`);
-  console.log(`  Partial (50-79): ${results.filter(r => r.score >= 50 && r.score < 80).length}`);
-  console.log(`  Failing (<50): ${results.filter(r => r.score < 50).length}`);
+  console.log(
+    `  Passing (>=80): ${results.filter((r) => r.score >= 80).length}`,
+  );
+  console.log(
+    `  Partial (50-79): ${results.filter((r) => r.score >= 50 && r.score < 80).length}`,
+  );
+  console.log(`  Failing (<50): ${results.filter((r) => r.score < 50).length}`);
   console.log(`  Total Time: ${(elapsed / 1000).toFixed(1)}s`);
   console.log(`  Avg Tool Calls: ${summary.avgToolCalls}`);
   console.log(`  Timeout Rate: ${summary.timeoutRate}%`);
@@ -349,7 +565,9 @@ function printReport(results, elapsed) {
   console.log(`  Invalid Harness Rate: ${summary.invalidHarnessRate}%`);
   console.log(`  Tokens: ${totalTokens.input} in / ${totalTokens.output} out`);
   console.log("  Category Metrics:");
-  for (const cat of Object.keys(categoryMetrics).sort((a, b) => a.localeCompare(b))) {
+  for (const cat of Object.keys(categoryMetrics).sort((a, b) =>
+    a.localeCompare(b),
+  )) {
     const metrics = categoryMetrics[cat];
     console.log(
       `    ${cat}: pass ${metrics.passRate}% | timeout ${metrics.timeoutRate}% | avg tools ${metrics.avgToolCalls}`,
@@ -368,7 +586,10 @@ async function main() {
   const modelIdx = args.indexOf("--model");
   const model = modelIdx !== -1 ? args[modelIdx + 1] : null;
   const runIdIdx = args.indexOf("--run-id");
-  const runId = process.env.NEX_BENCHMARK_RUN_ID || (runIdIdx !== -1 ? args[runIdIdx + 1] : null) || makeRunId();
+  const runId =
+    process.env.NEX_BENCHMARK_RUN_ID ||
+    (runIdIdx !== -1 ? args[runIdIdx + 1] : null) ||
+    makeRunId();
   const tasksIdx = args.indexOf("--tasks");
   const taskFilter = tasksIdx !== -1 ? args[tasksIdx + 1].split(",") : null;
   const catIdx = args.indexOf("--category");
@@ -379,13 +600,19 @@ async function main() {
   if (catFilter) tasks = tasks.filter((t) => t.category === catFilter);
   tasks = [...tasks].sort((a, b) => a.ordinal - b.ordinal);
 
-  console.log(`\n  Real-Life Benchmark: ${tasks.length} tasks${model ? ` (model: ${model})` : ""}`);
-  console.log(`  Categories: ${[...new Set(tasks.map(t => t.category))].join(", ")}\n`);
+  console.log(
+    `\n  Real-Life Benchmark: ${tasks.length} tasks${model ? ` (model: ${model})` : ""}`,
+  );
+  console.log(
+    `  Categories: ${[...new Set(tasks.map((t) => t.category))].join(", ")}\n`,
+  );
 
   if (dryRun) {
     console.log("  Tasks:");
     for (const t of tasks) {
-      console.log(`    [${t.category}] ${t.id} — ${t.description.slice(0, 70)}...`);
+      console.log(
+        `    [${t.category}] ${t.id} — ${t.description.slice(0, 70)}...`,
+      );
     }
     console.log("\n  --dry-run: no tasks executed\n");
     return;
@@ -405,7 +632,9 @@ async function main() {
     const result = await runTask(task, model);
     results.push(result);
     const status = result.score >= 80 ? "✓" : result.score >= 50 ? "~" : "✗";
-    console.log(`${status} ${result.score}/100 (${(result.elapsed / 1000).toFixed(1)}s)`);
+    console.log(
+      `${status} ${result.score}/100 (${(result.elapsed / 1000).toFixed(1)}s)`,
+    );
   }
 
   const totalElapsed = Date.now() - startTime;
@@ -413,10 +642,14 @@ async function main() {
   const { finalScore, categoryScores, categoryMetrics, totalTokens } = summary;
 
   // Save results
-  if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR, { recursive: true });
+  if (!fs.existsSync(RESULTS_DIR))
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const safeRunId = runId.replace(/[^a-zA-Z0-9-]/g, "-");
-  const outPath = path.join(RESULTS_DIR, `reallife-${timestamp}-${safeRunId}.json`);
+  const outPath = path.join(
+    RESULTS_DIR,
+    `reallife-${timestamp}-${safeRunId}.json`,
+  );
 
   const resultData = {
     date: new Date().toISOString(),
@@ -439,7 +672,7 @@ async function main() {
     totalTokens,
     totalElapsed,
     taskCount: results.length,
-    passing: results.filter(r => r.score >= 80).length,
+    passing: results.filter((r) => r.score >= 80).length,
     results,
   };
 
@@ -447,19 +680,20 @@ async function main() {
 
   // Append to history
   const historyPath = path.join(RESULTS_DIR, "reallife-history.jsonl");
-  const historyLine = JSON.stringify({
-    date: resultData.date,
-    runId,
-    harnessVersion: HARNESS_VERSION,
-    model,
-    finalScore,
-    categoryScores,
-    categoryMetrics,
-    taskCount: results.length,
-    passing: resultData.passing,
-    metrics: resultData.metrics,
-    totalTokens,
-  }) + "\n";
+  const historyLine =
+    JSON.stringify({
+      date: resultData.date,
+      runId,
+      harnessVersion: HARNESS_VERSION,
+      model,
+      finalScore,
+      categoryScores,
+      categoryMetrics,
+      taskCount: results.length,
+      passing: resultData.passing,
+      metrics: resultData.metrics,
+      totalTokens,
+    }) + "\n";
   fs.appendFileSync(historyPath, historyLine);
 
   console.log(`  Results: ${outPath}`);
@@ -482,4 +716,6 @@ module.exports = {
   parseJsonEventStream,
   extractUsageFromDoneEvent,
   extractBenchmarkMetrics,
+  analyzeBenchmarkQualitySignals,
+  terminateProcessWithGrace,
 };

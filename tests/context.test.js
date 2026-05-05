@@ -78,6 +78,30 @@ describe("context.js", () => {
       expect(ctx).toContain("lint");
     });
 
+    it("includes high-value package script commands", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        JSON.stringify({
+          name: "x",
+          scripts: {
+            test: "jest --runInBand",
+            build: "tsc -p tsconfig.json",
+            "benchmark:gate": "node scripts/benchmark-gate.js",
+          },
+        }),
+      );
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        cb(new Error("no git"));
+      });
+
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("PACKAGE SCRIPTS:");
+      expect(ctx).toContain("test=jest --runInBand");
+      expect(ctx).toContain("benchmark:gate=node scripts/benchmark-gate.js");
+    });
+
     it("includes workspaces when package.json declares them", async () => {
       fs.writeFileSync(
         path.join(tmpDir, "package.json"),
@@ -153,6 +177,29 @@ describe("context.js", () => {
 
       const ctx = await gatherProjectContext(tmpDir);
       expect(ctx).toContain("M file.js");
+    });
+
+    it("includes a compact git diff stat when files are changed", async () => {
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        if (cmd.includes("git diff --stat")) {
+          cb(null, {
+            stdout:
+              "src/app.js | 4 ++--\n1 file changed, 2 insertions(+), 2 deletions(-)\n",
+          });
+        } else if (cmd.includes("status")) {
+          cb(null, { stdout: "M src/app.js\n" });
+        } else if (cmd.includes("branch")) {
+          cb(null, { stdout: "devel\n" });
+        } else {
+          cb(new Error("no git"));
+        }
+      });
+
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("GIT DIFF STAT:");
+      expect(ctx).toContain("src/app.js | 4 ++--");
     });
 
     it("includes git log", async () => {
@@ -282,6 +329,29 @@ describe("context.js", () => {
     });
   });
 
+  // ─── AGENTS.md loading ───────────────────────────────────
+  describe("AGENTS.md loading", () => {
+    beforeEach(() => {
+      const context = require("../cli/context");
+      if (context._clearContextCache) context._clearContextCache();
+      const cp = require("child_process");
+      cp.exec.mockImplementation((cmd, opts, cb) => {
+        if (typeof opts === "function") cb = opts;
+        cb(new Error("no git"));
+      });
+    });
+
+    it("includes AGENTS.md content when present at project root", async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, "AGENTS.md"),
+        "# Project Rules\n\nRun npm test before pushing.",
+      );
+      const ctx = await gatherProjectContext(tmpDir);
+      expect(ctx).toContain("PROJECT INSTRUCTIONS (AGENTS.md)");
+      expect(ctx).toContain("Run npm test before pushing.");
+    });
+  });
+
   // ─── printContext ─────────────────────────────────────────
   describe("printContext()", () => {
     it("prints empty line instead of project info to console", async () => {
@@ -323,11 +393,15 @@ describe("context.js", () => {
       const cp = require("child_process");
       let execCallCount = 0;
       cp.exec.mockImplementation((cmd, opts, cb) => {
-        if (typeof opts === "function") { cb = opts; opts = {}; }
+        if (typeof opts === "function") {
+          cb = opts;
+          opts = {};
+        }
         execCallCount++;
         if (cmd.includes("git branch")) cb(null, { stdout: "main\n" });
         else if (cmd.includes("git status")) cb(null, { stdout: "" });
-        else if (cmd.includes("git log")) cb(null, { stdout: "abc123 initial\n" });
+        else if (cmd.includes("git log"))
+          cb(null, { stdout: "abc123 initial\n" });
         else cb(new Error("unknown cmd"));
       });
 
@@ -350,7 +424,10 @@ describe("context.js", () => {
       const context = require("../cli/context");
       let branchName = "main";
       cp.exec.mockImplementation((cmd, opts, cb) => {
-        if (typeof opts === "function") { cb = opts; opts = {}; }
+        if (typeof opts === "function") {
+          cb = opts;
+          opts = {};
+        }
         if (cmd.includes("git branch")) cb(null, { stdout: branchName + "\n" });
         else if (cmd.includes("git status")) cb(null, { stdout: "" });
         else if (cmd.includes("git log")) cb(null, { stdout: "abc initial\n" });

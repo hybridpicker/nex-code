@@ -101,17 +101,18 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 
 - **ollama** — Ollama Cloud (`OLLAMA_API_KEY`)
 - **openai** — OpenAI API (`OPENAI_API_KEY`)
+- **deepseek** — DeepSeek API (`DEEPSEEK_API_KEY`)
 - **anthropic** — Anthropic API (`ANTHROPIC_API_KEY`)
 - **gemini** — Google Gemini API (`GEMINI_API_KEY` or `GOOGLE_API_KEY`)
 - **local** — Local Ollama Server (no key required)
 
 ### Model-Spec Format:
 
-`provider:model` (e.g. `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
+`provider:model` (e.g. `deepseek:deepseek-v4-flash`, `openai:gpt-4o`, `anthropic:claude-sonnet`, `gemini:gemini-2.5-flash`, `local:llama3`)
 
 ### Env Variables:
 
-- `OLLAMA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+- `OLLAMA_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`
 - `DEFAULT_PROVIDER` (default: `ollama`)
 - `DEFAULT_MODEL` (default: provider-dependent)
 - `FALLBACK_CHAIN` (comma-separated, e.g. `anthropic,openai`)

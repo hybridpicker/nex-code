@@ -8,10 +8,15 @@
 
 const { OllamaProvider, getOllamaRecommendations } = require("./ollama");
 const { OpenAIProvider } = require("./openai");
+const { DeepSeekProvider } = require("./deepseek");
 const { AnthropicProvider } = require("./anthropic");
 const { GeminiProvider } = require("./gemini");
 const { LocalProvider } = require("./local");
-const { checkBudget } = require("../costs");
+const {
+  checkBudget,
+  formatProviderCostMode,
+  getProviderCostMode,
+} = require("../costs");
 
 // ─── Model Equivalence Map ─────────────────────────────────────
 // Maps models across providers by capability tier (top/strong/fast).
@@ -21,18 +26,21 @@ const MODEL_EQUIVALENTS = {
   top: {
     ollama: "kimi-k2:1t",
     openai: "gpt-4.1",
+    deepseek: "deepseek-v4-pro",
     anthropic: "claude-sonnet-4-5",
     gemini: "gemini-2.5-pro",
   },
   strong: {
     ollama: "qwen3-coder:480b",
     openai: "gpt-4o",
+    deepseek: "deepseek-v4-pro",
     anthropic: "claude-sonnet",
     gemini: "gemini-2.5-flash",
   },
   fast: {
     ollama: "devstral-small-2:24b",
     openai: "gpt-4.1-mini",
+    deepseek: "deepseek-v4-flash",
     anthropic: "claude-haiku",
     gemini: "gemini-2.0-flash",
   },
@@ -68,6 +76,15 @@ function resolveModelForProvider(sourceModel, targetProviderName) {
   return equivalent || sourceModel; // No mapping for this provider — pass through
 }
 
+function buildNoConfiguredProviderError() {
+  return [
+    "No configured provider available.",
+    "Lowest-cost path: run /setup and choose Ollama Cloud, or set OLLAMA_API_KEY plus DEFAULT_PROVIDER=ollama.",
+    "Local free path: start Ollama locally, pull a coding model, then use /model local:<model>.",
+    "Paid fallback: set DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY and use /fallback only when you want paid backup.",
+  ].join("\n");
+}
+
 // ─── Registry State ────────────────────────────────────────────
 
 const providers = {};
@@ -82,6 +99,7 @@ function initDefaults() {
 
   registerProvider("ollama", new OllamaProvider());
   registerProvider("openai", new OpenAIProvider());
+  registerProvider("deepseek", new DeepSeekProvider());
   registerProvider("anthropic", new AnthropicProvider());
   registerProvider("gemini", new GeminiProvider());
   registerProvider("local", new LocalProvider());
@@ -175,7 +193,9 @@ function parseModelSpec(spec) {
     // Only treat as provider:model if prefix is a known provider name
     if (
       providers[prefix] ||
-      ["ollama", "openai", "anthropic", "gemini", "local"].includes(prefix)
+      ["ollama", "openai", "deepseek", "anthropic", "gemini", "local"].includes(
+        prefix,
+      )
     ) {
       return { provider: prefix, model: spec.slice(colonIdx + 1) };
     }
@@ -454,13 +474,15 @@ async function _tryProviders(callFn) {
       continue;
     }
 
+    const isFallback = idx > 0;
+    const model = isFallback
+      ? resolveModelForProvider(activeModelId, provName)
+      : activeModelId;
+
     try {
-      const isFallback = idx > 0;
-      const model = isFallback
-        ? resolveModelForProvider(activeModelId, provName)
-        : activeModelId;
-      if (isFallback && model !== activeModelId) {
-        process.stderr.write(`  [fallback: ${provName}:${model}]\n`);
+      if (isFallback) {
+        const mode = getProviderCostMode(provName).label;
+        process.stderr.write(`  [fallback: ${provName}:${model} · ${mode}]\n`);
       }
       return await callFn(provider, provName, model);
     } catch (err) {
@@ -469,9 +491,7 @@ async function _tryProviders(callFn) {
 
       // Intra-provider fallback: try alternative Ollama models before jumping provider
       if (provName === "ollama" && OLLAMA_FALLBACK_MODELS.length > 0) {
-        const tried = isFallback
-          ? resolveModelForProvider(activeModelId, provName)
-          : activeModelId;
+        const tried = model;
         for (const altModel of OLLAMA_FALLBACK_MODELS) {
           if (altModel === tried) continue;
           try {
@@ -494,9 +514,9 @@ async function _tryProviders(callFn) {
     );
   }
   if (configuredCount === 0) {
-    throw new Error("No configured provider available");
+    throw new Error(buildNoConfiguredProviderError());
   }
-  throw lastError || new Error("No configured provider available");
+  throw lastError || new Error(buildNoConfiguredProviderError());
 }
 
 /**
@@ -540,7 +560,11 @@ async function callChat(messages, tools, options = {}) {
   if (options.provider) {
     const provider = providers[options.provider];
     if (!provider || !provider.isConfigured()) {
-      throw new Error(`Provider '${options.provider}' is not available`);
+      const mode = formatProviderCostMode(options.provider);
+      throw new Error(
+        `Provider '${options.provider}' is not available (${mode}).\n` +
+          buildNoConfiguredProviderError(),
+      );
     }
     const chatOpts = { model: options.model || activeModelId, ...options };
     try {
@@ -628,6 +652,7 @@ module.exports = {
   setFallbackChain,
   getFallbackChain,
   resolveModelForProvider,
+  buildNoConfiguredProviderError,
   MODEL_EQUIVALENTS,
   OLLAMA_FALLBACK_MODELS,
   _reset,
