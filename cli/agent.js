@@ -4579,17 +4579,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // ─── Phase-based routing initialization ──────────────────────────────────
   // Skip phase routing when opts.skipPhaseRouting is set (skill command prompts
   // like /autoresearch need immediate tool access, not a plan phase)
-  if (
-    conversationMessages.length <= 1 &&
+  const _phaseInitText = _gatedPromptText || _firstUserText;
+  const _shouldInitPhaseRouting =
     !opts.skipPhaseRouting &&
-    !_isConversationalPrompt(_firstUserText)
-  ) {
-    _phaseEnabled = isPhaseRoutingEnabled();
+    !_isConversationalPrompt(_phaseInitText) &&
+    // Normally we only initialize on the very first message. For gated automation
+    // prompts, we also initialize mid-thread if phase routing isn't already active.
+    (conversationMessages.length <= 1 || (_isGatedAutomationPrompt && !_phaseEnabled));
+  if (_shouldInitPhaseRouting) {
+    // Force phase routing for gated automation prompts even when the user hasn't
+    // enabled phase routing globally. These workflows declare ordered safety
+    // gates (preflight → implement → verify) and should never run as a single
+    // unphased stream.
+    _phaseEnabled = _isGatedAutomationPrompt ? true : isPhaseRoutingEnabled();
     if (_phaseEnabled) {
-      const _cat = detectCategory(_firstUserText);
+      const _cat = detectCategory(_phaseInitText);
       _detectedCategoryId = _cat?.id || "coding";
       const _skipPlanForDirectCreation =
-        _shouldSkipPlanPhaseForDirectCreation(_firstUserText);
+        _shouldSkipPlanPhaseForDirectCreation(_phaseInitText);
       _currentPhase = _skipPlanForDirectCreation ? "implement" : "plan";
       _phaseModelOverride = getModelForPhase(
         _currentPhase,
@@ -4612,8 +4619,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ? `${C.cyan}  ⚡ Phase routing enabled — skipping plan phase for direct file task, starting in implement with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`
           : `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
       );
-      if (_skipPlanForDirectCreation && _directTaskPaths.length > 0) {
-        const _targetList = _directTaskPaths.slice(0, 3).join(", ");
+      const _phaseDirectTaskPaths = _extractDirectTaskPaths(_phaseInitText);
+      if (_skipPlanForDirectCreation && _phaseDirectTaskPaths.length > 0) {
+        const _targetList = _phaseDirectTaskPaths.slice(0, 3).join(", ");
         const _directTaskGuardrail = {
           role: "user",
           content:

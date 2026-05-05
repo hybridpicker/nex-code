@@ -3715,6 +3715,8 @@ describe("agent.js", () => {
     });
 
     it("runs git status preflight before executing write tools", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Plan: check status, pick one scoped improvement.", []);
       mockStream("Ok", [
         {
           function: {
@@ -3724,7 +3726,10 @@ describe("agent.js", () => {
           id: "c1",
         },
       ]);
-      mockStream("Done");
+      mockStream("Implemented the change.");
+      mockStream(
+        "PASS: Verified with a focused dry-run of the gated workflow and confirmed the guardrails behave as expected without extra side effects.",
+      );
 
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
@@ -3732,17 +3737,23 @@ describe("agent.js", () => {
 
       await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
 
+      // Preflight runs before any model call and before any write tool.
       expect(executeTool.mock.calls[0][0]).toBe("bash");
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
       expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+      expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
     });
 
     it("runs git status preflight even when the gated prompt is not the first message", async () => {
+      getAutoConfirm.mockReturnValue(true);
       setConversationMessages([
         { role: "user", content: "Earlier unrelated message" },
         { role: "assistant", content: "Ok" },
       ]);
 
+      mockStream("Plan: check status, pick one scoped improvement.", []);
       mockStream("Ok", [
         {
           function: {
@@ -3752,7 +3763,10 @@ describe("agent.js", () => {
           id: "c1",
         },
       ]);
-      mockStream("Done");
+      mockStream("Implemented the change.");
+      mockStream(
+        "PASS: Verified with a focused dry-run of the gated workflow and confirmed the guardrails behave as expected without extra side effects.",
+      );
 
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
@@ -3765,6 +3779,9 @@ describe("agent.js", () => {
         "git status --short --branch",
       );
       expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+      expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
     });
 
     it("does not auto-orchestrate gated prompts even when they look complex", async () => {
