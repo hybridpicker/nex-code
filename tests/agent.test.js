@@ -326,6 +326,9 @@ const {
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _shouldSkipPlanPhaseForDirectCreation,
+  _hasAutomationOrPreflightGate,
+  _extractDirectTaskPaths,
 } = require("../cli/agent");
 const {
   callStream,
@@ -3643,6 +3646,39 @@ describe("agent.js", () => {
           (m) =>
             typeof m.content === "string" &&
             m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
+    });
+
+    it("does not skip planning for automation backlog prompts with safety gates", () => {
+      const prompt =
+        "Automation: MuseScore parity and UX improvements\n" +
+        "Work from main only. At the start of each run, inspect git status and the current branch. " +
+        "If the worktree is dirty with unrelated changes, stop without editing, committing, or pushing. " +
+        "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
+
+      expect(_extractDirectTaskPaths(prompt)).toEqual([
+        "docs/keyboard-shortcuts.md",
+        "docs/user-manual.md",
+        "docs/phase-roadmap.md",
+      ]);
+      expect(_hasAutomationOrPreflightGate(prompt)).toBe(true);
+      expect(_shouldSkipPlanPhaseForDirectCreation(prompt)).toBe(false);
+    });
+
+    it("still skips planning for one explicit direct file edit", () => {
+      expect(
+        _shouldSkipPlanPhaseForDirectCreation(
+          "Update cli/agent.js file to add a missing guard",
+        ),
+      ).toBe(true);
+    });
+
+    it("does not skip planning for multiple backlog file references", () => {
+      expect(
+        _shouldSkipPlanPhaseForDirectCreation(
+          "Improve docs/keyboard-shortcuts.md and docs/user-manual.md based on the backlog.",
         ),
       ).toBe(false);
     });
