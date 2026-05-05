@@ -187,7 +187,9 @@ function computeBenchmarkScore(results, categoryWeights) {
     counts[result.completionReason] = (counts[result.completionReason] || 0) + 1;
     return counts;
   }, {});
-  const timeoutCount = statusCounts.timeout || 0;
+  const validTimeoutCount = valid.filter(
+    (result) => result.completionReason === "timeout",
+  ).length;
   const errorCount =
     (statusCounts.error || 0) +
     (statusCounts["setup-error"] || 0) +
@@ -212,7 +214,7 @@ function computeBenchmarkScore(results, categoryWeights) {
       }
       : { input: 0, output: 0 },
     statusCounts,
-    timeoutRate: valid.length > 0 ? Math.round((timeoutCount / valid.length) * 100) : 0,
+    timeoutRate: valid.length > 0 ? Math.round((validTimeoutCount / valid.length) * 100) : 0,
     errorRate: results.length > 0 ? Math.round((errorCount / results.length) * 100) : 0,
     invalidHarnessRate: results.length > 0 ? Math.round((invalidCount / results.length) * 100) : 0,
     harnessFailureRate: results.length > 0 ? Math.round((invalidCount / results.length) * 100) : 0,

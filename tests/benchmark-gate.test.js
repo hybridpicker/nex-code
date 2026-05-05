@@ -1,10 +1,17 @@
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
 const {
   collectConfiguredOllamaModels,
   evaluateGateRegression,
+  findPassingHistoryRun,
   findUnavailableOllamaModels,
+  findPreviousComparableRun,
   getBaselineContext,
+  loadGateEnvironment,
   routingSignature,
   shouldUseGateCache,
   summarizeGateBaseline,
@@ -83,6 +90,34 @@ describe("benchmark-gate helpers", () => {
       "qwen3-coder-next",
       "qwen3-coder:480b",
     ]);
+  });
+
+  it("loads global gate env with override semantics", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-gate-env-"));
+    const configDir = path.join(homeDir, ".nex-code");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, ".env"),
+      "DEFAULT_MODEL=deepseek-v4-flash:cloud\nNEX_ROUTE_CODING=deepseek-v4-flash:cloud\n",
+    );
+    const env = {
+      DEFAULT_MODEL: "stale-model",
+      NEX_ROUTE_CODING: "stale-route",
+    };
+
+    expect(loadGateEnvironment({ homeDir, env })).toBe(true);
+    expect(env.DEFAULT_MODEL).toBe("deepseek-v4-flash:cloud");
+    expect(env.NEX_ROUTE_CODING).toBe("deepseek-v4-flash:cloud");
+  });
+
+  it("skips global gate env loading when disabled", () => {
+    const env = {
+      NEX_NO_DOTENV: "1",
+      DEFAULT_MODEL: "stale-model",
+    };
+
+    expect(loadGateEnvironment({ homeDir: __dirname, env })).toBe(false);
+    expect(env.DEFAULT_MODEL).toBe("stale-model");
   });
 
   it("treats untagged Ollama model names as matching loaded tags", () => {
@@ -201,6 +236,121 @@ describe("benchmark-gate helpers", () => {
       feature: 95,
     });
     expect(summary.sampleSize).toBe(3);
+  });
+
+  it("excludes failed gate runs from the median baseline", () => {
+    const summary = summarizeGateBaseline(
+      {
+        finalScore: 94,
+        avgElapsed: 10000,
+        categoryScores: {
+          bugfix: 94,
+        },
+        metrics: {
+          timeoutRate: 5,
+        },
+      },
+      [
+        {
+          outcome: "fail",
+          finalScore: 40,
+          avgElapsed: 60000,
+          timeoutRate: 100,
+          categoryScores: {
+            bugfix: 40,
+          },
+        },
+        {
+          outcome: "pass",
+          finalScore: 96,
+          avgElapsed: 12000,
+          timeoutRate: 0,
+          categoryScores: {
+            bugfix: 96,
+          },
+        },
+      ],
+    );
+
+    expect(summary.finalScore).toBe(95);
+    expect(summary.avgElapsed).toBe(11000);
+    expect(summary.metrics.timeoutRate).toBe(3);
+    expect(summary.categoryScores).toEqual({ bugfix: 95 });
+    expect(summary.sampleSize).toBe(2);
+  });
+
+  it("uses only prior runs from the same commit for repeat detection", () => {
+    const history = [
+      { sha: "old", outcome: "fail", finalScore: 80 },
+      { sha: "other", outcome: "fail", finalScore: 81 },
+      { sha: "current", outcome: "pass", finalScore: 95 },
+    ];
+
+    expect(findPreviousComparableRun(history, "current")).toEqual({
+      sha: "current",
+      outcome: "pass",
+      finalScore: 95,
+    });
+    expect(findPreviousComparableRun(history, "missing")).toBeNull();
+  });
+
+  it("finds a prior passing gate run for the same commit and baseline", () => {
+    const history = [
+      {
+        sha: "current",
+        baselineKey: "old-baseline",
+        outcome: "pass",
+        finalScore: 95,
+      },
+      {
+        sha: "current",
+        baselineKey: "baseline",
+        outcome: "transient-warning",
+        finalScore: 94,
+      },
+      {
+        sha: "other",
+        baselineKey: "baseline",
+        outcome: "pass",
+        finalScore: 99,
+      },
+    ];
+
+    expect(
+      findPassingHistoryRun(history, {
+        sha: "current",
+        baselineKey: "baseline",
+      }),
+    ).toEqual({
+      sha: "current",
+      baselineKey: "baseline",
+      outcome: "transient-warning",
+      finalScore: 94,
+    });
+  });
+
+  it("does not reuse history after a failed run for the same commit", () => {
+    const history = [
+      {
+        sha: "current",
+        baselineKey: "baseline",
+        outcome: "pass",
+        finalScore: 95,
+      },
+      {
+        sha: "current",
+        baselineKey: "baseline",
+        outcome: "fail",
+        finalScore: 70,
+      },
+    ];
+
+    expect(
+      findPassingHistoryRun(history, {
+        sha: "current",
+        baselineKey: "baseline",
+      }),
+    ).toBeNull();
   });
 
   it("warns on a single non-severe regression against the median baseline", () => {
