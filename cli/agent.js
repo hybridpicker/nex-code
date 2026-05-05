@@ -4239,6 +4239,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     process.env.NEX_ORCHESTRATE_THRESHOLD || "3",
     10,
   );
+  // Hard safety gate: prompts that declare git/worktree workflow gates must
+  // run through phased execution (plan → implement → verify) and the git
+  // preflight guard below. Auto-orchestrating would bypass that guard.
+  const _isGatedAutomationPrompt =
+    conversationMessages.length <= 1 &&
+    _shouldRequireGitPreflight(typeof userContent === "string" ? userContent : "");
 
   try {
     const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
@@ -4252,7 +4258,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       );
     }
 
-    if (_shouldAutoOrchestrate(autoOrch, complexity, orchThreshold, planModeActive)) {
+    if (
+      !_isGatedAutomationPrompt &&
+      _shouldAutoOrchestrate(autoOrch, complexity, orchThreshold, planModeActive)
+    ) {
       console.log(
         `${C.yellow}⚡ Auto-orchestrate: ${complexity.estimatedGoals} goals → parallel agents${C.reset}`,
       );
