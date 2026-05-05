@@ -1581,6 +1581,7 @@ let _lastCreationSummary = null; // persists across turns: brief note of what th
 let _commitDetected = false; // true once a successful git commit is detected in bash output
 let _postCommitGitCalls = 0; // count of git status/diff/log calls after commit detected
 let _toolBudgetWarningInjected = false; // true after the 30-call budget warning has been injected
+let _gitPreflight = null; // { required, ran, ok, command, requiredBranch, branch, dirty, changedFiles, raw }
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1599,6 +1600,17 @@ let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+
+// ─── Automation preflight state ─────────────────────────────────────────────
+// For long-running/gated automations, require concrete git evidence (branch + worktree
+// status) before allowing implementation-phase actions.
+let _gitPreflightRequired = false;
+let _gitPreflightSatisfied = false;
+let _gitPreflightBranch = null;
+let _gitPreflightClean = null; // null = unknown, true = clean, false = dirty
+let _gitPreflightRaw = "";
+let _gitPreflightStopOnDirty = false;
+let _gitPreflightDirtyStopFired = false;
 
 function _shouldFastTrackPlanBlock(fnName) {
   return (
@@ -1646,6 +1658,103 @@ function _hasAutomationOrPreflightGate(prompt) {
   );
 }
 
+function _extractRequiredBranch(prompt) {
+  const text = String(prompt || "");
+  if (!text) return null;
+  const m = text.match(/\bwork from\s+([A-Za-z0-9._/-]+)\s+only\b/i);
+  return m ? m[1] : null;
+}
+
+function _parseGitStatusShortBranch(output) {
+  const text = String(output || "").trim();
+  if (!text) return { branch: null, dirty: null, changedFiles: [] };
+  if (/^fatal:/i.test(text)) return { branch: null, dirty: null, changedFiles: [] };
+  const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+  const header = lines.find((l) => l.startsWith("## ")) || lines[0] || "";
+  const headerBody = header.startsWith("## ") ? header.slice(3).trim() : header.trim();
+  const branch = headerBody ? headerBody.split("...")[0].trim().split(/\s+/)[0] : null;
+  const statusLines = lines.filter((l) => !l.startsWith("## ") && l.trim() !== "");
+  const changed = [];
+  for (const line of statusLines) {
+    // short status: XY<space>path (or "?? path", "R  from -> to")
+    const m = line.match(/^[ MADRCU?!]{1,2}\s+(.*)$/);
+    if (!m) continue;
+    const rest = (m[1] || "").trim();
+    if (!rest) continue;
+    const toPath = rest.includes(" -> ") ? rest.split(" -> ").pop() : rest;
+    if (toPath) changed.push(toPath);
+  }
+  return { branch: branch || null, dirty: changed.length > 0, changedFiles: changed };
+}
+
+function _shouldRequireGitPreflight(prompt) {
+  // Only enforce for prompts that explicitly describe automation/release gates.
+  // Keep it narrow to avoid surprising users on normal coding tasks.
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  // Require at least one explicit git/worktree gate term.
+  return /\b(git status|current branch|worktree|dirty|pull\/rebase|rebase|commit|push)\b/i.test(
+    text,
+  );
+}
+
+async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessages) {
+  if (_gitPreflight?.ran) return _gitPreflight;
+  const requiredBranch = _extractRequiredBranch(prompt);
+  const command = "git status --short --branch";
+  _gitPreflight = {
+    required: true,
+    ran: true,
+    ok: false,
+    command,
+    requiredBranch,
+    branch: null,
+    dirty: null,
+    changedFiles: [],
+    raw: "",
+  };
+
+  let out = "";
+  try {
+    out = await executeTool("bash", { command }, { silent: true, autoConfirm: true });
+  } catch (err) {
+    out = `ERROR: failed to run preflight: ${err?.message || String(err)}`;
+  }
+  const raw = String(out ?? "");
+  const parsed = _parseGitStatusShortBranch(raw);
+  _gitPreflight.branch = parsed.branch;
+  _gitPreflight.dirty = parsed.dirty;
+  _gitPreflight.changedFiles = parsed.changedFiles;
+  _gitPreflight.raw = raw;
+
+  // Add concrete evidence into the conversation so the model can't "assume" safety.
+  const evidenceMsg = {
+    role: "tool",
+    tool_call_id: "preflight-git-status",
+    content: raw || "(no output)",
+  };
+  conversationMessages.push(evidenceMsg);
+  apiMessages.push(evidenceMsg);
+
+  // Decide whether it's safe to proceed.
+  if (!raw || /^ERROR:/i.test(raw) || /^fatal:/i.test(raw)) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  if (parsed.dirty) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  if (requiredBranch && parsed.branch && parsed.branch !== requiredBranch) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+
+  _gitPreflight.ok = true;
+  return _gitPreflight;
+}
+
 function _isConversationalPrompt(prompt) {
   const text = String(prompt || "").trim();
   if (!text) return false;
@@ -1671,6 +1780,47 @@ function _extractDirectTaskPaths(prompt) {
   );
   if (!matches) return [];
   return [...new Set(matches.map((m) => _normalizePromptPathMatch(m)))];
+}
+
+function _requiresGitPreflight(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  return /\b(work from main|current branch|git status|worktree|dirty|unrelated changes?|clean working tree|pull\/rebase|before changing|before editing)\b/i.test(
+    text,
+  );
+}
+
+function _promptRequiresStopOnDirtyWorktree(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  return /\b(if|when)\b[\s\S]{0,160}\b(worktree|working tree|repo|repository)\b[\s\S]{0,120}\bdirty\b[\s\S]{0,160}\b(stop|abort|do not|don't|without editing|without committing|without pushing)\b/i.test(
+    text,
+  );
+}
+
+function _isGitStatusBashCommand(command) {
+  const cmd = String(command || "");
+  if (!cmd) return false;
+  // Accept common variants; the important part is that it yields branch + dirty state.
+  return /\bgit\s+status\b/i.test(cmd);
+}
+
+function _parseGitStatusEvidence(fnName, output) {
+  const text = String(output || "");
+  if (!text) return { branch: null, clean: null };
+  if (fnName === "git_status") {
+    const branchMatch = text.match(/^\s*Branch:\s*(.+)\s*$/m);
+    const branch = branchMatch ? branchMatch[1].trim() : null;
+    const clean = /\bClean working tree\b/i.test(text);
+    return { branch, clean };
+  }
+  // bash("git status --short --branch") style
+  const branchMatch = text.match(/^\s*##\s+([^\s.]+)(?:\.\.\.|$)/m);
+  const branch = branchMatch ? branchMatch[1].trim() : null;
+  const lines = text.trim().split("\n").filter(Boolean);
+  const clean = lines.length === 1 && /^\s*##\s+/.test(lines[0]);
+  return { branch, clean };
 }
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
@@ -3586,6 +3736,7 @@ function _resetSessionTracking() {
   _detectedCategoryId = null;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
+  _gitPreflight = null;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -4452,6 +4603,55 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         apiMessages.push(_directTaskGuardrail);
       }
     }
+  }
+
+  // ─── Hard preflight guard for gated automation prompts ────────────────────
+  // Prompts that declare git/worktree safety gates must not enter implementation
+  // without concrete evidence from a git status/branch check. Footer branch info
+  // is not sufficient because it may be cached or missing dirty-file details.
+  if (conversationMessages.length <= 1 && _shouldRequireGitPreflight(_firstUserText)) {
+    const preflight = await _runGitPreflightIfNeeded(
+      _firstUserText,
+      apiMessages,
+      conversationMessages,
+    );
+    if (!preflight.ok) {
+      const requiredBranch = preflight.requiredBranch;
+      const branchHint = preflight.branch ? `Current branch: ${preflight.branch}. ` : "";
+      const requiredHint = requiredBranch ? `Required branch: ${requiredBranch}. ` : "";
+      const dirtyHint =
+        preflight.dirty === true
+          ? `Worktree is dirty (${preflight.changedFiles.length} changed file${preflight.changedFiles.length === 1 ? "" : "s"}). `
+          : "";
+      const errorHint =
+        !preflight.raw || /^ERROR:/i.test(preflight.raw) || /^fatal:/i.test(preflight.raw)
+          ? "Git preflight failed (no usable status output). "
+          : "";
+      const msg =
+        "[PRECHECK BLOCKED] This prompt contains explicit git/worktree safety gates. " +
+        "I ran `git status --short --branch` as preflight and will not proceed until it's safe.\n\n" +
+        `${errorHint}${branchHint}${requiredHint}${dirtyHint}`.trim() +
+        "\n\nNext step: make the worktree clean and be on the required branch, then re-run the automation.";
+      const assistantMsg = { role: "assistant", content: msg };
+      conversationMessages.push(assistantMsg);
+      saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
+      console.log(msg);
+      return;
+    }
+    // Reinforce final-summary honesty for gated workflows.
+    const summaryGuard = {
+      role: "user",
+      content:
+        "[SYSTEM] This is a gated automation workflow. In your final summary, explicitly report: " +
+        "(1) whether preflight ran and the exact command used, " +
+        "(2) which branch you worked on, " +
+        "(3) whether the worktree was clean before edits, and " +
+        "(4) verification results (PASS/FAIL) with concrete evidence. " +
+        "Do not claim safety or verification without evidence from tool output.",
+    };
+    conversationMessages.push(summaryGuard);
+    apiMessages.push(summaryGuard);
   }
 
   // ─── Stats tracking for résumé ───
