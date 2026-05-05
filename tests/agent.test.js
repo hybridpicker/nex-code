@@ -3724,6 +3724,36 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[1][0]).toBe("edit_file");
     });
 
+    it("runs git status preflight even when the gated prompt is not the first message", async () => {
+      setConversationMessages([
+        { role: "user", content: "Earlier unrelated message" },
+        { role: "assistant", content: "Ok" },
+      ]);
+
+      mockStream("Ok", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: { path: "cli/agent.js" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("OK"); // edit_file result
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe(
+        "git status --short --branch",
+      );
+      expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+    });
+
     it("does not auto-orchestrate gated prompts even when they look complex", async () => {
       const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
       detectComplexPrompt.mockReturnValueOnce({
@@ -3747,6 +3777,52 @@ describe("agent.js", () => {
       expect(executeTool).toHaveBeenCalledTimes(1);
       expect(executeTool.mock.calls[0][0]).toBe("bash");
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+    });
+
+    it("does not auto-orchestrate gated prompts even when they are not the first message", async () => {
+      setConversationMessages([
+        { role: "user", content: "Earlier unrelated message" },
+        { role: "assistant", content: "Ok" },
+      ]);
+
+      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+      detectComplexPrompt.mockReturnValueOnce({
+        isComplex: true,
+        estimatedGoals: 3,
+        reason: "3 bullet points",
+      });
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\n" +
+        "Work from main only. Please run git status and check current branch.\n" +
+        "- Fix login\n" +
+        "- Fix logout\n" +
+        "- Fix search\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(runOrchestrated).not.toHaveBeenCalled();
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+    });
+
+    it("re-runs git status preflight for each gated prompt in a long-running thread", async () => {
+      executeTool
+        .mockResolvedValueOnce("## devel...origin/devel\n")
+        .mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      expect(executeTool.mock.calls[1][0]).toBe("bash");
+      expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
     });
 
     it("stops immediately when preflight shows a dirty worktree", async () => {
