@@ -188,6 +188,15 @@ jest.mock("../cli/tools", () => ({
   executeTool: jest.fn(),
 }));
 
+jest.mock("../cli/orchestrator", () => ({
+  detectComplexPrompt: jest
+    .fn()
+    .mockReturnValue({ isComplex: false, estimatedGoals: 0, reason: "mock" }),
+  runOrchestrated: jest.fn().mockResolvedValue({
+    synthesis: { summary: "mock synthesis", filesChanged: [], conflicts: [] },
+  }),
+}));
+
 jest.mock("../cli/context", () => ({
   gatherProjectContext: jest.fn().mockReturnValue("PACKAGE: test-project"),
 }));
@@ -3713,6 +3722,31 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[0][0]).toBe("bash");
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
       expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+    });
+
+    it("does not auto-orchestrate gated prompts even when they look complex", async () => {
+      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+      detectComplexPrompt.mockReturnValueOnce({
+        isComplex: true,
+        estimatedGoals: 3,
+        reason: "3 bullet points",
+      });
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\n" +
+        "Work from main only. Please run git status and check current branch.\n" +
+        "- Fix login\n" +
+        "- Fix logout\n" +
+        "- Fix search\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(runOrchestrated).not.toHaveBeenCalled();
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
     });
 
     it("stops immediately when preflight shows a dirty worktree", async () => {
