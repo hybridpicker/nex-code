@@ -1644,6 +1644,9 @@ function _shouldSkipPlanPhaseForDirectCreation(prompt) {
 function _hasAutomationOrPreflightGate(prompt) {
   const text = String(prompt || "");
   if (!text) return false;
+  // Branch-only gates ("Work on main only") are strong automation-style constraints
+  // even when the prompt doesn't include an "Automation:" header.
+  if (_extractRequiredBranch(text)) return true;
   return (
     /\bAutomation(?:\s+ID)?\b|\bLast run:\b/i.test(text) ||
     /\b(work from main|at the start|current branch|git status|worktree|dirty|unrelated changes?|pull\/rebase|before changing|before editing)\b/i.test(
