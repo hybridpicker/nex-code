@@ -9055,16 +9055,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (commitSucceeded) {
             _commitDetected = true;
             _postCommitGitCalls = 0;
+            const _postCommitCap = _stickyGitPreflightRequired ? 4 : 2;
             debugLog(
-              `${C.green}  ✓ Git commit detected — post-commit verification cap active (max 2 git status/diff/log)${C.reset}`,
+              `${C.green}  ✓ Git commit detected — post-commit verification cap active (max ${_postCommitCap} git status/diff/log)${C.reset}`,
             );
-            const commitMsg = {
-              role: "user",
-              content:
-                "[SYSTEM] ✓ Git commit succeeded. Your changes are committed. " +
-                "Do NOT run further git status / git diff / git log calls — the commit is done. " +
-                "Write your final summary and stop. Running extra verification commands wastes tool calls and hurts session quality.",
-            };
+            const commitMsg = _stickyGitPreflightRequired
+              ? {
+                  role: "user",
+                  content:
+                    "[SYSTEM] ✓ Git commit succeeded. " +
+                    "This is a gated automation workflow: ensure you still capture final-state evidence. " +
+                    "Next: push (if required by the prompt), then run `git status --short --branch` once and include its output in the final automation report. " +
+                    "Avoid extra git diff/log unless needed to explain a blocker.",
+                }
+              : {
+                  role: "user",
+                  content:
+                    "[SYSTEM] ✓ Git commit succeeded. Your changes are committed. " +
+                    "Do NOT run further git status / git diff / git log calls — the commit is done. " +
+                    "Write your final summary and stop. Running extra verification commands wastes tool calls and hurts session quality.",
+                };
             conversationMessages.push(commitMsg);
             apiMessages.push(commitMsg);
           }
@@ -9075,7 +9085,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const gitVerifyPattern = /git\s+(status|diff|log|show)\b/;
           if (gitVerifyPattern.test(prep.args.command)) {
             _postCommitGitCalls++;
-            if (_postCommitGitCalls > 2) {
+            const cap = _stickyGitPreflightRequired ? 4 : 2;
+            if (_postCommitGitCalls > cap) {
               debugLog(
                 `${C.yellow}  ⚠ Post-commit git verification blocked (call ${_postCommitGitCalls})${C.reset}`,
               );
@@ -9085,7 +9096,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   "[SYSTEM] ⚠ STOP: You already ran " +
                   (_postCommitGitCalls - 1) +
                   " git verification commands after committing. " +
-                  "The commit is confirmed. Write your final summary NOW and do not make any more tool calls.",
+                  (_stickyGitPreflightRequired
+                    ? "In gated automation workflows, keep tool use minimal: you already have enough evidence for the final report. Write the final automation report now and stop."
+                    : "The commit is confirmed. Write your final summary NOW and do not make any more tool calls."),
               };
               conversationMessages.push(gitBlockMsg);
               apiMessages.push(gitBlockMsg);
