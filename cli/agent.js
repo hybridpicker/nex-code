@@ -1610,6 +1610,7 @@ const _freshlyWrittenFiles = new Set(); // files just written — allow one imme
 let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
 let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
 let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
+let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
 
 const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
 const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
@@ -3906,6 +3907,7 @@ function _resetSessionTracking() {
   _boundedBacklogPlanActive = false;
   _boundedBacklogPlanReads = 0;
   _boundedBacklogDecisionInjected = false;
+  _boundedBacklogDecisionMisses = 0;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -4792,6 +4794,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _isBoundedBacklogPlanningPrompt(_phaseInitText);
       _boundedBacklogPlanReads = 0;
       _boundedBacklogDecisionInjected = false;
+      _boundedBacklogDecisionMisses = 0;
       _freshlyWrittenFiles.clear();
       if (process.stdout.isTTY) {
         console.log(
@@ -6522,6 +6525,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
               saveNow(conversationMessages);
               break outer;
+            }
+            if (
+              _boundedBacklogPlanActive &&
+              !_looksLikeBoundedBacklogDecision(_assistantText)
+            ) {
+              _boundedBacklogDecisionMisses++;
+              if (
+                _boundedBacklogDecisionMisses >= 2 ||
+                _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+              ) {
+                const msg =
+                  "no safe task found\n\n" +
+                  "Bounded backlog planning requires an explicit selected-improvement decision " +
+                  "with files and verification evidence. Stopping before implementation because " +
+                  "the plan response did not follow the required template.";
+                const assistantMsg = { role: "assistant", content: msg };
+                conversationMessages.push(assistantMsg);
+                console.log(`\n${msg}`);
+                saveNow(conversationMessages);
+                _scoreAndPrint(conversationMessages);
+                break outer;
+              }
+              const decisionMsg = {
+                role: "user",
+                content: _buildBoundedBacklogPlanInstruction({
+                  blocked:
+                    _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS,
+                }),
+              };
+              conversationMessages.push(decisionMsg);
+              apiMessages.push(decisionMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Bounded backlog plan: missing selected-improvement decision — re-prompting in plan phase${C.reset}`,
+              );
+              continue;
             }
             // If the plan found nothing actionable, exit gracefully instead of
             // blindly entering implement phase where the model will just loop.

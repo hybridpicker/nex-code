@@ -3752,6 +3752,51 @@ describe("agent.js", () => {
       );
     });
 
+    it("does not transition to implement until the bounded backlog decision template is satisfied", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Plan: I will review the backlog and propose a change. Then I will implement it.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      const templateCount = msgs.filter(
+        (m) =>
+          m.role === "user" &&
+          typeof m.content === "string" &&
+          m.content.includes("Bounded backlog automation plan template"),
+      ).length;
+      expect(templateCount).toBeGreaterThanOrEqual(2);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("no safe task found"),
+        ),
+      ).toBe(true);
+    });
+
     it("stops bounded backlog planning instead of implementing after too many reads", async () => {
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n")
@@ -3955,7 +4000,15 @@ describe("agent.js", () => {
 
     it("runs git status preflight before executing write tools", async () => {
       getAutoConfirm.mockReturnValue(true);
-      mockStream("Plan: check status, pick one scoped improvement.", []);
+      mockStream(
+        "Selected improvement: tighten bounded backlog decision gating\n" +
+          "Selection rationale: prevents bypassing the required plan template\n" +
+          "Files: cli/agent.js\n" +
+          "Implementation outline: block plan→implement unless the template is satisfied\n" +
+          "Verification plan: npm test -- tests/agent.test.js\n" +
+          "Browser/UI applicability: not required",
+        [],
+      );
       mockStream("Ok", [
         {
           function: {
@@ -3992,7 +4045,15 @@ describe("agent.js", () => {
         { role: "assistant", content: "Ok" },
       ]);
 
-      mockStream("Plan: check status, pick one scoped improvement.", []);
+      mockStream(
+        "Selected improvement: tighten bounded backlog decision gating\n" +
+          "Selection rationale: prevents bypassing the required plan template\n" +
+          "Files: cli/agent.js\n" +
+          "Implementation outline: block plan→implement unless the template is satisfied\n" +
+          "Verification plan: npm test -- tests/agent.test.js\n" +
+          "Browser/UI applicability: not required",
+        [],
+      );
       mockStream("Ok", [
         {
           function: {
