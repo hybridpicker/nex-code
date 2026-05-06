@@ -3812,6 +3812,31 @@ describe("agent.js", () => {
       "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
       "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
 
+    it("records preflight as an assistant tool_call + tool result pair", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      const msgs = getConversationMessages();
+      const callMsg = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          Array.isArray(m.tool_calls) &&
+          m.tool_calls.some(
+            (tc) =>
+              tc?.id === "preflight-git-status" &&
+              (tc.function?.name || tc.name) === "bash",
+          ),
+      );
+      expect(callMsg).toBeDefined();
+      const toolMsg = msgs.find(
+        (m) => m.role === "tool" && m.tool_call_id === "preflight-git-status",
+      );
+      expect(toolMsg).toBeDefined();
+    });
+
 	    it("runs preflight for branch-only gates (no explicit git-status wording)", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
 
