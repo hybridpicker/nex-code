@@ -1582,6 +1582,9 @@ let _commitDetected = false; // true once a successful git commit is detected in
 let _postCommitGitCalls = 0; // count of git status/diff/log calls after commit detected
 let _toolBudgetWarningInjected = false; // true after the 30-call budget warning has been injected
 let _gitPreflight = null; // { required, ran, ok, command, requiredBranch, branch, dirty, changedFiles, raw }
+let _stickyGitPreflightRequired = false; // sticky per-thread: once required, enforce on follow-ups too
+let _stickyGitRequiredBranch = null; // sticky required branch for gated workflows
+let _stickyGitSummaryGuardInjected = false; // avoid injecting duplicate summary guard messages
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1719,7 +1722,7 @@ function _shouldRequireGitPreflight(prompt) {
 
 async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessages) {
   if (_gitPreflight?.ran) return _gitPreflight;
-  const requiredBranch = _extractRequiredBranch(prompt);
+  const requiredBranch = _stickyGitRequiredBranch || _extractRequiredBranch(prompt);
   const command = "git status --short --branch";
   _gitPreflight = {
     required: true,
@@ -3771,6 +3774,9 @@ function _resetSessionTracking() {
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
+  _stickyGitPreflightRequired = false;
+  _stickyGitRequiredBranch = null;
+  _stickyGitSummaryGuardInjected = false;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -4282,7 +4288,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       : typeof userInput === "string"
         ? userInput
         : "";
-  const _isGatedAutomationPrompt = _shouldRequireGitPreflight(_gatedPromptText);
+  const _thisPromptRequiresGitPreflight = _shouldRequireGitPreflight(_gatedPromptText);
+  if (_thisPromptRequiresGitPreflight) {
+    _stickyGitPreflightRequired = true;
+    const requiredBranch = _extractRequiredBranch(_gatedPromptText);
+    if (requiredBranch) _stickyGitRequiredBranch = requiredBranch;
+  }
+  // Sticky per-thread: follow-up prompts may omit the original gate wording,
+  // but we still must enforce the same git/worktree safety gates.
+  const _isGatedAutomationPrompt = _stickyGitPreflightRequired;
 
   try {
     const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
@@ -4664,9 +4678,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Prompts that declare git/worktree safety gates must not enter implementation
   // without concrete evidence from a git status/branch check. Footer branch info
   // is not sufficient because it may be cached or missing dirty-file details.
-  if (_shouldRequireGitPreflight(_gatedPromptText)) {
-    // Force a fresh git status read on each gated prompt. Long-running automation
-    // threads may contain multiple runs; caching preflight across turns is unsafe.
+  if (_stickyGitPreflightRequired) {
+    // Force a fresh git status read on each turn while a gated automation is
+    // active. Follow-up prompts may omit the original gate wording, but the
+    // workflow is still blocked on the same concrete evidence.
     _gitPreflight = null;
     const preflight = await _runGitPreflightIfNeeded(
       _gatedPromptText,
@@ -4697,19 +4712,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       console.log(msg);
       return;
     }
-    // Reinforce final-summary honesty for gated workflows.
-    const summaryGuard = {
-      role: "user",
-      content:
-        "[SYSTEM] This is a gated automation workflow. In your final summary, explicitly report: " +
-        "(1) whether preflight ran and the exact command used, " +
-        "(2) which branch you worked on, " +
-        "(3) whether the worktree was clean before edits, and " +
-        "(4) verification results (PASS/FAIL) with concrete evidence. " +
-        "Do not claim safety or verification without evidence from tool output.",
-    };
-    conversationMessages.push(summaryGuard);
-    apiMessages.push(summaryGuard);
+    if (!_stickyGitSummaryGuardInjected) {
+      // Reinforce final-summary honesty for gated workflows.
+      const summaryGuard = {
+        role: "user",
+        content:
+          "[SYSTEM] This is a gated automation workflow. In your final summary, explicitly report: " +
+          "(1) whether preflight ran and the exact command used, " +
+          "(2) which branch you worked on, " +
+          "(3) whether the worktree was clean before edits, and " +
+          "(4) verification results (PASS/FAIL) with concrete evidence. " +
+          "Do not claim safety or verification without evidence from tool output.",
+      };
+      conversationMessages.push(summaryGuard);
+      apiMessages.push(summaryGuard);
+      _stickyGitSummaryGuardInjected = true;
+    }
   }
 
   // ─── Stats tracking for résumé ───

@@ -3931,6 +3931,22 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
     });
 
+    it("keeps enforcing git preflight on follow-up prompts that omit gate wording", async () => {
+      executeTool
+        .mockResolvedValueOnce("## devel...origin/devel\n")
+        .mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+      await processInput("Please continue.", null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      expect(executeTool.mock.calls[1][0]).toBe("bash");
+      expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
+    });
+
     it("stops immediately when preflight shows a dirty worktree", async () => {
       executeTool.mockResolvedValueOnce("## main...origin/main\n M cli/agent.js\n");
 
