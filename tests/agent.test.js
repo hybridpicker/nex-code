@@ -3852,6 +3852,18 @@ describe("agent.js", () => {
 	      expect(msgs.indexOf(toolMsg)).toBeLessThan(precheckIdx);
 	    });
 
+	    it("prints preflight evidence in headless mode when not silent", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+	      await processInput(prompt, null, { autoConfirm: true });
+
+	      const out = logOutput();
+	      expect(out).toContain("[PRECHECK] Preflight ran: `git status --short --branch`.");
+	      expect(out).toContain("## devel...origin/devel");
+	    });
+
 	    it("runs preflight for branch-only gates (no explicit git-status wording)", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
 
