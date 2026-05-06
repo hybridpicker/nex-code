@@ -1850,10 +1850,13 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
   const precheckMsg = { role: "assistant", content: _precheckText };
   conversationMessages.push(precheckMsg);
   apiMessages.push(precheckMsg);
-  try {
-    if (process.stdout.isTTY) console.log(_precheckText);
-  } catch {
-    /* ignore */
+  if (!_turnSilent) {
+    try {
+      if (_serverHooks?.onToken) _serverHooks.onToken(_precheckText + "\n");
+      else console.log(_precheckText);
+    } catch {
+      /* ignore */
+    }
   }
 
   // Decide whether it's safe to proceed.
@@ -4292,6 +4295,9 @@ function _extractTechHints(text) {
 
 // Module-level server hooks — set by processInput in server mode, null in normal CLI mode.
 let _serverHooks = null;
+// Per-turn quiet flag (opts.silent) — used for out-of-band logs (e.g. preflight evidence)
+// so unit tests and server mode can suppress stdout noise deterministically.
+let _turnSilent = false;
 
 /**
  * Process a single user input through the agentic loop.
@@ -4306,6 +4312,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   STALE_ABORT_MS = _profile.staleAbort;
 
   _serverHooks = serverHooks;
+  _turnSilent = !!opts.silent;
 
   // Prepend creation-task context note from the previous turn so the model
   // can answer follow-up questions without re-investigating the codebase.
