@@ -1777,6 +1777,7 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
   if (_gitPreflight?.ran) return _gitPreflight;
   const requiredBranch = _stickyGitRequiredBranch || _extractRequiredBranch(prompt);
   const command = "git status --short --branch";
+  const toolCallId = "preflight-git-status";
   _gitPreflight = {
     required: true,
     ran: true,
@@ -1791,6 +1792,24 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
 
   let out = "";
   try {
+    // Record a proper tool-call pair into the transcript/run-history:
+    // assistant(tool_calls) → tool(tool_call_id).
+    // This makes preflight evidence visible and avoids "orphan tool message"
+    // API errors on providers that enforce tool-call structure strictly.
+    const assistantToolCallMsg = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: "function",
+          function: { name: "bash", arguments: JSON.stringify({ command }) },
+        },
+      ],
+    };
+    conversationMessages.push(assistantToolCallMsg);
+    apiMessages.push(assistantToolCallMsg);
+
     out = await executeTool("bash", { command }, { silent: true, autoConfirm: true });
   } catch (err) {
     out = `ERROR: failed to run preflight: ${err?.message || String(err)}`;
@@ -1807,7 +1826,7 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
   // Add concrete evidence into the conversation so the model can't "assume" safety.
   const evidenceMsg = {
     role: "tool",
-    tool_call_id: "preflight-git-status",
+    tool_call_id: toolCallId,
     content: raw || "(no output)",
   };
   conversationMessages.push(evidenceMsg);
