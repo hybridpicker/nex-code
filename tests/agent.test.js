@@ -3847,6 +3847,46 @@ describe("agent.js", () => {
         ),
       ).toBe(false);
     });
+
+    it("removes plan-phase tool access after the bounded backlog hard evidence budget", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      for (let n = 0; n < 10; n++) {
+        mockStream("", [
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `docs/backlog-${n}.md` },
+            },
+            id: `read-${n}`,
+          },
+        ]);
+      }
+
+      let toolsOnDecisionCall = null;
+      callStream.mockImplementationOnce(async (_messages, tools) => {
+        toolsOnDecisionCall = tools;
+        return { content: "no safe task found", tool_calls: [] };
+      });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        // Raise maxIterations so the plan phase doesn't stop at the default phase budget
+        // before the bounded-backlog hard-evidence tool-freeze can take effect.
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
+      expect(toolsOnDecisionCall).toHaveLength(0);
+      // 1 preflight bash call + 10 read_file tool executions; the decision call has no tools.
+      expect(executeTool).toHaveBeenCalledTimes(11);
+    });
   });
 
 		  describe("gated automation preflight guard", () => {

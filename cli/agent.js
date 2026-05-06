@@ -5234,6 +5234,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           allTools = baseTools.filter((t) =>
             PHASE_PLAN_TOOLS.has(t.function.name),
           );
+          // Bounded backlog automations must make a decision quickly. Once the plan phase
+          // has gathered enough read/search evidence, remove tool access entirely so the
+          // model is forced to produce the required decision template (or a clean stop)
+          // instead of continuing to explore.
+          if (
+            _boundedBacklogPlanActive &&
+            _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+          ) {
+            allTools = [];
+          }
         } else if (_phaseEnabled && _currentPhase === "verify") {
           allTools = baseTools.filter((t) =>
             PHASE_VERIFY_TOOLS.has(t.function.name),
@@ -7339,11 +7349,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
       ) {
         for (const prep of prepared) {
-          if (
-            !prep.canExecute ||
-            !BOUNDED_BACKLOG_EVIDENCE_TOOLS.has(prep.fnName)
-          )
-            continue;
+          if (!prep.canExecute) continue;
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
