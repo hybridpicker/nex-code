@@ -338,6 +338,9 @@ const {
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,
+  _isBoundedBacklogPlanningPrompt,
+  _buildBoundedBacklogPlanInstruction,
+  _looksLikeBoundedBacklogDecision,
 } = require("../cli/agent");
 const {
   callStream,
@@ -3688,6 +3691,114 @@ describe("agent.js", () => {
       expect(
         _shouldSkipPlanPhaseForDirectCreation(
           "Improve docs/keyboard-shortcuts.md and docs/user-manual.md based on the backlog.",
+        ),
+      ).toBe(false);
+    });
+
+    it("recognizes bounded backlog automation prompts and requires the plan template", () => {
+      const prompt =
+        "Automation: MuseScore parity and UX improvements\n" +
+        "Work from main only. Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement in priority order.";
+
+      expect(_isBoundedBacklogPlanningPrompt(prompt)).toBe(true);
+
+      const instruction = _buildBoundedBacklogPlanInstruction();
+      expect(instruction).toContain("Selected improvement:");
+      expect(instruction).toContain("Selection rationale:");
+      expect(instruction).toContain("Files:");
+      expect(instruction).toContain("Verification plan:");
+      expect(instruction).toContain("Browser/UI applicability:");
+
+      expect(
+        _looksLikeBoundedBacklogDecision(
+          "Selected improvement: fix shortcut docs\n" +
+            "Selection rationale: highest value gap\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Browser/UI applicability: not required",
+        ),
+      ).toBe(true);
+      expect(_looksLikeBoundedBacklogDecision("no safe task found")).toBe(true);
+    });
+
+    it("injects the bounded backlog plan template before the model plans", async () => {
+      let firstMessages = null;
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return { content: "no safe task found", tool_calls: [] };
+      });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(firstMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "user",
+            content: expect.stringContaining(
+              "Bounded backlog automation plan template",
+            ),
+          }),
+        ]),
+      );
+    });
+
+    it("stops bounded backlog planning instead of implementing after too many reads", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      for (let n = 0; n < 10; n++) {
+        mockStream("", [
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `docs/backlog-${n}.md` },
+            },
+            id: `read-${n}`,
+          },
+        ]);
+      }
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Bounded backlog automation plan template"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("no safe task found"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
         ),
       ).toBe(false);
     });
