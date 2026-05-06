@@ -3897,6 +3897,31 @@ describe("agent.js", () => {
       "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
       "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
 
+	    it("emits preflight tool_start/tool_end events via serverHooks", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+	      const serverHooks = {
+	        onToken: jest.fn(),
+	        onThinkingToken: jest.fn(),
+	        onToolStart: jest.fn(),
+	        onToolEnd: jest.fn(),
+	      };
+
+	      await processInput(prompt, serverHooks, { autoConfirm: true, silent: true });
+
+	      expect(serverHooks.onToolStart).toHaveBeenCalledWith("bash", {
+	        command: "git status --short --branch",
+	      });
+	      expect(serverHooks.onToolEnd).toHaveBeenCalled();
+
+	      const toolEnd = serverHooks.onToolEnd.mock.calls.find(
+	        (c) => c && c[0] === "bash",
+	      );
+	      expect(toolEnd).toBeDefined();
+	      expect(String(toolEnd[1] || "")).toContain("git status --short --branch");
+	    });
+
 	    it("records preflight as an assistant tool_call + tool result pair", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
 
