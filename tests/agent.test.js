@@ -3849,7 +3849,7 @@ describe("agent.js", () => {
     });
   });
 
-  describe("gated automation preflight guard", () => {
+	  describe("gated automation preflight guard", () => {
     const gatedPrompt =
       "Automation: MuseScore parity and UX improvements\n" +
       "Work from main only. At the start of each run, inspect git status and the current branch. " +
@@ -4206,7 +4206,7 @@ describe("agent.js", () => {
       expect(blocked).toBeDefined();
     });
 
-    it("enforces a structured final automation report when verify output is non-compliant", async () => {
+	    it("enforces a structured final automation report when verify output is non-compliant", async () => {
       getAutoConfirm.mockReturnValue(true);
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n") // preflight ok
@@ -4326,6 +4326,146 @@ describe("agent.js", () => {
             m.content.includes("Final git status:"),
         ),
       ).toBe(true);
-    });
-  });
+	    });
+
+      it("allows final git-status evidence after commit in gated automations", async () => {
+        getAutoConfirm.mockReturnValue(true);
+        executeTool
+          .mockResolvedValueOnce("## main...origin/main\n") // preflight ok
+          .mockResolvedValueOnce("ok") // write_file result
+          .mockResolvedValueOnce("[main abc1234] fix: test\n 1 file changed, 1 insertion(+)\n") // git commit
+          .mockResolvedValueOnce("## main...origin/main\n") // final git status
+          .mockResolvedValueOnce("PASS"); // verify bash result
+
+        // 1) Plan phase: try a bash call so it gets blocked
+        mockStream(
+          "I will run a command to proceed.",
+          [
+            {
+              function: { name: "bash", arguments: { command: "echo hi" } },
+              id: "b-plan",
+            },
+          ],
+        );
+
+        // 2) Plan phase: text-only response triggers plan→implement auto-advance
+        mockStream("Proceeding with implementation.");
+
+        // 3) Implement phase: make a change
+        mockStream(
+          "Implementing a small change.",
+          [
+            {
+              function: {
+                name: "write_file",
+                arguments: { path: "fix.txt", content: "x\n" },
+              },
+              id: "w1",
+            },
+          ],
+        );
+
+        // 4) Implement phase: text-only response triggers implement→verify transition
+        mockStream("Implementation done; moving to verification.");
+
+        // 5) Verify phase: perform a commit
+        mockStream(
+          "Committing changes now.",
+          [
+            {
+              function: {
+                name: "bash",
+                arguments: { command: "git commit -am \"test\"" },
+              },
+              id: "b-commit",
+            },
+          ],
+        );
+
+        // 6) Verify phase: capture final git status evidence
+        mockStream(
+          "Checking final git status for report evidence.",
+          [
+            {
+              function: {
+                name: "bash",
+                arguments: { command: "git status --short --branch" },
+              },
+              id: "b-status",
+            },
+          ],
+        );
+
+        // 7) Verify phase: run one verification command so verify can complete
+        mockStream(
+          "Running a focused verification command.",
+          [
+            {
+              function: { name: "bash", arguments: { command: "npm test" } },
+              id: "b-verify",
+            },
+          ],
+        );
+
+        // 8) Verify phase: end with a substantive compliant report so the loop can exit
+        mockStream(
+          "Preflight: git status --short --branch\n" +
+            "Preflight output: ## main...origin/main\n" +
+            "Branch: main\n" +
+            "Chosen task: test scenario\n" +
+            "Files changed: fix.txt\n" +
+            "Verification: npm test (PASS)\n" +
+            "Commit: detected (git commit succeeded per bash output)\n" +
+            "Push: not detected\n" +
+            "Final git status: bash:git status --short --branch\n" +
+            "## main...origin/main\n" +
+            "Remaining risk: none",
+        );
+
+        await processInput(
+          "Automation: test\n" +
+            "Work from main only. At the start, run git status. " +
+            "After verification passes, stage only the files changed, commit and push.",
+          null,
+          { autoConfirm: true, silent: true },
+        );
+
+        const msgs = getConversationMessages();
+        const postCommitSystemMsg = msgs.find(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Git commit succeeded"),
+        );
+        if (!postCommitSystemMsg) {
+          const debug = msgs
+            .map((m) => {
+              const head =
+                typeof m.content === "string"
+                  ? m.content.slice(0, 200).replace(/\n/g, "\\n")
+                  : Array.isArray(m.content)
+                    ? "[blocks]"
+                    : "";
+              return `${m.role}: ${head}`;
+            })
+            .slice(-30)
+            .join("\n");
+          throw new Error(`Expected post-commit system message not found.\n\n${debug}`);
+        }
+        expect(postCommitSystemMsg.content).toContain("gated automation workflow");
+        expect(postCommitSystemMsg.content).toContain("git status --short --branch");
+        expect(postCommitSystemMsg.content).not.toContain(
+          "Do NOT run further git status / git diff / git log",
+        );
+
+        // Ensure we did not block the final git-status evidence in this gated flow.
+        expect(executeTool.mock.calls.map((c) => c[1]?.command)).toEqual([
+          "git status --short --branch",
+          undefined,
+          "git commit -am \"test\"",
+          "git status --short --branch",
+          "npm test",
+        ]);
+      });
+	  });
 });
