@@ -1585,6 +1585,10 @@ let _gitPreflight = null; // { required, ran, ok, command, requiredBranch, branc
 let _stickyGitPreflightRequired = false; // sticky per-thread: once required, enforce on follow-ups too
 let _stickyGitRequiredBranch = null; // sticky required branch for gated workflows
 let _stickyGitSummaryGuardInjected = false; // avoid injecting duplicate summary guard messages
+let _gitPushDetected = false; // true once a successful git push is detected in bash output
+let _gitPushRaw = ""; // last seen git push output (for summary honesty)
+let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
+let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --branch"
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1714,6 +1718,34 @@ function _looksLikeBoundedBacklogDecision(text) {
     /\bselection rationale\s*:/i.test(value) &&
     /\bfiles\s*:/i.test(value) &&
     /\bverification plan\s*:/i.test(value)
+  );
+}
+
+function _looksLikeGatedAutomationFinalSummary(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  // Label-based contract: gated automation reports must be explicit and scannable.
+  const hasPreflight = /\bpreflight\s*:/i.test(value);
+  const hasPreflightOutput = /\bpreflight output\s*:/i.test(value);
+  const hasBranch = /\bbranch\s*:/i.test(value);
+  const hasTask =
+    /\b(chosen task|selected improvement)\s*:/i.test(value) ||
+    /\bno safe task found\b/i.test(value);
+  const hasFiles = /\bfiles changed\s*:/i.test(value);
+  const hasVerification = /\bverification\s*:/i.test(value);
+  const hasCommit = /\bcommit\s*:/i.test(value);
+  const hasPush = /\bpush\s*:/i.test(value);
+  const hasFinalStatus = /\bfinal git status\s*:/i.test(value);
+  return (
+    hasPreflight &&
+    hasPreflightOutput &&
+    hasBranch &&
+    hasTask &&
+    hasFiles &&
+    hasVerification &&
+    hasCommit &&
+    hasPush &&
+    hasFinalStatus
   );
 }
 
@@ -3880,6 +3912,10 @@ function _resetSessionTracking() {
   _stickyGitPreflightRequired = false;
   _stickyGitRequiredBranch = null;
   _stickyGitSummaryGuardInjected = false;
+  _gitPushDetected = false;
+  _gitPushRaw = "";
+  _lastGitStatusEvidence = "";
+  _lastGitStatusCommand = "";
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -4837,12 +4873,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const summaryGuard = {
         role: "user",
         content:
-          "[SYSTEM] This is a gated automation workflow. In your final summary, explicitly report: " +
-          "(1) whether preflight ran and the exact command used, " +
-          "(2) which branch you worked on, " +
-          "(3) whether the worktree was clean before edits, and " +
-          "(4) verification results (PASS/FAIL) with concrete evidence. " +
-          "Do not claim safety or verification without evidence from tool output.",
+          "[SYSTEM] This is a gated automation workflow. In your final summary, use these exact labels (one per line): " +
+          "Preflight:, Preflight output:, Branch:, Chosen task: (or Selected improvement: / no safe task found), " +
+          "Files changed:, Verification:, Commit:, Push:, Final git status:, Remaining risk:. " +
+          "If any field is unknown or not run, write that explicitly. Do not claim safety, verification, commit, push, or git status checks without evidence from tool output.",
       };
       conversationMessages.push(summaryGuard);
       apiMessages.push(summaryGuard);
@@ -6592,6 +6626,83 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               debugLog(
                 `${C.green}  ✓ Verification phase complete (headless substantive summary)${C.reset}`,
               );
+              // For gated automation workflows, require a structured, evidence-backed
+              // final report before exiting. Verify-phase summaries are often short
+              // and omit required workflow evidence (preflight/branch/files/commit/push/status).
+              if (
+                _stickyGitPreflightRequired &&
+                !_looksLikeGatedAutomationFinalSummary(_assistantText)
+              ) {
+                try {
+                  const _verificationEvidence =
+                    verificationCommandsRun.length > 0
+                      ? verificationCommandsRun.join(" | ")
+                      : verificationReadsRun.length > 0
+                        ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                        : "not run; state this explicitly and do not claim tests/build/checks passed";
+                  const _preflightCmd =
+                    (_gitPreflight && _gitPreflight.command) ||
+                    "git status --short --branch";
+                  const _preflightRaw =
+                    (_gitPreflight && String(_gitPreflight.raw || "").trim()) ||
+                    "(missing preflight output)";
+                  const _preflightBranch =
+                    (_gitPreflight && _gitPreflight.branch) ||
+                    _gitPreflightBranch ||
+                    "(unknown)";
+                  const _changedFiles =
+                    [...filesModified].slice(0, 24).join(", ") ||
+                    (_bashModifiedFiles > 0
+                      ? "files changed by shell commands"
+                      : "(none)");
+                  const _commitEvidence = _commitDetected
+                    ? "detected (git commit succeeded per bash output)"
+                    : "not detected";
+                  const _pushEvidence = _gitPushDetected
+                    ? "detected (git push succeeded per bash output)"
+                    : _gitPushRaw
+                      ? "attempted (see tool output)"
+                      : "not detected";
+                  const _finalWorktreeEvidence = _lastGitStatusEvidence
+                    ? `${_lastGitStatusCommand}\n${_lastGitStatusEvidence}`
+                    : "(not checked in this run)";
+                  const summaryPrompt = [
+                    "Write a final automation report using EXACT labels (one per line):",
+                    `Preflight: ${_preflightCmd}`,
+                    "Preflight output: (paste exactly; do not paraphrase)",
+                    _preflightRaw,
+                    `Branch: ${_preflightBranch}`,
+                    "Chosen task: (what you actually did; or `no safe task found`)",
+                    `Files changed: ${_changedFiles}`,
+                    `Verification: ${_verificationEvidence}`,
+                    `Commit: ${_commitEvidence}`,
+                    `Push: ${_pushEvidence}`,
+                    `Final git status: ${_finalWorktreeEvidence}`,
+                    "Remaining risk: (if any; otherwise `none`)",
+                    "",
+                    "Hard rules: do not claim verification/commit/push/git status checks without evidence from tool output. If unknown, write unknown.",
+                  ].join("\n");
+                  const summaryMessages = [
+                    ...apiMessages,
+                    { role: "user", content: summaryPrompt },
+                  ];
+                  const summaryRes = await callStream(summaryMessages, [], {});
+                  const summaryText = (summaryRes?.content || "").trim();
+                  if (summaryText) {
+                    console.log(`\n${summaryText}`);
+                    conversationMessages.push(
+                      { role: "user", content: summaryPrompt },
+                      { role: "assistant", content: summaryText },
+                    );
+                    apiMessages.push(
+                      { role: "user", content: summaryPrompt },
+                      { role: "assistant", content: summaryText },
+                    );
+                  }
+                } catch {
+                  /* best-effort; fall through to normal exit */
+                }
+              }
               _printResume(
                 totalSteps,
                 toolCounts,
@@ -7011,27 +7122,75 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !_hasPostEditVerificationEvidence() &&
           _claimsVerificationOrCompletion(content || streamedText || "") &&
           !_statesVerificationGap(content || streamedText || "");
+        const _needsGatedAutomationReport =
+          _stickyGitPreflightRequired &&
+          !_looksLikeGatedAutomationFinalSummary(content || streamedText || "");
         if (
           totalSteps > 0 &&
           !opts._isSummaryTurn &&
-          (isTooShort(content) || _needsVerificationDisclosure)
+          (isTooShort(content) ||
+            _needsVerificationDisclosure ||
+            _needsGatedAutomationReport)
         ) {
           try {
             debugLog(
               `${C.dim}  [post-turn] terse ending — requesting diagnosis/summary${C.reset}`,
             );
-            const summaryPrompt =
-              filesModified.size > 0 || _bashModifiedFiles > 0
+            const _verificationEvidence =
+              verificationCommandsRun.length > 0
+                ? verificationCommandsRun.join(" | ")
+                : verificationReadsRun.length > 0
+                  ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                  : "not run; state this explicitly and do not claim tests/build/checks passed";
+            const _preflightCmd =
+              (_gitPreflight && _gitPreflight.command) ||
+              "git status --short --branch";
+            const _preflightRaw =
+              (_gitPreflight && String(_gitPreflight.raw || "").trim()) ||
+              "(missing preflight output)";
+            const _preflightBranch =
+              (_gitPreflight && _gitPreflight.branch) ||
+              _gitPreflightBranch ||
+              "(unknown)";
+            const _changedFiles =
+              [...filesModified].slice(0, 24).join(", ") ||
+              (_bashModifiedFiles > 0
+                ? "files changed by shell commands"
+                : "(none)");
+            const _commitEvidence = _commitDetected
+              ? "detected (git commit succeeded per bash output)"
+              : "not detected";
+            const _pushEvidence = _gitPushDetected
+              ? "detected (git push succeeded per bash output)"
+              : _gitPushRaw
+                ? "attempted (see tool output)"
+                : "not detected";
+            const _finalWorktreeEvidence = _lastGitStatusEvidence
+              ? `${_lastGitStatusCommand}\n${_lastGitStatusEvidence}`
+              : "(not checked in this run)";
+
+            const summaryPrompt = _stickyGitPreflightRequired
+              ? [
+                  "Write a final automation report using EXACT labels (one per line):",
+                  `Preflight: ${_preflightCmd}`,
+                  "Preflight output: (paste exactly; do not paraphrase)",
+                  _preflightRaw,
+                  `Branch: ${_preflightBranch}`,
+                  "Chosen task: (what you actually did; or `no safe task found`)",
+                  `Files changed: ${_changedFiles}`,
+                  `Verification: ${_verificationEvidence}`,
+                  `Commit: ${_commitEvidence}`,
+                  `Push: ${_pushEvidence}`,
+                  `Final git status: ${_finalWorktreeEvidence}`,
+                  "Remaining risk: (if any; otherwise `none`)",
+                  "",
+                  "Hard rules: do not claim verification/commit/push/git status checks without evidence from tool output. If unknown, write unknown.",
+                ].join("\n")
+              : filesModified.size > 0 || _bashModifiedFiles > 0
                 ? [
                     "Write a closing summary (3+ sentences) with:",
                     `- changed files: ${[...filesModified].slice(0, 8).join(", ") || "files changed by shell commands"}`,
-                    `- verification: ${
-                      verificationCommandsRun.length > 0
-                        ? verificationCommandsRun.join(" | ")
-                        : verificationReadsRun.length > 0
-                          ? `post-edit read: ${verificationReadsRun.slice(0, 4).join(", ")}`
-                          : "not run; state this explicitly and do not claim tests/build/checks passed"
-                    }`,
+                    `- verification: ${_verificationEvidence}`,
                     "- remaining risk or follow-up, if any.",
                   ].join("\n")
                 : "Write a closing diagnosis (3+ sentences): what you investigated, what you found, and what the user should do next or what the root cause is.";
@@ -8191,6 +8350,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !firstLine.startsWith("CANCELLED") &&
           !firstLine.startsWith("Command failed") &&
           !firstLine.startsWith("EXIT");
+
+        // Track user-visible git status evidence for final automation reports.
+        if (prep.fnName === "git_status" && isOk) {
+          _lastGitStatusCommand = "git_status";
+          _lastGitStatusEvidence = res;
+        }
+        if (
+          prep.fnName === "bash" &&
+          prep.canExecute &&
+          typeof prep.args?.command === "string"
+        ) {
+          const cmd = prep.args.command;
+          if (/git\s+status\s+--short\s+--branch\b/.test(cmd)) {
+            _lastGitStatusCommand = "bash:git status --short --branch";
+            _lastGitStatusEvidence = res;
+          }
+          if (/git\s+push\b/.test(cmd)) {
+            // Best-effort push detection — do not overfit exact output.
+            _gitPushRaw = res;
+            const pushSucceeded =
+              isOk &&
+              !_gitPushRaw.startsWith("EXIT") &&
+              (/\bEverything up[- ]to[- ]date\b/i.test(_gitPushRaw) ||
+                /\bTo\s+\S+/i.test(_gitPushRaw) ||
+                /\bWriting objects\b/i.test(_gitPushRaw));
+            if (pushSucceeded) _gitPushDetected = true;
+          }
+        }
         // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
         if (
           !isOk &&
@@ -9777,6 +9964,7 @@ module.exports = {
   _isBoundedBacklogPlanningPrompt,
   _buildBoundedBacklogPlanInstruction,
   _looksLikeBoundedBacklogDecision,
+  _looksLikeGatedAutomationFinalSummary,
   // Export for testing
   buildUserContent,
   _detectImageURLs,
