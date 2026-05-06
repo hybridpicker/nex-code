@@ -1585,6 +1585,7 @@ let _gitPreflight = null; // { required, ran, ok, command, requiredBranch, branc
 let _stickyGitPreflightRequired = false; // sticky per-thread: once required, enforce on follow-ups too
 let _stickyGitRequiredBranch = null; // sticky required branch for gated workflows
 let _stickyGitSummaryGuardInjected = false; // avoid injecting duplicate summary guard messages
+let _stickyAutomationWorkflow = false; // sticky per-thread: once an automation/backlog workflow is detected, keep phased execution on follow-ups too
 let _gitPushDetected = false; // true once a successful git push is detected in bash output
 let _gitPushRaw = ""; // last seen git push output (for summary honesty)
 let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
@@ -3914,6 +3915,7 @@ function _resetSessionTracking() {
   _stickyGitPreflightRequired = false;
   _stickyGitRequiredBranch = null;
   _stickyGitSummaryGuardInjected = false;
+  _stickyAutomationWorkflow = false;
   _gitPushDetected = false;
   _gitPushRaw = "";
   _lastGitStatusEvidence = "";
@@ -4433,15 +4435,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       : typeof userInput === "string"
         ? userInput
         : "";
+  const _thisPromptIsAutomationWorkflow = _hasAutomationOrPreflightGate(_gatedPromptText);
+  if (_thisPromptIsAutomationWorkflow) {
+    _stickyAutomationWorkflow = true;
+  }
   const _thisPromptRequiresGitPreflight = _shouldRequireGitPreflight(_gatedPromptText);
   if (_thisPromptRequiresGitPreflight) {
     _stickyGitPreflightRequired = true;
     const requiredBranch = _extractRequiredBranch(_gatedPromptText);
     if (requiredBranch) _stickyGitRequiredBranch = requiredBranch;
   }
-  // Sticky per-thread: follow-up prompts may omit the original gate wording,
-  // but we still must enforce the same git/worktree safety gates.
+  // Sticky per-thread: follow-up prompts may omit the original workflow wording,
+  // but we still must keep the same safety + phase-routing constraints.
   const _isGatedAutomationPrompt = _stickyGitPreflightRequired;
+  const _isAutomationWorkflowPrompt = _stickyAutomationWorkflow;
 
   try {
     const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
@@ -4456,7 +4463,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     }
 
     if (
-      !_isGatedAutomationPrompt &&
+      !_isAutomationWorkflowPrompt &&
       _shouldAutoOrchestrate(autoOrch, complexity, orchThreshold, planModeActive)
     ) {
       console.log(
@@ -4768,13 +4775,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     !_isConversationalPrompt(_phaseInitText) &&
     // Normally we only initialize on the very first message. For gated automation
     // prompts, we also initialize mid-thread if phase routing isn't already active.
-    (conversationMessages.length <= 1 || (_isGatedAutomationPrompt && !_phaseEnabled));
+    (conversationMessages.length <= 1 ||
+      (_isAutomationWorkflowPrompt && !_phaseEnabled));
   if (_shouldInitPhaseRouting) {
-    // Force phase routing for gated automation prompts even when the user hasn't
-    // enabled phase routing globally. These workflows declare ordered safety
-    // gates (preflight → implement → verify) and should never run as a single
-    // unphased stream.
-    _phaseEnabled = _isGatedAutomationPrompt ? true : isPhaseRoutingEnabled();
+    // Force phase routing for automation/backlog workflows even when the user hasn't
+    // enabled phase routing globally. These workflows rely on explicit, testable
+    // phase transitions and must not run as a single unphased stream.
+    _phaseEnabled = _isAutomationWorkflowPrompt ? true : isPhaseRoutingEnabled();
     if (_phaseEnabled) {
       const _cat = detectCategory(_phaseInitText);
       _detectedCategoryId = _cat?.id || "coding";

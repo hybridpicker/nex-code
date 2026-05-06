@@ -3849,7 +3849,7 @@ describe("agent.js", () => {
     });
   });
 
-	  describe("gated automation preflight guard", () => {
+		  describe("gated automation preflight guard", () => {
     const gatedPrompt =
       "Automation: MuseScore parity and UX improvements\n" +
       "Work from main only. At the start of each run, inspect git status and the current branch. " +
@@ -4155,7 +4155,7 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
     });
 
-    it("keeps enforcing git preflight on follow-up prompts that omit gate wording", async () => {
+	    it("keeps enforcing git preflight on follow-up prompts that omit gate wording", async () => {
       executeTool
         .mockResolvedValueOnce("## devel...origin/devel\n")
         .mockResolvedValueOnce("## devel...origin/devel\n");
@@ -4326,6 +4326,31 @@ describe("agent.js", () => {
             m.content.includes("Final git status:"),
         ),
       ).toBe(true);
+	    });
+
+	    it("does not auto-orchestrate automation backlog prompts even without explicit git gates", async () => {
+	      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+	      detectComplexPrompt.mockReturnValueOnce({
+	        isComplex: true,
+	        estimatedGoals: 3,
+	        reason: "3 bullet points",
+	      });
+
+	      callStream.mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] });
+
+	      const prompt =
+	        "Automation: test\n" +
+	        "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+	        "Pick at most one tightly scoped improvement in priority order.\n" +
+	        "- Improve docs quality\n" +
+	        "- Improve UX text\n" +
+	        "- Improve error messages\n";
+
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+	      expect(runOrchestrated).not.toHaveBeenCalled();
+	      expect(callStream).toHaveBeenCalled();
+	      expect(executeTool).not.toHaveBeenCalled();
 	    });
 
       it("allows final git-status evidence after commit in gated automations", async () => {
