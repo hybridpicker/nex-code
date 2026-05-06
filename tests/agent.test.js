@@ -3714,6 +3714,46 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
     });
 
+    it("runs preflight for backticked required-branch gates", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\nWork from `main` only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+
+    it("blocks when preflight output is not recognizable `git status -sb` output", async () => {
+      executeTool.mockResolvedValueOnce("Branch: main\nClean working tree (no changes)");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("[PRECHECK BLOCKED]"),
+        ),
+      ).toBe(true);
+    });
+
     it("runs git status preflight before executing write tools", async () => {
       getAutoConfirm.mockReturnValue(true);
       mockStream("Plan: check status, pick one scoped improvement.", []);

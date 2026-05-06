@@ -1661,8 +1661,12 @@ function _hasAutomationOrPreflightGate(prompt) {
 function _extractRequiredBranch(prompt) {
   const text = String(prompt || "");
   if (!text) return null;
-  const m = text.match(/\bwork from\s+([A-Za-z0-9._/-]+)\s+only\b/i);
-  return m ? m[1] : null;
+  const m = text.match(
+    /\bwork\s+(?:from|on)\s+(?:the\s+)?(?:branch\s+)?[`'"]?([A-Za-z0-9._/-]+)[`'"]?\s+only\b/i,
+  );
+  if (!m) return null;
+  const branch = String(m[1] || "").trim();
+  return branch || null;
 }
 
 function _parseGitStatusShortBranch(output) {
@@ -1725,6 +1729,8 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
     out = `ERROR: failed to run preflight: ${err?.message || String(err)}`;
   }
   const raw = String(out ?? "");
+  const trimmed = raw.trim();
+  const hasExpectedShortBranchHeader = /^\s*##\s+\S+/.test(trimmed);
   const parsed = _parseGitStatusShortBranch(raw);
   _gitPreflight.branch = parsed.branch;
   _gitPreflight.dirty = parsed.dirty;
@@ -1742,6 +1748,13 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
 
   // Decide whether it's safe to proceed.
   if (!raw || /^ERROR:/i.test(raw) || /^fatal:/i.test(raw)) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  // Hard evidence requirement: the preflight must be recognizable output from
+  // `git status --short --branch`. Anything else is treated as an unsafe/unknown
+  // state and must block gated automations.
+  if (!hasExpectedShortBranchHeader) {
     _gitPreflight.ok = false;
     return _gitPreflight;
   }
