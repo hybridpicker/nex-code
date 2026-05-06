@@ -1833,6 +1833,7 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
   };
 
   let out = "";
+  let _serverHookToolStarted = false;
   try {
     // Record a proper tool-call pair into the transcript/run-history:
     // assistant(tool_calls) → tool(tool_call_id).
@@ -1852,11 +1853,39 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
     conversationMessages.push(assistantToolCallMsg);
     apiMessages.push(assistantToolCallMsg);
 
+    // Also emit explicit tool_start/tool_end events for server-mode run history.
+    // This avoids relying on assistant text as the only proof that the preflight
+    // command actually executed.
+    if (_serverHooks?.onToolStart) {
+      _serverHooks.onToolStart("bash", { command });
+      _serverHookToolStarted = true;
+    }
+
     out = await executeTool("bash", { command }, { silent: true, autoConfirm: true });
   } catch (err) {
     out = `ERROR: failed to run preflight: ${err?.message || String(err)}`;
   }
   const raw = String(out ?? "");
+  if (_serverHookToolStarted && _serverHooks?.onToolEnd) {
+    const truncated =
+      raw.length > 50000
+        ? raw.substring(0, 50000) + `\n...(truncated ${raw.length - 50000} chars)`
+        : raw;
+    const firstLine = truncated.split("\n")[0] || "";
+    const isError =
+      firstLine.startsWith("ERROR") ||
+      firstLine.includes("CANCELLED") ||
+      firstLine.includes("BLOCKED");
+    try {
+      _serverHooks.onToolEnd(
+        "bash",
+        formatToolSummary("bash", { command }, truncated, isError),
+        !isError,
+      );
+    } catch {
+      /* ignore */
+    }
+  }
   const trimmed = raw.trim();
   const hasExpectedShortBranchHeader = /^\s*##\s+\S+/.test(trimmed);
   const parsed = _parseGitStatusShortBranch(raw);
