@@ -1773,6 +1773,14 @@ function _shouldRequireGitPreflight(prompt) {
   );
 }
 
+function _truncatePreflightOutput(raw, maxChars = 2500) {
+  const text = String(raw ?? "");
+  if (!text.trim()) return "(no output)";
+  if (text.length <= maxChars) return text;
+  const head = text.slice(0, maxChars);
+  return head + `\n...(truncated ${text.length - maxChars} chars)`;
+}
+
 async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessages) {
   if (_gitPreflight?.ran) return _gitPreflight;
   const requiredBranch = _stickyGitRequiredBranch || _extractRequiredBranch(prompt);
@@ -1831,6 +1839,22 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
   };
   conversationMessages.push(evidenceMsg);
   apiMessages.push(evidenceMsg);
+
+  // Also surface the evidence in an assistant message so it shows up in
+  // user-facing transcripts that hide tool messages.
+  const _precheckPreview = _truncatePreflightOutput(raw);
+  const _precheckText =
+    `[PRECHECK] Preflight ran: \`${command}\`.` +
+    (requiredBranch ? ` Required branch: ${requiredBranch}.` : "") +
+    `\n\n${_precheckPreview}`;
+  const precheckMsg = { role: "assistant", content: _precheckText };
+  conversationMessages.push(precheckMsg);
+  apiMessages.push(precheckMsg);
+  try {
+    if (process.stdout.isTTY) console.log(_precheckText);
+  } catch {
+    /* ignore */
+  }
 
   // Decide whether it's safe to proceed.
   if (!raw || /^ERROR:/i.test(raw) || /^fatal:/i.test(raw)) {
