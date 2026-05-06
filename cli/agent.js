@@ -1603,6 +1603,20 @@ let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
+let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
+let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
+
+const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
+const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
+const BOUNDED_BACKLOG_EVIDENCE_TOOLS = new Set([
+  "read_file",
+  "grep",
+  "search_files",
+  "glob",
+  "list_directory",
+  "find_files",
+]);
 
 // ─── Automation preflight state ─────────────────────────────────────────────
 // For long-running/gated automations, require concrete git evidence (branch + worktree
@@ -1661,6 +1675,45 @@ function _hasAutomationOrPreflightGate(prompt) {
     /\b(backlog|primary backlog|pick (?:at most )?one|at most one|choose (?:one|a task)|priority order|verification is mandatory|stage only|commit and push|push main|push devel)\b/i.test(
       text,
     )
+  );
+}
+
+function _isBoundedBacklogPlanningPrompt(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  return /\b(primary backlog|backlog|pick at most one|at most one|priority order|choose (?:one|a task)|one tightly scoped improvement)\b/i.test(
+    text,
+  );
+}
+
+function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
+  const prefix = blocked
+    ? "[SYSTEM BLOCKED] Bounded backlog planning has enough evidence. Do not read or search more files."
+    : "[SYSTEM] Bounded backlog automation plan template.";
+  return [
+    prefix,
+    "Write the plan now using exactly these sections:",
+    "Selected improvement: name one scoped task, or write `no safe task found`.",
+    "Selection rationale: why this task is the safest/highest-value choice from the backlog evidence.",
+    "Files: list the files you will change and any read-only reference files.",
+    "Implementation outline: concrete edit steps, kept to this one task.",
+    "Verification plan: exact focused commands or reads that will prove the change.",
+    "Browser/UI applicability: say required, not required, or blocked, with the reason.",
+    `After ${BOUNDED_BACKLOG_PLAN_DECISION_READS}-${BOUNDED_BACKLOG_PLAN_HARD_READS} read/search tools, you must choose one scoped task or stop cleanly with ` +
+      "`no safe task found`; do not keep exploring.",
+  ].join("\n");
+}
+
+function _looksLikeBoundedBacklogDecision(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  if (/\bno safe task found\b/i.test(value)) return true;
+  return (
+    /\bselected improvement\s*:/i.test(value) &&
+    /\bselection rationale\s*:/i.test(value) &&
+    /\bfiles\s*:/i.test(value) &&
+    /\bverification plan\s*:/i.test(value)
   );
 }
 
@@ -3770,7 +3823,11 @@ function _resetSessionTracking() {
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
+  _lastPlanBlockedTool = null;
   _detectedCategoryId = null;
+  _boundedBacklogPlanActive = false;
+  _boundedBacklogPlanReads = 0;
+  _boundedBacklogDecisionInjected = false;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -4644,6 +4701,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _verifyLoopBack = 0;
       _planPhaseBlockedCount = 0;
       _lastPlanBlockedTool = null;
+      _boundedBacklogPlanActive =
+        _currentPhase === "plan" &&
+        _isBoundedBacklogPlanningPrompt(_phaseInitText);
+      _boundedBacklogPlanReads = 0;
+      _boundedBacklogDecisionInjected = false;
       _freshlyWrittenFiles.clear();
       if (process.stdout.isTTY) {
         console.log(
@@ -4670,6 +4732,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         };
         conversationMessages.push(_directTaskGuardrail);
         apiMessages.push(_directTaskGuardrail);
+      }
+      if (_boundedBacklogPlanActive) {
+        const _boundedPlanGuardrail = {
+          role: "user",
+          content: _buildBoundedBacklogPlanInstruction(),
+        };
+        conversationMessages.push(_boundedPlanGuardrail);
+        apiMessages.push(_boundedPlanGuardrail);
       }
     }
   }
@@ -6352,6 +6422,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const _assistantText = (content || streamedText || "").trim();
 
           if (_currentPhase === "plan") {
+            if (
+              _boundedBacklogPlanActive &&
+              /\bno safe task found\b/i.test(_assistantText)
+            ) {
+              debugLog(
+                `${C.yellow}  ⚠ Bounded backlog plan: no safe task found — exiting gracefully${C.reset}`,
+              );
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+              );
+              saveNow(conversationMessages);
+              break outer;
+            }
             // If the plan found nothing actionable, exit gracefully instead of
             // blindly entering implement phase where the model will just loop.
             // But don't exit if grep found files — the model discovered targets
@@ -6982,6 +7069,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             role: "tool",
             content:
               "BLOCKED: You already have enough evidence to produce the requested summary/document. Write the deliverable now and stop reading more files.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
+      // ─── Bounded backlog planning guard (pre-execution) ───────────────────
+      // Backlog automation prompts are allowed to inspect evidence, but they
+      // must not spend the whole plan phase searching. Once enough read/search
+      // evidence has been gathered, force a visible decision or clean blocker.
+      if (
+        _boundedBacklogPlanActive &&
+        _phaseEnabled &&
+        _currentPhase === "plan" &&
+        _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+      ) {
+        for (const prep of prepared) {
+          if (
+            !prep.canExecute ||
+            !BOUNDED_BACKLOG_EVIDENCE_TOOLS.has(prep.fnName)
+          )
+            continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: _buildBoundedBacklogPlanInstruction({ blocked: true }),
             tool_call_id: prep.callId,
           };
         }
@@ -8180,6 +8292,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Reset plan-phase block counter when a tool actually executes
         if (isOk && prep.canExecute && _phaseEnabled) {
           _planPhaseBlockedCount = 0;
+        }
+        if (
+          isOk &&
+          prep.canExecute &&
+          _boundedBacklogPlanActive &&
+          _phaseEnabled &&
+          _currentPhase === "plan" &&
+          BOUNDED_BACKLOG_EVIDENCE_TOOLS.has(prep.fnName)
+        ) {
+          _boundedBacklogPlanReads++;
+          if (
+            _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS &&
+            !_boundedBacklogDecisionInjected
+          ) {
+            _boundedBacklogDecisionInjected = true;
+            const decisionMsg = {
+              role: "user",
+              content: _buildBoundedBacklogPlanInstruction(),
+            };
+            conversationMessages.push(decisionMsg);
+            apiMessages.push(decisionMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Bounded backlog plan: ${_boundedBacklogPlanReads} read/search tools used — requiring a decision${C.reset}`,
+            );
+          }
         }
         if (
           isOk &&
@@ -9466,6 +9603,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           typeof _lastAssistant?.content === "string"
             ? _lastAssistant.content
             : "";
+        if (
+          _boundedBacklogPlanActive &&
+          _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS &&
+          !_looksLikeBoundedBacklogDecision(_summary)
+        ) {
+          const msg =
+            "no safe task found\n\n" +
+            `The bounded backlog plan phase used ${_boundedBacklogPlanReads} read/search tools without producing the required selected-improvement decision. ` +
+            "Stopping before implementation because the workflow requires choosing one scoped task with files and verification evidence.";
+          const assistantMsg = { role: "assistant", content: msg };
+          conversationMessages.push(assistantMsg);
+          console.log(`\n${msg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         const phaseMsg = await _transitionPhase("implement", _summary);
         if (phaseMsg) {
           conversationMessages.push(phaseMsg);
@@ -9571,6 +9724,9 @@ module.exports = {
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,
+  _isBoundedBacklogPlanningPrompt,
+  _buildBoundedBacklogPlanInstruction,
+  _looksLikeBoundedBacklogDecision,
   // Export for testing
   buildUserContent,
   _detectImageURLs,
