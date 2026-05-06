@@ -3727,7 +3727,7 @@ describe("agent.js", () => {
 	      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
 	    });
 
-	    it("runs preflight for backticked required-branch gates", async () => {
+    it("runs preflight for backticked required-branch gates", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
 
 	      const prompt =
@@ -3739,6 +3739,29 @@ describe("agent.js", () => {
       expect(executeTool).toHaveBeenCalledTimes(1);
       expect(executeTool.mock.calls[0][0]).toBe("bash");
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+
+    it("enforces required branch for 'the main branch only' phrasing", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\nWork from the main branch only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+
       const msgs = getConversationMessages();
       const blocked = msgs.find(
         (m) =>

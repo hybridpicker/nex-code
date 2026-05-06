@@ -1664,12 +1664,20 @@ function _hasAutomationOrPreflightGate(prompt) {
 function _extractRequiredBranch(prompt) {
   const text = String(prompt || "");
   if (!text) return null;
-  const m = text.match(
+  const patterns = [
+    // "Work from main only" / "Work on branch devel only"
     /\bwork\s+(?:from|on)\s+(?:the\s+)?(?:branch\s+)?[`'"]?([A-Za-z0-9._/-]+)[`'"]?\s+only\b/i,
-  );
-  if (!m) return null;
-  const branch = String(m[1] || "").trim();
-  return branch || null;
+    // "Work from the main branch only" / "Work on devel branch only"
+    /\bwork\s+(?:from|on)\s+(?:the\s+)?[`'"]?([A-Za-z0-9._/-]+)[`'"]?\s+branch\s+only\b/i,
+  ];
+
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const branch = String(m[1] || "").trim();
+    if (branch) return branch;
+  }
+  return null;
 }
 
 function _parseGitStatusShortBranch(output) {
