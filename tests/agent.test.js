@@ -4144,5 +4144,127 @@ describe("agent.js", () => {
       );
       expect(blocked).toBeDefined();
     });
+
+    it("enforces a structured final automation report when verify output is non-compliant", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight ok
+        .mockResolvedValueOnce("ok") // write_file result
+        .mockResolvedValueOnce("PASS"); // verify bash result
+
+      let summaryTools = null;
+      let summaryMessages = null;
+      let callIndex = 0;
+      callStream.mockImplementation(async (messages, tools, opts) => {
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const lastUserText = String(lastUser?.content || "");
+        const wantsAutomationReport = lastUserText.includes(
+          "Write a final automation report using EXACT labels",
+        );
+        if (Array.isArray(tools) && tools.length === 0 && wantsAutomationReport) {
+          summaryTools = tools;
+          summaryMessages = messages;
+          const content =
+            "Preflight: git status --short --branch\n" +
+            "Preflight output: ## main...origin/main\n" +
+            "Branch: main\n" +
+            "Chosen task: update a file\n" +
+            "Files changed: fix.txt\n" +
+            "Verification: npm test\n" +
+            "Commit: not detected\n" +
+            "Push: not detected\n" +
+            "Final git status: (not checked)\n" +
+            "Remaining risk: none";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+
+        if (callIndex === 0) {
+          callIndex++;
+          const content =
+            "Plan: make one small doc-safe change.\nFiles: fix.txt\nVerification: npm test";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        if (callIndex === 1) {
+          callIndex++;
+          return {
+            content: "",
+            tool_calls: [
+              {
+                function: {
+                  name: "write_file",
+                  arguments: { path: "fix.txt", content: "x" },
+                },
+                id: "w1",
+              },
+            ],
+          };
+        }
+        if (callIndex === 2) {
+          callIndex++;
+          const content =
+            "Implemented the change in fix.txt. Proceeding to verification now with targeted checks.";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        if (callIndex === 3) {
+          callIndex++;
+          return {
+            content: "",
+            tool_calls: [
+              {
+                function: { name: "bash", arguments: { command: "npm test" } },
+                id: "b1",
+              },
+            ],
+          };
+        }
+        if (callIndex === 4) {
+          callIndex++;
+          // Non-compliant verify summary (missing required automation-report labels),
+          // but long enough to trigger verify-phase completion.
+          const content =
+            "Verification complete. I ran the targeted checks and the results look good based on tool output. " +
+            "Next step is to review and, if desired, commit and push from the correct branch.";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        throw new Error("Unexpected callStream call");
+      });
+
+      await processInput(
+        "Automation: test\n" +
+          "Work from main only. At the start, run git status. " +
+          "If the worktree is dirty, stop without editing.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(summaryTools).toEqual([]);
+      expect(summaryMessages).toEqual(expect.any(Array));
+      const summaryCall = callStream.mock.calls.find(([msgs, tools]) => {
+        if (!Array.isArray(tools) || tools.length !== 0) return false;
+        return (msgs || []).some(
+          (m) =>
+            m?.role === "user" &&
+            String(m?.content || "").includes(
+              "Write a final automation report using EXACT labels",
+            ),
+        );
+      });
+      expect(summaryCall).toBeDefined();
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Preflight:") &&
+            m.content.includes("Final git status:"),
+        ),
+      ).toBe(true);
+    });
   });
 });
