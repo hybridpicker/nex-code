@@ -3812,14 +3812,14 @@ describe("agent.js", () => {
       "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
       "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
 
-    it("records preflight as an assistant tool_call + tool result pair", async () => {
-      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+	    it("records preflight as an assistant tool_call + tool result pair", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
 
-      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
 
-      await processInput(prompt, null, { autoConfirm: true, silent: true });
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
 
-      const msgs = getConversationMessages();
+	      const msgs = getConversationMessages();
       const callMsg = msgs.find(
         (m) =>
           m.role === "assistant" &&
@@ -3831,11 +3831,26 @@ describe("agent.js", () => {
           ),
       );
       expect(callMsg).toBeDefined();
-      const toolMsg = msgs.find(
-        (m) => m.role === "tool" && m.tool_call_id === "preflight-git-status",
-      );
-      expect(toolMsg).toBeDefined();
-    });
+	      const toolMsg = msgs.find(
+	        (m) => m.role === "tool" && m.tool_call_id === "preflight-git-status",
+	      );
+	      expect(toolMsg).toBeDefined();
+
+	      // Preflight evidence must also show up as a user-visible assistant message
+	      // (some transcript views hide tool messages).
+	      const precheckIdx = msgs.findIndex(
+	        (m) =>
+	          m.role === "assistant" &&
+	          typeof m.content === "string" &&
+	          m.content.includes("[PRECHECK]") &&
+	          m.content.includes("git status --short --branch") &&
+	          m.content.includes("## devel...origin/devel"),
+	      );
+	      expect(precheckIdx).toBeGreaterThan(-1);
+	      // Ordering matters: tool_call → tool result → visible assistant evidence.
+	      expect(msgs.indexOf(callMsg)).toBeLessThan(msgs.indexOf(toolMsg));
+	      expect(msgs.indexOf(toolMsg)).toBeLessThan(precheckIdx);
+	    });
 
 	    it("runs preflight for branch-only gates (no explicit git-status wording)", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
