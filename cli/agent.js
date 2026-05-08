@@ -2928,7 +2928,7 @@ async function _transitionPhase(
   // Generate ordered action items from extracted plan todos for implementation phase
   const _todoChecklist =
     _planTodos.length > 0
-      ? `\n\nACTION ITEMS (execute these in order, do NOT re-read these files):\n` +
+      ? `\n\nACTION ITEMS (execute these in order; use one targeted read if code context is needed):\n` +
         _planTodos.map((t, i) => `${i + 1}. ${t.file} — ${t.action}`).join("\n")
       : "";
 
@@ -7063,6 +7063,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _scoreAndPrint(conversationMessages);
           break outer;
         }
+        if (
+          hasText &&
+          _boundedBacklogPlanActive &&
+          getAutoConfirm() &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0
+        ) {
+          const implementationText = content || streamedText || "";
+          if (
+            _claimsVerificationOrCompletion(implementationText) &&
+            !_statesVerificationGap(implementationText) &&
+            !_looksLikeBoundedBacklogDecision(implementationText)
+          ) {
+            const stalledMsg =
+              "Implementation stalled before edits.\n\n" +
+              "The implementation phase claimed changes, verification, or a clean worktree without any successful file edit or verification evidence. Stopping without commit or push so the workflow does not falsely report success.";
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
         // Tool avoidance nudge: if the model says it cannot use tools but it
         // actually can, nudge it to use them. Two cases:
         //   A) Post-wipe budget exhausted — model is correct that tools are
@@ -8269,6 +8304,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       if (
+        _postEditVerifyPending &&
+        _phaseEnabled &&
+        _currentPhase === "implement"
+      ) {
+        const blockedPostEditTools = new Set([
+          "read_file",
+          "grep",
+          "search_files",
+          "glob",
+          "list_directory",
+          "find_files",
+        ]);
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (_isVerificationCommandCall(prep)) continue;
+          if (!blockedPostEditTools.has(prep.fnName)) continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content:
+              "BLOCKED: code was already edited. Run a narrow verification command now, such as npm test, npm run build, npm run lint, or the focused test from the plan. Do not read or search more files before verification.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
+      if (
         _boundedBacklogPlanActive &&
         _phaseEnabled &&
         _currentPhase === "implement" &&
@@ -8282,10 +8344,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.fnName === "write_file" ||
             prep.fnName === "edit_file" ||
             prep.fnName === "patch_file";
+          const isPlannedImplementationPath =
+            readPath &&
+            (_planTodos.some(
+              (todo) => _normalizePromptPath(todo.file) === readPath,
+            ) ||
+              _planSummary.includes(readPath));
           const isTargetedImplementationRead =
             prep.fnName === "read_file" &&
             readPath &&
-            !_boundedBacklogPromptPaths.has(readPath) &&
+            (isPlannedImplementationPath ||
+              !_boundedBacklogPromptPaths.has(readPath)) &&
             (prep.args?.line_start || prep.args?.line_end);
           const isEditRecoveryRead =
             isTargetedImplementationRead &&
@@ -8298,7 +8367,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (isWriteTool) continue;
           if (
             (isTargetedImplementationRead &&
-              _boundedBacklogImplementationReads < 2) ||
+              _boundedBacklogImplementationReads < 1) ||
             isEditRecoveryRead
           ) {
             if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
@@ -8306,6 +8375,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           if (
             isImplementationDiscovery &&
+            _boundedBacklogImplementationReads === 0 &&
             _boundedBacklogImplementationDiscoveryReads <
               BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS
           ) {
@@ -8315,18 +8385,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const rereadsBacklog =
             prep.fnName === "read_file" &&
             readPath &&
-            _boundedBacklogPromptPaths.has(readPath);
+            _boundedBacklogPromptPaths.has(readPath) &&
+            !isPlannedImplementationPath;
           const exhaustedImplementationReads =
             isTargetedImplementationRead &&
-            _boundedBacklogImplementationReads >= 2;
+            _boundedBacklogImplementationReads >= 1;
           const exhaustedImplementationDiscovery =
             isImplementationDiscovery &&
             _boundedBacklogImplementationDiscoveryReads >=
               BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS;
           prep.canExecute = false;
+          const implementationContextRead =
+            _boundedBacklogImplementationReads > 0;
           prep.errorResult = {
             role: "tool",
-            content: rereadsBacklog
+            content: implementationContextRead
+              ? "BLOCKED: the planned implementation file has already been read. Make the scoped edit now with edit_file or patch_file; do not run git, search, or read more before editing."
+              : rereadsBacklog
               ? "BLOCKED: implementation phase has already completed backlog review. Do not re-read backlog files. Edit the concrete implementation file from the accepted plan now."
               : exhaustedImplementationReads
                 ? "BLOCKED: implementation phase has already read enough targeted code context. Make the scoped edit now with edit_file or patch_file; do not read more before editing."
@@ -9692,6 +9767,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             if (cmd) verificationCommandsRun.push(cmd.slice(0, 160));
             _postEditVerifyPending = false;
             _postEditVerifyNudges = 0;
+            if (
+              _stickyGitPreflightRequired &&
+              (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+              !_commitDetected
+            ) {
+              const postVerifyMsg = {
+                role: "user",
+                content:
+                  "[SYSTEM] ✓ Verification command succeeded after your edit. " +
+                  "The dirty worktree now contains your own intended changes, not a preflight blocker. " +
+                  "Do not restart planning or re-read the changed file. Stage only the files you changed, commit with a terse English message, push if the prompt requires it, then run one final `git status --short --branch`.",
+              };
+              conversationMessages.push(postVerifyMsg);
+              apiMessages.push(postVerifyMsg);
+            }
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
