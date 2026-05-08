@@ -3885,21 +3885,24 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
-    it("stops bounded backlog planning instead of implementing after too many reads", async () => {
+    it("forces bounded backlog planning to decide after prefetch evidence", async () => {
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n")
         .mockResolvedValue("File content");
-      for (let n = 0; n < 10; n++) {
-        mockStream("", [
-          {
-            function: {
-              name: "read_file",
-              arguments: { path: `docs/backlog-${n}.md` },
-            },
-            id: `read-${n}`,
-          },
-        ]);
-      }
+      let toolsOnDecisionCall = null;
+      callStream.mockImplementationOnce(async (_messages, tools) => {
+        toolsOnDecisionCall = tools;
+        return {
+          content:
+            "Selected improvement: update shortcut docs\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        };
+      });
 
       await processInput(
         "Automation: MuseScore parity and UX improvements\n" +
@@ -3919,14 +3922,8 @@ describe("agent.js", () => {
             m.content.includes("Bounded backlog automation plan template"),
         ),
       ).toBe(true);
-      expect(
-        msgs.some(
-          (m) =>
-            m.role === "assistant" &&
-            typeof m.content === "string" &&
-            m.content.includes("no safe task found"),
-        ),
-      ).toBe(true);
+      expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
+      expect(toolsOnDecisionCall).toHaveLength(0);
       expect(
         msgs.some(
           (m) =>
@@ -3936,22 +3933,10 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
-    it("removes plan-phase tool access after the bounded backlog hard evidence budget", async () => {
+    it("removes plan-phase tool access after bounded backlog prefetch", async () => {
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n")
         .mockResolvedValue("File content");
-
-      for (let n = 0; n < 10; n++) {
-        mockStream("", [
-          {
-            function: {
-              name: "read_file",
-              arguments: { path: `docs/backlog-${n}.md` },
-            },
-            id: `read-${n}`,
-          },
-        ]);
-      }
 
       let toolsOnDecisionCall = null;
       callStream.mockImplementationOnce(async (_messages, tools) => {
@@ -3972,8 +3957,8 @@ describe("agent.js", () => {
 
       expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
       expect(toolsOnDecisionCall).toHaveLength(0);
-      // 1 preflight bash call + 10 read_file tool executions; the decision call has no tools.
-      expect(executeTool).toHaveBeenCalledTimes(11);
+      // 1 preflight bash call + 3 prompt-named backlog prefetch reads.
+      expect(executeTool).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -4178,6 +4163,9 @@ describe("agent.js", () => {
 
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog")
+        .mockResolvedValueOnce("roadmap backlog")
         .mockResolvedValueOnce("OK"); // edit_file result
 
       await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
@@ -4185,8 +4173,14 @@ describe("agent.js", () => {
       // Preflight runs before any model call and before any write tool.
       expect(executeTool.mock.calls[0][0]).toBe("bash");
       expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
-      expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+      const editCallIndex = executeTool.mock.calls.findIndex(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCallIndex).toBeGreaterThan(0);
       expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+      expect(executeTool.mock.invocationCallOrder[editCallIndex]).toBeGreaterThan(
         callStream.mock.invocationCallOrder[0],
       );
     });
@@ -4223,6 +4217,9 @@ describe("agent.js", () => {
 
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog")
+        .mockResolvedValueOnce("roadmap backlog")
         .mockResolvedValueOnce("OK"); // edit_file result
 
       await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
@@ -4231,8 +4228,14 @@ describe("agent.js", () => {
       expect(executeTool.mock.calls[0][1].command).toBe(
         "git status --short --branch",
       );
-      expect(executeTool.mock.calls[1][0]).toBe("edit_file");
+      const editCallIndex = executeTool.mock.calls.findIndex(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCallIndex).toBeGreaterThan(0);
       expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+      expect(executeTool.mock.invocationCallOrder[editCallIndex]).toBeGreaterThan(
         callStream.mock.invocationCallOrder[0],
       );
     });
@@ -4503,8 +4506,48 @@ describe("agent.js", () => {
 
 	      expect(runOrchestrated).not.toHaveBeenCalled();
 	      expect(callStream).toHaveBeenCalled();
-	      expect(executeTool).not.toHaveBeenCalled();
+	      expect(executeTool).toHaveBeenCalledWith(
+	        "read_file",
+	        expect.objectContaining({ path: "docs/keyboard-shortcuts.md" }),
+	        expect.objectContaining({ autoConfirm: true, silent: true }),
+	      );
 	    });
+
+    it("does not inject few-shot examples into backlog automations", async () => {
+      let firstMessages = null;
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return {
+          content:
+            "Selected improvement: update shortcut documentation\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update one documented shortcut label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        };
+      });
+      executeTool
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog");
+
+      const prompt =
+        "Automation: test\n" +
+        "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement in priority order.\n" +
+        "- Improve active editing workflows\n" +
+        "- Improve command center usefulness\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      const joined = firstMessages
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n");
+      expect(joined).not.toContain("[EXAMPLE");
+      expect(joined).not.toContain("stale data");
+      expect(joined).toContain("[BACKLOG PREFLIGHT]");
+    });
 
       it("allows final git-status evidence after commit in gated automations", async () => {
         getAutoConfirm.mockReturnValue(true);
