@@ -4324,6 +4324,219 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
+    it("prefetches current UI component evidence when the prompt asks for it", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-ui-prefetch";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/NotationToolbar.tsx`,
+        "export function NotationToolbar() { return null; }\n",
+      );
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      try {
+        callStream.mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: components/NotationToolbar.tsx is current UI evidence\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        });
+
+        await processInput(
+          "Automation: MuseScore parity and UX improvements\n" +
+            "Work from main only. At the start, run git status. " +
+            "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+            "Also inspect the current UI/components for obvious friction before choosing a task. " +
+            "Pick at most one tightly scoped improvement in priority order.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 25 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "list_directory",
+        expect.objectContaining({ path: "components", max_depth: 2 }),
+        expect.any(Object),
+      );
+      expect(executeTool).toHaveBeenCalledWith(
+        "read_file",
+        expect.objectContaining({
+          path: "components/NotationToolbar.tsx",
+          line_start: 1,
+          line_end: 180,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it("reprompts empty bounded backlog planning responses after prefetch", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      callStream
+        .mockResolvedValueOnce({ content: "", tool_calls: [] })
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: docs/user-manual.md and current UI evidence show unclear labels\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, inspect git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Also inspect the current UI/components for obvious friction before choosing a task. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(3);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Empty planning response is not a valid result"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reprompts bounded backlog plans that invent nonexistent implementation paths", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-plan-paths";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.mkdirSync(`${fixtureDir}/docs`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/NotationToolbar.tsx`,
+        "export function NotationToolbar() { return null; }\n",
+      );
+      fs.writeFileSync(`${fixtureDir}/docs/keyboard-shortcuts.md`, "# Keys\n");
+      fs.writeFileSync(`${fixtureDir}/docs/user-manual.md`, "# Manual\n");
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: src/components/Toolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Automation: MuseScore parity and UX improvements\n" +
+            "Work from main only. At the start, inspect git status. " +
+            "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+            "Also inspect the current UI/components for obvious friction before choosing a task. " +
+            "Pick at most one tightly scoped improvement.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("implementation files that do not exist") &&
+            m.content.includes("components/NotationToolbar.tsx"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reports stalled bounded backlog implementation on a final empty response", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: locate and update one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "glob",
+                arguments: JSON.stringify({ pattern: "components/NotationToolbar.tsx" }),
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: "", tool_calls: [] });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, inspect git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Also inspect the current UI/components for obvious friction before choosing a task. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Implementation stalled before edits") &&
+            m.content.includes("does not falsely report success"),
+        ),
+      ).toBe(true);
+    });
+
     it("does not finish bounded backlog implementation on prose-only no-progress", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
       getAutoConfirm.mockReturnValue(true);
@@ -4371,6 +4584,54 @@ describe("agent.js", () => {
             m.role === "assistant" &&
             typeof m.content === "string" &&
             m.content.includes("Implementation stalled before edits"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reprompts false git/tool blocking claims in bounded backlog implementation", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            "Selection rationale: cli/agent.js is a current implementation surface\n" +
+            "Files: cli/agent.js, tests/agent.test.js\n" +
+            "Implementation outline: read then edit one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "I'm unable to run any Git commands because the system instructions explicitly block git operations in this implementation phase.",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("the initial git preflight is already complete"),
         ),
       ).toBe(true);
     });
@@ -4596,6 +4857,49 @@ describe("agent.js", () => {
 	      expect(executeTool.mock.calls[0][0]).toBe("bash");
 	      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
 	    });
+
+    it("runs preflight from an explicit absolute task directory", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const originalCwd = process.cwd();
+      const fixtureDir = path.resolve(".tmp-agent-target-cwd");
+      fs.mkdirSync(fixtureDir, { recursive: true });
+      executeTool.mockImplementationOnce(async () => {
+        expect(fs.realpathSync(process.cwd())).toBe(fs.realpathSync(fixtureDir));
+        return "## main...origin/main\n";
+      });
+      callStream.mockResolvedValueOnce({
+        content:
+          "Preflight: git status --short --branch\n" +
+          "Preflight output: ## main...origin/main\n" +
+          "Branch: main\n" +
+          "Chosen task: no safe task found\n" +
+          "Files changed: none\n" +
+          "Verification: none\n" +
+          "Commit: none\n" +
+          "Push: none\n" +
+          "Final git status: unknown\n" +
+          "Remaining risk: none",
+        tool_calls: [],
+      });
+
+      try {
+        await processInput(
+          `Work only in ${fixtureDir}. Required branch: main. At the start, inspect git status and the current branch. If dirty, stop.`,
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 3 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        { command: "git status --short --branch" },
+        expect.any(Object),
+      );
+    });
 
 	    it("runs preflight for required-branch gates without an Automation header", async () => {
 	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
