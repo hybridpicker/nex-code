@@ -4410,6 +4410,192 @@ describe("agent.js", () => {
       }
     });
 
+    it("stops when bounded backlog implementation ignores edit-only blocks", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValue("File content");
+
+      const blockedReadCall = {
+        content: "Checking the implementation file again.",
+        tool_calls: [
+          {
+            id: "blocked-read",
+            function: {
+              name: "read_file",
+              arguments: {
+                path: "components/NotationToolbar.js",
+                line_start: 1,
+                line_end: 40,
+              },
+            },
+          },
+        ],
+      };
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.js\n" +
+            "Implementation outline: read the toolbar lines, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  line_start: 1,
+                  line_end: 40,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue(blockedReadCall);
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.js. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      const messages = getConversationMessages();
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("next response must contain exactly one edit_file"),
+        ),
+      ).toBe(true);
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file was already in context") &&
+            m.content.includes("instead of editing"),
+        ),
+      ).toBe(true);
+    });
+
+    it("allows narrow edit recovery search after bounded backlog edit mismatch", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("File content")
+        .mockResolvedValueOnce("ERROR: old_text not found in components/NotationToolbar.js")
+        .mockResolvedValueOnce("2:  return '<button class=\"note\">Note</button>';")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.js\n" +
+            "Implementation outline: read the toolbar lines, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  line_start: 1,
+                  line_end: 40,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit.",
+          tool_calls: [
+            {
+              id: "edit-toolbar",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  old_text: "<button>Add Note</button>",
+                  new_text: "<button aria-label=\"Add Note\">Add Note</button>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Finding the exact current line after edit mismatch.",
+          tool_calls: [
+            {
+              id: "grep-toolbar",
+              function: {
+                name: "bash",
+                arguments: {
+                  command: "grep -n \"Note\" components/NotationToolbar.js",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.js. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        expect.objectContaining({
+          command: "grep -n \"Note\" components/NotationToolbar.js",
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
+    });
+
     it("prefetches current UI component evidence when the prompt asks for it", async () => {
       const fs = require("fs");
       const fixtureDir = ".tmp-agent-ui-prefetch";

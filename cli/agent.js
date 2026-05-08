@@ -5476,6 +5476,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_ABORT_ERRORS = 15 * _sk;
   let consecutiveBlocks = 0;
   const LOOP_ABORT_BLOCKS = 5 * _sk;
+  const _blockedAfterImplementationRead = () =>
+    _boundedBacklogPlanActive &&
+    _phaseEnabled &&
+    _currentPhase === "implement" &&
+    filesModified.size === 0 &&
+    _bashModifiedFiles === 0 &&
+    _sessionLastEditFailed.size === 0 &&
+    _boundedBacklogImplementationReads > 0;
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
@@ -8364,6 +8372,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               prep.fnName,
               prep.args || {},
             );
+          const failedEditPaths = [..._sessionLastEditFailed.keys()].map((p) =>
+            _normalizePromptPath(p),
+          );
+          const bashCommand = String(prep.args?.command || "");
+          const isEditRecoveryBashGrep =
+            prep.fnName === "bash" &&
+            /^grep\s+-n\b/.test(bashCommand.trim()) &&
+            failedEditPaths.some(
+              (failedPath) => failedPath && bashCommand.includes(failedPath),
+            ) &&
+            !/[;&|`$]/.test(bashCommand) &&
+            !/(^|\s)[<>]/.test(bashCommand);
+          const isEditRecoveryDiscovery =
+            _sessionLastEditFailed.size > 0 &&
+            (isImplementationDiscovery || isEditRecoveryBashGrep);
           if (isWriteTool) continue;
           if (
             (isTargetedImplementationRead &&
@@ -8371,6 +8394,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             isEditRecoveryRead
           ) {
             if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
+            continue;
+          }
+          if (isEditRecoveryDiscovery) {
             continue;
           }
           if (
@@ -9416,10 +9442,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           preBlockContent.startsWith("PLAN PHASE:")
         ) {
           consecutiveBlocks++;
-          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          if (
+            _blockedAfterImplementationRead() &&
+            preBlockContent.includes("planned implementation file")
+          ) {
+            const editNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] The planned implementation file is already in context. Your next response must contain exactly one edit_file or patch_file tool call for the scoped change from the accepted plan. Do not run git, read_file, glob, search, or list_directory. Do not write prose before the tool call.",
+            };
+            conversationMessages.push(editNudge);
+            apiMessages.push(editNudge);
+          }
+          const blockAbortLimit = _blockedAfterImplementationRead()
+            ? Math.min(LOOP_ABORT_BLOCKS, 3)
+            : LOOP_ABORT_BLOCKS;
+          if (consecutiveBlocks >= blockAbortLimit) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
             );
+            if (_blockedAfterImplementationRead()) {
+              const stalledMsg =
+                "Implementation stalled before edits.\n\n" +
+                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
+              const stalledAssistantMsg = {
+                role: "assistant",
+                content: stalledMsg,
+              };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+            }
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -10475,10 +10530,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const wasBlocked = res.startsWith("BLOCKED:");
         if (wasBlocked) {
           consecutiveBlocks++;
-          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          if (
+            _blockedAfterImplementationRead() &&
+            res.includes("planned implementation file")
+          ) {
+            const editNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] The planned implementation file is already in context. Your next response must contain exactly one edit_file or patch_file tool call for the scoped change from the accepted plan. Do not run git, read_file, glob, search, or list_directory. Do not write prose before the tool call.",
+            };
+            conversationMessages.push(editNudge);
+            apiMessages.push(editNudge);
+          }
+          const blockAbortLimit = _blockedAfterImplementationRead()
+            ? Math.min(LOOP_ABORT_BLOCKS, 3)
+            : LOOP_ABORT_BLOCKS;
+          if (consecutiveBlocks >= blockAbortLimit) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`,
             );
+            if (_blockedAfterImplementationRead()) {
+              const stalledMsg =
+                "Implementation stalled before edits.\n\n" +
+                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
+              const stalledAssistantMsg = {
+                role: "assistant",
+                content: stalledMsg,
+              };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+            }
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
