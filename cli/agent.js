@@ -966,7 +966,10 @@ async function prepareToolCall(tc) {
       find: "search_files",
       search: "search_files",
       grep_search: "grep",
+      list: "list_directory",
+      print_tree: "list_directory",
       read: "read_file",
+      tree: "list_directory",
     };
     const knownTool = getAllToolDefinitions().some(
       (t) => t.function.name === suffix,
