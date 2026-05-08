@@ -858,6 +858,26 @@ describe("agent.js", () => {
         { silent: true, autoConfirm: true },
       );
     });
+
+    it("maps namespaced exec aliases to bash", async () => {
+      mockStream("", [
+        {
+          function: {
+            name: "bash.exec",
+            arguments: { command: "git status --short --branch" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      await processInput("test");
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        { command: "git status --short --branch" },
+        { silent: true, autoConfirm: true },
+      );
+    });
   });
 
   // ─── tool routing ─────────────────────────────────────────
