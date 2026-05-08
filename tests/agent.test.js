@@ -4758,6 +4758,71 @@ describe("agent.js", () => {
       ).toBe(true);
     });
 
+    it("reprompts bounded backlog plans that use missing prompt example files", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-plan-prompt-paths";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.mkdirSync(`${fixtureDir}/docs`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/CommandCenter.tsx`,
+        "export function CommandCenter() { return null; }\n",
+      );
+      fs.writeFileSync(`${fixtureDir}/docs/keyboard-shortcuts.md`, "# Keys\n");
+      fs.writeFileSync(`${fixtureDir}/docs/user-manual.md`, "# Manual\n");
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/CommandCenter.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Automation: MuseScore parity and UX improvements\n" +
+            "Work from main only. At the start, inspect git status. " +
+            "Prefer existing components/NotationToolbar.tsx or components/CommandCenter.tsx. " +
+            "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+            "Also inspect the current UI/components for obvious friction before choosing a task. " +
+            "Pick at most one tightly scoped improvement.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("implementation files that do not exist") &&
+            m.content.includes("components/CommandCenter.tsx"),
+        ),
+      ).toBe(true);
+    });
+
     it("reports stalled bounded backlog implementation on a final empty response", async () => {
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n")
