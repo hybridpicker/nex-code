@@ -196,6 +196,60 @@ function ensureScenarioHFixture() {
   runGit(dir, ["push", "-u", "origin", "main"]);
 }
 
+function ensureScenarioIFixture() {
+  const dir = path.join(SANDBOX_ROOT, "projects", "scenario-i");
+  const remoteDir = path.join(SANDBOX_ROOT, "remotes", "scenario-i.git");
+  fs.mkdirSync(path.join(dir, "components"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "docs"), { recursive: true });
+  fs.mkdirSync(path.dirname(remoteDir), { recursive: true });
+  const filler = Array.from(
+    { length: 198 },
+    (_, index) => `// filler ${index + 1}`,
+  );
+  writeFile(
+    path.join(dir, "components", "CommandCenter.tsx"),
+    [
+      "export function CommandCenter() {",
+      ...filler,
+      '  return <button className="apply-action">Apply</button>;',
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeFile(path.join(dir, "docs", "keyboard-shortcuts.md"), "# Keys\n");
+  writeFile(path.join(dir, "docs", "user-manual.md"), "# Manual\n");
+  writeFile(path.join(dir, "docs", "phase-roadmap.md"), "# Roadmap\n");
+  writeFile(
+    path.join(dir, "docs", "final-release-readiness-summary.md"),
+    "# Readiness\n",
+  );
+  writeFile(path.join(dir, "README.md"), "# Scenario I\n");
+  writeFile(path.join(dir, ".gitignore"), ".nex/\n");
+  writeFile(
+    path.join(dir, "package.json"),
+    JSON.stringify(
+      {
+        scripts: {
+          test:
+            "node -e \"const fs=require('fs');const s=fs.readFileSync('components/CommandCenter.tsx','utf8');if(!s.includes('aria-label=\\\"Apply changes\\\"')) process.exit(1);\"",
+          build: "node -e \"console.log('build ok')\"",
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  runGit(dir, ["init", "-b", "main"]);
+  runGit(dir, ["config", "user.email", "scenario-i@example.test"]);
+  runGit(dir, ["config", "user.name", "Scenario I"]);
+  runGit(dir, ["add", "."]);
+  runGit(dir, ["commit", "-m", "test: seed scenario i"]);
+  runGit(SANDBOX_ROOT, ["init", "--bare", remoteDir]);
+  runGit(dir, ["remote", "add", "origin", remoteDir]);
+  runGit(dir, ["push", "-u", "origin", "main"]);
+}
+
 function ensureServerMockFixture() {
   const dir = path.join(SANDBOX_ROOT, "server-mock");
   const binDir = path.join(dir, "bin");
@@ -479,6 +533,7 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
     ensureScenarioFFixture();
     ensureScenarioGFixture();
     ensureScenarioHFixture();
+    ensureScenarioIFixture();
   });
 
   test("Scenario A: stdout clean + exit 0 + file updated", async () => {
@@ -800,6 +855,56 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
       "utf-8",
     );
     expect(updated).toContain('aria-label="Insert note"');
+    expect(runGit(cwd, ["status", "--short", "--branch"])).toContain(
+      "## main...origin/main",
+    );
+  });
+
+  test("Scenario I: bounded backlog permits same-file target lookup", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-i");
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+    };
+
+    const task = [
+      `Scenario I: bounded backlog same-file locate. Work only in ${cwd}.`,
+      "Required branch: main. Inspect git status and branch first.",
+      "If not on main, switch to main. Pull/rebase origin/main before changes.",
+      "If the worktree has unrelated or ambiguous changes, stop without editing, committing, or pushing.",
+      "Improve exactly one small, user-visible active-editing workflow.",
+      "Prefer an existing component already found in the current UI, especially components/CommandCenter.tsx.",
+      "Do not invent src/components paths, Tooltip components, or test files unless they already exist.",
+      "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md, docs/final-release-readiness-summary.md, README.md, and existing tests as backlog/reference material.",
+      "Before editing, read the exact existing implementation file with targeted line ranges.",
+      "After verification passes, inspect git status again. Stage only files changed for this improvement. Commit with a terse English message, push main to origin, then inspect git status one final time.",
+    ].join(" ");
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--task",
+        task,
+      ],
+      timeoutMs: 30000,
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain("same-file search");
+    expect(stdout).toContain("implemented");
+    const updated = fs.readFileSync(
+      path.join(cwd, "components", "CommandCenter.tsx"),
+      "utf-8",
+    );
+    expect(updated).toContain('aria-label="Apply changes"');
     expect(runGit(cwd, ["status", "--short", "--branch"])).toContain(
       "## main...origin/main",
     );
