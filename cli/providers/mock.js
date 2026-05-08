@@ -176,9 +176,78 @@ function scenarioCRestartScript() {
   ].join("\n");
 }
 
+const SCENARIO_E_ASYNC_PROCESSOR = `// Scenario E fixture: nested callback flow with a simulated missing dependency.
+
+function loadJson(file, cb) {
+  setTimeout(() => {
+    if (file === "missing.json") return cb(new Error("missing dependency: missing.json"));
+    cb(null, { users: [{ id: 1, active: true }, { id: 2, active: false }] });
+  }, 5);
+}
+
+function transform(payload, cb) {
+  setTimeout(() => {
+    cb(null, payload.users.filter((user) => user.active).map((user) => user.id));
+  }, 5);
+}
+
+function save(ids, cb) {
+  setTimeout(() => cb(null, ids.join(',')), 5);
+}
+
+function loadJsonAsync(file) {
+  return new Promise((resolve, reject) => loadJson(file, (err, value) => err ? reject(err) : resolve(value)));
+}
+
+function transformAsync(payload) {
+  return new Promise((resolve, reject) => transform(payload, (err, value) => err ? reject(err) : resolve(value)));
+}
+
+function saveAsync(ids) {
+  return new Promise((resolve, reject) => save(ids, (err, value) => err ? reject(err) : resolve(value)));
+}
+
+async function run() {
+  const payload = await loadJsonAsync("data.json");
+  const ids = await transformAsync(payload);
+  return saveAsync(ids);
+}
+
+run()
+  .then((output) => console.log(output))
+  .catch((err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+`;
+
+function scenarioFFixedNginxConfig() {
+  return [
+    "# Scenario F fixture: subtle nginx typo in a sandboxed mock root.",
+    "events { worker_connections 128; }",
+    "http {",
+    "  upstream app_backend {",
+    "    server 127.0.0.1:3000;",
+    "  }",
+    "  server {",
+    "    listen 8081;",
+    "    location /api {",
+    "      proxy_pass http://app_backend;",
+    "    }",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function detectScenario(promptText) {
   const text = String(promptText || "");
   if (/malformed tool call/i.test(text)) return "malformed";
+  if (/Scenario G|merge conflicts/i.test(text)) return "g";
+  if (/Scenario F|dummy systemctl|sandboxed nginx config typo/i.test(text))
+    return "f";
+  if (/Scenario E|legacy callback processor|nested callback/i.test(text))
+    return "e";
   if (/mocked server environment|nginx/i.test(text)) return "c";
   if (/discount|node\s+src\/main\.js/i.test(text)) return "b";
   if (/async\s*\/\s*await|Refactor\s+app\.js/i.test(text)) return "a";
@@ -359,7 +428,10 @@ function buildDeterministicResponse(messages) {
           ),
           toolCall(
             "write_file",
-            { path: "restart-nginx-dry-run.sh", content: scenarioCRestartScript() },
+            {
+              path: "restart-nginx-dry-run.sh",
+              content: scenarioCRestartScript(),
+            },
             "c3",
           ),
         ],
@@ -422,10 +494,178 @@ function buildDeterministicResponse(messages) {
     };
   }
 
+  if (stableScenario === "e") {
+    const stepFromMessages = hasToolResult(messages, "e3")
+      ? 3
+      : hasToolResult(messages, "e2")
+        ? 2
+        : hasToolResult(messages, "e1")
+          ? 1
+          : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content: "Reading the legacy callback processor.",
+        tool_calls: [toolCall("read_file", { path: "processor.js" }, "e1")],
+      };
+    }
+    if (state.lastStep < 2) {
+      state.lastStep = 2;
+      return {
+        content:
+          "Refactoring nested callbacks to async helpers without adding dependencies.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            { path: "processor.js", content: SCENARIO_E_ASYNC_PROCESSOR },
+            "e2",
+          ),
+        ],
+      };
+    }
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Verifying the refactored processor.",
+        tool_calls: [toolCall("bash", { command: "node processor.js" }, "e3")],
+      };
+    }
+    return {
+      content:
+        "Refactored the nested callback processor to async/await without adding dependencies and verified the output.",
+      tool_calls: [],
+    };
+  }
+
+  if (stableScenario === "f") {
+    const stepFromMessages = hasToolResult(messages, "f3")
+      ? 3
+      : hasToolResult(messages, "f2")
+        ? 2
+        : hasToolResult(messages, "f1")
+          ? 1
+          : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content: "Reading the sandboxed nginx config.",
+        tool_calls: [
+          toolCall(
+            "read_file",
+            { path: "mock-root/etc/nginx/nginx.conf" },
+            "f1",
+          ),
+        ],
+      };
+    }
+    if (state.lastStep < 2) {
+      state.lastStep = 2;
+      return {
+        content: "Fixing the upstream name typo.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            {
+              path: "mock-root/etc/nginx/nginx.conf",
+              content: scenarioFFixedNginxConfig(),
+            },
+            "f2",
+          ),
+        ],
+      };
+    }
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Checking the dummy service command stays sandboxed.",
+        tool_calls: [
+          toolCall(
+            "bash",
+            { command: 'PATH="$PWD/bin:$PATH" systemctl reload nginx' },
+            "f3",
+          ),
+        ],
+      };
+    }
+    return {
+      content:
+        "Fixed the sandboxed nginx upstream typo and verified only the dummy systemctl executable was invoked.",
+      tool_calls: [],
+    };
+  }
+
+  if (stableScenario === "g") {
+    const stepFromMessages = hasToolResult(messages, "g5")
+      ? 5
+      : hasToolResult(messages, "g4")
+        ? 4
+        : hasToolResult(messages, "g3") || hasToolResult(messages, "g2")
+          ? 3
+          : hasToolResult(messages, "g1")
+            ? 1
+            : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content: "Inspecting simulated conflict markers.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { pattern: "<<<<<<<|=======|>>>>>>>", path: "." },
+            "g1",
+          ),
+        ],
+      };
+    }
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Reading conflicted files.",
+        tool_calls: [
+          toolCall("read_file", { path: "service.js" }, "g2"),
+          toolCall("read_file", { path: "README.md" }, "g3"),
+        ],
+      };
+    }
+    if (state.lastStep < 5) {
+      state.lastStep = 5;
+      return {
+        content: "Resolving conflicts by preserving configurable behavior.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            {
+              path: "service.js",
+              content:
+                "function port() { return Number(process.env.PORT || 3000); }\n\nmodule.exports = { port };\n",
+            },
+            "g4",
+          ),
+          toolCall(
+            "write_file",
+            {
+              path: "README.md",
+              content: "Run the service with PORT=3001 node service.js.\n",
+            },
+            "g5",
+          ),
+        ],
+      };
+    }
+    return {
+      content:
+        "Resolved the simulated multi-file git conflict while preserving the configurable port behavior.",
+      tool_calls: [],
+    };
+  }
+
   // Fallback: no scenario matched — return a benign final answer.
   return {
     content:
-      "No mock scenario matched this prompt. Set a Scenario A–D prompt (or enable malformed mode) to run deterministic E2E flows.",
+      "No mock scenario matched this prompt. Set a Scenario A–G prompt (or enable malformed mode) to run deterministic E2E flows.",
     tool_calls: [],
   };
 }
@@ -457,12 +697,16 @@ class MockProvider extends BaseProvider {
   }
 
   async stream(messages, _tools, options = {}) {
-    const onToken = typeof options.onToken === "function" ? options.onToken : () => {};
+    const onToken =
+      typeof options.onToken === "function" ? options.onToken : () => {};
     const res = buildDeterministicResponse(messages);
 
     // Simulate streaming: emit content in a couple chunks for realism.
     const content = String(res.content || "");
-    const mid = Math.min(content.length, Math.max(1, Math.floor(content.length / 2)));
+    const mid = Math.min(
+      content.length,
+      Math.max(1, Math.floor(content.length / 2)),
+    );
     if (content) {
       onToken(content.slice(0, mid));
       onToken(content.slice(mid));
