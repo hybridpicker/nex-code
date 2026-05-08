@@ -3804,7 +3804,11 @@ describe("agent.js", () => {
             "Plan: I will review the backlog and propose a change. Then I will implement it.",
           tool_calls: [],
         })
-        .mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] });
+        .mockResolvedValueOnce({
+          content:
+            "no safe task found because the referenced backlog files are missing and cannot be inspected",
+          tool_calls: [],
+        });
 
       await processInput(
         "Automation: MuseScore parity and UX improvements\n" +
@@ -3839,6 +3843,46 @@ describe("agent.js", () => {
             m.content.includes("no safe task found"),
         ),
       ).toBe(true);
+    });
+
+    it("reprompts premature no-safe bounded backlog decisions", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream
+        .mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] })
+        .mockResolvedValueOnce({
+          content:
+            "no safe task found because the referenced backlog files are missing and cannot be inspected",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes(
+              "Do not answer `no safe task found` before reading/searching backlog evidence",
+            ),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
     });
 
     it("stops bounded backlog planning instead of implementing after too many reads", async () => {
