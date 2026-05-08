@@ -1629,6 +1629,7 @@ let _implementSummary = null; // summary of changes from implement phase
 let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
+let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
@@ -1642,6 +1643,7 @@ let _boundedBacklogEvidencePrefetched = false;
 let _boundedBacklogPromptText = "";
 let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
 let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
+let _boundedBacklogImplementationReads = 0; // targeted implementation reads after a bounded backlog plan
 
 const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
 const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
@@ -1731,7 +1733,7 @@ function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
     prefix,
     "Before deciding, inspect the concrete backlog/reference paths named by the user prompt. Prefer read_file on those paths over generic searches for words like `backlog`, `TODO`, or `FIXME`.",
     "Ground the selected improvement in those files and the current project. Do not invent generic React bugs, placeholder files, or example components that were not found in the evidence.",
-    "Write the plan now using exactly these sections:",
+    "Write the plan now using exactly these label lines. Do not use markdown headings for these labels.",
     "Selected improvement: name one scoped task, or write `no safe task found`.",
     "Selection rationale: why this task is the safest/highest-value choice from the backlog evidence.",
     "Files: list the files you will change and any read-only reference files.",
@@ -1795,16 +1797,20 @@ function _looksOffTopicForBoundedBacklogPrompt(text) {
 
   const fileRefs = new Set();
   const fileRefPattern =
-    /[`'"]?((?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml))[`'"]?/g;
+    /[`'"]?((?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:tsx|jsx|mjs|cjs|mdx|json|scss|html|yaml|yml|css|ts|js|md))[`'"]?/g;
   let match;
   while ((match = fileRefPattern.exec(value))) {
     fileRefs.add(_normalizePromptPath(match[1]));
   }
+  let implementationRefs = 0;
+  let existingImplementationRefs = 0;
   for (const fileRef of fileRefs) {
     if (_boundedBacklogPromptPaths.has(fileRef)) continue;
+    implementationRefs++;
     const abs = path.resolve(process.cwd(), fileRef);
-    if (!fsSync.existsSync(abs)) return true;
+    if (fsSync.existsSync(abs)) existingImplementationRefs++;
   }
+  if (implementationRefs > 0 && existingImplementationRefs === 0) return true;
   return false;
 }
 
@@ -1812,12 +1818,35 @@ function _looksLikeBoundedBacklogDecision(text) {
   const value = String(text || "");
   if (!value.trim()) return false;
   if (_looksOffTopicForBoundedBacklogPrompt(value)) return false;
+  if (_looksLikeBoundedBacklogHeadingPlan(value)) return false;
   if (/\bno safe task found\b/i.test(value)) return true;
   return (
     /\bselected improvement\s*:/i.test(value) &&
     /\bselection rationale\s*:/i.test(value) &&
     /\bfiles\s*:/i.test(value) &&
     /\bverification plan\s*:/i.test(value)
+  );
+}
+
+function _looksLikeBoundedBacklogHeadingPlan(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  return (
+    /(?:^|\n)\s*#{1,6}\s*selected improvement\b/i.test(value) &&
+    /(?:^|\n)\s*#{1,6}\s*selection rationale\b/i.test(value) &&
+    /(?:^|\n)\s*#{1,6}\s*files\b/i.test(value) &&
+    /(?:^|\n)\s*#{1,6}\s*verification plan\b/i.test(value)
+  );
+}
+
+function _looksLikeTextualToolCallAttempt(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  return (
+    /\b(need|must|will|should|let'?s|attempt|going)\b.{0,80}\b(call|issue|use|run|read)\b.{0,80}\b(read_file|tool call|tool_calls?|JSON calls?)\b/i.test(
+      value,
+    ) ||
+    /\{\s*["']tool["']\s*:\s*["'](?:read_file|grep|search_files|glob)["']/i.test(value)
   );
 }
 
@@ -2181,7 +2210,7 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
   }
 
   const close =
-    "[BACKLOG PREFLIGHT] Use the evidence above to select one scoped improvement; do not search generic backlog/TODO terms first.";
+    "[BACKLOG PREFLIGHT] The prompt-named backlog/reference files above have already been read. Your next response must be the bounded plan labels exactly as requested (`Selected improvement:`, `Selection rationale:`, `Files:`, `Implementation outline:`, `Verification plan:`, `Browser/UI applicability:`). Do not request or describe more read_file calls.";
   const closeMsg = { role: "user", content: close };
   conversationMessages.push(closeMsg);
   apiMessages.push(closeMsg);
@@ -2678,6 +2707,10 @@ async function _transitionPhase(
   _currentPhase = targetPhase;
   _phaseIterations = 0;
   _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
+  if (targetPhase === "implement") {
+    _implementNoProgressNudges = 0;
+    if (_boundedBacklogPlanActive) _boundedBacklogImplementationReads = 0;
+  }
   if (targetPhase === "verify") {
     _verifyToolCalls = 0;
     _verifyCompletionNudges = 0;
@@ -2719,10 +2752,14 @@ async function _transitionPhase(
   let content;
   if (targetPhase === "implement") {
     _planSummary = summary?.slice(0, 2000) || "";
+    const boundedBacklogImplementationGuard = _boundedBacklogPlanActive
+      ? "\n\nBounded backlog implementation guard: preflight and backlog review are already complete. Do not run git status, git log, or re-read the backlog/docs before making progress. Start by reading the concrete implementation file(s) named in the accepted plan with targeted line ranges, then edit one scoped change."
+      : "";
     content =
       `[PHASE: IMPLEMENTATION] Analysis complete. Based on the analysis:\n${_planSummary}\n\n` +
       `${symbolHints}` +
       `Now implement the fix/changes. Do not investigate further — edit files directly.` +
+      boundedBacklogImplementationGuard +
       _todoChecklist;
   } else if (targetPhase === "verify") {
     _implementSummary = summary?.slice(0, 500) || "";
@@ -4164,6 +4201,7 @@ function _resetSessionTracking() {
   _verifyLoopBack = 0;
   _verifyToolCalls = 0;
   _verifyCompletionNudges = 0;
+  _implementNoProgressNudges = 0;
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
@@ -4177,6 +4215,7 @@ function _resetSessionTracking() {
   _boundedBacklogPromptText = "";
   _boundedBacklogDecisionInjected = false;
   _boundedBacklogDecisionMisses = 0;
+  _boundedBacklogImplementationReads = 0;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -5522,10 +5561,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           allTools = baseTools.filter((t) =>
             PHASE_PLAN_TOOLS.has(t.function.name),
           );
-          // Bounded backlog automations must make a decision quickly. Once the plan phase
-          // has gathered enough read/search evidence, remove tool access entirely so the
-          // model is forced to produce the required decision template (or a clean stop)
-          // instead of continuing to explore.
           if (
             _boundedBacklogPlanActive &&
             (_boundedBacklogEvidencePrefetched ||
@@ -6560,7 +6595,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _boundedBacklogPlanActive &&
         tool_calls &&
         tool_calls.length > 0 &&
-        _looksLikeBoundedBacklogDecision(content || streamedText || "")
+        ((_boundedBacklogEvidencePrefetched &&
+          String(content || streamedText || "").trim()) ||
+          _looksLikeBoundedBacklogDecision(content || streamedText || ""))
       ) {
         delete assistantMsg.tool_calls;
         tool_calls = [];
@@ -6794,6 +6831,50 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
+          _phaseEnabled &&
+          _currentPhase === "implement" &&
+          getAutoConfirm() &&
+          hasText &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0
+        ) {
+          if (_implementNoProgressNudges < 3) {
+            _implementNoProgressNudges++;
+            const implementationNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] Implementation is not complete: you produced prose but made no file changes. Do not finish or restate the plan. In the next response, either call read_file with line_start/line_end on the concrete implementation file from the accepted plan, or call edit_file/patch_file/write_file to make the scoped change. Keep prose minimal and include at least one tool call.",
+            };
+            conversationMessages.push(implementationNudge);
+            apiMessages.push(implementationNudge);
+            debugLog(
+              `${C.yellow}  ⚠ Implement phase made no progress — nudging for concrete tool use (${_implementNoProgressNudges}/3)${C.reset}`,
+            );
+            continue;
+          }
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            "The plan phase completed, but the implementation phase produced text-only responses without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+          const stalledAssistantMsg = {
+            role: "assistant",
+            content: stalledMsg,
+          };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+
+        if (
           hasText &&
           _looksLikeExplicitFinalSummary(content || streamedText || "") &&
           !opts.skillLoop &&
@@ -6970,6 +7051,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _boundedBacklogPlanActive &&
               !_looksLikeBoundedBacklogDecision(_assistantText)
             ) {
+              if (
+                _boundedBacklogEvidencePrefetched &&
+                _looksLikeTextualToolCallAttempt(_assistantText)
+              ) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction({ blocked: true }) +
+                    "\n\nThe backlog evidence has already been read into the conversation. Do not describe tool calls, JSON tool calls, or read_file calls in text. Write only the required bounded plan labels now.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: textual tool-call attempt after evidence prefetch${C.reset}`,
+                );
+                continue;
+              }
+              if (_looksLikeBoundedBacklogHeadingPlan(_assistantText)) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction({
+                      blocked: _boundedBacklogEvidencePrefetched,
+                    }) +
+                    "\n\nYour previous plan used markdown headings. Rewrite the same plan using exact label lines, for example `Selected improvement:` instead of `### Selected improvement`.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: heading labels rejected — requesting exact labels${C.reset}`,
+                );
+                continue;
+              }
               if (_looksOffTopicForBoundedBacklogPrompt(_assistantText)) {
                 _boundedBacklogDecisionMisses++;
                 const decisionMsg = {
@@ -6990,8 +7106,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 continue;
               }
               _boundedBacklogDecisionMisses++;
+              const missLimit = _boundedBacklogEvidencePrefetched ? 4 : 2;
               if (
-                _boundedBacklogDecisionMisses >= 2 ||
+                _boundedBacklogDecisionMisses >= missLimit ||
                 _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
               ) {
                 const msg =
@@ -7804,6 +7921,57 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           prep.errorResult = {
             role: "tool",
             content: _buildBoundedBacklogPlanInstruction({ blocked: true }),
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
+      if (
+        _boundedBacklogPlanActive &&
+        _phaseEnabled &&
+        _currentPhase === "implement" &&
+        _boundedBacklogEvidencePrefetched &&
+        filesModified.size === 0
+      ) {
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          const readPath = _normalizePromptPath(prep.args?.path || "");
+          const isWriteTool =
+            prep.fnName === "write_file" ||
+            prep.fnName === "edit_file" ||
+            prep.fnName === "patch_file";
+          const isTargetedImplementationRead =
+            prep.fnName === "read_file" &&
+            readPath &&
+            !_boundedBacklogPromptPaths.has(readPath) &&
+            (prep.args?.line_start || prep.args?.line_end);
+          const isEditRecoveryRead =
+            isTargetedImplementationRead &&
+            (_sessionLastEditFailed.get(prep.args?.path) || 0) > 0;
+          if (isWriteTool) continue;
+          if (
+            (isTargetedImplementationRead &&
+              _boundedBacklogImplementationReads < 2) ||
+            isEditRecoveryRead
+          ) {
+            if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
+            continue;
+          }
+          const rereadsBacklog =
+            prep.fnName === "read_file" &&
+            readPath &&
+            _boundedBacklogPromptPaths.has(readPath);
+          const exhaustedImplementationReads =
+            isTargetedImplementationRead &&
+            _boundedBacklogImplementationReads >= 2;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: rereadsBacklog
+              ? "BLOCKED: implementation phase has already completed backlog review. Do not re-read backlog files. Edit the concrete implementation file from the accepted plan now."
+              : exhaustedImplementationReads
+                ? "BLOCKED: implementation phase has already read enough targeted code context. Make the scoped edit now with edit_file or patch_file; do not read more before editing."
+                : "BLOCKED: implementation phase must not use bash/find/git or broad reading. Use read_file with line_start/line_end on the concrete implementation file if one more section is needed, then use edit_file or patch_file.",
             tool_call_id: prep.callId,
           };
         }
@@ -10403,6 +10571,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         debugLog(
           `${C.yellow}  ⚠ Verify budget exhausted — completing session${C.reset}`,
         );
+        break outer;
+      } else if (
+        _phaseEnabled &&
+        _currentPhase === "implement" &&
+        filesModified.size === 0 &&
+        _bashModifiedFiles === 0
+      ) {
+        const stalledMsg =
+          "Implementation stalled before edits.\n\n" +
+          "The plan phase completed, but the implementation phase exhausted its turn budget without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+        const assistantMsg = { role: "assistant", content: stalledMsg };
+        conversationMessages.push(assistantMsg);
+        apiMessages.push(assistantMsg);
+        console.log(`\n${stalledMsg}`);
+        saveNow(conversationMessages);
+        _scoreAndPrint(conversationMessages);
         break outer;
       }
 
