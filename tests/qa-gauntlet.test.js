@@ -16,7 +16,10 @@ jest.mock("../cli/providers/registry", () => ({
   MODEL_EQUIVALENTS: { fast: {}, strong: {}, top: {} },
 }));
 
-const { callStream, getActiveProviderName } = require("../cli/providers/registry");
+const {
+  callStream,
+  getActiveProviderName,
+} = require("../cli/providers/registry");
 const { setAutoConfirm } = require("../cli/safety");
 const {
   clearConversation,
@@ -139,7 +142,12 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
     const money = path.join(dir, "money.js");
     const discount = path.join(dir, "discount.js");
     const main = path.join(dir, "main.js");
-    const readme = path.join(SANDBOX_ROOT, "projects", "scenario-b", "README.md");
+    const readme = path.join(
+      SANDBOX_ROOT,
+      "projects",
+      "scenario-b",
+      "README.md",
+    );
     if (!fs.existsSync(money)) {
       writeFile(
         money,
@@ -328,8 +336,8 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
           "fi",
           "",
           "# Deliberately simplistic syntax check: proxy_pass line must end with ';'",
-          'if grep -nE \'^\\s*proxy_pass\\s+[^;]+$\' "$conf" >/dev/null; then',
-          '  line=$(grep -nE \'^\\s*proxy_pass\\s+[^;]+$\' "$conf" | head -n 1 | cut -d: -f1)',
+          "if grep -nE '^\\s*proxy_pass\\s+[^;]+$' \"$conf\" >/dev/null; then",
+          "  line=$(grep -nE '^\\s*proxy_pass\\s+[^;]+$' \"$conf\" | head -n 1 | cut -d: -f1)",
           '  echo "nginx: [emerg] invalid number of arguments in \\"proxy_pass\\" directive in $conf:$line (fake)" >&2',
           "  exit 1",
           "fi",
@@ -341,6 +349,136 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
       );
       fs.chmodSync(fakeNginx, 0o755);
     }
+  }
+
+  function ensureScenarioEFixture() {
+    const dir = path.join(SANDBOX_ROOT, "projects", "scenario-e");
+    fs.mkdirSync(dir, { recursive: true });
+    writeFile(
+      path.join(dir, "processor.js"),
+      [
+        "// Scenario E fixture: nested callback flow with a simulated missing dependency.",
+        "",
+        "function loadJson(file, cb) {",
+        "  setTimeout(() => {",
+        '    if (file === "missing.json") return cb(new Error("missing dependency: missing.json"));',
+        "    cb(null, { users: [{ id: 1, active: true }, { id: 2, active: false }] });",
+        "  }, 5);",
+        "}",
+        "",
+        "function transform(payload, cb) {",
+        "  setTimeout(() => {",
+        "    cb(null, payload.users.filter((user) => user.active).map((user) => user.id));",
+        "  }, 5);",
+        "}",
+        "",
+        "function save(ids, cb) {",
+        "  setTimeout(() => cb(null, ids.join(',')), 5);",
+        "}",
+        "",
+        "function run(cb) {",
+        '  loadJson("data.json", (err, payload) => {',
+        "    if (err) return cb(err);",
+        "    transform(payload, (err2, ids) => {",
+        "      if (err2) return cb(err2);",
+        "      save(ids, (err3, output) => {",
+        "        if (err3) return cb(err3);",
+        "        cb(null, output);",
+        "      });",
+        "    });",
+        "  });",
+        "}",
+        "",
+        "run((err, output) => {",
+        "  if (err) throw err;",
+        "  console.log(output);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(dir, "README.md"),
+      [
+        "Scenario E",
+        "",
+        "Goal: Refactor processor.js to async/await without adding dependencies.",
+        "The missing dependency is simulated; keep the successful behavior intact.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  function ensureScenarioFFixture() {
+    const dir = path.join(SANDBOX_ROOT, "server-scenario-f");
+    const binDir = path.join(dir, "bin");
+    const confDir = path.join(dir, "mock-root", "etc", "nginx");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(confDir, { recursive: true });
+    writeFile(
+      path.join(confDir, "nginx.conf"),
+      [
+        "# Scenario F fixture: subtle nginx typo in a sandboxed mock root.",
+        "events { worker_connections 128; }",
+        "http {",
+        "  upstream app_backend {",
+        "    server 127.0.0.1:3000;",
+        "  }",
+        "  server {",
+        "    listen 8081;",
+        "    location /api {",
+        "      proxy_pass http://app-backend;",
+        "    }",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const fakeSystemctl = path.join(binDir, "systemctl");
+    writeFile(
+      fakeSystemctl,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'echo "[scenario-f-systemctl] $*"',
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(fakeSystemctl, 0o755);
+  }
+
+  function ensureScenarioGFixture() {
+    const dir = path.join(SANDBOX_ROOT, "projects", "scenario-g");
+    fs.mkdirSync(dir, { recursive: true });
+    writeFile(
+      path.join(dir, "service.js"),
+      [
+        "<<<<<<< HEAD",
+        "function port() { return 3000; }",
+        "=======",
+        "function port() { return Number(process.env.PORT || 3000); }",
+        ">>>>>>> feature/server-config",
+        "",
+        "module.exports = { port };",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(dir, "README.md"),
+      [
+        "<<<<<<< HEAD",
+        "Run the service with node service.js.",
+        "=======",
+        "Run the service with PORT=3001 node service.js.",
+        ">>>>>>> feature/server-config",
+        "",
+      ].join("\n"),
+    );
+    fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+    writeFile(
+      path.join(dir, ".git", "MERGE_HEAD"),
+      "0000000000000000000000000000000000000000\n",
+    );
   }
 
   beforeAll(() => {
@@ -365,6 +503,9 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
     ensureScenarioAFixture();
     ensureScenarioBFixture();
     ensureServerMockFixture();
+    ensureScenarioEFixture();
+    ensureScenarioFFixture();
+    ensureScenarioGFixture();
   });
 
   it("Scenario A: refactor callback flow to async/await", async () => {
@@ -385,7 +526,9 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
     });
     mockStreamOnce({
       content: "Verifying behavior.",
-      tool_calls: [toolCall("bash", { command: "node app.js && echo check" }, "a3")],
+      tool_calls: [
+        toolCall("bash", { command: "node app.js && echo check" }, "a3"),
+      ],
     });
     mockStreamOnce({
       content:
@@ -514,7 +657,8 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
       ],
     });
     mockStreamOnce({
-      content: "Fixing nginx config syntax error and adding dry-run restart helper.",
+      content:
+        "Fixing nginx config syntax error and adding dry-run restart helper.",
       tool_calls: [
         toolCall(
           "write_file",
@@ -531,7 +675,11 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
     mockStreamOnce({
       content: "Making the restart helper executable.",
       tool_calls: [
-        toolCall("bash", { command: "chmod +x restart-nginx-dry-run.sh" }, "c4"),
+        toolCall(
+          "bash",
+          { command: "chmod +x restart-nginx-dry-run.sh" },
+          "c4",
+        ),
       ],
     });
     mockStreamOnce({
@@ -554,9 +702,13 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
       "In this mocked server environment only, find the nginx syntax error and create a dry-run restart script.",
     );
 
-    const updatedConf = readFile(path.join(cwd, "sandbox-local/etc/nginx/nginx.conf"));
+    const updatedConf = readFile(
+      path.join(cwd, "sandbox-local/etc/nginx/nginx.conf"),
+    );
     expect(updatedConf).toContain("proxy_pass http://127.0.0.1:3000;");
-    expect(fs.existsSync(path.join(cwd, "restart-nginx-dry-run.sh"))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, "restart-nginx-dry-run.sh"))).toBe(
+      true,
+    );
   });
 
   it("Scenario D: trigger tool-call budget stop and get a final summary", async () => {
@@ -576,7 +728,11 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
         toolCall("grep", { pattern: "fakeApiGet", path: "." }, "d3"),
         toolCall("read_file", { path: "README.md" }, "d4"),
         toolCall("read_file", { path: "app.js" }, "d5"),
-        toolCall("search_files", { path: ".", pattern: "getUserAndPosts" }, "d6"),
+        toolCall(
+          "search_files",
+          { path: ".", pattern: "getUserAndPosts" },
+          "d6",
+        ),
       ],
     });
 
@@ -615,5 +771,175 @@ describeGauntlet("QA gauntlet (sandbox-only)", () => {
       .slice(toolBatchIndex + 1)
       .filter((m) => m?.role === "assistant" && Array.isArray(m.tool_calls));
     expect(laterAssistantToolCalls).toHaveLength(0);
+  });
+
+  it("Scenario E: refactor nested callbacks with missing-dependency context", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-e");
+    process.chdir(cwd);
+
+    const fixed = `// Scenario E fixture: nested callback flow with a simulated missing dependency.\n\nfunction loadJson(file, cb) {\n  setTimeout(() => {\n    if (file === "missing.json") return cb(new Error("missing dependency: missing.json"));\n    cb(null, { users: [{ id: 1, active: true }, { id: 2, active: false }] });\n  }, 5);\n}\n\nfunction transform(payload, cb) {\n  setTimeout(() => {\n    cb(null, payload.users.filter((user) => user.active).map((user) => user.id));\n  }, 5);\n}\n\nfunction save(ids, cb) {\n  setTimeout(() => cb(null, ids.join(',')), 5);\n}\n\nfunction loadJsonAsync(file) {\n  return new Promise((resolve, reject) => loadJson(file, (err, value) => err ? reject(err) : resolve(value)));\n}\n\nfunction transformAsync(payload) {\n  return new Promise((resolve, reject) => transform(payload, (err, value) => err ? reject(err) : resolve(value)));\n}\n\nfunction saveAsync(ids) {\n  return new Promise((resolve, reject) => save(ids, (err, value) => err ? reject(err) : resolve(value)));\n}\n\nasync function run() {\n  const payload = await loadJsonAsync("data.json");\n  const ids = await transformAsync(payload);\n  return saveAsync(ids);\n}\n\nrun()\n  .then((output) => console.log(output))\n  .catch((err) => {\n    console.error(err.message);\n    process.exitCode = 1;\n  });\n`;
+
+    mockStreamOnce({
+      content: "Reading the legacy callback processor.",
+      tool_calls: [toolCall("read_file", { path: "processor.js" }, "e1")],
+    });
+    mockStreamOnce({
+      content:
+        "Refactoring nested callbacks to async helpers without adding dependencies.",
+      tool_calls: [
+        toolCall("write_file", { path: "processor.js", content: fixed }, "e2"),
+      ],
+    });
+    mockStreamOnce({
+      content: "Verifying the refactored processor.",
+      tool_calls: [toolCall("bash", { command: "node processor.js" }, "e3")],
+    });
+    mockStreamOnce({
+      content:
+        "Refactored the nested callback processor to async/await without adding dependencies and verified the output.",
+      tool_calls: [],
+    });
+    mockStreamOnce({
+      content:
+        "Final summary: Scenario E completed with three tool calls and no dependency installation.",
+      tool_calls: [],
+    });
+
+    await processInput(
+      "Scenario E: refactor the legacy callback processor to async/await without adding dependencies.",
+    );
+
+    expect(readFile(path.join(cwd, "processor.js"))).toContain(
+      "async function run",
+    );
+  });
+
+  it("Scenario F: fix sandboxed nginx typo without host commands", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "server-scenario-f");
+    process.chdir(cwd);
+
+    const fixedConf = [
+      "# Scenario F fixture: subtle nginx typo in a sandboxed mock root.",
+      "events { worker_connections 128; }",
+      "http {",
+      "  upstream app_backend {",
+      "    server 127.0.0.1:3000;",
+      "  }",
+      "  server {",
+      "    listen 8081;",
+      "    location /api {",
+      "      proxy_pass http://app_backend;",
+      "    }",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+
+    mockStreamOnce({
+      content: "Reading the sandboxed nginx config.",
+      tool_calls: [
+        toolCall("read_file", { path: "mock-root/etc/nginx/nginx.conf" }, "f1"),
+      ],
+    });
+    mockStreamOnce({
+      content: "Fixing the upstream name typo.",
+      tool_calls: [
+        toolCall(
+          "write_file",
+          { path: "mock-root/etc/nginx/nginx.conf", content: fixedConf },
+          "f2",
+        ),
+      ],
+    });
+    mockStreamOnce({
+      content: "Checking the dummy service command stays sandboxed.",
+      tool_calls: [
+        toolCall(
+          "bash",
+          { command: 'PATH="$PWD/bin:$PATH" systemctl reload nginx' },
+          "f3",
+        ),
+      ],
+    });
+    mockStreamOnce({
+      content:
+        "Fixed the sandboxed nginx upstream typo and verified only the dummy systemctl executable was invoked.",
+      tool_calls: [],
+    });
+    mockStreamOnce({
+      content:
+        "Final summary: Scenario F stayed inside the sandbox and used only the dummy systemctl wrapper.",
+      tool_calls: [],
+    });
+
+    await processInput(
+      "Scenario F: fix the sandboxed nginx config typo and use only the dummy systemctl.",
+    );
+
+    expect(
+      readFile(path.join(cwd, "mock-root/etc/nginx/nginx.conf")),
+    ).toContain("app_backend");
+  });
+
+  it("Scenario G: resolve simulated multi-file git conflicts", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-g");
+    process.chdir(cwd);
+
+    mockStreamOnce({
+      content: "Inspecting simulated conflict markers.",
+      tool_calls: [
+        toolCall(
+          "grep",
+          { pattern: "<<<<<<<|=======|>>>>>>>", path: "." },
+          "g1",
+        ),
+      ],
+    });
+    mockStreamOnce({
+      content: "Reading conflicted files.",
+      tool_calls: [
+        toolCall("read_file", { path: "service.js" }, "g2"),
+        toolCall("read_file", { path: "README.md" }, "g3"),
+      ],
+    });
+    mockStreamOnce({
+      content: "Resolving conflicts by preserving configurable behavior.",
+      tool_calls: [
+        toolCall(
+          "write_file",
+          {
+            path: "service.js",
+            content:
+              "function port() { return Number(process.env.PORT || 3000); }\n\nmodule.exports = { port };\n",
+          },
+          "g4",
+        ),
+        toolCall(
+          "write_file",
+          {
+            path: "README.md",
+            content: "Run the service with PORT=3001 node service.js.\n",
+          },
+          "g5",
+        ),
+      ],
+    });
+    mockStreamOnce({
+      content:
+        "Resolved the simulated multi-file git conflict while preserving the configurable port behavior.",
+      tool_calls: [],
+    });
+    mockStreamOnce({
+      content:
+        "Final summary: Scenario G resolved all conflict markers across the simulated repository.",
+      tool_calls: [],
+    });
+
+    await processInput(
+      "Scenario G: resolve the simulated git merge conflicts in multiple files.",
+    );
+
+    expect(readFile(path.join(cwd, "service.js"))).not.toContain("<<<<<<<");
+    expect(readFile(path.join(cwd, "README.md"))).not.toContain(">>>>>>>");
   });
 });

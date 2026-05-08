@@ -241,8 +241,8 @@ function ensureServerMockFixture() {
       "fi",
       "",
       "# Deliberately simplistic syntax check: proxy_pass line must end with ';'",
-      'if grep -nE \'^\\s*proxy_pass\\s+[^;]+$\' "$conf" >/dev/null; then',
-      '  line=$(grep -nE \'^\\s*proxy_pass\\s+[^;]+$\' "$conf" | head -n 1 | cut -d: -f1)',
+      "if grep -nE '^\\s*proxy_pass\\s+[^;]+$' \"$conf\" >/dev/null; then",
+      "  line=$(grep -nE '^\\s*proxy_pass\\s+[^;]+$' \"$conf\" | head -n 1 | cut -d: -f1)",
       '  echo "nginx: [emerg] invalid number of arguments in \\"proxy_pass\\" directive in $conf:$line (fake)" >&2',
       "  exit 1",
       "fi",
@@ -253,6 +253,126 @@ function ensureServerMockFixture() {
     ].join("\n"),
   );
   fs.chmodSync(fakeNginx, 0o755);
+}
+
+function ensureScenarioEFixture() {
+  const dir = path.join(SANDBOX_ROOT, "projects", "scenario-e");
+  fs.mkdirSync(dir, { recursive: true });
+  writeFile(
+    path.join(dir, "processor.js"),
+    [
+      "// Scenario E fixture: nested callback flow with a simulated missing dependency.",
+      "",
+      "function loadJson(file, cb) {",
+      "  setTimeout(() => {",
+      '    if (file === "missing.json") return cb(new Error("missing dependency: missing.json"));',
+      "    cb(null, { users: [{ id: 1, active: true }, { id: 2, active: false }] });",
+      "  }, 5);",
+      "}",
+      "",
+      "function transform(payload, cb) {",
+      "  setTimeout(() => {",
+      "    cb(null, payload.users.filter((user) => user.active).map((user) => user.id));",
+      "  }, 5);",
+      "}",
+      "",
+      "function save(ids, cb) {",
+      "  setTimeout(() => cb(null, ids.join(',')), 5);",
+      "}",
+      "",
+      "function run(cb) {",
+      '  loadJson("data.json", (err, payload) => {',
+      "    if (err) return cb(err);",
+      "    transform(payload, (err2, ids) => {",
+      "      if (err2) return cb(err2);",
+      "      save(ids, (err3, output) => {",
+      "        if (err3) return cb(err3);",
+      "        cb(null, output);",
+      "      });",
+      "    });",
+      "  });",
+      "}",
+      "",
+      "run((err, output) => {",
+      "  if (err) throw err;",
+      "  console.log(output);",
+      "});",
+      "",
+    ].join("\n"),
+  );
+}
+
+function ensureScenarioFFixture() {
+  const dir = path.join(SANDBOX_ROOT, "server-scenario-f");
+  const binDir = path.join(dir, "bin");
+  const confDir = path.join(dir, "mock-root", "etc", "nginx");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(confDir, { recursive: true });
+  writeFile(
+    path.join(confDir, "nginx.conf"),
+    [
+      "# Scenario F fixture: subtle nginx typo in a sandboxed mock root.",
+      "events { worker_connections 128; }",
+      "http {",
+      "  upstream app_backend {",
+      "    server 127.0.0.1:3000;",
+      "  }",
+      "  server {",
+      "    listen 8081;",
+      "    location /api {",
+      "      proxy_pass http://app-backend;",
+      "    }",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  const fakeSystemctl = path.join(binDir, "systemctl");
+  writeFile(
+    fakeSystemctl,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'echo "[scenario-f-systemctl] $*"',
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(fakeSystemctl, 0o755);
+}
+
+function ensureScenarioGFixture() {
+  const dir = path.join(SANDBOX_ROOT, "projects", "scenario-g");
+  fs.mkdirSync(dir, { recursive: true });
+  writeFile(
+    path.join(dir, "service.js"),
+    [
+      "<<<<<<< HEAD",
+      "function port() { return 3000; }",
+      "=======",
+      "function port() { return Number(process.env.PORT || 3000); }",
+      ">>>>>>> feature/server-config",
+      "",
+      "module.exports = { port };",
+      "",
+    ].join("\n"),
+  );
+  writeFile(
+    path.join(dir, "README.md"),
+    [
+      "<<<<<<< HEAD",
+      "Run the service with node service.js.",
+      "=======",
+      "Run the service with PORT=3001 node service.js.",
+      ">>>>>>> feature/server-config",
+      "",
+    ].join("\n"),
+  );
+  fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+  writeFile(
+    path.join(dir, ".git", "MERGE_HEAD"),
+    "0000000000000000000000000000000000000000\n",
+  );
 }
 
 function runCli({ cwd, env, args, timeoutMs = 15000 }) {
@@ -298,6 +418,9 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
     ensureScenarioAFixture();
     ensureScenarioBFixture();
     ensureServerMockFixture();
+    ensureScenarioEFixture();
+    ensureScenarioFFixture();
+    ensureScenarioGFixture();
   });
 
   test("Scenario A: stdout clean + exit 0 + file updated", async () => {
@@ -476,5 +599,101 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("handled a malformed tool call without hanging");
+  });
+
+  test("Scenario E: nested callback refactor exits 0", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-e");
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+      NEX_PHASE_ROUTING: "0",
+    };
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--task",
+        "Scenario E: refactor the legacy callback processor to async/await without adding dependencies.",
+      ],
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain("Refactored the nested callback processor");
+    expect(fs.readFileSync(path.join(cwd, "processor.js"), "utf-8")).toContain(
+      "async function run",
+    );
+  });
+
+  test("Scenario F: sandboxed server command uses dummy systemctl", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "server-scenario-f");
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+      NEX_PHASE_ROUTING: "0",
+    };
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--task",
+        "Scenario F: fix the sandboxed nginx config typo and use only the dummy systemctl.",
+      ],
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain("dummy systemctl executable was invoked");
+    expect(
+      fs.readFileSync(
+        path.join(cwd, "mock-root/etc/nginx/nginx.conf"),
+        "utf-8",
+      ),
+    ).toContain("app_backend");
+  });
+
+  test("Scenario G: simulated git conflicts are resolved", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-g");
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+      NEX_PHASE_ROUTING: "0",
+    };
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--task",
+        "Scenario G: resolve the simulated git merge conflicts in multiple files.",
+      ],
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain("Resolved the simulated multi-file git conflict");
+    expect(
+      fs.readFileSync(path.join(cwd, "service.js"), "utf-8"),
+    ).not.toContain("<<<<<<<");
   });
 });
