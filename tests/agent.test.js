@@ -818,6 +818,26 @@ describe("agent.js", () => {
         { silent: true, autoConfirm: true },
       );
     });
+
+    it("normalizes namespaced tool aliases to known tools", async () => {
+      mockStream("", [
+        {
+          function: {
+            name: "repo_browser.read_file",
+            arguments: { path: "package.json" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+      executeTool.mockResolvedValueOnce("{}");
+      await processInput("test");
+      expect(executeTool).toHaveBeenCalledWith(
+        "read_file",
+        expect.objectContaining({ path: "package.json" }),
+        { silent: true, autoConfirm: true },
+      );
+    });
   });
 
   // ─── tool routing ─────────────────────────────────────────
@@ -3765,6 +3785,42 @@ describe("agent.js", () => {
         ),
       ).toBe(true);
       expect(_looksLikeBoundedBacklogDecision("no safe task found")).toBe(true);
+    });
+
+    it("rejects bare no-safe responses after bounded backlog evidence", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Selected improvement: no safe task found",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "no safe task found because the referenced backlog files are missing and cannot be inspected",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Do not answer `no safe task found`"),
+        ),
+      ).toBe(true);
     });
 
     it("injects the bounded backlog plan template before the model plans", async () => {
