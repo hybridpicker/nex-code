@@ -962,6 +962,7 @@ async function prepareToolCall(tc) {
   if (typeof rawFnName === "string" && rawFnName.includes(".")) {
     const suffix = rawFnName.split(".").pop();
     const namespacedAliases = {
+      exec: "bash",
       find: "search_files",
       search: "search_files",
       grep_search: "grep",
