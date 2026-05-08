@@ -95,7 +95,23 @@ let fallbackChain = [];
 // ─── Initialize Default Providers ──────────────────────────────
 
 function initDefaults() {
-  if (Object.keys(providers).length > 0) return;
+  const wantMock = process.env.NEX_MOCK_PROVIDER === "1";
+
+  // If already initialized, optionally hot-add + activate the mock provider.
+  // This keeps behavior deterministic in tests that flip env vars at runtime.
+  if (Object.keys(providers).length > 0) {
+    if (wantMock && !providers.mock) {
+      const { MockProvider } = require("./mock");
+      registerProvider("mock", new MockProvider());
+    }
+    if (wantMock && providers.mock && activeProviderName !== "mock") {
+      activeProviderName = "mock";
+      activeModelId = providers.mock.defaultModel || "mock-model";
+      fallbackChain = [];
+      invalidateCaches();
+    }
+    return;
+  }
 
   registerProvider("ollama", new OllamaProvider());
   registerProvider("openai", new OpenAIProvider());
@@ -103,12 +119,20 @@ function initDefaults() {
   registerProvider("anthropic", new AnthropicProvider());
   registerProvider("gemini", new GeminiProvider());
   registerProvider("local", new LocalProvider());
+  if (wantMock) {
+    const { MockProvider } = require("./mock");
+    registerProvider("mock", new MockProvider());
+  }
 
   // Determine active provider from env or default to ollama
   const defaultProvider = process.env.DEFAULT_PROVIDER || "ollama";
   const defaultModel = process.env.DEFAULT_MODEL || null;
 
-  if (providers[defaultProvider]) {
+  if (wantMock) {
+    activeProviderName = "mock";
+    activeModelId = providers.mock?.defaultModel || "mock-model";
+    fallbackChain = [];
+  } else if (providers[defaultProvider]) {
     activeProviderName = defaultProvider;
     activeModelId = defaultModel || providers[defaultProvider].defaultModel;
   } else {
@@ -193,7 +217,7 @@ function parseModelSpec(spec) {
     // Only treat as provider:model if prefix is a known provider name
     if (
       providers[prefix] ||
-      ["ollama", "openai", "deepseek", "anthropic", "gemini", "local"].includes(
+      ["ollama", "openai", "deepseek", "anthropic", "gemini", "local", "mock"].includes(
         prefix,
       )
     ) {
