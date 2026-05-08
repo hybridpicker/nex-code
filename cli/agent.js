@@ -961,10 +961,17 @@ async function prepareToolCall(tc) {
   let fnName = rawFnName;
   if (typeof rawFnName === "string" && rawFnName.includes(".")) {
     const suffix = rawFnName.split(".").pop();
+    const namespacedAliases = {
+      find: "search_files",
+      search: "search_files",
+      grep_search: "grep",
+      read: "read_file",
+    };
     const knownTool = getAllToolDefinitions().some(
       (t) => t.function.name === suffix,
     );
     if (knownTool) fnName = suffix;
+    else if (namespacedAliases[suffix]) fnName = namespacedAliases[suffix];
   }
   const args = parseToolArgs(tc.function.arguments);
   const callId =
@@ -1015,6 +1022,14 @@ async function prepareToolCall(tc) {
     } catch (e) {
       console.error("path resolution failed:", e.message);
     }
+  }
+  if (
+    args &&
+    (fnName === "search_files" || fnName === "grep") &&
+    typeof args.pattern !== "string"
+  ) {
+    if (typeof args.query === "string") args.pattern = args.query;
+    else if (typeof args.search === "string") args.pattern = args.search;
   }
 
   // Validate
@@ -1855,6 +1870,16 @@ function _looksLikeTextualToolCallAttempt(text) {
       value,
     ) ||
     /\{\s*["']tool["']\s*:\s*["'](?:read_file|grep|search_files|glob)["']/i.test(value)
+  );
+}
+
+function _isUnmodifiedBoundedBacklogImplementation(filesModified, bashModifiedFiles) {
+  return (
+    _boundedBacklogPlanActive &&
+    _boundedBacklogEvidencePrefetched &&
+    (_boundedBacklogImplementationReads > 0 || _sessionLastEditFailed.size > 0) &&
+    filesModified.size === 0 &&
+    bashModifiedFiles === 0
   );
 }
 
@@ -6557,6 +6582,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.yellow}  ⚠ Tool-call budget reached (${totalToolCalls}/${maxToolCalls}) — forcing final answer${C.reset}`,
             );
+            if (
+              (_phaseEnabled && _currentPhase === "implement" &&
+                filesModified.size === 0 &&
+                _bashModifiedFiles === 0) ||
+              _isUnmodifiedBoundedBacklogImplementation(
+                filesModified,
+                _bashModifiedFiles,
+              )
+            ) {
+              const stalledMsg =
+                "Implementation stalled before edits.\n\n" +
+                "The implementation phase reached the tool-call budget without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+              const stalledAssistantMsg = {
+                role: "assistant",
+                content: stalledMsg,
+              };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
             const finalPrompt = {
               role: "user",
               content: _buildToolBudgetFinalPrompt(
@@ -6845,8 +6893,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
-          _phaseEnabled &&
-          _currentPhase === "implement" &&
+          ((_phaseEnabled && _currentPhase === "implement") ||
+            _isUnmodifiedBoundedBacklogImplementation(
+              filesModified,
+              _bashModifiedFiles,
+            )) &&
           getAutoConfirm() &&
           hasText &&
           filesModified.size === 0 &&
@@ -9032,7 +9083,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !firstLine.startsWith("ERROR") &&
           !firstLine.startsWith("CANCELLED") &&
           !firstLine.startsWith("Command failed") &&
-          !firstLine.startsWith("EXIT");
+          !firstLine.startsWith("EXIT") &&
+          !/old_text not found/i.test(firstLine);
 
         // Track user-visible git status evidence for final automation reports.
         if (prep.fnName === "git_status" && isOk) {
@@ -10265,6 +10317,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         );
       }
 
+      const boundedEditFailures = [..._sessionLastEditFailed.values()].reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      if (
+        _isUnmodifiedBoundedBacklogImplementation(
+          filesModified,
+          _bashModifiedFiles,
+        ) &&
+        boundedEditFailures >= 2
+      ) {
+        const stalledMsg =
+          "Implementation stalled before edits.\n\n" +
+          "The implementation phase attempted file edits, but the edits did not match the current file content. Stopping without commit or push so the workflow does not falsely report success.";
+        const stalledAssistantMsg = {
+          role: "assistant",
+          content: stalledMsg,
+        };
+        conversationMessages.push(stalledAssistantMsg);
+        apiMessages.push(stalledAssistantMsg);
+        console.log(`\n${stalledMsg}`);
+        saveNow(conversationMessages);
+        _scoreAndPrint(conversationMessages);
+        break outer;
+      }
+
       // ─── Per-message tool result budget ─────────────────────────────────────
       // When N tools run in parallel their results land in one API "user" turn.
       // Cap the aggregate size so a batch of large reads doesn't flood context.
@@ -10307,6 +10385,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       if (forceFinalAfterBatch) {
         const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        if (
+          (_phaseEnabled && _currentPhase === "implement" &&
+            filesModified.size === 0 &&
+            _bashModifiedFiles === 0) ||
+          _isUnmodifiedBoundedBacklogImplementation(
+            filesModified,
+            _bashModifiedFiles,
+          )
+        ) {
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            "The implementation phase reached the tool-call budget without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+          const stalledAssistantMsg = {
+            role: "assistant",
+            content: stalledMsg,
+          };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         const finalPrompt = {
           role: "user",
           content: _buildToolBudgetFinalPrompt(totalToolCalls, maxToolCalls),
@@ -10589,8 +10690,46 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       } else if (
         _phaseEnabled &&
         _currentPhase === "implement" &&
-        filesModified.size === 0 &&
-        _bashModifiedFiles === 0
+        (filesModified.size > 0 || _bashModifiedFiles > 0)
+      ) {
+        const _lastAssistant = [...conversationMessages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        const _summary =
+          typeof _lastAssistant?.content === "string"
+            ? _lastAssistant.content
+            : "";
+        const _firstUser = conversationMessages.find(
+          (m) => m.role === "user",
+        );
+        const _origTask =
+          typeof _firstUser?.content === "string" ? _firstUser.content : "";
+        const phaseMsg = await _transitionPhase(
+          "verify",
+          _summary,
+          filesModified,
+          _origTask,
+        );
+        if (phaseMsg) {
+          conversationMessages.push(phaseMsg);
+          apiMessages.push(phaseMsg);
+          iterLimit = Math.min(
+            getPhaseBudget("verify") + Math.max(0, (filesModified.size - 2) * 2),
+            20,
+          );
+          debugLog(
+            `${C.yellow}  ⚠ Implement budget exhausted after edits — auto-transitioning to verify${C.reset}`,
+          );
+          continue outer;
+        }
+      } else if (
+        (_phaseEnabled && _currentPhase === "implement" &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0) ||
+        _isUnmodifiedBoundedBacklogImplementation(
+          filesModified,
+          _bashModifiedFiles,
+        )
       ) {
         const stalledMsg =
           "Implementation stalled before edits.\n\n" +
@@ -10608,6 +10747,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         getActiveProviderName: _getProviderName,
       } = require("./providers/registry");
       const provider = _getProviderName();
+      if (
+        _boundedBacklogPlanActive &&
+        _boundedBacklogEvidencePrefetched &&
+        filesModified.size === 0 &&
+        _bashModifiedFiles === 0 &&
+        !progressMadeThisPass
+      ) {
+        const stalledMsg =
+          "Implementation stalled before edits.\n\n" +
+          "The bounded backlog workflow reached its turn budget after planning but before changing files. Stopping without commit or push so the workflow does not falsely report success.";
+        const assistantMsg = { role: "assistant", content: stalledMsg };
+        conversationMessages.push(assistantMsg);
+        apiMessages.push(assistantMsg);
+        console.log(`\n${stalledMsg}`);
+        saveNow(conversationMessages);
+        _scoreAndPrint(conversationMessages);
+        break outer;
+      }
       if (provider === "ollama" && autoExtensions < MAX_AUTO_EXTENSIONS) {
         // Skip auto-extend if no meaningful progress was made in this pass
         if (filesModified.size === 0 && !progressMadeThisPass) {

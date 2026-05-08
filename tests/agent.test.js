@@ -838,6 +838,26 @@ describe("agent.js", () => {
         { silent: true, autoConfirm: true },
       );
     });
+
+    it("maps namespaced repo search aliases to search_files", async () => {
+      mockStream("", [
+        {
+          function: {
+            name: "repo_browser.search",
+            arguments: { query: "Toolbar" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+      executeTool.mockResolvedValueOnce("components/Toolbar.tsx");
+      await processInput("test");
+      expect(executeTool).toHaveBeenCalledWith(
+        "search_files",
+        expect.objectContaining({ pattern: "Toolbar" }),
+        { silent: true, autoConfirm: true },
+      );
+    });
   });
 
   // ─── tool routing ─────────────────────────────────────────
@@ -4239,6 +4259,129 @@ describe("agent.js", () => {
         ),
       ).toBe(true);
     });
+
+    it("reports stalled implementation when tool budget is reached before edits", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      process.env.NEX_MAX_TOOL_CALLS = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: inspect current file\n" +
+            "Selection rationale: package.json exists\n" +
+            "Files: package.json\n" +
+            "Implementation outline: read then edit\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the target.",
+          tool_calls: [
+            {
+              id: "read-package",
+              function: {
+                name: "read_file",
+                arguments: { path: "package.json", line_start: 1, line_end: 20 },
+              },
+            },
+          ],
+        });
+      executeTool.mockResolvedValueOnce("{}");
+
+      await processInput(
+        "Improve docs/keyboard-shortcuts.md and docs/user-manual.md based on the backlog.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Implementation stalled before edits"),
+        ),
+      ).toBe(true);
+    });
+
+    it("stops bounded backlog runs after repeated edit mismatches", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("File content")
+        .mockResolvedValueOnce("File content")
+        .mockResolvedValue("old_text not found");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            "Selection rationale: package.json is a current implementation surface\n" +
+            "Files: package.json\n" +
+            "Implementation outline: read then edit\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the target.",
+          tool_calls: [
+            {
+              id: "read-package",
+              function: {
+                name: "read_file",
+                arguments: { path: "package.json", line_start: 1, line_end: 20 },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying the first edit.",
+          tool_calls: [
+            {
+              id: "edit-package-1",
+              function: {
+                name: "edit_file",
+                arguments: { path: "package.json", old_text: "missing-a", new_text: "x" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying the second edit.",
+          tool_calls: [
+            {
+              id: "edit-package-2",
+              function: {
+                name: "edit_file",
+                arguments: { path: "package.json", old_text: "missing-b", new_text: "y" },
+              },
+            },
+          ],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("attempted file edits"),
+        ),
+      ).toBe(true);
+    });
   });
 
 		  describe("gated automation preflight guard", () => {
@@ -4966,6 +5109,6 @@ describe("agent.js", () => {
           "git status --short --branch",
           "npm test",
         ]);
-      });
+      }, 15000);
 	  });
 });
