@@ -1,7 +1,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 
 const SANDBOX_BASE = path.join(os.homedir(), "Coding", "nex-code-sandbox");
 const SANDBOX_ROOT = path.join(SANDBOX_BASE, "cli-e2e");
@@ -137,6 +137,63 @@ function ensureScenarioBFixture() {
       "",
     ].join("\n"),
   );
+}
+
+function runGit(dir, args) {
+  return execFileSync("git", args, {
+    cwd: dir,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function ensureScenarioHFixture() {
+  const dir = path.join(SANDBOX_ROOT, "projects", "scenario-h");
+  const remoteDir = path.join(SANDBOX_ROOT, "remotes", "scenario-h.git");
+  fs.mkdirSync(path.join(dir, "components"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "docs"), { recursive: true });
+  fs.mkdirSync(path.dirname(remoteDir), { recursive: true });
+  writeFile(
+    path.join(dir, "components", "CommandCenter.tsx"),
+    [
+      "export function CommandCenter() {",
+      '  return <button className="command-action">Insert note</button>;',
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeFile(path.join(dir, "docs", "keyboard-shortcuts.md"), "# Keys\n");
+  writeFile(path.join(dir, "docs", "user-manual.md"), "# Manual\n");
+  writeFile(path.join(dir, "docs", "phase-roadmap.md"), "# Roadmap\n");
+  writeFile(
+    path.join(dir, "docs", "final-release-readiness-summary.md"),
+    "# Readiness\n",
+  );
+  writeFile(path.join(dir, "README.md"), "# Scenario H\n");
+  writeFile(path.join(dir, ".gitignore"), ".nex/\n");
+  writeFile(
+    path.join(dir, "package.json"),
+    JSON.stringify(
+      {
+        scripts: {
+          test:
+            "node -e \"const fs=require('fs');const s=fs.readFileSync('components/CommandCenter.tsx','utf8');if(!s.includes('aria-label=\\\"Insert note\\\"')) process.exit(1);\"",
+          build: "node -e \"console.log('build ok')\"",
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  runGit(dir, ["init", "-b", "main"]);
+  runGit(dir, ["config", "user.email", "scenario-h@example.test"]);
+  runGit(dir, ["config", "user.name", "Scenario H"]);
+  runGit(dir, ["add", "."]);
+  runGit(dir, ["commit", "-m", "test: seed scenario h"]);
+  runGit(SANDBOX_ROOT, ["init", "--bare", remoteDir]);
+  runGit(dir, ["remote", "add", "origin", remoteDir]);
+  runGit(dir, ["push", "-u", "origin", "main"]);
 }
 
 function ensureServerMockFixture() {
@@ -421,6 +478,7 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
     ensureScenarioEFixture();
     ensureScenarioFFixture();
     ensureScenarioGFixture();
+    ensureScenarioHFixture();
   });
 
   test("Scenario A: stdout clean + exit 0 + file updated", async () => {
@@ -695,5 +753,55 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
     expect(
       fs.readFileSync(path.join(cwd, "service.js"), "utf-8"),
     ).not.toContain("<<<<<<<");
+  });
+
+  test("Scenario H: bounded backlog corrects missing prompt example path", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-h");
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+    };
+
+    const task = [
+      `Scenario H: bounded backlog missing prompt example. Work only in ${cwd}.`,
+      "Required branch: main. Inspect git status and branch first.",
+      "If not on main, switch to main. Pull/rebase origin/main before changes.",
+      "If the worktree has unrelated or ambiguous changes, stop without editing, committing, or pushing.",
+      "Improve exactly one small, user-visible active-editing workflow.",
+      "Prefer existing components/NotationToolbar.tsx or components/CommandCenter.tsx.",
+      "Do not invent src/components paths, Tooltip components, or test files unless they already exist.",
+      "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md, docs/final-release-readiness-summary.md, README.md, and existing tests as backlog/reference material.",
+      "Before editing, read the exact existing implementation file with targeted line ranges.",
+      "After verification passes, inspect git status again. Stage only files changed for this improvement. Commit with a terse English message, push main to origin, then inspect git status one final time.",
+    ].join(" ");
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--task",
+        task,
+      ],
+      timeoutMs: 30000,
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain("Corrected the missing prompt example path");
+    expect(stdout).toContain("implemented");
+    const updated = fs.readFileSync(
+      path.join(cwd, "components", "CommandCenter.tsx"),
+      "utf-8",
+    );
+    expect(updated).toContain('aria-label="Insert note"');
+    expect(runGit(cwd, ["status", "--short", "--branch"])).toContain(
+      "## main...origin/main",
+    );
   });
 });
