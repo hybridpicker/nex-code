@@ -1636,6 +1636,10 @@ let _planTodos = []; // structured action items from plan phase [{file, action, 
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
 let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
 let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
+let _boundedBacklogNamedEvidenceReads = 0; // reads/searches that touch prompt-named backlog files
+const _boundedBacklogPromptPaths = new Set();
+let _boundedBacklogEvidencePrefetched = false;
+let _boundedBacklogPromptText = "";
 let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
 let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
 
@@ -1725,6 +1729,8 @@ function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
     : "[SYSTEM] Bounded backlog automation plan template.";
   return [
     prefix,
+    "Before deciding, inspect the concrete backlog/reference paths named by the user prompt. Prefer read_file on those paths over generic searches for words like `backlog`, `TODO`, or `FIXME`.",
+    "Ground the selected improvement in those files and the current project. Do not invent generic React bugs, placeholder files, or example components that were not found in the evidence.",
     "Write the plan now using exactly these sections:",
     "Selected improvement: name one scoped task, or write `no safe task found`.",
     "Selection rationale: why this task is the safest/highest-value choice from the backlog evidence.",
@@ -1737,9 +1743,75 @@ function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
   ].join("\n");
 }
 
+function _normalizePromptPath(value) {
+  return String(value || "").replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function _isNamedBoundedBacklogEvidenceTool(fnName, args = {}) {
+  if (!_boundedBacklogPlanActive || _boundedBacklogPromptPaths.size === 0) {
+    return true;
+  }
+  const candidates = [];
+  if (args.path) candidates.push(args.path);
+  if (args.pattern && /[/.]/.test(String(args.pattern))) candidates.push(args.pattern);
+  if (args.include && /[/.]/.test(String(args.include))) candidates.push(args.include);
+  if (args.file_pattern && /[/.]/.test(String(args.file_pattern))) {
+    candidates.push(args.file_pattern);
+  }
+  if (candidates.length === 0) return false;
+  const normalizedCandidates = candidates.map(_normalizePromptPath);
+  for (const promptPath of _boundedBacklogPromptPaths) {
+    const normalizedPromptPath = _normalizePromptPath(promptPath);
+    if (!normalizedPromptPath) continue;
+    if (
+      normalizedCandidates.some(
+        (candidate) =>
+          candidate === normalizedPromptPath ||
+          candidate.endsWith(`/${normalizedPromptPath}`) ||
+          normalizedPromptPath.endsWith(`/${candidate}`),
+      )
+    ) {
+      return true;
+    }
+  }
+  return fnName === "grep" || fnName === "search_files"
+    ? normalizedCandidates.some((candidate) =>
+        [..._boundedBacklogPromptPaths].some((promptPath) =>
+          candidate.includes(_normalizePromptPath(promptPath)),
+        ),
+      )
+    : false;
+}
+
+function _looksOffTopicForBoundedBacklogPrompt(text) {
+  if (!_boundedBacklogPlanActive) return false;
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  const prompt = String(_boundedBacklogPromptText || "");
+  const hallucinatedReactList =
+    /\b(stale data|list component|ListComponent)\b/i.test(value) &&
+    !/\b(stale data|list component|ListComponent)\b/i.test(prompt);
+  if (hallucinatedReactList) return true;
+
+  const fileRefs = new Set();
+  const fileRefPattern =
+    /[`'"]?((?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml))[`'"]?/g;
+  let match;
+  while ((match = fileRefPattern.exec(value))) {
+    fileRefs.add(_normalizePromptPath(match[1]));
+  }
+  for (const fileRef of fileRefs) {
+    if (_boundedBacklogPromptPaths.has(fileRef)) continue;
+    const abs = path.resolve(process.cwd(), fileRef);
+    if (!fsSync.existsSync(abs)) return true;
+  }
+  return false;
+}
+
 function _looksLikeBoundedBacklogDecision(text) {
   const value = String(text || "");
   if (!value.trim()) return false;
+  if (_looksOffTopicForBoundedBacklogPrompt(value)) return false;
   if (/\bno safe task found\b/i.test(value)) return true;
   return (
     /\bselected improvement\s*:/i.test(value) &&
@@ -1752,8 +1824,11 @@ function _looksLikeBoundedBacklogDecision(text) {
 function _isAllowedBoundedBacklogNoSafeTaskFound(text) {
   const value = String(text || "");
   if (!/\bno safe task found\b/i.test(value)) return false;
+  if (/\bexample only\b|\bnot applicable\b/i.test(value)) return false;
+  const hasPromptNamedEvidence =
+    _boundedBacklogPromptPaths.size === 0 || _boundedBacklogNamedEvidenceReads > 0;
   if (_boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS) {
-    return true;
+    return hasPromptNamedEvidence;
   }
 
   // Before reading backlog evidence, "no safe task found" is only valid when
@@ -1772,6 +1847,7 @@ function _isAllowedBoundedBacklogNoSafeTaskFound(text) {
 function _looksLikeGatedAutomationFinalSummary(text) {
   const value = String(text || "");
   if (!value.trim()) return false;
+  if (/\bexample only\b/i.test(value)) return false;
   // Label-based contract: gated automation reports must be explicit and scannable.
   const hasPreflight = /\bpreflight\s*:/i.test(value);
   const hasPreflightOutput = /\bpreflight output\s*:/i.test(value);
@@ -1784,7 +1860,7 @@ function _looksLikeGatedAutomationFinalSummary(text) {
   const hasCommit = /\bcommit\s*:/i.test(value);
   const hasPush = /\bpush\s*:/i.test(value);
   const hasFinalStatus = /\bfinal git status\s*:/i.test(value);
-  return (
+  const hasRequiredLabels =
     hasPreflight &&
     hasPreflightOutput &&
     hasBranch &&
@@ -1793,8 +1869,26 @@ function _looksLikeGatedAutomationFinalSummary(text) {
     hasVerification &&
     hasCommit &&
     hasPush &&
-    hasFinalStatus
-  );
+    hasFinalStatus;
+  if (!hasRequiredLabels) return false;
+
+  if (_gitPreflight?.ran) {
+    if (/\bpreflight\s*:\s*(?:not performed|not run|not applicable|unknown)\b/i.test(value)) {
+      return false;
+    }
+    if (
+      /\bpreflight output\s*:\s*(?:not performed|not run|not applicable|unknown|\(missing preflight output\))\b/i.test(
+        value,
+      )
+    ) {
+      return false;
+    }
+    if (/\bbranch\s*:\s*(?:not applicable|unknown)\b/i.test(value)) return false;
+  }
+  if (/\bno safe task found\b/i.test(value)) {
+    return _isAllowedBoundedBacklogNoSafeTaskFound(value);
+  }
+  return true;
 }
 
 function _extractRequiredBranch(prompt) {
@@ -1998,6 +2092,99 @@ async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessage
 
   _gitPreflight.ok = true;
   return _gitPreflight;
+}
+
+async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversationMessages) {
+  if (
+    _boundedBacklogEvidencePrefetched ||
+    !_boundedBacklogPlanActive ||
+    _boundedBacklogPromptPaths.size === 0
+  ) {
+    return;
+  }
+
+  const paths = [..._boundedBacklogPromptPaths]
+    .filter((p) => /\.(md|mdx|txt|rst|adoc|tsx?|jsx?)$/i.test(p))
+    .slice(0, 4);
+  if (paths.length === 0) return;
+  _boundedBacklogEvidencePrefetched = true;
+
+  const intro =
+    "[BACKLOG PREFLIGHT] Reading prompt-named backlog/reference files before planning.";
+  const introMsg = { role: "assistant", content: intro };
+  conversationMessages.push(introMsg);
+  apiMessages.push(introMsg);
+  if (!_turnSilent) {
+    try {
+      if (_serverHooks?.onToken) _serverHooks.onToken(intro + "\n");
+      else console.log(intro);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  for (let index = 0; index < paths.length; index++) {
+    const path = paths[index];
+    const args = { path, line_start: 1, line_end: 140 };
+    const toolCallId = `bounded-backlog-evidence-${index}`;
+    const assistantToolCallMsg = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: "function",
+          function: { name: "read_file", arguments: JSON.stringify(args) },
+        },
+      ],
+    };
+    conversationMessages.push(assistantToolCallMsg);
+    apiMessages.push(assistantToolCallMsg);
+
+    let out = "";
+    try {
+      if (_serverHooks?.onToolStart) _serverHooks.onToolStart("read_file", args);
+      out = await executeTool("read_file", args, {
+        silent: true,
+        autoConfirm: true,
+      });
+    } catch (err) {
+      out = `ERROR: failed to read backlog evidence ${path}: ${err?.message || String(err)}`;
+    }
+    const raw = String(out || "");
+    if (_serverHooks?.onToolEnd) {
+      const firstLine = raw.split("\n")[0] || "";
+      const isError =
+        /^ERROR:/i.test(firstLine) ||
+        firstLine.includes("CANCELLED") ||
+        firstLine.includes("BLOCKED");
+      try {
+        _serverHooks.onToolEnd(
+          "read_file",
+          formatToolSummary("read_file", args, raw.slice(0, 50000), isError),
+          !isError,
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const evidenceMsg = {
+      role: "tool",
+      tool_call_id: toolCallId,
+      content: raw || "(no output)",
+    };
+    conversationMessages.push(evidenceMsg);
+    apiMessages.push(evidenceMsg);
+    _boundedBacklogPlanReads++;
+    _boundedBacklogNamedEvidenceReads++;
+  }
+
+  const close =
+    "[BACKLOG PREFLIGHT] Use the evidence above to select one scoped improvement; do not search generic backlog/TODO terms first.";
+  const closeMsg = { role: "user", content: close };
+  conversationMessages.push(closeMsg);
+  apiMessages.push(closeMsg);
 }
 
 function _isConversationalPrompt(prompt) {
@@ -3984,6 +4171,10 @@ function _resetSessionTracking() {
   _detectedCategoryId = null;
   _boundedBacklogPlanActive = false;
   _boundedBacklogPlanReads = 0;
+  _boundedBacklogNamedEvidenceReads = 0;
+  _boundedBacklogPromptPaths.clear();
+  _boundedBacklogEvidencePrefetched = false;
+  _boundedBacklogPromptText = "";
   _boundedBacklogDecisionInjected = false;
   _boundedBacklogDecisionMisses = 0;
   _taskRegistry.clear();
@@ -4741,7 +4932,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Each example is wrapped with explicit "EXAMPLE START/END" markers so small
   // plan models (e.g. ministral-3:3b) don't mistake the example task for the
   // user's actual request.
-  if (isFirstMessage) {
+  if (isFirstMessage && !_isAutomationWorkflowPrompt) {
     const fewShot = getFewShotForInput(
       typeof userInput === "string" ? userInput : "",
     );
@@ -4877,6 +5068,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _currentPhase === "plan" &&
         _isBoundedBacklogPlanningPrompt(_phaseInitText);
       _boundedBacklogPlanReads = 0;
+      _boundedBacklogNamedEvidenceReads = 0;
+      _boundedBacklogPromptPaths.clear();
+      _boundedBacklogEvidencePrefetched = false;
+      _boundedBacklogPromptText = _boundedBacklogPlanActive ? _phaseInitText : "";
+      if (_boundedBacklogPlanActive) {
+        for (const _path of _extractDirectTaskPaths(_phaseInitText)) {
+          _boundedBacklogPromptPaths.add(_normalizePromptPath(_path));
+        }
+      }
       _boundedBacklogDecisionInjected = false;
       _boundedBacklogDecisionMisses = 0;
       _freshlyWrittenFiles.clear();
@@ -4970,6 +5170,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _stickyGitSummaryGuardInjected = true;
     }
   }
+
+  await _prefetchBoundedBacklogEvidenceIfNeeded(
+    apiMessages,
+    conversationMessages,
+  );
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
@@ -5323,7 +5528,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // instead of continuing to explore.
           if (
             _boundedBacklogPlanActive &&
-            _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+            (_boundedBacklogEvidencePrefetched ||
+              _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS)
           ) {
             allTools = [];
           }
@@ -6344,6 +6550,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       conversationMessages.push(assistantMsg);
       apiMessages.push(assistantMsg);
 
+      // Bounded backlog plan text is the deliverable for the plan phase. Small
+      // models sometimes append exploratory tool calls to the same response even
+      // after writing a valid selected-improvement plan; ignore those tool calls
+      // so the phase transition can happen immediately.
+      if (
+        _phaseEnabled &&
+        _currentPhase === "plan" &&
+        _boundedBacklogPlanActive &&
+        tool_calls &&
+        tool_calls.length > 0 &&
+        _looksLikeBoundedBacklogDecision(content || streamedText || "")
+      ) {
+        delete assistantMsg.tool_calls;
+        tool_calls = [];
+      }
+
       // ─── Analysis-only hard exit ─────────────────────────────────────────
       // For pure analysis prompts, after the first substantive text response
       // with no file modifications anywhere, end the loop. Some models ignore
@@ -6748,6 +6970,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _boundedBacklogPlanActive &&
               !_looksLikeBoundedBacklogDecision(_assistantText)
             ) {
+              if (_looksOffTopicForBoundedBacklogPrompt(_assistantText)) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction({
+                      blocked:
+                        _boundedBacklogPlanReads >=
+                        BOUNDED_BACKLOG_PLAN_HARD_READS,
+                    }) +
+                    "\n\nYour previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one nex-note notation-editor workflow improvement.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: rejected off-topic selected improvement${C.reset}`,
+                );
+                continue;
+              }
               _boundedBacklogDecisionMisses++;
               if (
                 _boundedBacklogDecisionMisses >= 2 ||
@@ -7554,7 +7795,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _boundedBacklogPlanActive &&
         _phaseEnabled &&
         _currentPhase === "plan" &&
-        _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+        (_boundedBacklogEvidencePrefetched ||
+          _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS)
       ) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
@@ -8798,6 +9040,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           BOUNDED_BACKLOG_EVIDENCE_TOOLS.has(prep.fnName)
         ) {
           _boundedBacklogPlanReads++;
+          if (_isNamedBoundedBacklogEvidenceTool(prep.fnName, prep.args)) {
+            _boundedBacklogNamedEvidenceReads++;
+          }
           if (
             _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS &&
             !_boundedBacklogDecisionInjected
