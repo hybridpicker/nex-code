@@ -4324,6 +4324,92 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
+    it("allows targeted implementation reads for prompt-named planned files", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-implementation-read";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.mkdirSync(`${fixtureDir}/docs`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/NotationToolbar.js`,
+        "export function renderNotationToolbar() { return '<button>Note</button>'; }\n",
+      );
+      fs.writeFileSync(`${fixtureDir}/docs/keyboard-shortcuts.md`, "Note: N\n");
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValue("File content");
+
+      try {
+        callStream
+          .mockResolvedValueOnce({
+            content:
+              "Selected improvement: add toolbar aria label\n" +
+              "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+              "Files: components/NotationToolbar.js\n" +
+              "Implementation outline: read the toolbar lines, then add one aria label\n" +
+              "Verification plan: npm test\n" +
+              "Browser/UI applicability: required",
+            tool_calls: [],
+          })
+          .mockResolvedValueOnce({
+            content: "Reading the planned implementation file.",
+            tool_calls: [
+              {
+                id: "read-toolbar",
+                function: {
+                  name: "read_file",
+                  arguments: {
+                    path: "components/NotationToolbar.js",
+                    line_start: 1,
+                    line_end: 40,
+                  },
+                },
+              },
+            ],
+          })
+          .mockResolvedValue({
+            content: "Implementation stalled before edits.",
+            tool_calls: [],
+          });
+
+        await processInput(
+          "Automation: active editing workflow improvement\n" +
+            "Work from main only. At the start, run git status. " +
+            "Prefer components/NotationToolbar.js. " +
+            "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+            "Pick at most one tightly scoped improvement.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+
+        const plannedFileReads = executeTool.mock.calls.filter(
+          ([name, args]) =>
+            name === "read_file" &&
+            JSON.stringify(args || {}).includes("components/NotationToolbar.js"),
+        );
+        expect(plannedFileReads.length).toBeGreaterThanOrEqual(2);
+        expect(JSON.stringify(plannedFileReads.at(-1)?.[1] || {})).toContain(
+          "line_start",
+        );
+        expect(
+          getConversationMessages().some(
+            (m) =>
+              m.role === "tool" &&
+              typeof m.content === "string" &&
+              m.content.includes("Do not re-read backlog files"),
+          ),
+        ).toBe(false);
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    });
+
     it("prefetches current UI component evidence when the prompt asks for it", async () => {
       const fs = require("fs");
       const fixtureDir = ".tmp-agent-ui-prefetch";
@@ -4586,6 +4672,50 @@ describe("agent.js", () => {
             m.content.includes("Implementation stalled before edits"),
         ),
       ).toBe(true);
+    });
+
+    it("rejects false implementation completion claims without edits", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.tsx needs clearer accessibility\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: add one aria-label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Implemented the accessibility improvement by adding an aria-label to the Insert Note button. The project was built successfully, all tests continue to pass, and the repository is clean.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      const msgs = getConversationMessages();
+      const hasFalseClaimStall = msgs.some(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("claimed changes, verification, or a clean worktree") &&
+          m.content.includes("without any successful file edit"),
+      );
+      expect(hasFalseClaimStall).toBe(true);
     });
 
     it("reprompts false git/tool blocking claims in bounded backlog implementation", async () => {
