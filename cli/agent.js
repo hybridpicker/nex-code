@@ -1920,7 +1920,6 @@ function _boundedBacklogPlanNeedsExistingFileCorrection(text) {
   const refs = _extractPlanFileRefs(text).filter(
     (fileRef) =>
       fileRef &&
-      !_boundedBacklogPromptPaths.has(fileRef) &&
       !/\.(md|mdx|txt|rst|adoc)$/i.test(fileRef),
   );
   if (refs.length === 0) return false;

@@ -244,6 +244,8 @@ function detectScenario(promptText) {
   const text = String(promptText || "");
   if (/malformed tool call/i.test(text)) return "malformed";
   if (/Scenario G|merge conflicts/i.test(text)) return "g";
+  if (/Scenario H|bounded backlog missing prompt example/i.test(text))
+    return "h";
   if (/Scenario F|dummy systemctl|sandboxed nginx config typo/i.test(text))
     return "f";
   if (/Scenario E|legacy callback processor|nested callback/i.test(text))
@@ -662,10 +664,121 @@ function buildDeterministicResponse(messages) {
     };
   }
 
+  if (stableScenario === "h") {
+    const userText = allUserText(messages);
+    const correctionRequested = /previous plan named implementation files that do not exist/i.test(
+      userText,
+    );
+    const stepFromMessages = hasToolResult(messages, "h5")
+      ? 5
+      : hasToolResult(messages, "h4")
+        ? 4
+        : hasToolResult(messages, "h3")
+          ? 3
+          : hasToolResult(messages, "h2")
+            ? 2
+            : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+
+    if (!correctionRequested && state.lastStep < 1) {
+      return {
+        content:
+          "Selected improvement: add an accessible label to the notation toolbar\n" +
+          "Selection rationale: current UI evidence shows active editing controls need clearer labels\n" +
+          "Files: components/NotationToolbar.tsx\n" +
+          "Implementation outline: update one existing button label\n" +
+          "Verification plan: npm test && npm run build\n" +
+          "Browser/UI applicability: not required for this deterministic harness scenario",
+        tool_calls: [],
+      };
+    }
+
+    if (correctionRequested && state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content:
+          "Selected improvement: add an accessible label to the command center insert action\n" +
+          "Selection rationale: components/CommandCenter.tsx is existing UI evidence and the active editing action needs clearer assistive text\n" +
+          "Files: components/CommandCenter.tsx\n" +
+          "Implementation outline: read the current button line, then add one aria-label without changing behavior\n" +
+          "Verification plan: npm test && npm run build\n" +
+          "Browser/UI applicability: not required for this deterministic harness scenario",
+        tool_calls: [],
+      };
+    }
+
+    if (state.lastStep < 2) {
+      state.lastStep = 2;
+      return {
+        content: "Reading the corrected implementation file.",
+        tool_calls: [
+          toolCall(
+            "read_file",
+            { path: "components/CommandCenter.tsx", line_start: 1, line_end: 80 },
+            "h2",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Applying the scoped accessibility label.",
+        tool_calls: [
+          toolCall(
+            "edit_file",
+            {
+              path: "components/CommandCenter.tsx",
+              old_text:
+                '<button className="command-action">Insert note</button>',
+              new_text:
+                '<button className="command-action" aria-label="Insert note">Insert note</button>',
+            },
+            "h3",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 4) {
+      state.lastStep = 4;
+      return {
+        content: "Verifying the scoped UI change.",
+        tool_calls: [
+          toolCall("bash", { command: "npm test && npm run build" }, "h4"),
+        ],
+      };
+    }
+
+    if (state.lastStep < 5) {
+      state.lastStep = 5;
+      return {
+        content: "Staging, committing, pushing, and checking final status.",
+        tool_calls: [
+          toolCall(
+            "bash",
+            {
+              command:
+                'git status --short --branch && git add components/CommandCenter.tsx && git commit -m "fix: clarify command center action label" && git push origin main && git status --short --branch',
+            },
+            "h5",
+          ),
+        ],
+      };
+    }
+
+    return {
+      content:
+        "Corrected the missing prompt example path, implemented the command center accessibility label, verified with npm test and npm run build, committed the scoped change, pushed main to origin, and confirmed the worktree is clean.",
+      tool_calls: [],
+    };
+  }
+
   // Fallback: no scenario matched — return a benign final answer.
   return {
     content:
-      "No mock scenario matched this prompt. Set a Scenario A–G prompt (or enable malformed mode) to run deterministic E2E flows.",
+      "No mock scenario matched this prompt. Set a Scenario A–H prompt (or enable malformed mode) to run deterministic E2E flows.",
     tool_calls: [],
   };
 }
