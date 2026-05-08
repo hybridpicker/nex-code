@@ -80,6 +80,11 @@ function _statesVerificationGap(text) {
   );
 }
 
+function _looksLikeExplicitFinalSummary(text) {
+  if (!text || typeof text !== "string") return false;
+  return /^\s*(?:final\s+)?(?:summary|report|answer|result)\s*:/i.test(text);
+}
+
 function _looksLikeUserDirectedQuestion(text) {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
@@ -670,6 +675,27 @@ function clearToolDefinitionsCache() {
 let MAX_ITERATIONS = 50;
 function setMaxIterations(n) {
   if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n;
+}
+
+function _getMaxToolCallBudget(providerName = getActiveProviderName()) {
+  if (process.env.NEX_DISABLE_TOOL_BUDGET === "1") return Infinity;
+  const raw = process.env.NEX_MAX_TOOL_CALLS;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  // Local Ollama models are the most prone to tool loops under context pressure.
+  // Keep the default tight there, while preserving the existing budget for cloud
+  // and premium providers unless the user opts into a stricter budget.
+  return providerName === "local" ? 5 : 30;
+}
+
+function _buildToolBudgetFinalPrompt(used, max) {
+  return (
+    `[SYSTEM STOP] Tool-call budget reached (${used}/${max}). ` +
+    "You MUST stop calling tools now. Provide your final answer based only on the information already in the conversation. " +
+    "If the task cannot be completed from the gathered evidence, state the blocker plainly and do not invent facts."
+  );
 }
 
 // Abort signal getter — set by cli/index.js to avoid circular dependency
@@ -1581,6 +1607,15 @@ let _lastCreationSummary = null; // persists across turns: brief note of what th
 let _commitDetected = false; // true once a successful git commit is detected in bash output
 let _postCommitGitCalls = 0; // count of git status/diff/log calls after commit detected
 let _toolBudgetWarningInjected = false; // true after the 30-call budget warning has been injected
+let _gitPreflight = null; // { required, ran, ok, command, requiredBranch, branch, dirty, changedFiles, raw }
+let _stickyGitPreflightRequired = false; // sticky per-thread: once required, enforce on follow-ups too
+let _stickyGitRequiredBranch = null; // sticky required branch for gated workflows
+let _stickyGitSummaryGuardInjected = false; // avoid injecting duplicate summary guard messages
+let _stickyAutomationWorkflow = false; // sticky per-thread: once an automation/backlog workflow is detected, keep phased execution on follow-ups too
+let _gitPushDetected = false; // true once a successful git push is detected in bash output
+let _gitPushRaw = ""; // last seen git push output (for summary honesty)
+let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
+let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --branch"
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1599,6 +1634,36 @@ let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
+let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
+let _boundedBacklogNamedEvidenceReads = 0; // reads/searches that touch prompt-named backlog files
+const _boundedBacklogPromptPaths = new Set();
+let _boundedBacklogEvidencePrefetched = false;
+let _boundedBacklogPromptText = "";
+let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
+let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
+
+const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
+const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
+const BOUNDED_BACKLOG_EVIDENCE_TOOLS = new Set([
+  "read_file",
+  "grep",
+  "search_files",
+  "glob",
+  "list_directory",
+  "find_files",
+]);
+
+// ─── Automation preflight state ─────────────────────────────────────────────
+// For long-running/gated automations, require concrete git evidence (branch + worktree
+// status) before allowing implementation-phase actions.
+let _gitPreflightRequired = false;
+let _gitPreflightSatisfied = false;
+let _gitPreflightBranch = null;
+let _gitPreflightClean = null; // null = unknown, true = clean, false = dirty
+let _gitPreflightRaw = "";
+let _gitPreflightStopOnDirty = false;
+let _gitPreflightDirtyStopFired = false;
 
 function _shouldFastTrackPlanBlock(fnName) {
   return (
@@ -1612,10 +1677,9 @@ function _shouldFastTrackPlanBlock(fnName) {
 function _shouldSkipPlanPhaseForDirectCreation(prompt) {
   const text = String(prompt || "");
   if (!text) return false;
-  const hasExplicitPath =
-    /(?:^|\s)(?:\.{1,2}\/)?[\w./-]+\.(?:js|ts|tsx|jsx|py|md|json|yml|yaml|sh|css|html)\b/i.test(
-      text,
-    );
+  if (_hasAutomationOrPreflightGate(text)) return false;
+  const directTaskPaths = _extractDirectTaskPaths(text);
+  if (directTaskPaths.length !== 1) return false;
   const directCreateRefactor =
     /\b(create|write|add|make|build|scaffold)\b[\s\S]{0,160}\b(refactor|rename|improve|update|change|edit)\b/i.test(
       text,
@@ -1627,7 +1691,500 @@ function _shouldSkipPlanPhaseForDirectCreation(prompt) {
     /\b(create|write|add|make|build|refactor|update|change|edit)\b[\s\S]{0,160}\bfile\b/i.test(
       text,
     );
-  return hasExplicitPath && (directCreateRefactor || directFileTask);
+  return directCreateRefactor || directFileTask;
+}
+
+function _hasAutomationOrPreflightGate(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  // Branch-only gates ("Work on main only") are strong automation-style constraints
+  // even when the prompt doesn't include an "Automation:" header.
+  if (_extractRequiredBranch(text)) return true;
+  return (
+    /\bAutomation(?:\s+ID)?\b|\bLast run:\b/i.test(text) ||
+    /\b(work from main|at the start|current branch|git status|worktree|dirty|unrelated changes?|pull\/rebase|before changing|before editing)\b/i.test(
+      text,
+    ) ||
+    /\b(if|when)\b[\s\S]{0,120}\b(stop|abort|do not|don't|without editing|without committing|without pushing)\b/i.test(
+      text,
+    ) ||
+    /\b(backlog|primary backlog|pick (?:at most )?one|at most one|choose (?:one|a task)|priority order|verification is mandatory|stage only|commit and push|push main|push devel)\b/i.test(
+      text,
+    )
+  );
+}
+
+function _isBoundedBacklogPlanningPrompt(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  return /\b(primary backlog|backlog|pick at most one|at most one|priority order|choose (?:one|a task)|one tightly scoped improvement)\b/i.test(
+    text,
+  );
+}
+
+function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
+  const prefix = blocked
+    ? "[SYSTEM BLOCKED] Bounded backlog planning has enough evidence. Do not read or search more files."
+    : "[SYSTEM] Bounded backlog automation plan template.";
+  return [
+    prefix,
+    "Before deciding, inspect the concrete backlog/reference paths named by the user prompt. Prefer read_file on those paths over generic searches for words like `backlog`, `TODO`, or `FIXME`.",
+    "Ground the selected improvement in those files and the current project. Do not invent generic React bugs, placeholder files, or example components that were not found in the evidence.",
+    "Write the plan now using exactly these sections:",
+    "Selected improvement: name one scoped task, or write `no safe task found`.",
+    "Selection rationale: why this task is the safest/highest-value choice from the backlog evidence.",
+    "Files: list the files you will change and any read-only reference files.",
+    "Implementation outline: concrete edit steps, kept to this one task.",
+    "Verification plan: exact focused commands or reads that will prove the change.",
+    "Browser/UI applicability: say required, not required, or blocked, with the reason.",
+    `After ${BOUNDED_BACKLOG_PLAN_DECISION_READS}-${BOUNDED_BACKLOG_PLAN_HARD_READS} read/search tools, you must choose one scoped task or stop cleanly with ` +
+      "`no safe task found`; do not keep exploring.",
+  ].join("\n");
+}
+
+function _normalizePromptPath(value) {
+  return String(value || "").replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function _isNamedBoundedBacklogEvidenceTool(fnName, args = {}) {
+  if (!_boundedBacklogPlanActive || _boundedBacklogPromptPaths.size === 0) {
+    return true;
+  }
+  const candidates = [];
+  if (args.path) candidates.push(args.path);
+  if (args.pattern && /[/.]/.test(String(args.pattern))) candidates.push(args.pattern);
+  if (args.include && /[/.]/.test(String(args.include))) candidates.push(args.include);
+  if (args.file_pattern && /[/.]/.test(String(args.file_pattern))) {
+    candidates.push(args.file_pattern);
+  }
+  if (candidates.length === 0) return false;
+  const normalizedCandidates = candidates.map(_normalizePromptPath);
+  for (const promptPath of _boundedBacklogPromptPaths) {
+    const normalizedPromptPath = _normalizePromptPath(promptPath);
+    if (!normalizedPromptPath) continue;
+    if (
+      normalizedCandidates.some(
+        (candidate) =>
+          candidate === normalizedPromptPath ||
+          candidate.endsWith(`/${normalizedPromptPath}`) ||
+          normalizedPromptPath.endsWith(`/${candidate}`),
+      )
+    ) {
+      return true;
+    }
+  }
+  return fnName === "grep" || fnName === "search_files"
+    ? normalizedCandidates.some((candidate) =>
+        [..._boundedBacklogPromptPaths].some((promptPath) =>
+          candidate.includes(_normalizePromptPath(promptPath)),
+        ),
+      )
+    : false;
+}
+
+function _looksOffTopicForBoundedBacklogPrompt(text) {
+  if (!_boundedBacklogPlanActive) return false;
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  const prompt = String(_boundedBacklogPromptText || "");
+  const hallucinatedReactList =
+    /\b(stale data|list component|ListComponent)\b/i.test(value) &&
+    !/\b(stale data|list component|ListComponent)\b/i.test(prompt);
+  if (hallucinatedReactList) return true;
+
+  const fileRefs = new Set();
+  const fileRefPattern =
+    /[`'"]?((?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml))[`'"]?/g;
+  let match;
+  while ((match = fileRefPattern.exec(value))) {
+    fileRefs.add(_normalizePromptPath(match[1]));
+  }
+  for (const fileRef of fileRefs) {
+    if (_boundedBacklogPromptPaths.has(fileRef)) continue;
+    const abs = path.resolve(process.cwd(), fileRef);
+    if (!fsSync.existsSync(abs)) return true;
+  }
+  return false;
+}
+
+function _looksLikeBoundedBacklogDecision(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  if (_looksOffTopicForBoundedBacklogPrompt(value)) return false;
+  if (/\bno safe task found\b/i.test(value)) return true;
+  return (
+    /\bselected improvement\s*:/i.test(value) &&
+    /\bselection rationale\s*:/i.test(value) &&
+    /\bfiles\s*:/i.test(value) &&
+    /\bverification plan\s*:/i.test(value)
+  );
+}
+
+function _isAllowedBoundedBacklogNoSafeTaskFound(text) {
+  const value = String(text || "");
+  if (!/\bno safe task found\b/i.test(value)) return false;
+  if (/\bexample only\b|\bnot applicable\b/i.test(value)) return false;
+  const hasPromptNamedEvidence =
+    _boundedBacklogPromptPaths.size === 0 || _boundedBacklogNamedEvidenceReads > 0;
+  if (_boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS) {
+    return hasPromptNamedEvidence;
+  }
+
+  // Before reading backlog evidence, "no safe task found" is only valid when
+  // it names a concrete blocker. Otherwise small planning models can exit
+  // clean-looking automation runs without inspecting the backlog at all.
+  return (
+    /\b(blocked|blocker|cannot|can't|unable|failed|unavailable|permission denied|missing|not found|no readable|dirty worktree|wrong branch|merge conflict|precheck blocked|preflight failed)\b/i.test(
+      value,
+    ) &&
+    /\b(because|reason|preflight|worktree|branch|git|permission|missing|unavailable|inspect|read|search)\b/i.test(
+      value,
+    )
+  );
+}
+
+function _looksLikeGatedAutomationFinalSummary(text) {
+  const value = String(text || "");
+  if (!value.trim()) return false;
+  if (/\bexample only\b/i.test(value)) return false;
+  // Label-based contract: gated automation reports must be explicit and scannable.
+  const hasPreflight = /\bpreflight\s*:/i.test(value);
+  const hasPreflightOutput = /\bpreflight output\s*:/i.test(value);
+  const hasBranch = /\bbranch\s*:/i.test(value);
+  const hasTask =
+    /\b(chosen task|selected improvement)\s*:/i.test(value) ||
+    /\bno safe task found\b/i.test(value);
+  const hasFiles = /\bfiles changed\s*:/i.test(value);
+  const hasVerification = /\bverification\s*:/i.test(value);
+  const hasCommit = /\bcommit\s*:/i.test(value);
+  const hasPush = /\bpush\s*:/i.test(value);
+  const hasFinalStatus = /\bfinal git status\s*:/i.test(value);
+  const hasRequiredLabels =
+    hasPreflight &&
+    hasPreflightOutput &&
+    hasBranch &&
+    hasTask &&
+    hasFiles &&
+    hasVerification &&
+    hasCommit &&
+    hasPush &&
+    hasFinalStatus;
+  if (!hasRequiredLabels) return false;
+
+  if (_gitPreflight?.ran) {
+    if (/\bpreflight\s*:\s*(?:not performed|not run|not applicable|unknown)\b/i.test(value)) {
+      return false;
+    }
+    if (
+      /\bpreflight output\s*:\s*(?:not performed|not run|not applicable|unknown|\(missing preflight output\))\b/i.test(
+        value,
+      )
+    ) {
+      return false;
+    }
+    if (/\bbranch\s*:\s*(?:not applicable|unknown)\b/i.test(value)) return false;
+  }
+  if (/\bno safe task found\b/i.test(value)) {
+    return _isAllowedBoundedBacklogNoSafeTaskFound(value);
+  }
+  return true;
+}
+
+function _extractRequiredBranch(prompt) {
+  const text = String(prompt || "");
+  if (!text) return null;
+  const patterns = [
+    // "Work from main only" / "Work on branch devel only"
+    /\bwork\s+(?:from|on)\s+(?:the\s+)?(?:branch\s+)?[`'"]?([A-Za-z0-9._/-]+)[`'"]?\s+only\b/i,
+    // "Work from the main branch only" / "Work on devel branch only"
+    /\bwork\s+(?:from|on)\s+(?:the\s+)?[`'"]?([A-Za-z0-9._/-]+)[`'"]?\s+branch\s+only\b/i,
+  ];
+
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const branch = String(m[1] || "").trim();
+    if (branch) return branch;
+  }
+  return null;
+}
+
+function _parseGitStatusShortBranch(output) {
+  const text = String(output || "").trim();
+  if (!text) return { branch: null, dirty: null, changedFiles: [] };
+  if (/^fatal:/i.test(text)) return { branch: null, dirty: null, changedFiles: [] };
+  const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+  const header = lines.find((l) => l.startsWith("## ")) || lines[0] || "";
+  const headerBody = header.startsWith("## ") ? header.slice(3).trim() : header.trim();
+  const branch = headerBody ? headerBody.split("...")[0].trim().split(/\s+/)[0] : null;
+  const statusLines = lines.filter((l) => !l.startsWith("## ") && l.trim() !== "");
+  const changed = [];
+  for (const line of statusLines) {
+    // short status: XY<space>path (or "?? path", "R  from -> to")
+    const m = line.match(/^[ MADRCU?!]{1,2}\s+(.*)$/);
+    if (!m) continue;
+    const rest = (m[1] || "").trim();
+    if (!rest) continue;
+    const toPath = rest.includes(" -> ") ? rest.split(" -> ").pop() : rest;
+    if (toPath) changed.push(toPath);
+  }
+  return { branch: branch || null, dirty: changed.length > 0, changedFiles: changed };
+}
+
+function _shouldRequireGitPreflight(prompt) {
+  // Only enforce for prompts that explicitly describe automation/release gates.
+  // Keep it narrow to avoid surprising users on normal coding tasks.
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  // If the prompt requires working from a specific branch ("Work from main only"),
+  // we must preflight to get concrete branch + worktree evidence.
+  if (_extractRequiredBranch(text)) return true;
+  // Otherwise require at least one explicit git/worktree gate term.
+  return /\b(git status|current branch|worktree|dirty|pull\/rebase|rebase|commit|push)\b/i.test(
+    text,
+  );
+}
+
+function _truncatePreflightOutput(raw, maxChars = 2500) {
+  const text = String(raw ?? "");
+  if (!text.trim()) return "(no output)";
+  if (text.length <= maxChars) return text;
+  const head = text.slice(0, maxChars);
+  return head + `\n...(truncated ${text.length - maxChars} chars)`;
+}
+
+async function _runGitPreflightIfNeeded(prompt, apiMessages, conversationMessages) {
+  if (_gitPreflight?.ran) return _gitPreflight;
+  const requiredBranch = _stickyGitRequiredBranch || _extractRequiredBranch(prompt);
+  const command = "git status --short --branch";
+  const toolCallId = "preflight-git-status";
+  _gitPreflight = {
+    required: true,
+    ran: true,
+    ok: false,
+    command,
+    requiredBranch,
+    branch: null,
+    dirty: null,
+    changedFiles: [],
+    raw: "",
+  };
+
+  let out = "";
+  let _serverHookToolStarted = false;
+  try {
+    // Record a proper tool-call pair into the transcript/run-history:
+    // assistant(tool_calls) → tool(tool_call_id).
+    // This makes preflight evidence visible and avoids "orphan tool message"
+    // API errors on providers that enforce tool-call structure strictly.
+    const assistantToolCallMsg = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: "function",
+          function: { name: "bash", arguments: JSON.stringify({ command }) },
+        },
+      ],
+    };
+    conversationMessages.push(assistantToolCallMsg);
+    apiMessages.push(assistantToolCallMsg);
+
+    // Also emit explicit tool_start/tool_end events for server-mode run history.
+    // This avoids relying on assistant text as the only proof that the preflight
+    // command actually executed.
+    if (_serverHooks?.onToolStart) {
+      _serverHooks.onToolStart("bash", { command });
+      _serverHookToolStarted = true;
+    }
+
+    out = await executeTool("bash", { command }, { silent: true, autoConfirm: true });
+  } catch (err) {
+    out = `ERROR: failed to run preflight: ${err?.message || String(err)}`;
+  }
+  const raw = String(out ?? "");
+  if (_serverHookToolStarted && _serverHooks?.onToolEnd) {
+    const truncated =
+      raw.length > 50000
+        ? raw.substring(0, 50000) + `\n...(truncated ${raw.length - 50000} chars)`
+        : raw;
+    const firstLine = truncated.split("\n")[0] || "";
+    const isError =
+      firstLine.startsWith("ERROR") ||
+      firstLine.includes("CANCELLED") ||
+      firstLine.includes("BLOCKED");
+    try {
+      _serverHooks.onToolEnd(
+        "bash",
+        formatToolSummary("bash", { command }, truncated, isError),
+        !isError,
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+  const trimmed = raw.trim();
+  const hasExpectedShortBranchHeader = /^\s*##\s+\S+/.test(trimmed);
+  const parsed = _parseGitStatusShortBranch(raw);
+  _gitPreflight.branch = parsed.branch;
+  _gitPreflight.dirty = parsed.dirty;
+  _gitPreflight.changedFiles = parsed.changedFiles;
+  _gitPreflight.raw = raw;
+
+  // Add concrete evidence into the conversation so the model can't "assume" safety.
+  const evidenceMsg = {
+    role: "tool",
+    tool_call_id: toolCallId,
+    content: raw || "(no output)",
+  };
+  conversationMessages.push(evidenceMsg);
+  apiMessages.push(evidenceMsg);
+
+  // Also surface the evidence in an assistant message so it shows up in
+  // user-facing transcripts that hide tool messages.
+  const _precheckPreview = _truncatePreflightOutput(raw);
+  const _precheckText =
+    `[PRECHECK] Preflight ran: \`${command}\`.` +
+    (requiredBranch ? ` Required branch: ${requiredBranch}.` : "") +
+    `\n\n${_precheckPreview}`;
+  const precheckMsg = { role: "assistant", content: _precheckText };
+  conversationMessages.push(precheckMsg);
+  apiMessages.push(precheckMsg);
+  if (!_turnSilent) {
+    try {
+      if (_serverHooks?.onToken) _serverHooks.onToken(_precheckText + "\n");
+      else console.log(_precheckText);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Decide whether it's safe to proceed.
+  if (!raw || /^ERROR:/i.test(raw) || /^fatal:/i.test(raw)) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  // Hard evidence requirement: the preflight must be recognizable output from
+  // `git status --short --branch`. Anything else is treated as an unsafe/unknown
+  // state and must block gated automations.
+  if (!hasExpectedShortBranchHeader) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  if (parsed.dirty) {
+    _gitPreflight.ok = false;
+    return _gitPreflight;
+  }
+  if (requiredBranch) {
+    // Branch-only gated prompts still require concrete, parseable evidence.
+    if (!parsed.branch) {
+      _gitPreflight.ok = false;
+      return _gitPreflight;
+    }
+    if (parsed.branch !== requiredBranch) {
+      _gitPreflight.ok = false;
+      return _gitPreflight;
+    }
+  }
+
+  _gitPreflight.ok = true;
+  return _gitPreflight;
+}
+
+async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversationMessages) {
+  if (
+    _boundedBacklogEvidencePrefetched ||
+    !_boundedBacklogPlanActive ||
+    _boundedBacklogPromptPaths.size === 0
+  ) {
+    return;
+  }
+
+  const paths = [..._boundedBacklogPromptPaths]
+    .filter((p) => /\.(md|mdx|txt|rst|adoc|tsx?|jsx?)$/i.test(p))
+    .slice(0, 4);
+  if (paths.length === 0) return;
+  _boundedBacklogEvidencePrefetched = true;
+
+  const intro =
+    "[BACKLOG PREFLIGHT] Reading prompt-named backlog/reference files before planning.";
+  const introMsg = { role: "assistant", content: intro };
+  conversationMessages.push(introMsg);
+  apiMessages.push(introMsg);
+  if (!_turnSilent) {
+    try {
+      if (_serverHooks?.onToken) _serverHooks.onToken(intro + "\n");
+      else console.log(intro);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  for (let index = 0; index < paths.length; index++) {
+    const path = paths[index];
+    const args = { path, line_start: 1, line_end: 140 };
+    const toolCallId = `bounded-backlog-evidence-${index}`;
+    const assistantToolCallMsg = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: "function",
+          function: { name: "read_file", arguments: JSON.stringify(args) },
+        },
+      ],
+    };
+    conversationMessages.push(assistantToolCallMsg);
+    apiMessages.push(assistantToolCallMsg);
+
+    let out = "";
+    try {
+      if (_serverHooks?.onToolStart) _serverHooks.onToolStart("read_file", args);
+      out = await executeTool("read_file", args, {
+        silent: true,
+        autoConfirm: true,
+      });
+    } catch (err) {
+      out = `ERROR: failed to read backlog evidence ${path}: ${err?.message || String(err)}`;
+    }
+    const raw = String(out || "");
+    if (_serverHooks?.onToolEnd) {
+      const firstLine = raw.split("\n")[0] || "";
+      const isError =
+        /^ERROR:/i.test(firstLine) ||
+        firstLine.includes("CANCELLED") ||
+        firstLine.includes("BLOCKED");
+      try {
+        _serverHooks.onToolEnd(
+          "read_file",
+          formatToolSummary("read_file", args, raw.slice(0, 50000), isError),
+          !isError,
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const evidenceMsg = {
+      role: "tool",
+      tool_call_id: toolCallId,
+      content: raw || "(no output)",
+    };
+    conversationMessages.push(evidenceMsg);
+    apiMessages.push(evidenceMsg);
+    _boundedBacklogPlanReads++;
+    _boundedBacklogNamedEvidenceReads++;
+  }
+
+  const close =
+    "[BACKLOG PREFLIGHT] Use the evidence above to select one scoped improvement; do not search generic backlog/TODO terms first.";
+  const closeMsg = { role: "user", content: close };
+  conversationMessages.push(closeMsg);
+  apiMessages.push(closeMsg);
 }
 
 function _isConversationalPrompt(prompt) {
@@ -1655,6 +2212,47 @@ function _extractDirectTaskPaths(prompt) {
   );
   if (!matches) return [];
   return [...new Set(matches.map((m) => _normalizePromptPathMatch(m)))];
+}
+
+function _requiresGitPreflight(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  if (!_hasAutomationOrPreflightGate(text)) return false;
+  return /\b(work from main|current branch|git status|worktree|dirty|unrelated changes?|clean working tree|pull\/rebase|before changing|before editing)\b/i.test(
+    text,
+  );
+}
+
+function _promptRequiresStopOnDirtyWorktree(prompt) {
+  const text = String(prompt || "");
+  if (!text) return false;
+  return /\b(if|when)\b[\s\S]{0,160}\b(worktree|working tree|repo|repository)\b[\s\S]{0,120}\bdirty\b[\s\S]{0,160}\b(stop|abort|do not|don't|without editing|without committing|without pushing)\b/i.test(
+    text,
+  );
+}
+
+function _isGitStatusBashCommand(command) {
+  const cmd = String(command || "");
+  if (!cmd) return false;
+  // Accept common variants; the important part is that it yields branch + dirty state.
+  return /\bgit\s+status\b/i.test(cmd);
+}
+
+function _parseGitStatusEvidence(fnName, output) {
+  const text = String(output || "");
+  if (!text) return { branch: null, clean: null };
+  if (fnName === "git_status") {
+    const branchMatch = text.match(/^\s*Branch:\s*(.+)\s*$/m);
+    const branch = branchMatch ? branchMatch[1].trim() : null;
+    const clean = /\bClean working tree\b/i.test(text);
+    return { branch, clean };
+  }
+  // bash("git status --short --branch") style
+  const branchMatch = text.match(/^\s*##\s+([^\s.]+)(?:\.\.\.|$)/m);
+  const branch = branchMatch ? branchMatch[1].trim() : null;
+  const lines = text.trim().split("\n").filter(Boolean);
+  const clean = lines.length === 1 && /^\s*##\s+/.test(lines[0]);
+  return { branch, clean };
 }
 
 // Helper: deduplicate consecutive identical compression messages for cleaner output.
@@ -1885,8 +2483,10 @@ function _isVerificationCommandCall(prep) {
   if (!prep || !prep.fnName) return false;
   if (!["bash", "ssh_exec"].includes(prep.fnName)) return false;
   const cmd = String(prep.args?.command || "").toLowerCase();
-  return /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check)\b/.test(
-    cmd,
+  return (
+    /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check)\b/.test(
+      cmd,
+    ) || /\bnode\s+["']?[\w./ -]+\.(?:c?js|mjs)\b/.test(cmd)
   );
 }
 
@@ -3567,9 +4167,27 @@ function _resetSessionTracking() {
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
+  _lastPlanBlockedTool = null;
   _detectedCategoryId = null;
+  _boundedBacklogPlanActive = false;
+  _boundedBacklogPlanReads = 0;
+  _boundedBacklogNamedEvidenceReads = 0;
+  _boundedBacklogPromptPaths.clear();
+  _boundedBacklogEvidencePrefetched = false;
+  _boundedBacklogPromptText = "";
+  _boundedBacklogDecisionInjected = false;
+  _boundedBacklogDecisionMisses = 0;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
+  _gitPreflight = null;
+  _stickyGitPreflightRequired = false;
+  _stickyGitRequiredBranch = null;
+  _stickyGitSummaryGuardInjected = false;
+  _stickyAutomationWorkflow = false;
+  _gitPushDetected = false;
+  _gitPushRaw = "";
+  _lastGitStatusEvidence = "";
+  _lastGitStatusCommand = "";
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -3985,6 +4603,9 @@ function _extractTechHints(text) {
 
 // Module-level server hooks — set by processInput in server mode, null in normal CLI mode.
 let _serverHooks = null;
+// Per-turn quiet flag (opts.silent) — used for out-of-band logs (e.g. preflight evidence)
+// so unit tests and server mode can suppress stdout noise deterministically.
+let _turnSilent = false;
 
 /**
  * Process a single user input through the agentic loop.
@@ -3999,6 +4620,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   STALE_ABORT_MS = _profile.staleAbort;
 
   _serverHooks = serverHooks;
+  _turnSilent = !!opts.silent;
 
   // Prepend creation-task context note from the previous turn so the model
   // can answer follow-up questions without re-investigating the codebase.
@@ -4063,13 +4685,38 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
   // Auto-orchestrate for complex multi-goal prompts (default: on).
   // Disable with NEX_AUTO_ORCHESTRATE=false or --no-auto-orchestrate.
+  const planModeActive = isPlanMode();
   const autoOrch =
     opts.autoOrchestrate !== false &&
-    process.env.NEX_AUTO_ORCHESTRATE !== "false";
+    process.env.NEX_AUTO_ORCHESTRATE !== "false" &&
+    !planModeActive;
   const orchThreshold = parseInt(
     process.env.NEX_ORCHESTRATE_THRESHOLD || "3",
     10,
   );
+  // Hard safety gate: prompts that declare git/worktree workflow gates must
+  // run through phased execution (plan → implement → verify) and the git
+  // preflight guard below. Auto-orchestrating would bypass that guard.
+  const _gatedPromptText =
+    typeof userContent === "string"
+      ? userContent
+      : typeof userInput === "string"
+        ? userInput
+        : "";
+  const _thisPromptIsAutomationWorkflow = _hasAutomationOrPreflightGate(_gatedPromptText);
+  if (_thisPromptIsAutomationWorkflow) {
+    _stickyAutomationWorkflow = true;
+  }
+  const _thisPromptRequiresGitPreflight = _shouldRequireGitPreflight(_gatedPromptText);
+  if (_thisPromptRequiresGitPreflight) {
+    _stickyGitPreflightRequired = true;
+    const requiredBranch = _extractRequiredBranch(_gatedPromptText);
+    if (requiredBranch) _stickyGitRequiredBranch = requiredBranch;
+  }
+  // Sticky per-thread: follow-up prompts may omit the original workflow wording,
+  // but we still must keep the same safety + phase-routing constraints.
+  const _isGatedAutomationPrompt = _stickyGitPreflightRequired;
+  const _isAutomationWorkflowPrompt = _stickyAutomationWorkflow;
 
   try {
     const { detectComplexPrompt, runOrchestrated } = require("./orchestrator");
@@ -4077,10 +4724,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       typeof userInput === "string" ? userInput : "",
     );
 
+    if (!autoOrch && planModeActive && complexity.isComplex) {
+      console.log(
+        `${C.dim}Plan mode active: auto-orchestrate disabled until /plan approve${C.reset}`,
+      );
+    }
+
     if (
-      autoOrch &&
-      complexity.isComplex &&
-      complexity.estimatedGoals >= orchThreshold
+      !_isAutomationWorkflowPrompt &&
+      _shouldAutoOrchestrate(autoOrch, complexity, orchThreshold, planModeActive)
     ) {
       console.log(
         `${C.yellow}⚡ Auto-orchestrate: ${complexity.estimatedGoals} goals → parallel agents${C.reset}`,
@@ -4280,7 +4932,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // Each example is wrapped with explicit "EXAMPLE START/END" markers so small
   // plan models (e.g. ministral-3:3b) don't mistake the example task for the
   // user's actual request.
-  if (isFirstMessage) {
+  if (isFirstMessage && !_isAutomationWorkflowPrompt) {
     const fewShot = getFewShotForInput(
       typeof userInput === "string" ? userInput : "",
     );
@@ -4385,17 +5037,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   // ─── Phase-based routing initialization ──────────────────────────────────
   // Skip phase routing when opts.skipPhaseRouting is set (skill command prompts
   // like /autoresearch need immediate tool access, not a plan phase)
-  if (
-    conversationMessages.length <= 1 &&
+  const _phaseInitText = _gatedPromptText || _firstUserText;
+  const _shouldInitPhaseRouting =
     !opts.skipPhaseRouting &&
-    !_isConversationalPrompt(_firstUserText)
-  ) {
-    _phaseEnabled = isPhaseRoutingEnabled();
+    !_isConversationalPrompt(_phaseInitText) &&
+    // Normally we only initialize on the very first message. For gated automation
+    // prompts, we also initialize mid-thread if phase routing isn't already active.
+    (conversationMessages.length <= 1 ||
+      (_isAutomationWorkflowPrompt && !_phaseEnabled));
+  if (_shouldInitPhaseRouting) {
+    // Force phase routing for automation/backlog workflows even when the user hasn't
+    // enabled phase routing globally. These workflows rely on explicit, testable
+    // phase transitions and must not run as a single unphased stream.
+    _phaseEnabled = _isAutomationWorkflowPrompt ? true : isPhaseRoutingEnabled();
     if (_phaseEnabled) {
-      const _cat = detectCategory(_firstUserText);
+      const _cat = detectCategory(_phaseInitText);
       _detectedCategoryId = _cat?.id || "coding";
       const _skipPlanForDirectCreation =
-        _shouldSkipPlanPhaseForDirectCreation(_firstUserText);
+        _shouldSkipPlanPhaseForDirectCreation(_phaseInitText);
       _currentPhase = _skipPlanForDirectCreation ? "implement" : "plan";
       _phaseModelOverride = getModelForPhase(
         _currentPhase,
@@ -4405,6 +5064,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _verifyLoopBack = 0;
       _planPhaseBlockedCount = 0;
       _lastPlanBlockedTool = null;
+      _boundedBacklogPlanActive =
+        _currentPhase === "plan" &&
+        _isBoundedBacklogPlanningPrompt(_phaseInitText);
+      _boundedBacklogPlanReads = 0;
+      _boundedBacklogNamedEvidenceReads = 0;
+      _boundedBacklogPromptPaths.clear();
+      _boundedBacklogEvidencePrefetched = false;
+      _boundedBacklogPromptText = _boundedBacklogPlanActive ? _phaseInitText : "";
+      if (_boundedBacklogPlanActive) {
+        for (const _path of _extractDirectTaskPaths(_phaseInitText)) {
+          _boundedBacklogPromptPaths.add(_normalizePromptPath(_path));
+        }
+      }
+      _boundedBacklogDecisionInjected = false;
+      _boundedBacklogDecisionMisses = 0;
       _freshlyWrittenFiles.clear();
       if (process.stdout.isTTY) {
         console.log(
@@ -4418,8 +5092,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ? `${C.cyan}  ⚡ Phase routing enabled — skipping plan phase for direct file task, starting in implement with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`
           : `${C.cyan}  ⚡ Phase routing enabled — plan phase with ${_phaseModelOverride || "default model"} (category: ${_detectedCategoryId})${C.reset}`,
       );
-      if (_skipPlanForDirectCreation && _directTaskPaths.length > 0) {
-        const _targetList = _directTaskPaths.slice(0, 3).join(", ");
+      const _phaseDirectTaskPaths = _extractDirectTaskPaths(_phaseInitText);
+      if (_skipPlanForDirectCreation && _phaseDirectTaskPaths.length > 0) {
+        const _targetList = _phaseDirectTaskPaths.slice(0, 3).join(", ");
         const _directTaskGuardrail = {
           role: "user",
           content:
@@ -4431,11 +5106,79 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         conversationMessages.push(_directTaskGuardrail);
         apiMessages.push(_directTaskGuardrail);
       }
+      if (_boundedBacklogPlanActive) {
+        const _boundedPlanGuardrail = {
+          role: "user",
+          content: _buildBoundedBacklogPlanInstruction(),
+        };
+        conversationMessages.push(_boundedPlanGuardrail);
+        apiMessages.push(_boundedPlanGuardrail);
+      }
     }
   }
 
+  // ─── Hard preflight guard for gated automation prompts ────────────────────
+  // Prompts that declare git/worktree safety gates must not enter implementation
+  // without concrete evidence from a git status/branch check. Footer branch info
+  // is not sufficient because it may be cached or missing dirty-file details.
+  if (_stickyGitPreflightRequired) {
+    // Force a fresh git status read on each turn while a gated automation is
+    // active. Follow-up prompts may omit the original gate wording, but the
+    // workflow is still blocked on the same concrete evidence.
+    _gitPreflight = null;
+    const preflight = await _runGitPreflightIfNeeded(
+      _gatedPromptText,
+      apiMessages,
+      conversationMessages,
+    );
+    if (!preflight.ok) {
+      const requiredBranch = preflight.requiredBranch;
+      const branchHint = preflight.branch ? `Current branch: ${preflight.branch}. ` : "";
+      const requiredHint = requiredBranch ? `Required branch: ${requiredBranch}. ` : "";
+      const dirtyHint =
+        preflight.dirty === true
+          ? `Worktree is dirty (${preflight.changedFiles.length} changed file${preflight.changedFiles.length === 1 ? "" : "s"}). `
+          : "";
+      const errorHint =
+        !preflight.raw || /^ERROR:/i.test(preflight.raw) || /^fatal:/i.test(preflight.raw)
+          ? "Git preflight failed (no usable status output). "
+          : "";
+      const msg =
+        "[PRECHECK BLOCKED] This prompt contains explicit git/worktree safety gates. " +
+        "I ran `git status --short --branch` as preflight and will not proceed until it's safe.\n\n" +
+        `${errorHint}${branchHint}${requiredHint}${dirtyHint}`.trim() +
+        "\n\nNext step: make the worktree clean and be on the required branch, then re-run the automation.";
+      const assistantMsg = { role: "assistant", content: msg };
+      conversationMessages.push(assistantMsg);
+      saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
+      console.log(msg);
+      return;
+    }
+    if (!_stickyGitSummaryGuardInjected) {
+      // Reinforce final-summary honesty for gated workflows.
+      const summaryGuard = {
+        role: "user",
+        content:
+          "[SYSTEM] This is a gated automation workflow. In your final summary, use these exact labels (one per line): " +
+          "Preflight:, Preflight output:, Branch:, Chosen task: (or Selected improvement: / no safe task found), " +
+          "Files changed:, Verification:, Commit:, Push:, Final git status:, Remaining risk:. " +
+          "If any field is unknown or not run, write that explicitly. Do not claim safety, verification, commit, push, or git status checks without evidence from tool output.",
+      };
+      conversationMessages.push(summaryGuard);
+      apiMessages.push(summaryGuard);
+      _stickyGitSummaryGuardInjected = true;
+    }
+  }
+
+  await _prefetchBoundedBacklogEvidenceIfNeeded(
+    apiMessages,
+    conversationMessages,
+  );
+
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
+  let totalToolCalls = 0;
   const toolCounts = new Map();
   const filesModified = new Set();
   const filesRead = new Set();
@@ -4485,6 +5228,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
+  let forceFinalAnswerNow = false;
+  let forceFinalBudgetNudges = 0;
+  let forceFinalAfterBatch = false;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -4766,7 +5512,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           "ssh_exec",
         ]);
         let allTools;
-        if (isPlanMode()) {
+        if (forceFinalAnswerNow) {
+          allTools = [];
+        } else if (isPlanMode()) {
           allTools = baseTools.filter((t) =>
             PLAN_MODE_ALLOWED_TOOLS.has(t.function.name),
           );
@@ -4774,6 +5522,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           allTools = baseTools.filter((t) =>
             PHASE_PLAN_TOOLS.has(t.function.name),
           );
+          // Bounded backlog automations must make a decision quickly. Once the plan phase
+          // has gathered enough read/search evidence, remove tool access entirely so the
+          // model is forced to produce the required decision template (or a clean stop)
+          // instead of continuing to explore.
+          if (
+            _boundedBacklogPlanActive &&
+            (_boundedBacklogEvidencePrefetched ||
+              _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS)
+          ) {
+            allTools = [];
+          }
         } else if (_phaseEnabled && _currentPhase === "verify") {
           allTools = baseTools.filter((t) =>
             PHASE_VERIFY_TOOLS.has(t.function.name),
@@ -4869,6 +5628,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           },
         });
+        // Defensive guard: provider bugs or misconfigured mocks can return undefined,
+        // which would otherwise crash later when destructuring { content, tool_calls }.
+        if (!result || typeof result !== "object") {
+          throw new Error(
+            "Provider returned an empty response (no content/tool_calls)",
+          );
+        }
       } catch (err) {
         clearInterval(staleTimer);
         if (flushTimeout) {
@@ -5016,6 +5782,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         // User-friendly error message (avoid raw stack traces/cryptic codes)
+        const _emptyProviderResponse = err.message.includes(
+          "Provider returned an empty response",
+        );
         let userMessage = err.message;
         if (
           err.code === "ECONNREFUSED" ||
@@ -5482,6 +6251,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
 
+        // Fatal: the provider returned no usable response object. Retrying is
+        // pointless and can lead to tight retry loops (especially in tests).
+        if (_emptyProviderResponse) {
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          break outer;
+        }
+
         if (err.message.includes("429")) {
           rateLimitRetries++;
           if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
@@ -5710,12 +6498,73 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         tool_calls = [];
       }
 
+      forceFinalAfterBatch = false;
+      if (Array.isArray(tool_calls) && tool_calls.length > 0) {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        if (Number.isFinite(maxToolCalls)) {
+          const remaining = maxToolCalls - totalToolCalls;
+          if (remaining <= 0) {
+            forceFinalBudgetNudges++;
+            debugLog(
+              `${C.yellow}  ⚠ Tool-call budget reached (${totalToolCalls}/${maxToolCalls}) — forcing final answer${C.reset}`,
+            );
+            const finalPrompt = {
+              role: "user",
+              content: _buildToolBudgetFinalPrompt(
+                totalToolCalls,
+                maxToolCalls,
+              ),
+            };
+            conversationMessages.push(finalPrompt);
+            apiMessages.push(finalPrompt);
+            forceFinalAnswerNow = true;
+            if (forceFinalBudgetNudges >= 2) {
+              const forcedMsg = {
+                role: "assistant",
+                content:
+                  "I reached the tool-call budget and cannot safely continue executing tools. Based on the information gathered so far, I cannot complete more investigation without risking a tool loop.",
+              };
+              conversationMessages.push(forcedMsg);
+              console.log(`\n${forcedMsg.content}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              await _awaitAndDrainBackgroundJobs();
+              return;
+            }
+            continue;
+          }
+          if (tool_calls.length > remaining) {
+            debugLog(
+              `${C.yellow}  ⚠ Tool-call batch trimmed from ${tool_calls.length} to ${remaining} (budget ${totalToolCalls}/${maxToolCalls})${C.reset}`,
+            );
+            tool_calls = tool_calls.slice(0, remaining);
+            forceFinalAfterBatch = true;
+          }
+        }
+      }
+
       const assistantMsg = { role: "assistant", content: content || "" };
       if (tool_calls && tool_calls.length > 0) {
         assistantMsg.tool_calls = tool_calls;
       }
       conversationMessages.push(assistantMsg);
       apiMessages.push(assistantMsg);
+
+      // Bounded backlog plan text is the deliverable for the plan phase. Small
+      // models sometimes append exploratory tool calls to the same response even
+      // after writing a valid selected-improvement plan; ignore those tool calls
+      // so the phase transition can happen immediately.
+      if (
+        _phaseEnabled &&
+        _currentPhase === "plan" &&
+        _boundedBacklogPlanActive &&
+        tool_calls &&
+        tool_calls.length > 0 &&
+        _looksLikeBoundedBacklogDecision(content || streamedText || "")
+      ) {
+        delete assistantMsg.tool_calls;
+        tool_calls = [];
+      }
 
       // ─── Analysis-only hard exit ─────────────────────────────────────────
       // For pure analysis prompts, after the first substantive text response
@@ -5945,6 +6794,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
+          hasText &&
+          _looksLikeExplicitFinalSummary(content || streamedText || "") &&
+          !opts.skillLoop &&
+          !isPlanMode() &&
+          !_phaseEnabled &&
+          !_stickyGitPreflightRequired
+        ) {
+          debugLog(
+            `${C.green}  ✓ Explicit final summary exit: no follow-up provider call needed${C.reset}`,
+          );
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          await _awaitAndDrainBackgroundJobs();
+          return;
+        }
+
+        if (
           getAutoConfirm() &&
           !opts.skillLoop &&
           filesModified.size === 0 &&
@@ -6056,6 +6934,92 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const _assistantText = (content || streamedText || "").trim();
 
           if (_currentPhase === "plan") {
+            if (
+              _boundedBacklogPlanActive &&
+              /\bno safe task found\b/i.test(_assistantText)
+            ) {
+              if (!_isAllowedBoundedBacklogNoSafeTaskFound(_assistantText)) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction() +
+                    "\n\nDo not answer `no safe task found` before reading/searching backlog evidence unless you name a concrete blocker such as dirty worktree, wrong branch, missing files, or unavailable permissions. If git preflight is clean, inspect the listed backlog/UI files and select one scoped improvement.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: premature no-safe-task response — requiring backlog evidence${C.reset}`,
+                );
+                continue;
+              }
+              debugLog(
+                `${C.yellow}  ⚠ Bounded backlog plan: no safe task found — exiting gracefully${C.reset}`,
+              );
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+              );
+              saveNow(conversationMessages);
+              break outer;
+            }
+            if (
+              _boundedBacklogPlanActive &&
+              !_looksLikeBoundedBacklogDecision(_assistantText)
+            ) {
+              if (_looksOffTopicForBoundedBacklogPrompt(_assistantText)) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction({
+                      blocked:
+                        _boundedBacklogPlanReads >=
+                        BOUNDED_BACKLOG_PLAN_HARD_READS,
+                    }) +
+                    "\n\nYour previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one nex-note notation-editor workflow improvement.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: rejected off-topic selected improvement${C.reset}`,
+                );
+                continue;
+              }
+              _boundedBacklogDecisionMisses++;
+              if (
+                _boundedBacklogDecisionMisses >= 2 ||
+                _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS
+              ) {
+                const msg =
+                  "no safe task found\n\n" +
+                  "Bounded backlog planning requires an explicit selected-improvement decision " +
+                  "with files and verification evidence. Stopping before implementation because " +
+                  "the plan response did not follow the required template.";
+                const assistantMsg = { role: "assistant", content: msg };
+                conversationMessages.push(assistantMsg);
+                console.log(`\n${msg}`);
+                saveNow(conversationMessages);
+                _scoreAndPrint(conversationMessages);
+                break outer;
+              }
+              const decisionMsg = {
+                role: "user",
+                content: _buildBoundedBacklogPlanInstruction({
+                  blocked:
+                    _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS,
+                }),
+              };
+              conversationMessages.push(decisionMsg);
+              apiMessages.push(decisionMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Bounded backlog plan: missing selected-improvement decision — re-prompting in plan phase${C.reset}`,
+              );
+              continue;
+            }
             // If the plan found nothing actionable, exit gracefully instead of
             // blindly entering implement phase where the model will just loop.
             // But don't exit if grep found files — the model discovered targets
@@ -6159,6 +7123,83 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               debugLog(
                 `${C.green}  ✓ Verification phase complete (headless substantive summary)${C.reset}`,
               );
+              // For gated automation workflows, require a structured, evidence-backed
+              // final report before exiting. Verify-phase summaries are often short
+              // and omit required workflow evidence (preflight/branch/files/commit/push/status).
+              if (
+                _stickyGitPreflightRequired &&
+                !_looksLikeGatedAutomationFinalSummary(_assistantText)
+              ) {
+                try {
+                  const _verificationEvidence =
+                    verificationCommandsRun.length > 0
+                      ? verificationCommandsRun.join(" | ")
+                      : verificationReadsRun.length > 0
+                        ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                        : "not run; state this explicitly and do not claim tests/build/checks passed";
+                  const _preflightCmd =
+                    (_gitPreflight && _gitPreflight.command) ||
+                    "git status --short --branch";
+                  const _preflightRaw =
+                    (_gitPreflight && String(_gitPreflight.raw || "").trim()) ||
+                    "(missing preflight output)";
+                  const _preflightBranch =
+                    (_gitPreflight && _gitPreflight.branch) ||
+                    _gitPreflightBranch ||
+                    "(unknown)";
+                  const _changedFiles =
+                    [...filesModified].slice(0, 24).join(", ") ||
+                    (_bashModifiedFiles > 0
+                      ? "files changed by shell commands"
+                      : "(none)");
+                  const _commitEvidence = _commitDetected
+                    ? "detected (git commit succeeded per bash output)"
+                    : "not detected";
+                  const _pushEvidence = _gitPushDetected
+                    ? "detected (git push succeeded per bash output)"
+                    : _gitPushRaw
+                      ? "attempted (see tool output)"
+                      : "not detected";
+                  const _finalWorktreeEvidence = _lastGitStatusEvidence
+                    ? `${_lastGitStatusCommand}\n${_lastGitStatusEvidence}`
+                    : "(not checked in this run)";
+                  const summaryPrompt = [
+                    "Write a final automation report using EXACT labels (one per line):",
+                    `Preflight: ${_preflightCmd}`,
+                    "Preflight output: (paste exactly; do not paraphrase)",
+                    _preflightRaw,
+                    `Branch: ${_preflightBranch}`,
+                    "Chosen task: (what you actually did; or `no safe task found`)",
+                    `Files changed: ${_changedFiles}`,
+                    `Verification: ${_verificationEvidence}`,
+                    `Commit: ${_commitEvidence}`,
+                    `Push: ${_pushEvidence}`,
+                    `Final git status: ${_finalWorktreeEvidence}`,
+                    "Remaining risk: (if any; otherwise `none`)",
+                    "",
+                    "Hard rules: do not claim verification/commit/push/git status checks without evidence from tool output. If unknown, write unknown.",
+                  ].join("\n");
+                  const summaryMessages = [
+                    ...apiMessages,
+                    { role: "user", content: summaryPrompt },
+                  ];
+                  const summaryRes = await callStream(summaryMessages, [], {});
+                  const summaryText = (summaryRes?.content || "").trim();
+                  if (summaryText) {
+                    console.log(`\n${summaryText}`);
+                    conversationMessages.push(
+                      { role: "user", content: summaryPrompt },
+                      { role: "assistant", content: summaryText },
+                    );
+                    apiMessages.push(
+                      { role: "user", content: summaryPrompt },
+                      { role: "assistant", content: summaryText },
+                    );
+                  }
+                } catch {
+                  /* best-effort; fall through to normal exit */
+                }
+              }
               _printResume(
                 totalSteps,
                 toolCounts,
@@ -6578,27 +7619,75 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !_hasPostEditVerificationEvidence() &&
           _claimsVerificationOrCompletion(content || streamedText || "") &&
           !_statesVerificationGap(content || streamedText || "");
+        const _needsGatedAutomationReport =
+          _stickyGitPreflightRequired &&
+          !_looksLikeGatedAutomationFinalSummary(content || streamedText || "");
         if (
           totalSteps > 0 &&
           !opts._isSummaryTurn &&
-          (isTooShort(content) || _needsVerificationDisclosure)
+          (isTooShort(content) ||
+            _needsVerificationDisclosure ||
+            _needsGatedAutomationReport)
         ) {
           try {
             debugLog(
               `${C.dim}  [post-turn] terse ending — requesting diagnosis/summary${C.reset}`,
             );
-            const summaryPrompt =
-              filesModified.size > 0 || _bashModifiedFiles > 0
+            const _verificationEvidence =
+              verificationCommandsRun.length > 0
+                ? verificationCommandsRun.join(" | ")
+                : verificationReadsRun.length > 0
+                  ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                  : "not run; state this explicitly and do not claim tests/build/checks passed";
+            const _preflightCmd =
+              (_gitPreflight && _gitPreflight.command) ||
+              "git status --short --branch";
+            const _preflightRaw =
+              (_gitPreflight && String(_gitPreflight.raw || "").trim()) ||
+              "(missing preflight output)";
+            const _preflightBranch =
+              (_gitPreflight && _gitPreflight.branch) ||
+              _gitPreflightBranch ||
+              "(unknown)";
+            const _changedFiles =
+              [...filesModified].slice(0, 24).join(", ") ||
+              (_bashModifiedFiles > 0
+                ? "files changed by shell commands"
+                : "(none)");
+            const _commitEvidence = _commitDetected
+              ? "detected (git commit succeeded per bash output)"
+              : "not detected";
+            const _pushEvidence = _gitPushDetected
+              ? "detected (git push succeeded per bash output)"
+              : _gitPushRaw
+                ? "attempted (see tool output)"
+                : "not detected";
+            const _finalWorktreeEvidence = _lastGitStatusEvidence
+              ? `${_lastGitStatusCommand}\n${_lastGitStatusEvidence}`
+              : "(not checked in this run)";
+
+            const summaryPrompt = _stickyGitPreflightRequired
+              ? [
+                  "Write a final automation report using EXACT labels (one per line):",
+                  `Preflight: ${_preflightCmd}`,
+                  "Preflight output: (paste exactly; do not paraphrase)",
+                  _preflightRaw,
+                  `Branch: ${_preflightBranch}`,
+                  "Chosen task: (what you actually did; or `no safe task found`)",
+                  `Files changed: ${_changedFiles}`,
+                  `Verification: ${_verificationEvidence}`,
+                  `Commit: ${_commitEvidence}`,
+                  `Push: ${_pushEvidence}`,
+                  `Final git status: ${_finalWorktreeEvidence}`,
+                  "Remaining risk: (if any; otherwise `none`)",
+                  "",
+                  "Hard rules: do not claim verification/commit/push/git status checks without evidence from tool output. If unknown, write unknown.",
+                ].join("\n")
+              : filesModified.size > 0 || _bashModifiedFiles > 0
                 ? [
                     "Write a closing summary (3+ sentences) with:",
                     `- changed files: ${[...filesModified].slice(0, 8).join(", ") || "files changed by shell commands"}`,
-                    `- verification: ${
-                      verificationCommandsRun.length > 0
-                        ? verificationCommandsRun.join(" | ")
-                        : verificationReadsRun.length > 0
-                          ? `post-edit read: ${verificationReadsRun.slice(0, 4).join(", ")}`
-                          : "not run; state this explicitly and do not claim tests/build/checks passed"
-                    }`,
+                    `- verification: ${_verificationEvidence}`,
                     "- remaining risk or follow-up, if any.",
                   ].join("\n")
                 : "Write a closing diagnosis (3+ sentences): what you investigated, what you found, and what the user should do next or what the root cause is.";
@@ -6630,6 +7719,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       totalSteps++;
       _phaseIterations++;
       if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
+      totalToolCalls += tool_calls.length;
+      {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        if (Number.isFinite(maxToolCalls) && totalToolCalls >= maxToolCalls) {
+          forceFinalAfterBatch = true;
+        }
+      }
       for (const tc of tool_calls) {
         const name = tc.function.name;
         toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
@@ -6638,16 +7734,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // ─── Proactive tool-call budget warning ──────────────────────────────────
       // At 30 tool calls, inject a warning to wrap up. This prevents runaway
       // verification loops that tank session scores.
-      if (totalSteps >= 30 && !_toolBudgetWarningInjected) {
+      if (totalToolCalls >= 30 && !_toolBudgetWarningInjected) {
         _toolBudgetWarningInjected = true;
         debugLog(
-          `${C.yellow}  ⚠ Tool budget warning: ${totalSteps} tool calls used — nudging model to wrap up${C.reset}`,
+          `${C.yellow}  ⚠ Tool budget warning: ${totalToolCalls} tool calls used — nudging model to wrap up${C.reset}`,
         );
         const budgetWarn = {
           role: "user",
           content:
             "[SYSTEM] ⚠ You have used " +
-            totalSteps +
+            totalToolCalls +
             " tool calls. This is approaching the quality threshold (40). " +
             "Wrap up NOW: write your final summary and stop. Do NOT run additional verification commands (git status, git diff, git log) — " +
             "your changes are already committed and verified. Further tool calls will hurt session quality.",
@@ -6686,6 +7782,28 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             role: "tool",
             content:
               "BLOCKED: You already have enough evidence to produce the requested summary/document. Write the deliverable now and stop reading more files.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
+      // ─── Bounded backlog planning guard (pre-execution) ───────────────────
+      // Backlog automation prompts are allowed to inspect evidence, but they
+      // must not spend the whole plan phase searching. Once enough read/search
+      // evidence has been gathered, force a visible decision or clean blocker.
+      if (
+        _boundedBacklogPlanActive &&
+        _phaseEnabled &&
+        _currentPhase === "plan" &&
+        (_boundedBacklogEvidencePrefetched ||
+          _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_HARD_READS)
+      ) {
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content: _buildBoundedBacklogPlanInstruction({ blocked: true }),
             tool_call_id: prep.callId,
           };
         }
@@ -7733,6 +8851,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !firstLine.startsWith("CANCELLED") &&
           !firstLine.startsWith("Command failed") &&
           !firstLine.startsWith("EXIT");
+
+        // Track user-visible git status evidence for final automation reports.
+        if (prep.fnName === "git_status" && isOk) {
+          _lastGitStatusCommand = "git_status";
+          _lastGitStatusEvidence = res;
+        }
+        if (
+          prep.fnName === "bash" &&
+          prep.canExecute &&
+          typeof prep.args?.command === "string"
+        ) {
+          const cmd = prep.args.command;
+          if (/git\s+status\s+--short\s+--branch\b/.test(cmd)) {
+            _lastGitStatusCommand = "bash:git status --short --branch";
+            _lastGitStatusEvidence = res;
+          }
+          if (/git\s+push\b/.test(cmd)) {
+            // Best-effort push detection — do not overfit exact output.
+            _gitPushRaw = res;
+            const pushSucceeded =
+              isOk &&
+              !_gitPushRaw.startsWith("EXIT") &&
+              (/\bEverything up[- ]to[- ]date\b/i.test(_gitPushRaw) ||
+                /\bTo\s+\S+/i.test(_gitPushRaw) ||
+                /\bWriting objects\b/i.test(_gitPushRaw));
+            if (pushSucceeded) _gitPushDetected = true;
+          }
+        }
         // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
         if (
           !isOk &&
@@ -7884,6 +9030,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Reset plan-phase block counter when a tool actually executes
         if (isOk && prep.canExecute && _phaseEnabled) {
           _planPhaseBlockedCount = 0;
+        }
+        if (
+          isOk &&
+          prep.canExecute &&
+          _boundedBacklogPlanActive &&
+          _phaseEnabled &&
+          _currentPhase === "plan" &&
+          BOUNDED_BACKLOG_EVIDENCE_TOOLS.has(prep.fnName)
+        ) {
+          _boundedBacklogPlanReads++;
+          if (_isNamedBoundedBacklogEvidenceTool(prep.fnName, prep.args)) {
+            _boundedBacklogNamedEvidenceReads++;
+          }
+          if (
+            _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS &&
+            !_boundedBacklogDecisionInjected
+          ) {
+            _boundedBacklogDecisionInjected = true;
+            const decisionMsg = {
+              role: "user",
+              content: _buildBoundedBacklogPlanInstruction(),
+            };
+            conversationMessages.push(decisionMsg);
+            apiMessages.push(decisionMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Bounded backlog plan: ${_boundedBacklogPlanReads} read/search tools used — requiring a decision${C.reset}`,
+            );
+          }
         }
         if (
           isOk &&
@@ -8347,16 +9521,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (commitSucceeded) {
             _commitDetected = true;
             _postCommitGitCalls = 0;
+            const _postCommitCap = _stickyGitPreflightRequired ? 4 : 2;
             debugLog(
-              `${C.green}  ✓ Git commit detected — post-commit verification cap active (max 2 git status/diff/log)${C.reset}`,
+              `${C.green}  ✓ Git commit detected — post-commit verification cap active (max ${_postCommitCap} git status/diff/log)${C.reset}`,
             );
-            const commitMsg = {
-              role: "user",
-              content:
-                "[SYSTEM] ✓ Git commit succeeded. Your changes are committed. " +
-                "Do NOT run further git status / git diff / git log calls — the commit is done. " +
-                "Write your final summary and stop. Running extra verification commands wastes tool calls and hurts session quality.",
-            };
+            const commitMsg = _stickyGitPreflightRequired
+              ? {
+                  role: "user",
+                  content:
+                    "[SYSTEM] ✓ Git commit succeeded. " +
+                    "This is a gated automation workflow: ensure you still capture final-state evidence. " +
+                    "Next: push (if required by the prompt), then run `git status --short --branch` once and include its output in the final automation report. " +
+                    "Avoid extra git diff/log unless needed to explain a blocker.",
+                }
+              : {
+                  role: "user",
+                  content:
+                    "[SYSTEM] ✓ Git commit succeeded. Your changes are committed. " +
+                    "Do NOT run further git status / git diff / git log calls — the commit is done. " +
+                    "Write your final summary and stop. Running extra verification commands wastes tool calls and hurts session quality.",
+                };
             conversationMessages.push(commitMsg);
             apiMessages.push(commitMsg);
           }
@@ -8367,7 +9551,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const gitVerifyPattern = /git\s+(status|diff|log|show)\b/;
           if (gitVerifyPattern.test(prep.args.command)) {
             _postCommitGitCalls++;
-            if (_postCommitGitCalls > 2) {
+            const cap = _stickyGitPreflightRequired ? 4 : 2;
+            if (_postCommitGitCalls > cap) {
               debugLog(
                 `${C.yellow}  ⚠ Post-commit git verification blocked (call ${_postCommitGitCalls})${C.reset}`,
               );
@@ -8377,7 +9562,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   "[SYSTEM] ⚠ STOP: You already ran " +
                   (_postCommitGitCalls - 1) +
                   " git verification commands after committing. " +
-                  "The commit is confirmed. Write your final summary NOW and do not make any more tool calls.",
+                  (_stickyGitPreflightRequired
+                    ? "In gated automation workflows, keep tool use minimal: you already have enough evidence for the final report. Write the final automation report now and stop."
+                    : "The commit is confirmed. Write your final summary NOW and do not make any more tool calls."),
               };
               conversationMessages.push(gitBlockMsg);
               apiMessages.push(gitBlockMsg);
@@ -8936,6 +10123,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         apiMessages.push(toolMsg);
       }
 
+      if (forceFinalAfterBatch) {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        const finalPrompt = {
+          role: "user",
+          content: _buildToolBudgetFinalPrompt(totalToolCalls, maxToolCalls),
+        };
+        conversationMessages.push(finalPrompt);
+        apiMessages.push(finalPrompt);
+        forceFinalAnswerNow = true;
+        forceFinalBudgetNudges++;
+      }
+
       const _wroteTextDeliverableThisBatch =
         _isSynthesisHeavyPrompt &&
         prepared.some((prep, idx) => {
@@ -9170,6 +10369,22 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           typeof _lastAssistant?.content === "string"
             ? _lastAssistant.content
             : "";
+        if (
+          _boundedBacklogPlanActive &&
+          _boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS &&
+          !_looksLikeBoundedBacklogDecision(_summary)
+        ) {
+          const msg =
+            "no safe task found\n\n" +
+            `The bounded backlog plan phase used ${_boundedBacklogPlanReads} read/search tools without producing the required selected-improvement decision. ` +
+            "Stopping before implementation because the workflow requires choosing one scoped task with files and verification evidence.";
+          const assistantMsg = { role: "assistant", content: msg };
+          conversationMessages.push(assistantMsg);
+          console.log(`\n${msg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         const phaseMsg = await _transitionPhase("implement", _summary);
         if (phaseMsg) {
           conversationMessages.push(phaseMsg);
@@ -9236,6 +10451,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   await _awaitAndDrainBackgroundJobs();
 }
 
+function _shouldAutoOrchestrate(autoOrch, complexity, threshold, planModeActive = false) {
+  return (
+    !planModeActive &&
+    autoOrch &&
+    complexity &&
+    complexity.isComplex &&
+    complexity.estimatedGoals >= threshold
+  );
+}
+
 module.exports = {
   processInput,
   clearConversation,
@@ -9261,6 +10486,14 @@ module.exports = {
   _isSimpleDirectAnswerPrompt,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
+  _shouldAutoOrchestrate,
+  _shouldSkipPlanPhaseForDirectCreation,
+  _hasAutomationOrPreflightGate,
+  _extractDirectTaskPaths,
+  _isBoundedBacklogPlanningPrompt,
+  _buildBoundedBacklogPlanInstruction,
+  _looksLikeBoundedBacklogDecision,
+  _looksLikeGatedAutomationFinalSummary,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

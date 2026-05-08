@@ -103,7 +103,7 @@ const _modelSpecEarly =
     : "";
 const _modelProviderEarly = (() => {
   const prefix = _modelSpecEarly.split(":")[0];
-  return ["ollama", "openai", "deepseek", "anthropic", "gemini", "local"].includes(
+  return ["ollama", "openai", "deepseek", "anthropic", "gemini", "local", "mock"].includes(
     prefix,
   )
     ? prefix
@@ -162,6 +162,7 @@ if (modelIdx !== -1 && args[modelIdx + 1]) {
       "anthropic",
       "gemini",
       "local",
+      "mock",
     ].includes(prefix)
       ? prefix
       : null;
