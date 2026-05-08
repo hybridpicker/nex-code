@@ -4581,6 +4581,176 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
+    it("allows targeted read after repeated same-file grep hits", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("Lines 204-264 without target")
+        .mockResolvedValueOnce("260:  <ToolBtn title={t('toolbar.undo')} />")
+        .mockResolvedValueOnce("458:  onInsertRest={onInsertRest}")
+        .mockResolvedValueOnce("458:  onInsertRest={onInsertRest}")
+        .mockResolvedValueOnce("Lines 260-340 without target")
+        .mockResolvedValueOnce("Lines 340-420 without target")
+        .mockResolvedValueOnce("Lines 420-500 with onInsertRest")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar insert rest label\n" +
+            "Selection rationale: components/NotationToolbar.tsx is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: read the toolbar range, locate Insert Rest if needed, then make one label edit\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 204,
+                  line_end: 264,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Checking same-file labels.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-undo",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "toolbar",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Looking for insert handlers in the same file.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-insert",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "Insert",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Narrowing to insert rest.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-rest",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "onInsertRest",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the first located target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-a",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 260,
+                  line_end: 340,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the adjacent target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-b",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 340,
+                  line_end: 420,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the final located target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-c",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 420,
+                  line_end: 500,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.tsx. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "read_file",
+        expect.objectContaining({
+          path: "components/NotationToolbar.tsx",
+          line_start: 420,
+          line_end: 500,
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
+    }, 15000);
+
     it("allows narrow edit recovery search after bounded backlog edit mismatch", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
       getAutoConfirm.mockReturnValue(true);

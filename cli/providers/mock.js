@@ -777,17 +777,21 @@ function buildDeterministicResponse(messages) {
   }
 
   if (stableScenario === "i") {
-    const stepFromMessages = hasToolResult(messages, "i6")
-      ? 6
-      : hasToolResult(messages, "i5")
-        ? 5
-        : hasToolResult(messages, "i4")
-          ? 4
-          : hasToolResult(messages, "i3")
-            ? 3
-            : hasToolResult(messages, "i2")
-              ? 2
-              : 0;
+    const stepFromMessages = hasToolResult(messages, "i8")
+      ? 8
+      : hasToolResult(messages, "i7")
+        ? 7
+        : hasToolResult(messages, "i6")
+          ? 6
+          : hasToolResult(messages, "i5")
+            ? 5
+            : hasToolResult(messages, "i4")
+              ? 4
+              : hasToolResult(messages, "i3")
+                ? 3
+                : hasToolResult(messages, "i2")
+                  ? 2
+                  : 0;
     state.lastStep = Math.max(state.lastStep, stepFromMessages);
 
     if (state.lastStep < 1) {
@@ -821,7 +825,7 @@ function buildDeterministicResponse(messages) {
     if (state.lastStep < 3) {
       state.lastStep = 3;
       return {
-        content: "Locating the Apply button inside the same planned file.",
+        content: "Checking labels inside the same planned file.",
         tool_calls: [
           toolCall(
             "grep",
@@ -835,6 +839,34 @@ function buildDeterministicResponse(messages) {
     if (state.lastStep < 4) {
       state.lastStep = 4;
       return {
+        content: "Trying the more specific Apply label in the same file.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { path: "components/CommandCenter.tsx", pattern: "Apply changes" },
+            "i4",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 5) {
+      state.lastStep = 5;
+      return {
+        content: "Locating the Apply action class inside the same planned file.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { path: "components/CommandCenter.tsx", pattern: "apply-action" },
+            "i5",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 6) {
+      state.lastStep = 6;
+      return {
         content: "Reading the located Apply button range.",
         tool_calls: [
           toolCall(
@@ -844,14 +876,14 @@ function buildDeterministicResponse(messages) {
               line_start: 200,
               line_end: 230,
             },
-            "i4",
+            "i6",
           ),
         ],
       };
     }
 
-    if (state.lastStep < 5) {
-      state.lastStep = 5;
+    if (state.lastStep < 7) {
+      state.lastStep = 7;
       return {
         content: "Applying the scoped accessibility label.",
         tool_calls: [
@@ -863,14 +895,14 @@ function buildDeterministicResponse(messages) {
               new_text:
                 '<button className="apply-action" aria-label="Apply changes">Apply</button>',
             },
-            "i5",
+            "i7",
           ),
         ],
       };
     }
 
-    if (state.lastStep < 6) {
-      state.lastStep = 6;
+    if (state.lastStep < 8) {
+      state.lastStep = 8;
       return {
         content: "Verifying, committing, pushing, and checking final status.",
         tool_calls: [
@@ -880,7 +912,7 @@ function buildDeterministicResponse(messages) {
               command:
                 'npm test && npm run build && git status --short --branch && git add components/CommandCenter.tsx && git commit -m "fix: clarify command center apply label" && git push origin main && git status --short --branch',
             },
-            "i6",
+            "i8",
           ),
         ],
       };
