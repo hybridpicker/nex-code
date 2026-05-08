@@ -1666,6 +1666,7 @@ let _boundedBacklogPlanActive = false; // true for automation/backlog prompts th
 let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
 let _boundedBacklogNamedEvidenceReads = 0; // reads/searches that touch prompt-named backlog files
 const _boundedBacklogPromptPaths = new Set();
+const _boundedBacklogUiEvidencePaths = new Set();
 let _boundedBacklogEvidencePrefetched = false;
 let _boundedBacklogPromptText = "";
 let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
@@ -1778,6 +1779,31 @@ function _normalizePromptPath(value) {
   return String(value || "").replace(/^\.\/+/, "").replace(/\/+$/, "");
 }
 
+function _extractExplicitTaskCwd(prompt) {
+  const text = String(prompt || "");
+  if (!text) return null;
+  const patterns = [
+    /\b(?:work|operate|run)\s+(?:only\s+)?(?:in|inside|within|from)\s+[`"']?(\/[^\s`"',;:)]+)/i,
+    /\bworking\s+directory\s*:\s*[`"']?(\/[^\s`"',;:)]+)/i,
+    /\bcwd\s*:\s*[`"']?(\/[^\s`"',;:)]+)/i,
+  ];
+  for (const re of patterns) {
+    const match = text.match(re);
+    if (!match) continue;
+    const candidate = String(match[1] || "").replace(/[.]+$/, "");
+    if (!candidate) continue;
+    try {
+      const resolved = path.resolve(candidate);
+      if (fsSync.existsSync(resolved) && fsSync.statSync(resolved).isDirectory()) {
+        return fsSync.realpathSync(resolved);
+      }
+    } catch {
+      // Ignore malformed or inaccessible prompt paths and keep the current cwd.
+    }
+  }
+  return null;
+}
+
 function _isNamedBoundedBacklogEvidenceTool(fnName, args = {}) {
   if (!_boundedBacklogPlanActive || _boundedBacklogPromptPaths.size === 0) {
     return true;
@@ -1874,6 +1900,34 @@ function _looksOffTopicForBoundedBacklogPrompt(text) {
   void implementationRefs;
   void existingImplementationRefs;
   return false;
+}
+
+function _extractPlanFileRefs(text) {
+  const fileRefs = new Set();
+  const fileRefPattern =
+    /[`'"]?((?:[A-Za-z0-9_.@-]+\/)+[A-Za-z0-9_.@-]+\.(?:tsx|jsx|mjs|cjs|mdx|json|scss|html|yaml|yml|css|ts|js|md))[`'"]?/g;
+  let match;
+  while ((match = fileRefPattern.exec(String(text || "")))) {
+    fileRefs.add(_normalizePromptPath(match[1]));
+  }
+  return [...fileRefs];
+}
+
+function _boundedBacklogPlanNeedsExistingFileCorrection(text) {
+  if (!_boundedBacklogPlanActive || _boundedBacklogUiEvidencePaths.size === 0) {
+    return false;
+  }
+  const refs = _extractPlanFileRefs(text).filter(
+    (fileRef) =>
+      fileRef &&
+      !_boundedBacklogPromptPaths.has(fileRef) &&
+      !/\.(md|mdx|txt|rst|adoc)$/i.test(fileRef),
+  );
+  if (refs.length === 0) return false;
+  const existingRefs = refs.filter((fileRef) =>
+    fsSync.existsSync(path.resolve(process.cwd(), fileRef)),
+  );
+  return existingRefs.length === 0;
 }
 
 function _hasBoundedBacklogLabel(text, label) {
@@ -2238,10 +2292,7 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
     }
   }
 
-  for (let index = 0; index < paths.length; index++) {
-    const path = paths[index];
-    const args = { path, line_start: 1, line_end: 140 };
-    const toolCallId = `bounded-backlog-evidence-${index}`;
+  async function appendEvidenceTool(fnName, args, toolCallId, { named = false } = {}) {
     const assistantToolCallMsg = {
       role: "assistant",
       content: "",
@@ -2249,7 +2300,7 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
         {
           id: toolCallId,
           type: "function",
-          function: { name: "read_file", arguments: JSON.stringify(args) },
+          function: { name: fnName, arguments: JSON.stringify(args) },
         },
       ],
     };
@@ -2258,13 +2309,13 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
 
     let out = "";
     try {
-      if (_serverHooks?.onToolStart) _serverHooks.onToolStart("read_file", args);
-      out = await executeTool("read_file", args, {
+      if (_serverHooks?.onToolStart) _serverHooks.onToolStart(fnName, args);
+      out = await executeTool(fnName, args, {
         silent: true,
         autoConfirm: true,
       });
     } catch (err) {
-      out = `ERROR: failed to read backlog evidence ${path}: ${err?.message || String(err)}`;
+      out = `ERROR: failed to read backlog evidence ${args.path || fnName}: ${err?.message || String(err)}`;
     }
     const raw = String(out || "");
     if (_serverHooks?.onToolEnd) {
@@ -2275,8 +2326,8 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
         firstLine.includes("BLOCKED");
       try {
         _serverHooks.onToolEnd(
-          "read_file",
-          formatToolSummary("read_file", args, raw.slice(0, 50000), isError),
+          fnName,
+          formatToolSummary(fnName, args, raw.slice(0, 50000), isError),
           !isError,
         );
       } catch {
@@ -2292,11 +2343,57 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
     conversationMessages.push(evidenceMsg);
     apiMessages.push(evidenceMsg);
     _boundedBacklogPlanReads++;
-    _boundedBacklogNamedEvidenceReads++;
+    if (named) _boundedBacklogNamedEvidenceReads++;
+  }
+
+  for (let index = 0; index < paths.length; index++) {
+    const path = paths[index];
+    await appendEvidenceTool(
+      "read_file",
+      { path, line_start: 1, line_end: 140 },
+      `bounded-backlog-evidence-${index}`,
+      { named: true },
+    );
+  }
+
+  const wantsUiEvidence =
+    /\b(current UI|UI\/components|components?|toolbar|palette|inspector|command center|menus?)\b/i.test(
+      _boundedBacklogPromptText,
+    );
+  if (wantsUiEvidence) {
+    const uiEvidencePaths = ["components", "src", "app"].filter((p) =>
+      fsSync.existsSync(path.resolve(process.cwd(), p)),
+    );
+    for (let index = 0; index < Math.min(uiEvidencePaths.length, 2); index++) {
+      await appendEvidenceTool(
+        "list_directory",
+        { path: uiEvidencePaths[index], max_depth: 2 },
+        `bounded-backlog-ui-tree-${index}`,
+      );
+    }
+
+    const uiSurfaceCandidates = [
+      "components/NotationToolbar.tsx",
+      "components/CommandCenter.tsx",
+      "components/EditPalette.tsx",
+      "components/Inspector.tsx",
+    ].filter((p) => fsSync.existsSync(path.resolve(process.cwd(), p)));
+    for (let index = 0; index < Math.min(uiSurfaceCandidates.length, 2); index++) {
+      _boundedBacklogUiEvidencePaths.add(uiSurfaceCandidates[index]);
+      await appendEvidenceTool(
+        "read_file",
+        {
+          path: uiSurfaceCandidates[index],
+          line_start: 1,
+          line_end: 180,
+        },
+        `bounded-backlog-ui-evidence-${index}`,
+      );
+    }
   }
 
   const close =
-    "[BACKLOG PREFLIGHT] The prompt-named backlog/reference files above have already been read. Your next response must be the bounded plan labels exactly as requested (`Selected improvement:`, `Selection rationale:`, `Files:`, `Implementation outline:`, `Verification plan:`, `Browser/UI applicability:`). Do not request or describe more read_file calls.";
+    "[BACKLOG PREFLIGHT] The prompt-named backlog/reference files and any requested UI/component evidence above have already been read. Your next response must be the bounded plan labels exactly as requested (`Selected improvement:`, `Selection rationale:`, `Files:`, `Implementation outline:`, `Verification plan:`, `Browser/UI applicability:`). Do not request or describe more read_file calls.";
   const closeMsg = { role: "user", content: close };
   conversationMessages.push(closeMsg);
   apiMessages.push(closeMsg);
@@ -2841,8 +2938,17 @@ async function _transitionPhase(
   let content;
   if (targetPhase === "implement") {
     _planSummary = summary?.slice(0, 2000) || "";
+    const knownUiPaths =
+      _boundedBacklogPlanActive && _boundedBacklogUiEvidencePaths.size > 0
+        ? ` Known existing UI files from the preflight evidence: ${[
+            ..._boundedBacklogUiEvidencePaths,
+          ]
+            .slice(0, 4)
+            .join(", ")}. If a planned path does not exist, use the closest known existing UI file instead of searching invented src/components paths.`
+        : "";
     const boundedBacklogImplementationGuard = _boundedBacklogPlanActive
-      ? "\n\nBounded backlog implementation guard: preflight and backlog review are already complete. Do not run git status, git log, or re-read the backlog/docs before making progress. Start by reading the concrete implementation file(s) named in the accepted plan with targeted line ranges, then edit one scoped change."
+      ? "\n\nBounded backlog implementation guard: preflight and backlog review are already complete. Do not run git status, git log, or re-read the backlog/docs before making progress. Start by reading the concrete implementation file(s) named in the accepted plan with targeted line ranges, then edit one scoped change." +
+        knownUiPaths
       : "";
     content =
       `[PHASE: IMPLEMENTATION] Analysis complete. Based on the analysis:\n${_planSummary}\n\n` +
@@ -4759,6 +4865,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _lastCreationSummary = null; // consume once
   }
 
+  const explicitTaskCwd =
+    typeof _resolvedInput === "string" ? _extractExplicitTaskCwd(_resolvedInput) : null;
+  if (explicitTaskCwd) {
+    let currentCwd = null;
+    try {
+      currentCwd = fsSync.realpathSync(process.cwd());
+    } catch {
+      currentCwd = path.resolve(process.cwd());
+    }
+    if (currentCwd !== explicitTaskCwd) {
+      process.chdir(explicitTaskCwd);
+      invalidateSystemPromptCache();
+    }
+  }
+
   // Inject heuristic hints for URLs and tech stack to guide the model's search
   if (typeof _resolvedInput === "string") {
     const urlPaths = _extractUrlPaths(_resolvedInput);
@@ -5199,6 +5320,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       _boundedBacklogPlanReads = 0;
       _boundedBacklogNamedEvidenceReads = 0;
       _boundedBacklogPromptPaths.clear();
+      _boundedBacklogUiEvidencePaths.clear();
       _boundedBacklogEvidencePrefetched = false;
       _boundedBacklogPromptText = _boundedBacklogPlanActive ? _phaseInitText : "";
       if (_boundedBacklogPlanActive) {
@@ -5360,6 +5482,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let forceFinalAnswerNow = false;
   let forceFinalBudgetNudges = 0;
   let forceFinalAfterBatch = false;
+  let boundedBacklogEmptyResponseNudges = 0;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -6667,6 +6790,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             apiMessages.push(finalPrompt);
             forceFinalAnswerNow = true;
             if (forceFinalBudgetNudges >= 2) {
+              if (
+                _boundedBacklogPlanActive &&
+                _boundedBacklogEvidencePrefetched &&
+                filesModified.size === 0 &&
+                _bashModifiedFiles === 0
+              ) {
+                const stalledMsg =
+                  "Implementation stalled before edits.\n\n" +
+                  "The implementation phase reached the tool-call budget without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+                const stalledAssistantMsg = {
+                  role: "assistant",
+                  content: stalledMsg,
+                };
+                conversationMessages.push(stalledAssistantMsg);
+                apiMessages.push(stalledAssistantMsg);
+                console.log(`\n${stalledMsg}`);
+                saveNow(conversationMessages);
+                _scoreAndPrint(conversationMessages);
+                break outer;
+              }
               const forcedMsg = {
                 role: "assistant",
                 content:
@@ -6776,6 +6919,27 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       if (!tool_calls || tool_calls.length === 0) {
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        if (
+          !hasText &&
+          _boundedBacklogPlanActive &&
+          _boundedBacklogEvidencePrefetched &&
+          _isUnmodifiedBoundedBacklogImplementation(
+            filesModified,
+            _bashModifiedFiles,
+          ) &&
+          (forceFinalAnswerNow || i >= iterLimit - 1)
+        ) {
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            "The bounded backlog workflow reached the response budget without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         // Direct-answer guard: enforce the current turn language even if the model
         // drifts due to multilingual project context. For snippet prompts this is
         // pure presentation quality (no tools) and fixes frequent benchmark dings.
@@ -6865,6 +7029,40 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
           continue; // retry — don't count as a new step
         }
+        if (
+          !hasText &&
+          _boundedBacklogPlanActive &&
+          _boundedBacklogEvidencePrefetched &&
+          i < MAX_ITERATIONS - 1
+        ) {
+          boundedBacklogEmptyResponseNudges++;
+          if (boundedBacklogEmptyResponseNudges <= 2) {
+            const phase =
+              _phaseEnabled && _currentPhase === "implement" ? "implementation" : "planning";
+            const nudge = {
+              role: "user",
+              content:
+                phase === "implementation"
+                  ? "[SYSTEM] Empty implementation response is not progress. Continue now with a concrete tool call: read the implementation file from the accepted plan with a targeted range, or edit/patch/write the scoped change. Do not stop without edits."
+                  : "[SYSTEM] Empty planning response is not a valid result. The backlog and UI evidence has already been read. Respond now with the required labels: Selected improvement:, Selection rationale:, Files:, Implementation outline:, Verification plan:, Browser/UI applicability:.",
+            };
+            apiMessages.push(nudge);
+            conversationMessages.push(nudge);
+            continue;
+          }
+          const stalledMsg =
+            (_phaseEnabled && _currentPhase === "implement"
+              ? "Implementation stalled before edits."
+              : "Planning stalled before selecting an improvement.") +
+            "\n\nThe model returned repeated empty responses after the gated backlog evidence was available. Stopping without commit or push so the workflow does not falsely report success.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         // Tool avoidance nudge: if the model says it cannot use tools but it
         // actually can, nudge it to use them. Two cases:
         //   A) Post-wipe budget exhausted — model is correct that tools are
@@ -6874,7 +7072,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         //      to use tools normally.
         // Cap at 3 nudges (i < 3) to prevent infinite loops.
         const _toolAvoidancePattern =
-          /can.?t use.*tool|Tool.?Budget|cannot.*access|no.*tool.*access/i;
+          /can.?t use.*tool|Tool.?Budget|cannot.*access|no.*tool.*access|unable to run (?:any )?(?:git )?commands?|system instructions?.{0,80}\bblock.{0,80}(?:git|tool|command)|(?:git|bash|tools?).{0,80}\b(blocked|forbidden|not allowed)\b/i;
         if (
           hasText &&
           i < 3 &&
@@ -6905,7 +7103,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const toolNudge = {
               role: "user",
               content:
-                "[SYSTEM] You have full tool access. Use your tools to investigate and implement the fix directly — do not say you cannot use tools. If SSH is needed, use a single targeted command that captures the most relevant information rather than multiple sequential calls.",
+                _boundedBacklogPlanActive &&
+                _phaseEnabled &&
+                _currentPhase === "implement"
+                  ? "[SYSTEM] You are in implementation phase and the initial git preflight is already complete. Do not claim git/tools are unavailable, and do not re-run git status before editing. Locate the concrete implementation file with targeted read/search/list_directory if needed, then call edit_file/patch_file/write_file for the scoped change."
+                  : "[SYSTEM] You have full tool access. Use your tools to investigate and implement the fix directly — do not say you cannot use tools. If SSH is needed, use a single targeted command that captures the most relevant information rather than multiple sequential calls.",
             };
             apiMessages.push(toolNudge);
             conversationMessages.push(toolNudge);
@@ -7250,6 +7452,30 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               apiMessages.push(decisionMsg);
               debugLog(
                 `${C.yellow}  ⚠ Bounded backlog plan: missing selected-improvement decision — re-prompting in plan phase${C.reset}`,
+              );
+              continue;
+            }
+            if (
+              _boundedBacklogPlanActive &&
+              _boundedBacklogDecisionMisses < 1 &&
+              _boundedBacklogPlanNeedsExistingFileCorrection(_assistantText)
+            ) {
+              _boundedBacklogDecisionMisses++;
+              const knownPaths = [..._boundedBacklogUiEvidencePaths]
+                .slice(0, 4)
+                .join(", ");
+              const decisionMsg = {
+                role: "user",
+                content:
+                  _buildBoundedBacklogPlanInstruction({
+                    blocked: _boundedBacklogEvidencePrefetched,
+                  }) +
+                  `\n\nYour previous plan named implementation files that do not exist in this repository. Use an existing file from the UI evidence already read above, such as: ${knownPaths}. Do not invent src/components paths when the actual files are at the repository root.`,
+              };
+              conversationMessages.push(decisionMsg);
+              apiMessages.push(decisionMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Bounded backlog plan: correcting nonexistent implementation paths${C.reset}`,
               );
               continue;
             }
