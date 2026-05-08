@@ -1673,10 +1673,13 @@ let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nud
 let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
 let _boundedBacklogImplementationReads = 0; // targeted implementation reads after a bounded backlog plan
 let _boundedBacklogImplementationDiscoveryReads = 0; // narrow path discovery after a bounded backlog plan
+let _boundedBacklogImplementationNarrowFinds = 0; // same-file locating after an initial range misses the target
+const _boundedBacklogImplementationReadKeys = new Set();
 
 const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
 const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
 const BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS = 3;
+const BOUNDED_BACKLOG_IMPLEMENTATION_NARROW_FINDS = 3;
 const BOUNDED_BACKLOG_EVIDENCE_TOOLS = new Set([
   "read_file",
   "grep",
@@ -2894,6 +2897,8 @@ async function _transitionPhase(
     if (_boundedBacklogPlanActive) {
       _boundedBacklogImplementationReads = 0;
       _boundedBacklogImplementationDiscoveryReads = 0;
+      _boundedBacklogImplementationNarrowFinds = 0;
+      _boundedBacklogImplementationReadKeys.clear();
     }
   }
   if (targetPhase === "verify") {
@@ -4411,6 +4416,8 @@ function _resetSessionTracking() {
   _boundedBacklogDecisionMisses = 0;
   _boundedBacklogImplementationReads = 0;
   _boundedBacklogImplementationDiscoveryReads = 0;
+  _boundedBacklogImplementationNarrowFinds = 0;
+  _boundedBacklogImplementationReadKeys.clear();
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -8357,12 +8364,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               (todo) => _normalizePromptPath(todo.file) === readPath,
             ) ||
               _planSummary.includes(readPath));
+          const plannedImplementationPaths = new Set(
+            _planTodos
+              .map((todo) => _normalizePromptPath(todo.file))
+              .filter(Boolean),
+          );
+          for (const fileRef of _extractPlanFileRefs(_planSummary)) {
+            const normalizedRef = _normalizePromptPath(fileRef);
+            if (
+              normalizedRef &&
+              !_boundedBacklogPromptPaths.has(normalizedRef) &&
+              !/\.(md|mdx|txt|rst|adoc)$/i.test(normalizedRef)
+            ) {
+              plannedImplementationPaths.add(normalizedRef);
+            }
+          }
+          if (isPlannedImplementationPath) {
+            plannedImplementationPaths.add(readPath);
+          }
           const isTargetedImplementationRead =
             prep.fnName === "read_file" &&
             readPath &&
             (isPlannedImplementationPath ||
               !_boundedBacklogPromptPaths.has(readPath)) &&
             (prep.args?.line_start || prep.args?.line_end);
+          const implementationReadKey = isTargetedImplementationRead
+            ? `${readPath}:${prep.args?.line_start || ""}:${prep.args?.line_end || ""}`
+            : "";
           const isEditRecoveryRead =
             isTargetedImplementationRead &&
             (_sessionLastEditFailed.get(prep.args?.path) || 0) > 0;
@@ -8386,13 +8414,65 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const isEditRecoveryDiscovery =
             _sessionLastEditFailed.size > 0 &&
             (isImplementationDiscovery || isEditRecoveryBashGrep);
+          const discoveryPath = _normalizePromptPath(
+            prep.args?.path || prep.args?.cwd || "",
+          );
+          const discoveryText = String(
+            prep.args?.pattern ||
+              prep.args?.glob ||
+              prep.args?.query ||
+              prep.args?.search ||
+              prep.args?.include ||
+              prep.args?.file_pattern ||
+              "",
+          );
+          const isSamePlannedFileDiscovery =
+            _boundedBacklogImplementationReads > 0 &&
+            (prep.fnName === "grep" || prep.fnName === "search_files") &&
+            discoveryPath &&
+            plannedImplementationPaths.has(discoveryPath) &&
+            discoveryText.trim().length > 0;
+          const isSamePlannedFileBashGrep =
+            _boundedBacklogImplementationReads > 0 &&
+            prep.fnName === "bash" &&
+            /^grep\s+-n\b/.test(bashCommand.trim()) &&
+            [...plannedImplementationPaths].some(
+              (plannedPath) => plannedPath && bashCommand.includes(plannedPath),
+            ) &&
+            !/[;&|`$]/.test(bashCommand) &&
+            !/(^|\s)[<>]/.test(bashCommand);
+          const isNewSameFileRangeRead =
+            isTargetedImplementationRead &&
+            _boundedBacklogImplementationReads > 0 &&
+            plannedImplementationPaths.has(readPath) &&
+            implementationReadKey &&
+            !_boundedBacklogImplementationReadKeys.has(implementationReadKey);
+          const isNarrowSameFileFind =
+            _boundedBacklogImplementationReads > 0 &&
+            _boundedBacklogImplementationNarrowFinds <
+              BOUNDED_BACKLOG_IMPLEMENTATION_NARROW_FINDS &&
+            (isSamePlannedFileDiscovery ||
+              isSamePlannedFileBashGrep ||
+              isNewSameFileRangeRead);
           if (isWriteTool) continue;
           if (
             (isTargetedImplementationRead &&
               _boundedBacklogImplementationReads < 1) ||
             isEditRecoveryRead
           ) {
-            if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
+            if (!isEditRecoveryRead) {
+              _boundedBacklogImplementationReads++;
+              if (implementationReadKey) {
+                _boundedBacklogImplementationReadKeys.add(implementationReadKey);
+              }
+            }
+            continue;
+          }
+          if (isNarrowSameFileFind) {
+            _boundedBacklogImplementationNarrowFinds++;
+            if (implementationReadKey) {
+              _boundedBacklogImplementationReadKeys.add(implementationReadKey);
+            }
             continue;
           }
           if (isEditRecoveryDiscovery) {

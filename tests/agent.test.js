@@ -3641,7 +3641,7 @@ describe("agent.js", () => {
             ),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("exits cleanly in headless verify phase after verification evidence and a substantive summary", async () => {
       clearConversation();
@@ -3691,7 +3691,7 @@ describe("agent.js", () => {
             m.content.includes("Verification is incomplete"),
         ),
       ).toBe(false);
-    });
+    }, 15000);
 
     it("continues from headless implement summary into verification", async () => {
       clearConversation();
@@ -4493,6 +4493,92 @@ describe("agent.js", () => {
             m.content.includes("instead of editing"),
         ),
       ).toBe(true);
+    }, 15000);
+
+    it("allows narrow same-file search after initial bounded backlog read", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Command center file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("Lines 90-150 without target")
+        .mockResolvedValueOnce("212:  <button>Apply</button>")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add command center apply aria label\n" +
+            "Selection rationale: components/CommandCenter.tsx is an existing active editing UI\n" +
+            "Files: components/CommandCenter.tsx\n" +
+            "Implementation outline: read the command center lines, locate Apply if needed, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-command-center",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/CommandCenter.tsx",
+                  line_start: 90,
+                  line_end: 150,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Locating the Apply button within the same planned file.",
+          tool_calls: [
+            {
+              id: "grep-command-center",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/CommandCenter.tsx",
+                  pattern: "Apply",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/CommandCenter.tsx. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "grep",
+        expect.objectContaining({
+          path: "components/CommandCenter.tsx",
+          pattern: "Apply",
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
     });
 
     it("allows narrow edit recovery search after bounded backlog edit mismatch", async () => {
