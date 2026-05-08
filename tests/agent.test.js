@@ -3845,6 +3845,16 @@ describe("agent.js", () => {
         ),
       ).toBe(true);
       expect(_looksLikeBoundedBacklogDecision("no safe task found")).toBe(true);
+      expect(
+        _looksLikeBoundedBacklogDecision(
+          "**Selected improvement:** improve toolbar shortcut hints\n" +
+            "**Selection rationale:** docs evidence names a UI workflow gap\n" +
+            "**Files:** src/components/Toolbar.tsx, docs/keyboard-shortcuts.md\n" +
+            "**Implementation outline:** locate the toolbar and add one hint\n" +
+            "**Verification plan:** npm test -- tests/agent.test.js\n" +
+            "**Browser/UI applicability:** required",
+        ),
+      ).toBe(true);
     });
 
     it("rejects bare no-safe responses after bounded backlog evidence", async () => {
@@ -4247,6 +4257,71 @@ describe("agent.js", () => {
             m.content.includes("[PHASE: IMPLEMENTATION]"),
         ),
       ).toBe(true);
+    });
+
+    it("allows bounded backlog implementation to locate planned UI files", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("User manual")
+        .mockResolvedValueOnce("components/CommandCenter.tsx\ncomponents/Toolbar.tsx")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve command center shortcut hints\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md identifies a visible editing workflow gap\n" +
+            "Files: components/CommandCenter.tsx, tests/agent.test.js\n" +
+            "Implementation outline: locate the current command center component, read the relevant lines, then edit one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Locating the current UI components.",
+          tool_calls: [
+            {
+              id: "locate-components",
+              function: {
+                name: "repo_browser.print_tree",
+                arguments: { path: "components", max_depth: 2 },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Also inspect the current UI/components for obvious friction before choosing a task. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "list_directory",
+        expect.objectContaining({ path: "components" }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes(
+              "implementation phase must not use bash/git or broad reading",
+            ),
+        ),
+      ).toBe(false);
     });
 
     it("does not finish bounded backlog implementation on prose-only no-progress", async () => {

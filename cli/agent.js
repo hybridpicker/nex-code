@@ -1671,9 +1671,11 @@ let _boundedBacklogPromptText = "";
 let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nudges
 let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
 let _boundedBacklogImplementationReads = 0; // targeted implementation reads after a bounded backlog plan
+let _boundedBacklogImplementationDiscoveryReads = 0; // narrow path discovery after a bounded backlog plan
 
 const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
 const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
+const BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS = 3;
 const BOUNDED_BACKLOG_EVIDENCE_TOOLS = new Set([
   "read_file",
   "grep",
@@ -1812,6 +1814,34 @@ function _isNamedBoundedBacklogEvidenceTool(fnName, args = {}) {
     : false;
 }
 
+function _isBoundedBacklogImplementationDiscoveryTool(fnName, args = {}) {
+  if (
+    fnName !== "grep" &&
+    fnName !== "search_files" &&
+    fnName !== "glob" &&
+    fnName !== "list_directory" &&
+    fnName !== "find_files"
+  ) {
+    return false;
+  }
+  const pathArg = _normalizePromptPath(args.path || args.cwd || "");
+  if (pathArg && _boundedBacklogPromptPaths.has(pathArg)) return false;
+  const patternArg = String(
+    args.pattern || args.glob || args.query || args.search || "",
+  );
+  const includeArg = String(args.include || args.file_pattern || "");
+  const evidenceText = `${pathArg} ${patternArg} ${includeArg}`;
+  if (
+    [..._boundedBacklogPromptPaths].some((promptPath) => {
+      const normalizedPromptPath = _normalizePromptPath(promptPath);
+      return normalizedPromptPath && evidenceText.includes(normalizedPromptPath);
+    })
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function _looksOffTopicForBoundedBacklogPrompt(text) {
   if (!_boundedBacklogPlanActive) return false;
   const value = String(text || "");
@@ -1837,8 +1867,21 @@ function _looksOffTopicForBoundedBacklogPrompt(text) {
     const abs = path.resolve(process.cwd(), fileRef);
     if (fsSync.existsSync(abs)) existingImplementationRefs++;
   }
-  if (implementationRefs > 0 && existingImplementationRefs === 0) return true;
+  // Plausible but wrong path prefixes are common in small-model plans, for
+  // example src/components/ in projects that keep components/ at repo root.
+  // Let the tightly capped implementation discovery tools resolve those paths
+  // instead of rejecting the whole plan as off-topic.
+  void implementationRefs;
+  void existingImplementationRefs;
   return false;
+}
+
+function _hasBoundedBacklogLabel(text, label) {
+  const escaped = String(label || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?:^|\\n)\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}\\s*:(?:\\*\\*)?`,
+    "i",
+  ).test(String(text || ""));
 }
 
 function _looksLikeBoundedBacklogDecision(text) {
@@ -1848,10 +1891,10 @@ function _looksLikeBoundedBacklogDecision(text) {
   if (_looksLikeBoundedBacklogHeadingPlan(value)) return false;
   if (/\bno safe task found\b/i.test(value)) return true;
   return (
-    /\bselected improvement\s*:/i.test(value) &&
-    /\bselection rationale\s*:/i.test(value) &&
-    /\bfiles\s*:/i.test(value) &&
-    /\bverification plan\s*:/i.test(value)
+    _hasBoundedBacklogLabel(value, "Selected improvement") &&
+    _hasBoundedBacklogLabel(value, "Selection rationale") &&
+    _hasBoundedBacklogLabel(value, "Files") &&
+    _hasBoundedBacklogLabel(value, "Verification plan")
   );
 }
 
@@ -2752,7 +2795,10 @@ async function _transitionPhase(
   _phaseModelOverride = getModelForPhase(targetPhase, _detectedCategoryId);
   if (targetPhase === "implement") {
     _implementNoProgressNudges = 0;
-    if (_boundedBacklogPlanActive) _boundedBacklogImplementationReads = 0;
+    if (_boundedBacklogPlanActive) {
+      _boundedBacklogImplementationReads = 0;
+      _boundedBacklogImplementationDiscoveryReads = 0;
+    }
   }
   if (targetPhase === "verify") {
     _verifyToolCalls = 0;
@@ -4259,6 +4305,7 @@ function _resetSessionTracking() {
   _boundedBacklogDecisionInjected = false;
   _boundedBacklogDecisionMisses = 0;
   _boundedBacklogImplementationReads = 0;
+  _boundedBacklogImplementationDiscoveryReads = 0;
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -8017,6 +8064,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const isEditRecoveryRead =
             isTargetedImplementationRead &&
             (_sessionLastEditFailed.get(prep.args?.path) || 0) > 0;
+          const isImplementationDiscovery =
+            _isBoundedBacklogImplementationDiscoveryTool(
+              prep.fnName,
+              prep.args || {},
+            );
           if (isWriteTool) continue;
           if (
             (isTargetedImplementationRead &&
@@ -8026,6 +8078,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
             continue;
           }
+          if (
+            isImplementationDiscovery &&
+            _boundedBacklogImplementationDiscoveryReads <
+              BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS
+          ) {
+            _boundedBacklogImplementationDiscoveryReads++;
+            continue;
+          }
           const rereadsBacklog =
             prep.fnName === "read_file" &&
             readPath &&
@@ -8033,6 +8093,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const exhaustedImplementationReads =
             isTargetedImplementationRead &&
             _boundedBacklogImplementationReads >= 2;
+          const exhaustedImplementationDiscovery =
+            isImplementationDiscovery &&
+            _boundedBacklogImplementationDiscoveryReads >=
+              BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS;
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
@@ -8040,7 +8104,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               ? "BLOCKED: implementation phase has already completed backlog review. Do not re-read backlog files. Edit the concrete implementation file from the accepted plan now."
               : exhaustedImplementationReads
                 ? "BLOCKED: implementation phase has already read enough targeted code context. Make the scoped edit now with edit_file or patch_file; do not read more before editing."
-                : "BLOCKED: implementation phase must not use bash/find/git or broad reading. Use read_file with line_start/line_end on the concrete implementation file if one more section is needed, then use edit_file or patch_file.",
+                : exhaustedImplementationDiscovery
+                  ? "BLOCKED: implementation phase has already used enough path discovery. Read the concrete implementation file with line_start/line_end or make the scoped edit now."
+                  : "BLOCKED: implementation phase must not use bash/git or broad reading. Use a targeted glob/search/list_directory call only to locate the concrete implementation file, then read it with line_start/line_end or edit it.",
             tool_call_id: prep.callId,
           };
         }
@@ -10595,6 +10661,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           totalSteps >= 4 &&
           filesModified.size === _filesModifiedAtStreakStart
         ) {
+          if (
+            (_phaseEnabled &&
+              _currentPhase === "implement" &&
+              filesModified.size === 0 &&
+              _bashModifiedFiles === 0) ||
+            _isUnmodifiedBoundedBacklogImplementation(
+              filesModified,
+              _bashModifiedFiles,
+            )
+          ) {
+            const stalledMsg =
+              "Implementation stalled before edits.\n\n" +
+              "The implementation phase kept reading/searching without changing files. Stopping without commit or push so the workflow does not falsely report success.";
+            const assistantMsg = { role: "assistant", content: stalledMsg };
+            conversationMessages.push(assistantMsg);
+            apiMessages.push(assistantMsg);
+            console.log(`\n${stalledMsg}`);
+            if (taskProgress) {
+              taskProgress.stop();
+              taskProgress = null;
+            }
+            setOnChange(null);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
           debugLog(
             `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
           );
@@ -10803,6 +10902,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     }
     break outer;
   } // end outer while
+
+  if (
+    _boundedBacklogPlanActive &&
+    _boundedBacklogEvidencePrefetched &&
+    filesModified.size === 0 &&
+    _bashModifiedFiles === 0
+  ) {
+    const lastAssistant = [...conversationMessages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const lastAssistantText =
+      typeof lastAssistant?.content === "string" ? lastAssistant.content : "";
+    const alreadyReported =
+      /\b(no safe task found|implementation stalled before edits)\b/i.test(
+        lastAssistantText,
+      );
+    if (!alreadyReported) {
+      const stalledMsg =
+        "Implementation stalled before edits.\n\n" +
+        "The bounded backlog workflow ended after reading/searching but before changing files. Stopping without commit or push so the workflow does not falsely report success.";
+      const assistantMsg = { role: "assistant", content: stalledMsg };
+      conversationMessages.push(assistantMsg);
+      apiMessages.push(assistantMsg);
+      console.log(`\n${stalledMsg}`);
+      _printResume(totalSteps, toolCounts, filesModified, filesRead, startTime);
+      saveNow(conversationMessages);
+      _scoreAndPrint(conversationMessages);
+    }
+  }
 
   // ─── Background job drain (post-loop) ───────────────────────────────────────
   // break outer always falls through here; the early return at the no-tool-calls
