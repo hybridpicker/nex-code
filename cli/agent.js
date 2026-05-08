@@ -1749,6 +1749,26 @@ function _looksLikeBoundedBacklogDecision(text) {
   );
 }
 
+function _isAllowedBoundedBacklogNoSafeTaskFound(text) {
+  const value = String(text || "");
+  if (!/\bno safe task found\b/i.test(value)) return false;
+  if (_boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS) {
+    return true;
+  }
+
+  // Before reading backlog evidence, "no safe task found" is only valid when
+  // it names a concrete blocker. Otherwise small planning models can exit
+  // clean-looking automation runs without inspecting the backlog at all.
+  return (
+    /\b(blocked|blocker|cannot|can't|unable|failed|unavailable|permission denied|missing|not found|no readable|dirty worktree|wrong branch|merge conflict|precheck blocked|preflight failed)\b/i.test(
+      value,
+    ) &&
+    /\b(because|reason|preflight|worktree|branch|git|permission|missing|unavailable|inspect|read|search)\b/i.test(
+      value,
+    )
+  );
+}
+
 function _looksLikeGatedAutomationFinalSummary(text) {
   const value = String(text || "");
   if (!value.trim()) return false;
@@ -6696,6 +6716,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _boundedBacklogPlanActive &&
               /\bno safe task found\b/i.test(_assistantText)
             ) {
+              if (!_isAllowedBoundedBacklogNoSafeTaskFound(_assistantText)) {
+                _boundedBacklogDecisionMisses++;
+                const decisionMsg = {
+                  role: "user",
+                  content:
+                    _buildBoundedBacklogPlanInstruction() +
+                    "\n\nDo not answer `no safe task found` before reading/searching backlog evidence unless you name a concrete blocker such as dirty worktree, wrong branch, missing files, or unavailable permissions. If git preflight is clean, inspect the listed backlog/UI files and select one scoped improvement.",
+                };
+                conversationMessages.push(decisionMsg);
+                apiMessages.push(decisionMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Bounded backlog plan: premature no-safe-task response — requiring backlog evidence${C.reset}`,
+                );
+                continue;
+              }
               debugLog(
                 `${C.yellow}  ⚠ Bounded backlog plan: no safe task found — exiting gracefully${C.reset}`,
               );
