@@ -957,7 +957,15 @@ setAllowAlwaysHandler((toolName) => {
  * Returns an object ready for execution.
  */
 async function prepareToolCall(tc) {
-  const fnName = tc.function.name;
+  const rawFnName = tc.function.name;
+  let fnName = rawFnName;
+  if (typeof rawFnName === "string" && rawFnName.includes(".")) {
+    const suffix = rawFnName.split(".").pop();
+    const knownTool = getAllToolDefinitions().some(
+      (t) => t.function.name === suffix,
+    );
+    if (knownTool) fnName = suffix;
+  }
   const args = parseToolArgs(tc.function.arguments);
   const callId =
     tc.id || `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1854,6 +1862,12 @@ function _isAllowedBoundedBacklogNoSafeTaskFound(text) {
   const value = String(text || "");
   if (!/\bno safe task found\b/i.test(value)) return false;
   if (/\bexample only\b|\bnot applicable\b/i.test(value)) return false;
+  const hasConcreteNoSafeReason =
+    /\b(because|reason|blocked|blocker|cannot|can't|unable|failed|unavailable|permission denied|missing|not found|no readable|dirty worktree|wrong branch|merge conflict|precheck blocked|preflight failed|ambiguous|unrelated|manual user work|no safe worthwhile improvement)\b/i.test(
+      value,
+    ) &&
+    value.trim().length > "Selected improvement: no safe task found".length + 20;
+  if (!hasConcreteNoSafeReason) return false;
   const hasPromptNamedEvidence =
     _boundedBacklogPromptPaths.size === 0 || _boundedBacklogNamedEvidenceReads > 0;
   if (_boundedBacklogPlanReads >= BOUNDED_BACKLOG_PLAN_DECISION_READS) {
