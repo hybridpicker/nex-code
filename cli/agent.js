@@ -672,6 +672,27 @@ function setMaxIterations(n) {
   if (Number.isFinite(n) && n > 0) MAX_ITERATIONS = n;
 }
 
+function _getMaxToolCallBudget(providerName = getActiveProviderName()) {
+  if (process.env.NEX_DISABLE_TOOL_BUDGET === "1") return Infinity;
+  const raw = process.env.NEX_MAX_TOOL_CALLS;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  // Local Ollama models are the most prone to tool loops under context pressure.
+  // Keep the default tight there, while preserving the existing budget for cloud
+  // and premium providers unless the user opts into a stricter budget.
+  return providerName === "local" ? 5 : 30;
+}
+
+function _buildToolBudgetFinalPrompt(used, max) {
+  return (
+    `[SYSTEM STOP] Tool-call budget reached (${used}/${max}). ` +
+    "You MUST stop calling tools now. Provide your final answer based only on the information already in the conversation. " +
+    "If the task cannot be completed from the gathered evidence, state the blocker plainly and do not invent facts."
+  );
+}
+
 // Abort signal getter — set by cli/index.js to avoid circular dependency
 let _getAbortSignal = () => null;
 function setAbortSignalGetter(fn) {
@@ -4925,6 +4946,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
   // ─── Stats tracking for résumé ───
   let totalSteps = 0;
+  let totalToolCalls = 0;
   const toolCounts = new Map();
   const filesModified = new Set();
   const filesRead = new Set();
@@ -4974,6 +4996,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
+  let forceFinalAnswerNow = false;
+  let forceFinalBudgetNudges = 0;
+  let forceFinalAfterBatch = false;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -5255,7 +5280,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           "ssh_exec",
         ]);
         let allTools;
-        if (isPlanMode()) {
+        if (forceFinalAnswerNow) {
+          allTools = [];
+        } else if (isPlanMode()) {
           allTools = baseTools.filter((t) =>
             PLAN_MODE_ALLOWED_TOOLS.has(t.function.name),
           );
@@ -5368,6 +5395,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           },
         });
+        // Defensive guard: provider bugs or misconfigured mocks can return undefined,
+        // which would otherwise crash later when destructuring { content, tool_calls }.
+        if (!result || typeof result !== "object") {
+          throw new Error(
+            "Provider returned an empty response (no content/tool_calls)",
+          );
+        }
       } catch (err) {
         clearInterval(staleTimer);
         if (flushTimeout) {
@@ -5515,6 +5549,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         // User-friendly error message (avoid raw stack traces/cryptic codes)
+        const _emptyProviderResponse = err.message.includes(
+          "Provider returned an empty response",
+        );
         let userMessage = err.message;
         if (
           err.code === "ECONNREFUSED" ||
@@ -5981,6 +6018,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
 
+        // Fatal: the provider returned no usable response object. Retrying is
+        // pointless and can lead to tight retry loops (especially in tests).
+        if (_emptyProviderResponse) {
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          break outer;
+        }
+
         if (err.message.includes("429")) {
           rateLimitRetries++;
           if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
@@ -6207,6 +6263,51 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           `${C.yellow}  ⚠ Assistant asked the user a direct question in text — dropping tool calls and waiting for user input${C.reset}`,
         );
         tool_calls = [];
+      }
+
+      forceFinalAfterBatch = false;
+      if (Array.isArray(tool_calls) && tool_calls.length > 0) {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        if (Number.isFinite(maxToolCalls)) {
+          const remaining = maxToolCalls - totalToolCalls;
+          if (remaining <= 0) {
+            forceFinalBudgetNudges++;
+            debugLog(
+              `${C.yellow}  ⚠ Tool-call budget reached (${totalToolCalls}/${maxToolCalls}) — forcing final answer${C.reset}`,
+            );
+            const finalPrompt = {
+              role: "user",
+              content: _buildToolBudgetFinalPrompt(
+                totalToolCalls,
+                maxToolCalls,
+              ),
+            };
+            conversationMessages.push(finalPrompt);
+            apiMessages.push(finalPrompt);
+            forceFinalAnswerNow = true;
+            if (forceFinalBudgetNudges >= 2) {
+              const forcedMsg = {
+                role: "assistant",
+                content:
+                  "I reached the tool-call budget and cannot safely continue executing tools. Based on the information gathered so far, I cannot complete more investigation without risking a tool loop.",
+              };
+              conversationMessages.push(forcedMsg);
+              console.log(`\n${forcedMsg.content}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              await _awaitAndDrainBackgroundJobs();
+              return;
+            }
+            continue;
+          }
+          if (tool_calls.length > remaining) {
+            debugLog(
+              `${C.yellow}  ⚠ Tool-call batch trimmed from ${tool_calls.length} to ${remaining} (budget ${totalToolCalls}/${maxToolCalls})${C.reset}`,
+            );
+            tool_calls = tool_calls.slice(0, remaining);
+            forceFinalAfterBatch = true;
+          }
+        }
       }
 
       const assistantMsg = { role: "assistant", content: content || "" };
@@ -7306,6 +7407,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       totalSteps++;
       _phaseIterations++;
       if (totalSteps >= 1) stepPrinted = false; // show step header from first tool call onward
+      totalToolCalls += tool_calls.length;
+      {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        if (Number.isFinite(maxToolCalls) && totalToolCalls >= maxToolCalls) {
+          forceFinalAfterBatch = true;
+        }
+      }
       for (const tc of tool_calls) {
         const name = tc.function.name;
         toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
@@ -7314,16 +7422,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // ─── Proactive tool-call budget warning ──────────────────────────────────
       // At 30 tool calls, inject a warning to wrap up. This prevents runaway
       // verification loops that tank session scores.
-      if (totalSteps >= 30 && !_toolBudgetWarningInjected) {
+      if (totalToolCalls >= 30 && !_toolBudgetWarningInjected) {
         _toolBudgetWarningInjected = true;
         debugLog(
-          `${C.yellow}  ⚠ Tool budget warning: ${totalSteps} tool calls used — nudging model to wrap up${C.reset}`,
+          `${C.yellow}  ⚠ Tool budget warning: ${totalToolCalls} tool calls used — nudging model to wrap up${C.reset}`,
         );
         const budgetWarn = {
           role: "user",
           content:
             "[SYSTEM] ⚠ You have used " +
-            totalSteps +
+            totalToolCalls +
             " tool calls. This is approaching the quality threshold (40). " +
             "Wrap up NOW: write your final summary and stop. Do NOT run additional verification commands (git status, git diff, git log) — " +
             "your changes are already committed and verified. Further tool calls will hurt session quality.",
@@ -9697,6 +9805,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       for (const toolMsg of toolMessages) {
         conversationMessages.push(toolMsg);
         apiMessages.push(toolMsg);
+      }
+
+      if (forceFinalAfterBatch) {
+        const maxToolCalls = _getMaxToolCallBudget(getActiveProviderName());
+        const finalPrompt = {
+          role: "user",
+          content: _buildToolBudgetFinalPrompt(totalToolCalls, maxToolCalls),
+        };
+        conversationMessages.push(finalPrompt);
+        apiMessages.push(finalPrompt);
+        forceFinalAnswerNow = true;
+        forceFinalBudgetNudges++;
       }
 
       const _wroteTextDeliverableThisBatch =

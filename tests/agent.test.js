@@ -397,6 +397,8 @@ describe("agent.js", () => {
 
   afterEach(() => {
     restoreTimeout();
+    delete process.env.NEX_MAX_TOOL_CALLS;
+    delete process.env.NEX_DISABLE_TOOL_BUDGET;
     logSpy.mockRestore();
   });
 
@@ -467,6 +469,12 @@ describe("agent.js", () => {
       mockStream("Hello!");
       await processInput("Hi");
       expect(getConversationLength()).toBe(2);
+    });
+
+    it("handles provider returning undefined (defensive guard)", async () => {
+      callStream.mockImplementationOnce(async () => undefined);
+      await processInput("test");
+      expect(logOutput()).toContain("empty response");
     });
 
     it("auto-saves after response", async () => {
@@ -2826,6 +2834,42 @@ describe("agent.js", () => {
       });
       await processInput("test", { onThinkingToken });
       expect(onThinkingToken).toHaveBeenCalled();
+    });
+
+    it("forces a final answer when the tool-call budget is reached", async () => {
+      process.env.NEX_MAX_TOOL_CALLS = "1";
+      mockStream("", [
+        {
+          function: { name: "bash", arguments: { command: "echo first" } },
+          id: "c1",
+        },
+      ]);
+      callStream.mockImplementationOnce(async (messages, tools) => {
+        expect(tools).toHaveLength(0);
+        expect(messages[messages.length - 1].content).toContain(
+          "Tool-call budget reached (1/1)",
+        );
+        return {
+          content:
+            "Final based on gathered data. The agent stopped tool execution after the configured budget and answered from the information already available.",
+          tool_calls: [],
+        };
+      });
+      executeTool.mockResolvedValueOnce("first");
+
+      await processInput("test");
+
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(callStream).toHaveBeenCalledTimes(2);
+      expect(callStream.mock.calls[1][1]).toHaveLength(0);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Tool-call budget reached (1/1)"),
+        ),
+      ).toBe(true);
     });
   });
 
