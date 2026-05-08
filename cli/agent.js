@@ -80,6 +80,11 @@ function _statesVerificationGap(text) {
   );
 }
 
+function _looksLikeExplicitFinalSummary(text) {
+  if (!text || typeof text !== "string") return false;
+  return /^\s*(?:final\s+)?(?:summary|report|answer|result)\s*:/i.test(text);
+}
+
 function _looksLikeUserDirectedQuestion(text) {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
@@ -2271,8 +2276,10 @@ function _isVerificationCommandCall(prep) {
   if (!prep || !prep.fnName) return false;
   if (!["bash", "ssh_exec"].includes(prep.fnName)) return false;
   const cmd = String(prep.args?.command || "").toLowerCase();
-  return /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check)\b/.test(
-    cmd,
+  return (
+    /\b(test|jest|vitest|pytest|mocha|rspec|phpunit|cargo test|go test|tsc|build|lint|eslint|check)\b/.test(
+      cmd,
+    ) || /\bnode\s+["']?[\w./ -]+\.(?:c?js|mjs)\b/.test(cmd)
   );
 }
 
@@ -6542,6 +6549,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             conversationMessages.push(continueNudge);
             continue; // retry without counting as a step
           }
+        }
+
+        if (
+          hasText &&
+          _looksLikeExplicitFinalSummary(content || streamedText || "") &&
+          !opts.skillLoop &&
+          !isPlanMode() &&
+          !_phaseEnabled &&
+          !_stickyGitPreflightRequired
+        ) {
+          debugLog(
+            `${C.green}  ✓ Explicit final summary exit: no follow-up provider call needed${C.reset}`,
+          );
+          if (taskProgress) {
+            taskProgress.stop();
+            taskProgress = null;
+          }
+          setOnChange(null);
+          _printResume(
+            totalSteps,
+            toolCounts,
+            filesModified,
+            filesRead,
+            startTime,
+          );
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          await _awaitAndDrainBackgroundJobs();
+          return;
         }
 
         if (
