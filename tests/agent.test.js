@@ -188,6 +188,15 @@ jest.mock("../cli/tools", () => ({
   executeTool: jest.fn(),
 }));
 
+jest.mock("../cli/orchestrator", () => ({
+  detectComplexPrompt: jest
+    .fn()
+    .mockReturnValue({ isComplex: false, estimatedGoals: 0, reason: "mock" }),
+  runOrchestrated: jest.fn().mockResolvedValue({
+    synthesis: { summary: "mock synthesis", filesChanged: [], conflicts: [] },
+  }),
+}));
+
 jest.mock("../cli/context", () => ({
   gatherProjectContext: jest.fn().mockReturnValue("PACKAGE: test-project"),
 }));
@@ -325,6 +334,13 @@ const {
   _buildSymbolHintBlock,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
+  _shouldAutoOrchestrate,
+  _shouldSkipPlanPhaseForDirectCreation,
+  _hasAutomationOrPreflightGate,
+  _extractDirectTaskPaths,
+  _isBoundedBacklogPlanningPrompt,
+  _buildBoundedBacklogPlanInstruction,
+  _looksLikeBoundedBacklogDecision,
 } = require("../cli/agent");
 const {
   callStream,
@@ -381,6 +397,8 @@ describe("agent.js", () => {
 
   afterEach(() => {
     restoreTimeout();
+    delete process.env.NEX_MAX_TOOL_CALLS;
+    delete process.env.NEX_DISABLE_TOOL_BUDGET;
     logSpy.mockRestore();
   });
 
@@ -451,6 +469,12 @@ describe("agent.js", () => {
       mockStream("Hello!");
       await processInput("Hi");
       expect(getConversationLength()).toBe(2);
+    });
+
+    it("handles provider returning undefined (defensive guard)", async () => {
+      callStream.mockImplementationOnce(async () => undefined);
+      await processInput("test");
+      expect(logOutput()).toContain("empty response");
     });
 
     it("auto-saves after response", async () => {
@@ -1394,7 +1418,10 @@ describe("agent.js", () => {
     });
 
     it("includes plan mode prompt", async () => {
-      isPlanMode.mockReturnValueOnce(true);
+      isPlanMode
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false);
       getPlanModePrompt.mockReturnValueOnce("Plan mode active");
       mockStream("ok");
       await processInput("test");
@@ -2100,6 +2127,17 @@ describe("agent.js", () => {
       isPlanMode.mockReturnValue(false);
       getPlanModePrompt.mockReturnValue("");
     });
+
+    it("does not allow auto-orchestration while plan mode is active", () => {
+      expect(
+        _shouldAutoOrchestrate(
+          true,
+          { isComplex: true, estimatedGoals: 5 },
+          3,
+          true,
+        ),
+      ).toBe(false);
+    });
   });
 
   // ─── loop detection ────────────────────────────────────────
@@ -2796,6 +2834,42 @@ describe("agent.js", () => {
       });
       await processInput("test", { onThinkingToken });
       expect(onThinkingToken).toHaveBeenCalled();
+    });
+
+    it("forces a final answer when the tool-call budget is reached", async () => {
+      process.env.NEX_MAX_TOOL_CALLS = "1";
+      mockStream("", [
+        {
+          function: { name: "bash", arguments: { command: "echo first" } },
+          id: "c1",
+        },
+      ]);
+      callStream.mockImplementationOnce(async (messages, tools) => {
+        expect(tools).toHaveLength(0);
+        expect(messages[messages.length - 1].content).toContain(
+          "Tool-call budget reached (1/1)",
+        );
+        return {
+          content:
+            "Final based on gathered data. The agent stopped tool execution after the configured budget and answered from the information already available.",
+          tool_calls: [],
+        };
+      });
+      executeTool.mockResolvedValueOnce("first");
+
+      await processInput("test");
+
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(callStream).toHaveBeenCalledTimes(2);
+      expect(callStream.mock.calls[1][1]).toHaveLength(0);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Tool-call budget reached (1/1)"),
+        ),
+      ).toBe(true);
     });
   });
 
@@ -3631,5 +3705,988 @@ describe("agent.js", () => {
         ),
       ).toBe(false);
     });
+
+    it("does not skip planning for automation backlog prompts with safety gates", () => {
+      const prompt =
+        "Automation: MuseScore parity and UX improvements\n" +
+        "Work from main only. At the start of each run, inspect git status and the current branch. " +
+        "If the worktree is dirty with unrelated changes, stop without editing, committing, or pushing. " +
+        "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
+
+      expect(_extractDirectTaskPaths(prompt)).toEqual([
+        "docs/keyboard-shortcuts.md",
+        "docs/user-manual.md",
+        "docs/phase-roadmap.md",
+      ]);
+      expect(_hasAutomationOrPreflightGate(prompt)).toBe(true);
+      expect(_shouldSkipPlanPhaseForDirectCreation(prompt)).toBe(false);
+    });
+
+    it("still skips planning for one explicit direct file edit", () => {
+      expect(
+        _shouldSkipPlanPhaseForDirectCreation(
+          "Update cli/agent.js file to add a missing guard",
+        ),
+      ).toBe(true);
+    });
+
+    it("does not skip planning for multiple backlog file references", () => {
+      expect(
+        _shouldSkipPlanPhaseForDirectCreation(
+          "Improve docs/keyboard-shortcuts.md and docs/user-manual.md based on the backlog.",
+        ),
+      ).toBe(false);
+    });
+
+    it("recognizes bounded backlog automation prompts and requires the plan template", () => {
+      const prompt =
+        "Automation: MuseScore parity and UX improvements\n" +
+        "Work from main only. Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement in priority order.";
+
+      expect(_isBoundedBacklogPlanningPrompt(prompt)).toBe(true);
+
+      const instruction = _buildBoundedBacklogPlanInstruction();
+      expect(instruction).toContain("Selected improvement:");
+      expect(instruction).toContain("Selection rationale:");
+      expect(instruction).toContain("Files:");
+      expect(instruction).toContain("Verification plan:");
+      expect(instruction).toContain("Browser/UI applicability:");
+
+      expect(
+        _looksLikeBoundedBacklogDecision(
+          "Selected improvement: fix shortcut docs\n" +
+            "Selection rationale: highest value gap\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Browser/UI applicability: not required",
+        ),
+      ).toBe(true);
+      expect(_looksLikeBoundedBacklogDecision("no safe task found")).toBe(true);
+    });
+
+    it("injects the bounded backlog plan template before the model plans", async () => {
+      let firstMessages = null;
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return { content: "no safe task found", tool_calls: [] };
+      });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(firstMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "user",
+            content: expect.stringContaining(
+              "Bounded backlog automation plan template",
+            ),
+          }),
+        ]),
+      );
+    });
+
+    it("does not transition to implement until the bounded backlog decision template is satisfied", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Plan: I will review the backlog and propose a change. Then I will implement it.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "no safe task found because the referenced backlog files are missing and cannot be inspected",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      const templateCount = msgs.filter(
+        (m) =>
+          m.role === "user" &&
+          typeof m.content === "string" &&
+          m.content.includes("Bounded backlog automation plan template"),
+      ).length;
+      expect(templateCount).toBeGreaterThanOrEqual(2);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("no safe task found"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reprompts premature no-safe bounded backlog decisions", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n");
+      callStream
+        .mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] })
+        .mockResolvedValueOnce({
+          content:
+            "no safe task found because the referenced backlog files are missing and cannot be inspected",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(callStream).toHaveBeenCalledTimes(2);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes(
+              "Do not answer `no safe task found` before reading/searching backlog evidence",
+            ),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
+    });
+
+    it("forces bounded backlog planning to decide after prefetch evidence", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      let toolsOnDecisionCall = null;
+      callStream.mockImplementationOnce(async (_messages, tools) => {
+        toolsOnDecisionCall = tools;
+        return {
+          content:
+            "Selected improvement: update shortcut docs\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        };
+      });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Bounded backlog automation plan template"),
+        ),
+      ).toBe(true);
+      expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
+      expect(toolsOnDecisionCall).toHaveLength(0);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(false);
+    });
+
+    it("removes plan-phase tool access after bounded backlog prefetch", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      let toolsOnDecisionCall = null;
+      callStream.mockImplementationOnce(async (_messages, tools) => {
+        toolsOnDecisionCall = tools;
+        return { content: "no safe task found", tool_calls: [] };
+      });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        // Raise maxIterations so the plan phase doesn't stop at the default phase budget
+        // before the bounded-backlog hard-evidence tool-freeze can take effect.
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
+      expect(toolsOnDecisionCall).toHaveLength(0);
+      // 1 preflight bash call + 3 prompt-named backlog prefetch reads.
+      expect(executeTool).toHaveBeenCalledTimes(4);
+    });
   });
+
+		  describe("gated automation preflight guard", () => {
+    const gatedPrompt =
+      "Automation: MuseScore parity and UX improvements\n" +
+      "Work from main only. At the start of each run, inspect git status and the current branch. " +
+      "If the worktree is dirty with unrelated changes, stop without editing, committing, or pushing. " +
+      "Use documented gaps in docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+      "Pick at most one tightly scoped improvement. After verification passes, stage only the files changed, commit and push.";
+
+	    it("emits preflight tool_start/tool_end events via serverHooks", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+	      const serverHooks = {
+	        onToken: jest.fn(),
+	        onThinkingToken: jest.fn(),
+	        onToolStart: jest.fn(),
+	        onToolEnd: jest.fn(),
+	      };
+
+	      await processInput(prompt, serverHooks, { autoConfirm: true, silent: true });
+
+	      expect(serverHooks.onToolStart).toHaveBeenCalledWith("bash", {
+	        command: "git status --short --branch",
+	      });
+	      expect(serverHooks.onToolEnd).toHaveBeenCalled();
+
+	      const toolEnd = serverHooks.onToolEnd.mock.calls.find(
+	        (c) => c && c[0] === "bash",
+	      );
+	      expect(toolEnd).toBeDefined();
+	      expect(String(toolEnd[1] || "")).toContain("git status --short --branch");
+	    });
+
+	    it("records preflight as an assistant tool_call + tool result pair", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+	      const msgs = getConversationMessages();
+      const callMsg = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          Array.isArray(m.tool_calls) &&
+          m.tool_calls.some(
+            (tc) =>
+              tc?.id === "preflight-git-status" &&
+              (tc.function?.name || tc.name) === "bash",
+          ),
+      );
+      expect(callMsg).toBeDefined();
+	      const toolMsg = msgs.find(
+	        (m) => m.role === "tool" && m.tool_call_id === "preflight-git-status",
+	      );
+	      expect(toolMsg).toBeDefined();
+
+	      // Preflight evidence must also show up as a user-visible assistant message
+	      // (some transcript views hide tool messages).
+	      const precheckIdx = msgs.findIndex(
+	        (m) =>
+	          m.role === "assistant" &&
+	          typeof m.content === "string" &&
+	          m.content.includes("[PRECHECK]") &&
+	          m.content.includes("git status --short --branch") &&
+	          m.content.includes("## devel...origin/devel"),
+	      );
+	      expect(precheckIdx).toBeGreaterThan(-1);
+	      // Ordering matters: tool_call → tool result → visible assistant evidence.
+	      expect(msgs.indexOf(callMsg)).toBeLessThan(msgs.indexOf(toolMsg));
+	      expect(msgs.indexOf(toolMsg)).toBeLessThan(precheckIdx);
+	    });
+
+	    it("prints preflight evidence in headless mode when not silent", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+	      await processInput(prompt, null, { autoConfirm: true });
+
+	      const out = logOutput();
+	      expect(out).toContain("[PRECHECK] Preflight ran: `git status --short --branch`.");
+	      expect(out).toContain("## devel...origin/devel");
+	    });
+
+	    it("runs preflight for branch-only gates (no explicit git-status wording)", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Automation: test\nWork from main only. Fix any typo in README.";
+
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+	      expect(callStream).not.toHaveBeenCalled();
+	      expect(executeTool).toHaveBeenCalledTimes(1);
+	      expect(executeTool.mock.calls[0][0]).toBe("bash");
+	      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+	    });
+
+	    it("runs preflight for required-branch gates without an Automation header", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt = "Work on main only. Fix any typo in README.";
+
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+	      expect(callStream).not.toHaveBeenCalled();
+	      expect(executeTool).toHaveBeenCalledTimes(1);
+	      expect(executeTool.mock.calls[0][0]).toBe("bash");
+	      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+	    });
+
+    it("runs preflight for backticked required-branch gates", async () => {
+	      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+	      const prompt =
+	        "Automation: test\nWork from `main` only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+
+    it("enforces required branch for 'the main branch only' phrasing", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\nWork from the main branch only. Fix any typo in README.";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+
+    it("blocks when preflight output is not recognizable `git status -sb` output", async () => {
+      executeTool.mockResolvedValueOnce("Branch: main\nClean working tree (no changes)");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("[PRECHECK BLOCKED]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("runs git status preflight before executing write tools", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream(
+        "Selected improvement: tighten bounded backlog decision gating\n" +
+          "Selection rationale: prevents bypassing the required plan template\n" +
+          "Files: cli/agent.js\n" +
+          "Implementation outline: block plan→implement unless the template is satisfied\n" +
+          "Verification plan: npm test -- tests/agent.test.js\n" +
+          "Browser/UI applicability: not required",
+        [],
+      );
+      mockStream("Ok", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: { path: "cli/agent.js" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Implemented the change.");
+      mockStream(
+        "PASS: Verified with a focused dry-run of the gated workflow and confirmed the guardrails behave as expected without extra side effects.",
+      );
+
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog")
+        .mockResolvedValueOnce("roadmap backlog")
+        .mockResolvedValueOnce("OK"); // edit_file result
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      // Preflight runs before any model call and before any write tool.
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      const editCallIndex = executeTool.mock.calls.findIndex(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCallIndex).toBeGreaterThan(0);
+      expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+      expect(executeTool.mock.invocationCallOrder[editCallIndex]).toBeGreaterThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("runs git status preflight even when the gated prompt is not the first message", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      setConversationMessages([
+        { role: "user", content: "Earlier unrelated message" },
+        { role: "assistant", content: "Ok" },
+      ]);
+
+      mockStream(
+        "Selected improvement: tighten bounded backlog decision gating\n" +
+          "Selection rationale: prevents bypassing the required plan template\n" +
+          "Files: cli/agent.js\n" +
+          "Implementation outline: block plan→implement unless the template is satisfied\n" +
+          "Verification plan: npm test -- tests/agent.test.js\n" +
+          "Browser/UI applicability: not required",
+        [],
+      );
+      mockStream("Ok", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: { path: "cli/agent.js" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Implemented the change.");
+      mockStream(
+        "PASS: Verified with a focused dry-run of the gated workflow and confirmed the guardrails behave as expected without extra side effects.",
+      );
+
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight git status
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog")
+        .mockResolvedValueOnce("roadmap backlog")
+        .mockResolvedValueOnce("OK"); // edit_file result
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe(
+        "git status --short --branch",
+      );
+      const editCallIndex = executeTool.mock.calls.findIndex(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCallIndex).toBeGreaterThan(0);
+      expect(executeTool.mock.invocationCallOrder[0]).toBeLessThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+      expect(executeTool.mock.invocationCallOrder[editCallIndex]).toBeGreaterThan(
+        callStream.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("does not auto-orchestrate gated prompts even when they look complex", async () => {
+      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+      detectComplexPrompt.mockReturnValueOnce({
+        isComplex: true,
+        estimatedGoals: 3,
+        reason: "3 bullet points",
+      });
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\n" +
+        "Work from main only. Please run git status and check current branch.\n" +
+        "- Fix login\n" +
+        "- Fix logout\n" +
+        "- Fix search\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(runOrchestrated).not.toHaveBeenCalled();
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+    });
+
+    it("does not auto-orchestrate gated prompts even when they are not the first message", async () => {
+      setConversationMessages([
+        { role: "user", content: "Earlier unrelated message" },
+        { role: "assistant", content: "Ok" },
+      ]);
+
+      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+      detectComplexPrompt.mockReturnValueOnce({
+        isComplex: true,
+        estimatedGoals: 3,
+        reason: "3 bullet points",
+      });
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n"); // wrong branch → preflight blocks
+
+      const prompt =
+        "Automation: test\n" +
+        "Work from main only. Please run git status and check current branch.\n" +
+        "- Fix login\n" +
+        "- Fix logout\n" +
+        "- Fix search\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      expect(runOrchestrated).not.toHaveBeenCalled();
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+    });
+
+    it("re-runs git status preflight for each gated prompt in a long-running thread", async () => {
+      executeTool
+        .mockResolvedValueOnce("## devel...origin/devel\n")
+        .mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      expect(executeTool.mock.calls[1][0]).toBe("bash");
+      expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
+    });
+
+	    it("keeps enforcing git preflight on follow-up prompts that omit gate wording", async () => {
+      executeTool
+        .mockResolvedValueOnce("## devel...origin/devel\n")
+        .mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+      await processInput("Please continue.", null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[0][0]).toBe("bash");
+      expect(executeTool.mock.calls[0][1].command).toBe("git status --short --branch");
+      expect(executeTool.mock.calls[1][0]).toBe("bash");
+      expect(executeTool.mock.calls[1][1].command).toBe("git status --short --branch");
+    });
+
+    it("stops immediately when preflight shows a dirty worktree", async () => {
+      executeTool.mockResolvedValueOnce("## main...origin/main\n M cli/agent.js\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("[PRECHECK BLOCKED]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("stops immediately when not on the required branch", async () => {
+      executeTool.mockResolvedValueOnce("## devel...origin/devel\n");
+
+      await processInput(gatedPrompt, null, { autoConfirm: true, silent: true });
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      const msgs = getConversationMessages();
+      const blocked = msgs.find(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("Required branch: main."),
+      );
+      expect(blocked).toBeDefined();
+    });
+
+	    it("enforces a structured final automation report when verify output is non-compliant", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n") // preflight ok
+        .mockResolvedValueOnce("ok") // write_file result
+        .mockResolvedValueOnce("PASS"); // verify bash result
+
+      let summaryTools = null;
+      let summaryMessages = null;
+      let callIndex = 0;
+      callStream.mockImplementation(async (messages, tools, opts) => {
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const lastUserText = String(lastUser?.content || "");
+        const wantsAutomationReport = lastUserText.includes(
+          "Write a final automation report using EXACT labels",
+        );
+        if (Array.isArray(tools) && tools.length === 0 && wantsAutomationReport) {
+          summaryTools = tools;
+          summaryMessages = messages;
+          const content =
+            "Preflight: git status --short --branch\n" +
+            "Preflight output: ## main...origin/main\n" +
+            "Branch: main\n" +
+            "Chosen task: update a file\n" +
+            "Files changed: fix.txt\n" +
+            "Verification: npm test\n" +
+            "Commit: not detected\n" +
+            "Push: not detected\n" +
+            "Final git status: (not checked)\n" +
+            "Remaining risk: none";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+
+        if (callIndex === 0) {
+          callIndex++;
+          const content =
+            "Plan: make one small doc-safe change.\nFiles: fix.txt\nVerification: npm test";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        if (callIndex === 1) {
+          callIndex++;
+          return {
+            content: "",
+            tool_calls: [
+              {
+                function: {
+                  name: "write_file",
+                  arguments: { path: "fix.txt", content: "x" },
+                },
+                id: "w1",
+              },
+            ],
+          };
+        }
+        if (callIndex === 2) {
+          callIndex++;
+          const content =
+            "Implemented the change in fix.txt. Proceeding to verification now with targeted checks.";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        if (callIndex === 3) {
+          callIndex++;
+          return {
+            content: "",
+            tool_calls: [
+              {
+                function: { name: "bash", arguments: { command: "npm test" } },
+                id: "b1",
+              },
+            ],
+          };
+        }
+        if (callIndex === 4) {
+          callIndex++;
+          // Non-compliant verify summary (missing required automation-report labels),
+          // but long enough to trigger verify-phase completion.
+          const content =
+            "Verification complete. I ran the targeted checks and the results look good based on tool output. " +
+            "Next step is to review and, if desired, commit and push from the correct branch.";
+          if (opts?.onToken) opts.onToken(content);
+          return { content, tool_calls: [] };
+        }
+        throw new Error("Unexpected callStream call");
+      });
+
+      await processInput(
+        "Automation: test\n" +
+          "Work from main only. At the start, run git status. " +
+          "If the worktree is dirty, stop without editing.",
+        null,
+        { autoConfirm: true, silent: true },
+      );
+
+      expect(summaryTools).toEqual([]);
+      expect(summaryMessages).toEqual(expect.any(Array));
+      const summaryCall = callStream.mock.calls.find(([msgs, tools]) => {
+        if (!Array.isArray(tools) || tools.length !== 0) return false;
+        return (msgs || []).some(
+          (m) =>
+            m?.role === "user" &&
+            String(m?.content || "").includes(
+              "Write a final automation report using EXACT labels",
+            ),
+        );
+      });
+      expect(summaryCall).toBeDefined();
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Preflight:") &&
+            m.content.includes("Final git status:"),
+        ),
+      ).toBe(true);
+	    });
+
+	    it("does not auto-orchestrate automation backlog prompts even without explicit git gates", async () => {
+	      const { detectComplexPrompt, runOrchestrated } = require("../cli/orchestrator");
+	      detectComplexPrompt.mockReturnValueOnce({
+	        isComplex: true,
+	        estimatedGoals: 3,
+	        reason: "3 bullet points",
+	      });
+
+	      callStream.mockResolvedValueOnce({ content: "no safe task found", tool_calls: [] });
+
+	      const prompt =
+	        "Automation: test\n" +
+	        "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+	        "Pick at most one tightly scoped improvement in priority order.\n" +
+	        "- Improve docs quality\n" +
+	        "- Improve UX text\n" +
+	        "- Improve error messages\n";
+
+	      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+	      expect(runOrchestrated).not.toHaveBeenCalled();
+	      expect(callStream).toHaveBeenCalled();
+	      expect(executeTool).toHaveBeenCalledWith(
+	        "read_file",
+	        expect.objectContaining({ path: "docs/keyboard-shortcuts.md" }),
+	        expect.objectContaining({ autoConfirm: true, silent: true }),
+	      );
+	    });
+
+    it("does not inject few-shot examples into backlog automations", async () => {
+      let firstMessages = null;
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return {
+          content:
+            "Selected improvement: update shortcut documentation\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update one documented shortcut label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        };
+      });
+      executeTool
+        .mockResolvedValueOnce("keyboard shortcuts backlog")
+        .mockResolvedValueOnce("user manual backlog");
+
+      const prompt =
+        "Automation: test\n" +
+        "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+        "Pick at most one tightly scoped improvement in priority order.\n" +
+        "- Improve active editing workflows\n" +
+        "- Improve command center usefulness\n";
+
+      await processInput(prompt, null, { autoConfirm: true, silent: true });
+
+      const joined = firstMessages
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n");
+      expect(joined).not.toContain("[EXAMPLE");
+      expect(joined).not.toContain("stale data");
+      expect(joined).toContain("[BACKLOG PREFLIGHT]");
+    });
+
+      it("allows final git-status evidence after commit in gated automations", async () => {
+        getAutoConfirm.mockReturnValue(true);
+        executeTool
+          .mockResolvedValueOnce("## main...origin/main\n") // preflight ok
+          .mockResolvedValueOnce("ok") // write_file result
+          .mockResolvedValueOnce("[main abc1234] fix: test\n 1 file changed, 1 insertion(+)\n") // git commit
+          .mockResolvedValueOnce("## main...origin/main\n") // final git status
+          .mockResolvedValueOnce("PASS"); // verify bash result
+
+        // 1) Plan phase: try a bash call so it gets blocked
+        mockStream(
+          "I will run a command to proceed.",
+          [
+            {
+              function: { name: "bash", arguments: { command: "echo hi" } },
+              id: "b-plan",
+            },
+          ],
+        );
+
+        // 2) Plan phase: text-only response triggers plan→implement auto-advance
+        mockStream("Proceeding with implementation.");
+
+        // 3) Implement phase: make a change
+        mockStream(
+          "Implementing a small change.",
+          [
+            {
+              function: {
+                name: "write_file",
+                arguments: { path: "fix.txt", content: "x\n" },
+              },
+              id: "w1",
+            },
+          ],
+        );
+
+        // 4) Implement phase: text-only response triggers implement→verify transition
+        mockStream("Implementation done; moving to verification.");
+
+        // 5) Verify phase: perform a commit
+        mockStream(
+          "Committing changes now.",
+          [
+            {
+              function: {
+                name: "bash",
+                arguments: { command: "git commit -am \"test\"" },
+              },
+              id: "b-commit",
+            },
+          ],
+        );
+
+        // 6) Verify phase: capture final git status evidence
+        mockStream(
+          "Checking final git status for report evidence.",
+          [
+            {
+              function: {
+                name: "bash",
+                arguments: { command: "git status --short --branch" },
+              },
+              id: "b-status",
+            },
+          ],
+        );
+
+        // 7) Verify phase: run one verification command so verify can complete
+        mockStream(
+          "Running a focused verification command.",
+          [
+            {
+              function: { name: "bash", arguments: { command: "npm test" } },
+              id: "b-verify",
+            },
+          ],
+        );
+
+        // 8) Verify phase: end with a substantive compliant report so the loop can exit
+        mockStream(
+          "Preflight: git status --short --branch\n" +
+            "Preflight output: ## main...origin/main\n" +
+            "Branch: main\n" +
+            "Chosen task: test scenario\n" +
+            "Files changed: fix.txt\n" +
+            "Verification: npm test (PASS)\n" +
+            "Commit: detected (git commit succeeded per bash output)\n" +
+            "Push: not detected\n" +
+            "Final git status: bash:git status --short --branch\n" +
+            "## main...origin/main\n" +
+            "Remaining risk: none",
+        );
+
+        await processInput(
+          "Automation: test\n" +
+            "Work from main only. At the start, run git status. " +
+            "After verification passes, stage only the files changed, commit and push.",
+          null,
+          { autoConfirm: true, silent: true },
+        );
+
+        const msgs = getConversationMessages();
+        const postCommitSystemMsg = msgs.find(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Git commit succeeded"),
+        );
+        if (!postCommitSystemMsg) {
+          const debug = msgs
+            .map((m) => {
+              const head =
+                typeof m.content === "string"
+                  ? m.content.slice(0, 200).replace(/\n/g, "\\n")
+                  : Array.isArray(m.content)
+                    ? "[blocks]"
+                    : "";
+              return `${m.role}: ${head}`;
+            })
+            .slice(-30)
+            .join("\n");
+          throw new Error(`Expected post-commit system message not found.\n\n${debug}`);
+        }
+        expect(postCommitSystemMsg.content).toContain("gated automation workflow");
+        expect(postCommitSystemMsg.content).toContain("git status --short --branch");
+        expect(postCommitSystemMsg.content).not.toContain(
+          "Do NOT run further git status / git diff / git log",
+        );
+
+        // Ensure we did not block the final git-status evidence in this gated flow.
+        expect(executeTool.mock.calls.map((c) => c[1]?.command)).toEqual([
+          "git status --short --branch",
+          undefined,
+          "git commit -am \"test\"",
+          "git status --short --branch",
+          "npm test",
+        ]);
+      });
+	  });
 });

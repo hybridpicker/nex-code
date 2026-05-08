@@ -796,7 +796,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "bash",
       description:
-        "Execute a bash command in the project directory. Timeout: 90s (commands that exceed this are killed). Use for: running tests, installing packages, git commands, build tools, starting servers, compiling code. Example: use bash for \"npm install\" or \"git status\", but NOT for \"cat config.json\" (use read_file instead) or \"grep -r 'error' src/\" (use grep tool instead). AVOID using bash for: cat/head/tail (use read_file), sed/awk (use edit_file), find/ls (use glob or list_directory), grep/rg (use grep tool). Using dedicated tools is faster and produces better-formatted output. Always quote file paths containing spaces with double quotes. Check the exit code in output — non-zero means the command failed. For long-running commands (large builds, full test suites), warn the user if they may exceed 90s. Destructive or dangerous commands (rm -rf, git push, npm publish, sudo) require user confirmation.",
+        "Run shell commands in the project directory. Timeout: 90s. Use for tests, installs, git, builds, servers, and compilers. Do not use for reading/searching files: use read_file, grep, glob, or list_directory instead. Quote paths with spaces. Check exit code; non-zero means failure. Dangerous commands require confirmation.",
       parameters: {
         type: "object",
         properties: {
@@ -814,7 +814,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a file's contents with line numbers. ALWAYS read a file before editing it to ensure exact content matching — edit_file requires the EXACT text including whitespace and newlines. Example: read_file path=src/app.js line_start=10 line_end=20. Auto-truncates at 350 lines for unbounded reads. For large files (>350 lines), use line_start/line_end to read specific sections. Concrete example: read_file(path='src/app.js', line_start=10, line_end=20) reads lines 10-20 of src/app.js. Prefer this over bash cat/head/tail — dedicated tools produce better-formatted output. Files are read with UTF-8 encoding. IMPORTANT: If you need more than 350 lines, specify line_start and line_end explicitly — omitting them will truncate the output.",
+        "Read UTF-8 file contents with line numbers. Read before editing so edit_file can match exact text. Use line_start/line_end for targeted or large-file reads; unbounded reads truncate at 350 lines. Prefer this over bash cat/head/tail.",
       parameters: {
         type: "object",
         properties: {
@@ -917,7 +917,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "glob",
       description:
-        "Find files matching a glob pattern by name or extension. Returns paths sorted by modification time. ALWAYS use this to locate files BEFORE reading them — never guess file paths. Example: glob(pattern='src/**/*.test.js') finds all test files in src directory. DO NOT use for content search (e.g. finding 'error' in files) — use grep tool instead. Examples: '**/*.test.js' (all test files), 'src/**/*.ts' (all TypeScript in src), 'package.json' (find config). Prefer this over bash find/ls. When you need file contents, glob first to get the exact path, then read_file to read it.",
+        "Find files by name/path glob, sorted by modification time. Use before reading when paths are unknown. Do not search file contents with this; use grep. Prefer this over bash find/ls.",
       parameters: {
         type: "object",
         properties: {
