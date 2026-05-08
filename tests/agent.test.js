@@ -3760,7 +3760,7 @@ describe("agent.js", () => {
             "Selection rationale: highest value gap\n" +
             "Files: docs/keyboard-shortcuts.md\n" +
             "Implementation outline: update the missing command\n" +
-            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
             "Browser/UI applicability: not required",
         ),
       ).toBe(true);
@@ -3898,7 +3898,7 @@ describe("agent.js", () => {
             "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
             "Files: docs/keyboard-shortcuts.md\n" +
             "Implementation outline: update the missing command\n" +
-            "Verification plan: npm test -- tests/docs.test.js\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
             "Browser/UI applicability: not required",
           tool_calls: [],
         };
@@ -3930,7 +3930,7 @@ describe("agent.js", () => {
             typeof m.content === "string" &&
             m.content.includes("[PHASE: IMPLEMENTATION]"),
         ),
-      ).toBe(false);
+      ).toBe(true);
     });
 
     it("removes plan-phase tool access after bounded backlog prefetch", async () => {
@@ -3941,7 +3941,30 @@ describe("agent.js", () => {
       let toolsOnDecisionCall = null;
       callStream.mockImplementationOnce(async (_messages, tools) => {
         toolsOnDecisionCall = tools;
-        return { content: "no safe task found", tool_calls: [] };
+        return {
+          content: "I will read more backlog files.",
+          tool_calls: [
+            {
+              id: "extra-read",
+              function: {
+                name: "read_file",
+                arguments: { path: "docs/keyboard-shortcuts.md" },
+              },
+            },
+          ],
+        };
+      });
+      callStream.mockImplementationOnce(async () => {
+        return {
+          content:
+            "Selected improvement: update shortcut docs\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        };
       });
 
       await processInput(
@@ -3958,7 +3981,207 @@ describe("agent.js", () => {
       expect(Array.isArray(toolsOnDecisionCall)).toBe(true);
       expect(toolsOnDecisionCall).toHaveLength(0);
       // 1 preflight bash call + 3 prompt-named backlog prefetch reads.
+      // The extra read_file tool call is blocked before execution.
       expect(executeTool).toHaveBeenCalledTimes(4);
+    });
+
+    it("reprompts textual tool-call attempts after bounded backlog prefetch", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "We need to call read_file. I will output JSON calls now: " +
+            '{"tool":"read_file","path":"docs/keyboard-shortcuts.md"}',
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: update shortcut docs\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Do not describe tool calls"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reprompts markdown heading plans after bounded backlog prefetch", async () => {
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "### Selected improvement\nUpdate shortcut docs\n\n" +
+            "### Selection rationale\nDocs evidence names the gap\n\n" +
+            "### Files\n- docs/keyboard-shortcuts.md\n\n" +
+            "### Implementation outline\nUpdate one row\n\n" +
+            "### Verification plan\nnpm test -- tests/agent.test.js\n\n" +
+            "### Browser/UI applicability\nnot required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: update shortcut docs\n" +
+            "Selection rationale: docs/keyboard-shortcuts.md is prompt evidence\n" +
+            "Files: docs/keyboard-shortcuts.md\n" +
+            "Implementation outline: update the missing command\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: not required",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md, docs/user-manual.md, docs/phase-roadmap.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("used markdown headings"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts existing tsx file references in bounded backlog plans", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-tsx-fixture";
+      const fixturePath = `${fixtureDir}/CommandCenter.tsx`;
+      fs.mkdirSync(fixtureDir, { recursive: true });
+      fs.writeFileSync(fixturePath, "export function CommandCenter() { return null; }\n");
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      try {
+        callStream.mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            `Selection rationale: ${fixturePath} is a current UI workflow surface\n` +
+            `Files: ${fixturePath}, hooks/missingCommandCenter.ts, tests/agent.test.js\n` +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        });
+
+        await processInput(
+          "Automation: MuseScore parity and UX improvements\n" +
+            "Work from main only. At the start, run git status. " +
+            "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+            "Pick at most one tightly scoped improvement in priority order.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 25 },
+        );
+      } finally {
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[PHASE: IMPLEMENTATION]"),
+        ),
+      ).toBe(true);
+    });
+
+    it("does not finish bounded backlog implementation on prose-only no-progress", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            "Selection rationale: cli/agent.js is a current implementation surface\n" +
+            "Files: cli/agent.js, tests/agent.test.js\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content: "Let me read the most likely file for command center implementation:",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 25 },
+      );
+
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Implementation is not complete"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Implementation stalled before edits"),
+        ),
+      ).toBe(true);
     });
   });
 
