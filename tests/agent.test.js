@@ -878,6 +878,26 @@ describe("agent.js", () => {
         { silent: true, autoConfirm: true },
       );
     });
+
+    it("maps namespaced tree aliases to list_directory", async () => {
+      mockStream("", [
+        {
+          function: {
+            name: "repo_browser.print_tree",
+            arguments: { path: "components" },
+          },
+          id: "c1",
+        },
+      ]);
+      mockStream("Done");
+      executeTool.mockResolvedValueOnce("CommandCenter.tsx");
+      await processInput("test");
+      expect(executeTool).toHaveBeenCalledWith(
+        "list_directory",
+        expect.objectContaining({ path: "components" }),
+        { silent: true, autoConfirm: true },
+      );
+    });
   });
 
   // ─── tool routing ─────────────────────────────────────────
