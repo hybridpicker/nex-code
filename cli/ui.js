@@ -65,14 +65,14 @@ function banner(modelName, cwd, opts = {}) {
   const geminiTag = opts.gemini ? `  ${B}${T.banner_gemini}✦ GEMINI${r}` : "";
   const version = require("../package.json").version;
   const project = cwd ? path.basename(cwd) : null;
-  const modelChip = `${T.banner_model}[${modelName || "model"}]${r}`;
-  const projectChip = `${T.banner_version}[${project || "workspace"}]${r}`;
+  const modelChip = `${T.muted}[${modelName || "model"}]${r}`;
+  const projectChip = `${T.muted}[${project || "workspace"}]${r}`;
 
   const subtitles = [
     `  ${T.banner_name}${B}nex-code${r}  ${T.banner_version}v${version}${r}`,
     `  ${modelChip} ${projectChip}`,
     `  ${T.banner_logo}${B}terminal workbench${r}  ${T.muted}·  /help${r}${geminiTag}${yoloTag}`,
-    "",
+    `  ${C.dim}${"—".repeat(50)}${r}`,
   ];
 
   const total = Math.max(dogLines.length, subtitles.length);
@@ -87,7 +87,7 @@ function banner(modelName, cwd, opts = {}) {
     lines.push(dog + text);
   }
 
-  console.log("\n" + lines.join("\n") + "\n");
+  console.log("\n" + lines.join("\n"));
 }
 
 // Re-exports from spinner.js and format.js for backward compatibility
