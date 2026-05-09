@@ -1657,6 +1657,8 @@ let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
+let _stagnationNudges = 0; // soft-warning nudges for general stagnation (DeepSeek TUI inspired)
+let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
@@ -1673,10 +1675,16 @@ let _boundedBacklogDecisionInjected = false; // avoid duplicate bounded-plan nud
 let _boundedBacklogDecisionMisses = 0; // count plan-phase "decision required" misses to prevent bypassing template
 let _boundedBacklogImplementationReads = 0; // targeted implementation reads after a bounded backlog plan
 let _boundedBacklogImplementationDiscoveryReads = 0; // narrow path discovery after a bounded backlog plan
+let _boundedBacklogImplementationNarrowFinds = 0; // same-file locating after an initial range misses the target
+let _boundedBacklogImplementationPostGrepReads = 0; // targeted reads after same-file grep found a likely line
+const _boundedBacklogImplementationReadKeys = new Set();
+const _boundedBacklogSameFileGrepHits = new Map();
 
 const BOUNDED_BACKLOG_PLAN_DECISION_READS = 8;
 const BOUNDED_BACKLOG_PLAN_HARD_READS = 10;
 const BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS = 3;
+const BOUNDED_BACKLOG_IMPLEMENTATION_NARROW_FINDS = 3;
+const BOUNDED_BACKLOG_IMPLEMENTATION_POST_GREP_READS = 4;
 const BOUNDED_BACKLOG_EVIDENCE_TOOLS = new Set([
   "read_file",
   "grep",
@@ -1763,6 +1771,7 @@ function _buildBoundedBacklogPlanInstruction({ blocked = false } = {}) {
     prefix,
     "Before deciding, inspect the concrete backlog/reference paths named by the user prompt. Prefer read_file on those paths over generic searches for words like `backlog`, `TODO`, or `FIXME`.",
     "Ground the selected improvement in those files and the current project. Do not invent generic React bugs, placeholder files, or example components that were not found in the evidence.",
+    "For UI work, choose only controls, labels, handlers, or component names that were actually visible in the evidence already read. Do not infer a button exists from the product domain; if the exact target is delegated to a child component, name that existing child component/file as the target instead.",
     "Write the plan now using exactly these label lines. Do not use markdown headings for these labels.",
     "Selected improvement: name one scoped task, or write `no safe task found`.",
     "Selection rationale: why this task is the safest/highest-value choice from the backlog evidence.",
@@ -1920,7 +1929,6 @@ function _boundedBacklogPlanNeedsExistingFileCorrection(text) {
   const refs = _extractPlanFileRefs(text).filter(
     (fileRef) =>
       fileRef &&
-      !_boundedBacklogPromptPaths.has(fileRef) &&
       !/\.(md|mdx|txt|rst|adoc)$/i.test(fileRef),
   );
   if (refs.length === 0) return false;
@@ -1968,6 +1976,9 @@ function _looksLikeTextualToolCallAttempt(text) {
   if (!value.trim()) return false;
   return (
     /\b(need|must|will|should|let'?s|attempt|going)\b.{0,80}\b(call|issue|use|run|read)\b.{0,80}\b(read_file|tool call|tool_calls?|JSON calls?)\b/i.test(
+      value,
+    ) ||
+    /\b(need|must|will|should|let'?s|attempt|going)\b.{0,80}\b(run|check|use)\b.{0,80}\b(git status|bash|grep|glob|search)\b/i.test(
       value,
     ) ||
     /\{\s*["']tool["']\s*:\s*["'](?:read_file|grep|search_files|glob)["']/i.test(value)
@@ -2292,6 +2303,7 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
     }
   }
 
+  const evidenceByPath = new Map();
   async function appendEvidenceTool(fnName, args, toolCallId, { named = false } = {}) {
     const assistantToolCallMsg = {
       role: "assistant",
@@ -2342,8 +2354,12 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
     };
     conversationMessages.push(evidenceMsg);
     apiMessages.push(evidenceMsg);
+    if (fnName === "read_file" && args.path) {
+      evidenceByPath.set(_normalizePromptPath(args.path), raw);
+    }
     _boundedBacklogPlanReads++;
     if (named) _boundedBacklogNamedEvidenceReads++;
+    return raw;
   }
 
   for (let index = 0; index < paths.length; index++) {
@@ -2390,10 +2406,41 @@ async function _prefetchBoundedBacklogEvidenceIfNeeded(apiMessages, conversation
         `bounded-backlog-ui-evidence-${index}`,
       );
     }
+
+    const directUiImports = [];
+    for (const [sourcePath, sourceText] of evidenceByPath.entries()) {
+      if (!sourcePath.startsWith("components/")) continue;
+      const importRegex =
+        /from\s+['"](?:@\/components\/|\.\/)([A-Za-z][A-Za-z0-9_-]*)['"]/g;
+      let match;
+      while ((match = importRegex.exec(sourceText))) {
+        const candidate = `components/${match[1]}.tsx`;
+        if (
+          fsSync.existsSync(path.resolve(process.cwd(), candidate)) &&
+          !evidenceByPath.has(candidate) &&
+          !directUiImports.includes(candidate)
+        ) {
+          directUiImports.push(candidate);
+        }
+      }
+    }
+    for (let index = 0; index < Math.min(directUiImports.length, 2); index++) {
+      const candidate = directUiImports[index];
+      _boundedBacklogUiEvidencePaths.add(candidate);
+      await appendEvidenceTool(
+        "read_file",
+        {
+          path: candidate,
+          line_start: 1,
+          line_end: 180,
+        },
+        `bounded-backlog-ui-child-evidence-${index}`,
+      );
+    }
   }
 
   const close =
-    "[BACKLOG PREFLIGHT] The prompt-named backlog/reference files and any requested UI/component evidence above have already been read. Your next response must be the bounded plan labels exactly as requested (`Selected improvement:`, `Selection rationale:`, `Files:`, `Implementation outline:`, `Verification plan:`, `Browser/UI applicability:`). Do not request or describe more read_file calls.";
+    "[BACKLOG PREFLIGHT] The prompt-named backlog/reference files and any requested UI/component evidence above have already been read. Your next response must be the bounded plan labels exactly as requested (`Selected improvement:`, `Selection rationale:`, `Files:`, `Implementation outline:`, `Verification plan:`, `Browser/UI applicability:`). Choose only controls, handlers, labels, and files that are visible in that evidence; do not invent toolbar buttons or src/components paths. Do not request or describe more read_file calls.";
   const closeMsg = { role: "user", content: close };
   conversationMessages.push(closeMsg);
   apiMessages.push(closeMsg);
@@ -2669,6 +2716,8 @@ function _commandForScript(scriptName) {
   return `npm run ${scriptName}`;
 }
 
+// DeepSeek TUI inspired verification principle: read back what you wrote.
+// After every edit, confirm the file content matches intent before continuing.
 function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   const modifiedList =
     [...(filesModified || [])].slice(0, 6).join(", ") ||
@@ -2677,7 +2726,7 @@ function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   const tests = (relatedTests || []).slice(0, 3);
   const lines = [
     `[SYSTEM] You already changed code in: ${modifiedList}.`,
-    "Run one narrow verification step next before more exploration.",
+    "Verification is mandatory before further exploration — do not read other files. STEP 1: read_file the modified file(s) to confirm the edit was applied correctly. Do not trust memory — verify the actual file content on disk. STEP 2: run the narrowest relevant verification command (lint, test, typecheck).",
   ];
   if (checks.length > 0) {
     lines.push(`Suggested verification commands: ${checks.join(" | ")}`);
@@ -2686,7 +2735,7 @@ function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
     lines.push(`Likely related tests: ${tests.join(", ")}`);
   }
   lines.push(
-    "Do not continue broad read/search loops until the latest edit has been checked.",
+    "If verification passes: report \"Verification passed\" and you may continue. If verification fails: fix the issue before any other work.",
   );
   return lines.join("\n");
 }
@@ -2895,6 +2944,10 @@ async function _transitionPhase(
     if (_boundedBacklogPlanActive) {
       _boundedBacklogImplementationReads = 0;
       _boundedBacklogImplementationDiscoveryReads = 0;
+      _boundedBacklogImplementationNarrowFinds = 0;
+      _boundedBacklogImplementationPostGrepReads = 0;
+      _boundedBacklogImplementationReadKeys.clear();
+      _boundedBacklogSameFileGrepHits.clear();
     }
   }
   if (targetPhase === "verify") {
@@ -2928,7 +2981,7 @@ async function _transitionPhase(
   // Generate ordered action items from extracted plan todos for implementation phase
   const _todoChecklist =
     _planTodos.length > 0
-      ? `\n\nACTION ITEMS (execute these in order, do NOT re-read these files):\n` +
+      ? `\n\nACTION ITEMS (execute these in order; use one targeted read if code context is needed):\n` +
         _planTodos.map((t, i) => `${i + 1}. ${t.file} — ${t.action}`).join("\n")
       : "";
 
@@ -4412,6 +4465,10 @@ function _resetSessionTracking() {
   _boundedBacklogDecisionMisses = 0;
   _boundedBacklogImplementationReads = 0;
   _boundedBacklogImplementationDiscoveryReads = 0;
+  _boundedBacklogImplementationNarrowFinds = 0;
+  _boundedBacklogImplementationPostGrepReads = 0;
+  _boundedBacklogImplementationReadKeys.clear();
+  _boundedBacklogSameFileGrepHits.clear();
   _taskRegistry.clear();
   _autoCompletedTasks.clear();
   _gitPreflight = null;
@@ -5476,6 +5533,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const LOOP_ABORT_ERRORS = 15 * _sk;
   let consecutiveBlocks = 0;
   const LOOP_ABORT_BLOCKS = 5 * _sk;
+  const _blockedAfterImplementationRead = () =>
+    _boundedBacklogPlanActive &&
+    _phaseEnabled &&
+    _currentPhase === "implement" &&
+    filesModified.size === 0 &&
+    _bashModifiedFiles === 0 &&
+    _sessionLastEditFailed.size === 0 &&
+    _boundedBacklogImplementationReads > 0;
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
@@ -5805,7 +5870,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           signal: combinedAbort.signal,
           ...(_phaseModelOverride ? { model: _phaseModelOverride } : {}),
           onThinkingToken: () => {
-            // Thinking-model reasoning tokens: reset stale timer but don't display
+            // DeepSeek TUI inspired: thinking tokens keep the model alive.
+            // Reset stale timer — the model IS working, even if output isn't visible yet.
             lastTokenTime = Date.now();
             staleWarned = false;
             if (_serverHooks?.onThinkingToken) {
@@ -7063,6 +7129,41 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _scoreAndPrint(conversationMessages);
           break outer;
         }
+        if (
+          hasText &&
+          _boundedBacklogPlanActive &&
+          getAutoConfirm() &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0
+        ) {
+          const implementationText = content || streamedText || "";
+          if (
+            _claimsVerificationOrCompletion(implementationText) &&
+            !_statesVerificationGap(implementationText) &&
+            !_looksLikeBoundedBacklogDecision(implementationText)
+          ) {
+            const stalledMsg =
+              "Implementation stalled before edits.\n\n" +
+              "The implementation phase claimed changes, verification, or a clean worktree without any successful file edit or verification evidence. Stopping without commit or push so the workflow does not falsely report success.";
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
         // Tool avoidance nudge: if the model says it cannot use tools but it
         // actually can, nudge it to use them. Two cases:
         //   A) Post-wipe budget exhausted — model is correct that tools are
@@ -8269,6 +8370,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       if (
+        _postEditVerifyPending &&
+        _phaseEnabled &&
+        _currentPhase === "implement"
+      ) {
+        const blockedPostEditTools = new Set([
+          "read_file",
+          "grep",
+          "search_files",
+          "glob",
+          "list_directory",
+          "find_files",
+        ]);
+        for (const prep of prepared) {
+          if (!prep.canExecute) continue;
+          if (_isVerificationCommandCall(prep)) continue;
+          if (!blockedPostEditTools.has(prep.fnName)) continue;
+          prep.canExecute = false;
+          prep.errorResult = {
+            role: "tool",
+            content:
+              "BLOCKED: code was already edited. Run a narrow verification command now, such as npm test, npm run build, npm run lint, or the focused test from the plan. Do not read or search more files before verification.",
+            tool_call_id: prep.callId,
+          };
+        }
+      }
+
+      if (
         _boundedBacklogPlanActive &&
         _phaseEnabled &&
         _currentPhase === "implement" &&
@@ -8282,11 +8410,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.fnName === "write_file" ||
             prep.fnName === "edit_file" ||
             prep.fnName === "patch_file";
+          const isPlannedImplementationPath =
+            readPath &&
+            (_planTodos.some(
+              (todo) => _normalizePromptPath(todo.file) === readPath,
+            ) ||
+              _planSummary.includes(readPath));
+          const plannedImplementationPaths = new Set(
+            _planTodos
+              .map((todo) => _normalizePromptPath(todo.file))
+              .filter(Boolean),
+          );
+          for (const fileRef of _extractPlanFileRefs(_planSummary)) {
+            const normalizedRef = _normalizePromptPath(fileRef);
+            if (
+              normalizedRef &&
+              !_boundedBacklogPromptPaths.has(normalizedRef) &&
+              !/\.(md|mdx|txt|rst|adoc)$/i.test(normalizedRef)
+            ) {
+              plannedImplementationPaths.add(normalizedRef);
+            }
+          }
+          if (isPlannedImplementationPath) {
+            plannedImplementationPaths.add(readPath);
+          }
           const isTargetedImplementationRead =
             prep.fnName === "read_file" &&
             readPath &&
-            !_boundedBacklogPromptPaths.has(readPath) &&
+            (isPlannedImplementationPath ||
+              !_boundedBacklogPromptPaths.has(readPath)) &&
             (prep.args?.line_start || prep.args?.line_end);
+          const implementationReadKey = isTargetedImplementationRead
+            ? `${readPath}:${prep.args?.line_start || ""}:${prep.args?.line_end || ""}`
+            : "";
           const isEditRecoveryRead =
             isTargetedImplementationRead &&
             (_sessionLastEditFailed.get(prep.args?.path) || 0) > 0;
@@ -8295,17 +8451,101 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               prep.fnName,
               prep.args || {},
             );
+          const failedEditPaths = [..._sessionLastEditFailed.keys()].map((p) =>
+            _normalizePromptPath(p),
+          );
+          const bashCommand = String(prep.args?.command || "");
+          const isEditRecoveryBashGrep =
+            prep.fnName === "bash" &&
+            /^grep\s+-n\b/.test(bashCommand.trim()) &&
+            failedEditPaths.some(
+              (failedPath) => failedPath && bashCommand.includes(failedPath),
+            ) &&
+            !/[;&|`$]/.test(bashCommand) &&
+            !/(^|\s)[<>]/.test(bashCommand);
+          const isEditRecoveryDiscovery =
+            _sessionLastEditFailed.size > 0 &&
+            (isImplementationDiscovery || isEditRecoveryBashGrep);
+          const discoveryPath = _normalizePromptPath(
+            prep.args?.path || prep.args?.cwd || "",
+          );
+          const discoveryText = String(
+            prep.args?.pattern ||
+              prep.args?.glob ||
+              prep.args?.query ||
+              prep.args?.search ||
+              prep.args?.include ||
+              prep.args?.file_pattern ||
+              "",
+          );
+          const isSamePlannedFileDiscovery =
+            _boundedBacklogImplementationReads > 0 &&
+            (prep.fnName === "grep" || prep.fnName === "search_files") &&
+            discoveryPath &&
+            plannedImplementationPaths.has(discoveryPath) &&
+            discoveryText.trim().length > 0;
+          const isSamePlannedFileBashGrep =
+            _boundedBacklogImplementationReads > 0 &&
+            prep.fnName === "bash" &&
+            /^grep\s+-n\b/.test(bashCommand.trim()) &&
+            [...plannedImplementationPaths].some(
+              (plannedPath) => plannedPath && bashCommand.includes(plannedPath),
+            ) &&
+            !/[;&|`$]/.test(bashCommand) &&
+            !/(^|\s)[<>]/.test(bashCommand);
+          const isNewSameFileRangeRead =
+            isTargetedImplementationRead &&
+            _boundedBacklogImplementationReads > 0 &&
+            plannedImplementationPaths.has(readPath) &&
+            implementationReadKey &&
+            !_boundedBacklogImplementationReadKeys.has(implementationReadKey);
+          const isPostGrepTargetRangeRead =
+            isNewSameFileRangeRead &&
+            (_boundedBacklogSameFileGrepHits.get(readPath) || 0) > 0 &&
+            _boundedBacklogImplementationPostGrepReads <
+              BOUNDED_BACKLOG_IMPLEMENTATION_POST_GREP_READS;
+          const isNarrowSameFileFind =
+            _boundedBacklogImplementationReads > 0 &&
+            _boundedBacklogImplementationNarrowFinds <
+              BOUNDED_BACKLOG_IMPLEMENTATION_NARROW_FINDS &&
+            (isSamePlannedFileDiscovery ||
+              isSamePlannedFileBashGrep ||
+              isNewSameFileRangeRead);
           if (isWriteTool) continue;
           if (
             (isTargetedImplementationRead &&
-              _boundedBacklogImplementationReads < 2) ||
+              _boundedBacklogImplementationReads < 1) ||
             isEditRecoveryRead
           ) {
-            if (!isEditRecoveryRead) _boundedBacklogImplementationReads++;
+            if (!isEditRecoveryRead) {
+              _boundedBacklogImplementationReads++;
+              if (implementationReadKey) {
+                _boundedBacklogImplementationReadKeys.add(implementationReadKey);
+              }
+            }
+            continue;
+          }
+          if (isPostGrepTargetRangeRead) {
+            _boundedBacklogImplementationPostGrepReads++;
+            prep._boundedBacklogPostGrepRead = true;
+            if (implementationReadKey) {
+              _boundedBacklogImplementationReadKeys.add(implementationReadKey);
+            }
+            continue;
+          }
+          if (isNarrowSameFileFind) {
+            _boundedBacklogImplementationNarrowFinds++;
+            if (implementationReadKey) {
+              _boundedBacklogImplementationReadKeys.add(implementationReadKey);
+            }
+            continue;
+          }
+          if (isEditRecoveryDiscovery) {
             continue;
           }
           if (
             isImplementationDiscovery &&
+            _boundedBacklogImplementationReads === 0 &&
             _boundedBacklogImplementationDiscoveryReads <
               BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS
           ) {
@@ -8315,18 +8555,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const rereadsBacklog =
             prep.fnName === "read_file" &&
             readPath &&
-            _boundedBacklogPromptPaths.has(readPath);
+            _boundedBacklogPromptPaths.has(readPath) &&
+            !isPlannedImplementationPath;
           const exhaustedImplementationReads =
             isTargetedImplementationRead &&
-            _boundedBacklogImplementationReads >= 2;
+            _boundedBacklogImplementationReads >= 1;
           const exhaustedImplementationDiscovery =
             isImplementationDiscovery &&
             _boundedBacklogImplementationDiscoveryReads >=
               BOUNDED_BACKLOG_IMPLEMENTATION_DISCOVERY_READS;
           prep.canExecute = false;
+          const implementationContextRead =
+            _boundedBacklogImplementationReads > 0;
           prep.errorResult = {
             role: "tool",
-            content: rereadsBacklog
+            content: implementationContextRead
+              ? "BLOCKED: the planned implementation file has already been read. Make the scoped edit now with edit_file or patch_file; do not run git, search, or read more before editing."
+              : rereadsBacklog
               ? "BLOCKED: implementation phase has already completed backlog review. Do not re-read backlog files. Edit the concrete implementation file from the accepted plan now."
               : exhaustedImplementationReads
                 ? "BLOCKED: implementation phase has already read enough targeted code context. Make the scoped edit now with edit_file or patch_file; do not read more before editing."
@@ -8576,7 +8821,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               const sectionCount = prevRanges.length; // sections already committed
               const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
               const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
-              if (sectionCount >= SCROLL_BLOCK_SECTIONS) {
+              if (
+                sectionCount >= SCROLL_BLOCK_SECTIONS &&
+                !prep._boundedBacklogPostGrepRead
+              ) {
                 const shortPath = path.split("/").slice(-2).join("/");
                 debugLog(
                   `${C.red}  ✖ Blocked file-scroll: "${shortPath}" — ${sectionCount} sections already read. Use grep to find specific content.${C.reset}`,
@@ -9341,10 +9589,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           preBlockContent.startsWith("PLAN PHASE:")
         ) {
           consecutiveBlocks++;
-          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          if (
+            _blockedAfterImplementationRead() &&
+            preBlockContent.includes("planned implementation file")
+          ) {
+            const editNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] The planned implementation file is already in context. Your next response must contain exactly one edit_file or patch_file tool call for the scoped change from the accepted plan. Do not run git, read_file, glob, search, or list_directory. Do not write prose before the tool call.",
+            };
+            conversationMessages.push(editNudge);
+            apiMessages.push(editNudge);
+          }
+          const blockAbortLimit = _blockedAfterImplementationRead()
+            ? Math.min(LOOP_ABORT_BLOCKS, 3)
+            : LOOP_ABORT_BLOCKS;
+          if (consecutiveBlocks >= blockAbortLimit) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
             );
+            if (_blockedAfterImplementationRead()) {
+              const stalledMsg =
+                "Implementation stalled before edits.\n\n" +
+                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
+              const stalledAssistantMsg = {
+                role: "assistant",
+                content: stalledMsg,
+              };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+            }
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -9692,6 +9969,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             if (cmd) verificationCommandsRun.push(cmd.slice(0, 160));
             _postEditVerifyPending = false;
             _postEditVerifyNudges = 0;
+            if (
+              _stickyGitPreflightRequired &&
+              (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+              !_commitDetected
+            ) {
+              const postVerifyMsg = {
+                role: "user",
+                content:
+                  "[SYSTEM] ✓ Verification command succeeded after your edit. " +
+                  "The dirty worktree now contains your own intended changes, not a preflight blocker. " +
+                  "Do not restart planning or re-read the changed file. Stage only the files you changed, commit with a terse English message, push if the prompt requires it, then run one final `git status --short --branch`.",
+              };
+              conversationMessages.push(postVerifyMsg);
+              apiMessages.push(postVerifyMsg);
+            }
           }
           // After the first file edit, tighten the post-edit investigation cap to
           // POST_EDIT_CAP (5 calls). This prevents the model from re-investigating
@@ -10110,6 +10402,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           res &&
           !res.startsWith("(no matches)")
         ) {
+          const searchedPath = _normalizePromptPath(prep.args?.path || "");
+          if (
+            _boundedBacklogPlanActive &&
+            _phaseEnabled &&
+            _currentPhase === "implement" &&
+            searchedPath
+          ) {
+            _boundedBacklogSameFileGrepHits.set(
+              searchedPath,
+              (_boundedBacklogSameFileGrepHits.get(searchedPath) || 0) + 1,
+            );
+          }
           const lines = res.split("\n");
           for (const line of lines) {
             // Grep output format: "filepath:linenum:content" or just "filepath"
@@ -10385,10 +10689,39 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const wasBlocked = res.startsWith("BLOCKED:");
         if (wasBlocked) {
           consecutiveBlocks++;
-          if (consecutiveBlocks >= LOOP_ABORT_BLOCKS) {
+          if (
+            _blockedAfterImplementationRead() &&
+            res.includes("planned implementation file")
+          ) {
+            const editNudge = {
+              role: "user",
+              content:
+                "[SYSTEM] The planned implementation file is already in context. Your next response must contain exactly one edit_file or patch_file tool call for the scoped change from the accepted plan. Do not run git, read_file, glob, search, or list_directory. Do not write prose before the tool call.",
+            };
+            conversationMessages.push(editNudge);
+            apiMessages.push(editNudge);
+          }
+          const blockAbortLimit = _blockedAfterImplementationRead()
+            ? Math.min(LOOP_ABORT_BLOCKS, 3)
+            : LOOP_ABORT_BLOCKS;
+          if (consecutiveBlocks >= blockAbortLimit) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`,
             );
+            if (_blockedAfterImplementationRead()) {
+              const stalledMsg =
+                "Implementation stalled before edits.\n\n" +
+                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
+              const stalledAssistantMsg = {
+                role: "assistant",
+                content: stalledMsg,
+              };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+            }
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -10596,6 +10929,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _postEditVerifyPending &&
         !(_phaseEnabled && _currentPhase === "verify")
       ) {
+        _needsPostEditVerifyPrompt = false; // reset after injection
         const suggestedChecks = await _inferVerificationCommands(filesModified);
         const relatedTests = await _inferRelevantTests(filesModified);
         const verifyMsg = {
@@ -10865,10 +11199,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       // ─── Stagnation detection (headless mode) ────────────────────────────
+      // DeepSeek TUI inspired: soft warnings instead of hard abort.
       // In headless/auto-confirm mode, track consecutive iterations where only
       // read-only tools (read_file, grep, glob, list_directory, bash) run with
       // no file modifications. If the model keeps investigating without acting
-      // for too many iterations, it's stagnating — force early exit.
+      // for too many iterations, inject a nudge instead of aborting — the model
+      // may still find the right target and get back on track.
       if (getAutoConfirm() && !opts.skillLoop) {
         const _batchHasWrite = prepared.some(
           (p) =>
@@ -10876,12 +11212,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         );
         if (_batchHasWrite) {
           _readOnlyToolStreak = 0;
+          _stagnationNudges = 0;
         } else {
           if (_readOnlyToolStreak === 0)
             _filesModifiedAtStreakStart = filesModified.size;
           _readOnlyToolStreak++;
         }
-        // After 9+ read-only iterations with no new file writes, force exit
+        // After 9+ read-only iterations with no new file writes, inject a nudge
         if (
           _readOnlyToolStreak >= 9 &&
           totalSteps >= 4 &&
@@ -10897,6 +11234,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _bashModifiedFiles,
             )
           ) {
+            if (_implementNoProgressNudges < 3) {
+              _implementNoProgressNudges++;
+              _readOnlyToolStreak = 0;
+              const implementationNudge = {
+                role: "user",
+                content:
+                  "[SYSTEM] You have enough targeted implementation context. Your next response must contain exactly one edit_file or patch_file tool call for the scoped change from the accepted plan. Do not call read_file, grep, glob, list_directory, bash, or git. Do not write prose before the tool call.",
+              };
+              conversationMessages.push(implementationNudge);
+              apiMessages.push(implementationNudge);
+              debugLog(
+                `${C.yellow}  ⚠ Implement phase read-only streak — nudging for edit (${_implementNoProgressNudges}/3)${C.reset}`,
+              );
+              continue;
+            }
             const stalledMsg =
               "Implementation stalled before edits.\n\n" +
               "The implementation phase kept reading/searching without changing files. Stopping without commit or push so the workflow does not falsely report success.";
@@ -10920,13 +11272,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _scoreAndPrint(conversationMessages);
             break outer;
           }
+          // Non-implement stagnation: inject a soft nudge instead of force-exit.
+          // Reset the streak to give the model room to recover.
+          if (_stagnationNudges < 2) {
+            _stagnationNudges++;
+            _readOnlyToolStreak = 0;
+            const nudgeMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] You have spent several iterations investigating without making changes. " +
+                "If you have enough information: summarize findings and ask the user what to do next. " +
+                "If the task requires file edits: make them now instead of continuing to read. " +
+                "Do not invent facts — if blocked, state the blocker plainly.",
+            };
+            conversationMessages.push(nudgeMsg);
+            apiMessages.push(nudgeMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Stagnation nudge ${_stagnationNudges}/2 — ${_readOnlyToolStreakSaved || _readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
+            );
+            _readOnlyToolStreakSaved = _readOnlyToolStreak;
+            continue;
+          }
+          // After 2 nudges without recovery: exit with summary instead of silent abort
           debugLog(
-            `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
+            `${C.yellow}  ⚠ Stagnation persistence: ${_readOnlyToolStreakSaved || 9}+ read-only iterations — exiting with summary${C.reset}`,
           );
           if (process.stdout.isTTY) {
             process.stderr.write(
-              `${C.yellow}  ⚠ Stagnation detected: ${_readOnlyToolStreak} iterations without edits — exiting. ` +
-                `The model investigated but did not apply changes.${C.reset}\n`,
+              `${C.yellow}  ⚠ Investigation stalled: ${_readOnlyToolStreakSaved || 9}+ iterations without edits. ` +
+                `Exiting so you can adjust the task or provide feedback.${C.reset}\n`,
             );
           }
           if (taskProgress) {

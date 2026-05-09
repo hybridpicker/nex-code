@@ -54,4 +54,35 @@ describe("headless mode (bin/nex-code.js)", () => {
       expect(r.exitCode).toBe(1);
     });
   });
+
+  describe("headless fail-closed behavior", () => {
+    it("exits non-zero when the run ends without a final assistant response", () => {
+      const r = runCli(
+        ["--auto", "--json", "--task", "Trigger null provider response."],
+        {
+          expectError: true,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_NULL_RESPONSE: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      const lines = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      expect(lines.length).toBeGreaterThan(0);
+      const last = JSON.parse(lines[lines.length - 1]);
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toContain("without a final assistant response");
+    });
+  });
 });
