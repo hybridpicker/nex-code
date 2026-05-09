@@ -26,7 +26,9 @@ function _estTok(text) {
 }
 
 const MAX_SUB_ITERATIONS = 15;
-const MAX_PARALLEL_AGENTS = parseInt(process.env.NEX_MAX_PARALLEL || "5", 10);
+// DeepSeek TUI inspired: higher parallelism for Ollama Cloud (costs per-token, not per-request).
+// More concurrent sub-agents finish work faster with no cost penalty on pay-per-token providers.
+const MAX_PARALLEL_AGENTS = parseInt(process.env.NEX_MAX_PARALLEL || "10", 10);
 const MAX_CHAT_RETRIES = parseInt(process.env.NEX_MAX_CHAT_RETRIES || "3", 10);
 // Depth-1 agents (reviewers) get fewer iterations to stay lightweight
 const MAX_REVIEWER_ITERATIONS = 8;

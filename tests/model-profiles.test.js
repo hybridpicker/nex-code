@@ -16,27 +16,27 @@ describe("model-profiles.js", () => {
   describe("getModelProfile()", () => {
     it("returns devstral-2 profile for full model ID", () => {
       const p = getModelProfile("devstral-2:123b");
-      expect(p.staleWarn).toBe(30000);
-      expect(p.staleAbort).toBe(90000);
+      expect(p.staleWarn).toBe(60000);
+      expect(p.staleAbort).toBe(180000);
       expect(p.investigationCap).toBe(18);
       expect(p.postEditCap).toBe(10);
     });
 
     it("returns devstral-small profile", () => {
       const p = getModelProfile("devstral-small-2:24b");
-      expect(p.staleWarn).toBe(20000);
+      expect(p.staleWarn).toBe(40000);
       expect(p.investigationCap).toBe(10);
     });
 
     it("returns qwen3-coder profile", () => {
       const p = getModelProfile("qwen3-coder:480b");
-      expect(p.staleWarn).toBe(60000);
+      expect(p.staleWarn).toBe(120000);
       expect(p.investigationCap).toBe(15);
     });
 
     it("returns kimi-k2 profile", () => {
       const p = getModelProfile("kimi-k2:1t");
-      expect(p.staleWarn).toBe(45000);
+      expect(p.staleWarn).toBe(90000);
     });
 
     it("returns defaults for unknown model", () => {
@@ -53,7 +53,7 @@ describe("model-profiles.js", () => {
     it("prefers longest prefix match", () => {
       // "devstral-small" should match over "devstral-"
       const p = getModelProfile("devstral-small-2:24b");
-      expect(p.staleWarn).toBe(20000); // devstral-small, not devstral-2
+      expect(p.staleWarn).toBe(40000); // devstral-small, not devstral-2
     });
 
     it("ENV override takes precedence", () => {
@@ -69,24 +69,24 @@ describe("model-profiles.js", () => {
     it("rejects invalid ENV values (NaN)", () => {
       process.env.NEX_STALE_WARN_MS = "not-a-number";
       const p = getModelProfile("devstral-2:123b");
-      expect(p.staleWarn).toBe(30000); // profile default, not NaN
+      expect(p.staleWarn).toBe(60000); // profile default, not NaN
     });
 
     it("rejects out-of-range ENV values", () => {
       process.env.NEX_STALE_WARN_MS = "500"; // below 1000 min
       const p = getModelProfile("devstral-2:123b");
-      expect(p.staleWarn).toBe(30000); // profile default
+      expect(p.staleWarn).toBe(60000); // profile default
     });
 
     it("rejects ENV values above 300000", () => {
       process.env.NEX_STALE_ABORT_MS = "999999";
       const p = getModelProfile("devstral-2:123b");
-      expect(p.staleAbort).toBe(90000); // profile default
+      expect(p.staleAbort).toBe(180000); // profile default
     });
 
     it("is case-insensitive", () => {
       const p = getModelProfile("Devstral-2:123B");
-      expect(p.staleWarn).toBe(30000);
+      expect(p.staleWarn).toBe(60000);
     });
   });
 

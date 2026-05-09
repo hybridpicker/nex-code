@@ -126,11 +126,16 @@ const DEFAULT_PHASE_BUDGETS = { explore: 10, plan: 10, implement: 35, verify: 8 
 // Built-in phase defaults for Ollama Cloud users who haven't run a benchmark yet.
 // These activate automatically when provider is "ollama". Users can override via
 // config or by running /benchmark which auto-populates the phases section.
+// DeepSeek TUI inspired: thinking-model support for better reasoning.
+// kimi-k2-thinking provides structured chain-of-thought before final output,
+// ideal for plan/verify phases where correctness > speed.
 const BUILTIN_PHASE_DEFAULTS = {
   explore: "devstral-small-2:24b", // fast, low-reasoning, high-throughput search
   plan: "qwen3-coder:480b",       // 256K context, strong reasoning
   implement: null,                  // null = use active model (already best for coding)
   verify: "devstral-small-2:24b",  // fast, good enough for test/lint checks
+  // Optional thinking-model overrides (set NEX_PHASE_PLAN_MODEL=kimi-k2-thinking to use):
+  // plan: "kimi-k2-thinking" — reasoning model for complex planning tasks
 };
 
 /**
