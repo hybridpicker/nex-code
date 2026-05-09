@@ -46,6 +46,8 @@ Options:
   --watch [config]         Alias for --daemon
   --model <spec>           Set model (e.g. openai:gpt-4o)
   --max-turns <n>          Max agentic loop iterations (default: 50)
+  --scope <files>          Restrict file edits to these files/dirs (comma-separated, globs ok)
+                           e.g. --scope 'src/index.js,src/components/*.tsx'
   --orchestrate            Use multi-agent orchestrator (with --task)
   --no-auto-orchestrate    Disable auto-orchestration for multi-goal prompts (on by default)
   --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
@@ -231,6 +233,14 @@ if (geminiMode) {
       `\x1b[38;2;138;180;248m◆\x1b[0m \x1b[1mGemini mode\x1b[0m\x1b[2m — provider=gemini · model=${geminiModel} · routing locked\x1b[0m\n`,
     );
   }
+}
+
+// ─── --scope (restrict file edits to specific files) ──────────
+// Set NEX_SCOPE env var so agent.js prepareToolCall can enforce it.
+// Supports comma-separated paths and globs, e.g. --scope 'src/index.js,src/*.tsx'
+const scopeIdx = args.indexOf("--scope");
+if (scopeIdx !== -1 && args[scopeIdx + 1] && !args[scopeIdx + 1].startsWith("--")) {
+  process.env.NEX_SCOPE = args[scopeIdx + 1];
 }
 
 // ─── --max-turns (flag or .nex/config.json) ──────────────────
