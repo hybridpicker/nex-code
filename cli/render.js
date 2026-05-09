@@ -6,6 +6,51 @@
 
 const { C } = require("./ui");
 
+// Terminal capability detection — UTF-8 support for box-drawing glyphs
+let _unicodeOk = null;
+function hasUnicode() {
+  if (_unicodeOk !== null) return _unicodeOk;
+  // Check locale environment variables for UTF-8
+  const lang = (process.env.LANG || process.env.LC_ALL || process.env.LC_CTYPE || "").toLowerCase();
+  if (lang.includes("utf-8") || lang.includes("utf8")) {
+    _unicodeOk = true;
+  } else {
+    // Fallback: test if stdout handles multi-byte by writing a test char
+    // (non-invasive — only when locale doesn't advertise UTF-8)
+    try {
+      if (process.stdout.isTTY && process.stdout.columns > 0) {
+        _unicodeOk = true; // modern TTYs are overwhelmingly UTF-8
+      } else {
+        _unicodeOk = process.env.TERM ? !/^(vt100|vt220|ansi|xterm)$/.test(process.env.TERM) : true;
+      }
+    } catch {
+      _unicodeOk = false;
+    }
+  }
+  return _unicodeOk;
+}
+
+// Glyph helpers — return Unicode or ASCII fallback based on terminal capability
+const G = {
+  // Box-drawing
+  tl: () => hasUnicode() ? "┌" : "+",
+  tr: () => hasUnicode() ? "┐" : "+",
+  bl: () => hasUnicode() ? "└" : "+",
+  br: () => hasUnicode() ? "┘" : "+",
+  h:  () => hasUnicode() ? "─" : "-",
+  v:  () => hasUnicode() ? "│" : "|",
+  // Blockquote
+  bq: () => hasUnicode() ? "▎" : "|",
+  // Icons
+  dot:   () => hasUnicode() ? "●" : "*",
+  error: () => hasUnicode() ? "✖" : "x",
+  diamond: () => hasUnicode() ? "◆" : "#",
+  doutline: () => hasUnicode() ? "◇" : "o",
+  dcircle: () => hasUnicode() ? "◎" : "@",
+  circle: () => hasUnicode() ? "○" : "o",
+  bullet: () => hasUnicode() ? "•" : "-",
+};
+
 function getTerminalWidth() {
   return Math.max(10, (process.stdout.columns || 80) - 2);
 }
@@ -29,41 +74,41 @@ function renderMarkdown(text) {
     // Code block toggle
     if (line.trim().startsWith("```")) {
       if (inCodeBlock) {
-        rendered.push(`${C.dim}${"─".repeat(40)}${C.reset}`);
+        const bar = G.h().repeat(Math.min(cols - 1, 50));
+        rendered.push(`${C.dim}${G.bl()}${bar}${C.reset}`);
         inCodeBlock = false;
         codeBlockLang = "";
       } else {
         inCodeBlock = true;
         codeBlockLang = line.trim().substring(3).trim();
-        const label = codeBlockLang ? ` ${codeBlockLang} ` : "";
-        rendered.push(
-          `${C.dim}${"─".repeat(3)}${label}${"─".repeat(Math.max(0, 37 - label.length))}${C.reset}`,
-        );
+        const label = codeBlockLang ? ` ${codeBlockLang} ` : " code ";
+        const bar = G.h().repeat(Math.max(0, Math.min(cols - label.length - 2, 50)));
+        rendered.push(`${C.dim}${G.tl()}${label}${bar}${C.reset}`);
       }
       continue;
     }
 
     if (inCodeBlock) {
-      rendered.push(`  ${highlightCode(line, codeBlockLang)}`);
+      rendered.push(`${C.dim}${G.v()}${C.reset} ${highlightCode(line, codeBlockLang)}`);
       continue;
     }
 
     // Headers (check longer prefixes first)
     if (line.startsWith("###### ")) {
       rendered.push(
-        `${C.bold}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}`,
+        `${C.dim}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}`,
       );
       continue;
     }
     if (line.startsWith("##### ")) {
       rendered.push(
-        `${C.bold}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}`,
+        `${C.dim}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}`,
       );
       continue;
     }
     if (line.startsWith("#### ")) {
       rendered.push(
-        `${C.bold}${C.cyan}    ${stripHeadingMarkers(line.substring(5))}${C.reset}`,
+        `${C.dim}${C.bold}    ${stripHeadingMarkers(line.substring(5))}${C.reset}`,
       );
       continue;
     }
@@ -75,14 +120,31 @@ function renderMarkdown(text) {
     }
     if (line.startsWith("## ")) {
       rendered.push(
-        `${C.bold}${C.cyan}  ${stripHeadingMarkers(line.substring(3))}${C.reset}`,
+        `${C.bold}${C.primary}  ${stripHeadingMarkers(line.substring(3))}${C.reset}`,
       );
       continue;
     }
     if (line.startsWith("# ")) {
+      const text = stripHeadingMarkers(line.substring(2));
+      const bar = G.h().repeat(Math.min(text.length + 2, cols - 2));
       rendered.push(
-        `${C.bold}${C.cyan}${stripHeadingMarkers(line.substring(2))}${C.reset}`,
+        `\n${C.bold}${C.primary}  ${text}${C.reset}\n${C.dim}  ${bar}${C.reset}`,
       );
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      rendered.push(`${C.dim}${G.h().repeat(Math.min(cols, 50))}${C.reset}`);
+      continue;
+    }
+
+    // Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      const indent = line.match(/^(\s*)/)[1];
+      const content = line.replace(/^\s*>\s?/, "");
+      const formatted = `${indent}${C.dim}${G.bq()}${C.reset} ${C.dim}${renderInline(content)}${C.reset}`;
+      rendered.push(wrapAnsi(formatted, cols, indent + "  "));
       continue;
     }
 
@@ -90,7 +152,7 @@ function renderMarkdown(text) {
     if (/^\s*[-*]\s/.test(line)) {
       const indent = line.match(/^(\s*)/)[1];
       const content = line.replace(/^\s*[-*]\s/, "");
-      const formatted = `${indent}${C.cyan}•${C.reset} ${renderInline(content)}`;
+      const formatted = `${indent}${C.cyan}${G.bullet()}${C.reset} ${renderInline(content)}`;
       rendered.push(wrapAnsi(formatted, cols, indent + "  "));
       continue;
     }
@@ -410,24 +472,29 @@ function renderTable(headers, rows) {
     return Math.max(h.length, maxRow);
   });
 
-  const sep = widths.map((w) => "─".repeat(w + 2)).join("┼");
+  const V = G.v();
+  const H = G.h();
+  const CROSS = hasUnicode() ? "┼" : "+";
+  const T_DOWN = hasUnicode() ? "┬" : "+";
+  const T_UP = hasUnicode() ? "┴" : "+";
+  const sep = widths.map((w) => H.repeat(w + 2)).join(CROSS);
   const headerLine = headers
     .map((h, i) => ` ${C.bold}${h.padEnd(widths[i])}${C.reset} `)
-    .join("│");
+    .join(V);
 
   const lines = [];
-  lines.push(`${C.dim}┌${sep.replace(/┼/g, "┬")}┐${C.reset}`);
-  lines.push(`${C.dim}│${C.reset}${headerLine}${C.dim}│${C.reset}`);
-  lines.push(`${C.dim}├${sep}┤${C.reset}`);
+  lines.push(`${C.dim}${G.tl()}${sep.replace(/\+/g, T_DOWN)}${G.tr()}${C.reset}`);
+  lines.push(`${C.dim}${V}${C.reset}${headerLine}${C.dim}${V}${C.reset}`);
+  lines.push(`${C.dim}${hasUnicode() ? "├" : "+"}${sep}${hasUnicode() ? "┤" : "+"}${C.reset}`);
 
   for (const row of rows) {
     const rowLine = headers
       .map((_, i) => ` ${(row[i] || "").padEnd(widths[i])} `)
-      .join(`${C.dim}│${C.reset}`);
-    lines.push(`${C.dim}│${C.reset}${rowLine}${C.dim}│${C.reset}`);
+      .join(`${C.dim}${V}${C.reset}`);
+    lines.push(`${C.dim}${V}${C.reset}${rowLine}${C.dim}${V}${C.reset}`);
   }
 
-  lines.push(`${C.dim}└${sep.replace(/┼/g, "┴")}┘${C.reset}`);
+  lines.push(`${C.dim}${G.bl()}${sep.replace(/\+/g, T_UP)}${G.br()}${C.reset}`);
   return lines.join("\n");
 }
 
@@ -558,7 +625,8 @@ class StreamRenderer {
     }
     // Reset state
     if (this.inCodeBlock) {
-      this._safeWrite(`${C.dim}${"─".repeat(40)}${C.reset}\n`);
+      const cols = getTerminalWidth();
+      this._safeWrite(`${C.dim}${G.bl()}${G.h().repeat(Math.min(cols - 1, 50))}${C.reset}\n`);
       this.inCodeBlock = false;
       this.codeBlockLang = "";
     }
@@ -570,41 +638,41 @@ class StreamRenderer {
     // Code block toggle
     if (line.trim().startsWith("```")) {
       if (this.inCodeBlock) {
-        this._safeWrite(`${C.dim}${"─".repeat(40)}${C.reset}\n`);
+        const bar = G.h().repeat(Math.min(cols - 1, 50));
+        this._safeWrite(`${C.dim}${G.bl()}${bar}${C.reset}\n`);
         this.inCodeBlock = false;
         this.codeBlockLang = "";
       } else {
         this.inCodeBlock = true;
         this.codeBlockLang = line.trim().substring(3).trim();
-        const label = this.codeBlockLang ? ` ${this.codeBlockLang} ` : "";
-        this._safeWrite(
-          `${C.dim}${"─".repeat(3)}${label}${"─".repeat(Math.max(0, 37 - label.length))}${C.reset}\n`,
-        );
+        const label = this.codeBlockLang ? ` ${this.codeBlockLang} ` : " code ";
+        const bar = G.h().repeat(Math.max(0, Math.min(cols - label.length - 2, 50)));
+        this._safeWrite(`${C.dim}${G.tl()}${label}${bar}${C.reset}\n`);
       }
       return;
     }
 
     if (this.inCodeBlock) {
-      this._safeWrite(`  ${highlightCode(line, this.codeBlockLang)}\n`);
+      this._safeWrite(`${C.dim}${G.v()}${C.reset} ${highlightCode(line, this.codeBlockLang)}\n`);
       return;
     }
 
     // Headers (check longer prefixes first)
     if (line.startsWith("###### ")) {
       this._safeWrite(
-        `${C.bold}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}\n`,
+        `${C.dim}${C.cyan}      ${stripHeadingMarkers(line.substring(7))}${C.reset}\n`,
       );
       return;
     }
     if (line.startsWith("##### ")) {
       this._safeWrite(
-        `${C.bold}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}\n`,
+        `${C.dim}${C.cyan}     ${stripHeadingMarkers(line.substring(6))}${C.reset}\n`,
       );
       return;
     }
     if (line.startsWith("#### ")) {
       this._safeWrite(
-        `${C.bold}${C.cyan}    ${stripHeadingMarkers(line.substring(5))}${C.reset}\n`,
+        `${C.dim}${C.bold}    ${stripHeadingMarkers(line.substring(5))}${C.reset}\n`,
       );
       return;
     }
@@ -616,14 +684,32 @@ class StreamRenderer {
     }
     if (line.startsWith("## ")) {
       this._safeWrite(
-        `${C.bold}${C.cyan}  ${stripHeadingMarkers(line.substring(3))}${C.reset}\n`,
+        `${C.bold}${C.primary}  ${stripHeadingMarkers(line.substring(3))}${C.reset}\n`,
       );
       return;
     }
     if (line.startsWith("# ")) {
+      const text = stripHeadingMarkers(line.substring(2));
+      const bar = G.h().repeat(Math.min(text.length + 2, cols - 2));
       this._safeWrite(
-        `${C.bold}${C.cyan}${stripHeadingMarkers(line.substring(2))}${C.reset}\n`,
+        `\n${C.bold}${C.primary}  ${text}${C.reset}\n${C.dim}  ${bar}${C.reset}\n`,
       );
+      return;
+    }
+
+    // Horizontal rule
+    if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      this._safeWrite(`${C.dim}${G.h().repeat(Math.min(cols, 50))}${C.reset}\n`);
+      return;
+    }
+
+    // Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      const indent = line.match(/^(\s*)/)[1];
+      const content = line.replace(/^\s*>\s?/, "");
+      const formatted = `${indent}${C.dim}${G.bq()}${C.reset} ${C.dim}${renderInline(content)}${C.reset}`;
+      const wrapped = wrapAnsi(formatted, cols, indent + "  ");
+      this._safeWrite(`${wrapped}\n`);
       return;
     }
 
@@ -659,6 +745,8 @@ class StreamRenderer {
 }
 
 module.exports = {
+  hasUnicode,
+  G,
   renderMarkdown,
   renderInline,
   stripHeadingMarkers,
