@@ -499,8 +499,21 @@ function runHeadlessTask(task) {
   function finishSuccess(getMessages) {
     const { sanitizeFinalAnswer } = require("../cli/format");
     const msgs = getMessages();
-    const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
-    const response = sanitizeFinalAnswer(getAssistantText(lastAssistant?.content));
+    // Walk backwards through assistant messages to find one with text content.
+    // When the model makes edits and verifies but its last turn produces only
+    // tool calls (read-back, lint), the headless runner would previously fail
+    // with "no final assistant response" even though the task was completed.
+    let response = "";
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === "assistant") {
+        const text = sanitizeFinalAnswer(getAssistantText(m.content));
+        if (text && text.trim().length > 0) {
+          response = text;
+          break;
+        }
+      }
+    }
     const streamedResponse = String(
       jsonModeState?.getStreamedText?.() || plainModeState?.getStreamedText?.() || "",
     ).trim();
@@ -512,6 +525,43 @@ function runHeadlessTask(task) {
       typeof finalResponse === "string" && finalResponse.trim().length > 0;
 
     if (!hasFinalResponse) {
+      // Check if any write/edit tool calls were made — indicates the task was
+      // actively worked on, even though the model produced no final summary.
+      const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+      let hadWrites = false;
+      for (const m of msgs) {
+        if (m.role !== "assistant") continue;
+        const tcs = m.tool_calls || (Array.isArray(m.content) ? m.content.filter(b => b && b.type === "tool_use") : []);
+        for (const tc of tcs) {
+          const name = tc.function?.name || tc.name || "";
+          if (writeTools.has(name)) { hadWrites = true; break; }
+        }
+        if (hadWrites) break;
+      }
+
+      if (hadWrites) {
+        const warnMsg = "Headless run: files were modified but no final summary was produced. Exiting cleanly (writes detected).";
+        if (!jsonModeState) {
+          if (plainModeState) plainModeState.restore();
+          console.error(warnMsg);
+          process.exit(0);
+          return;
+        }
+        const { getSessionCosts } = require("../cli/costs");
+        const costs = getSessionCosts();
+        jsonModeState.restore();
+        emitJsonLine({
+          type: "result",
+          success: true,
+          warning: warnMsg,
+          response: "(files modified, no text summary)",
+          usage: { input: costs.totalInput || 0, output: costs.totalOutput || 0, cacheRead: costs.totalCacheRead || 0 },
+          toolCalls: countToolCalls(msgs),
+        });
+        process.exit(0);
+        return;
+      }
+
       const errorMessage =
         "Headless run ended without a final assistant response. Stopping to avoid a false success.";
 
