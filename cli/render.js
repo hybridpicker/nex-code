@@ -744,9 +744,136 @@ class StreamRenderer {
   }
 }
 
+
+/**
+ * Render a directory tree with colored entries.
+ * @param {string} rootPath - absolute path to root
+ * @param {object} options
+ * @param {number} [options.maxDepth=4] - max directory depth
+ * @param {number} [options.maxFiles=60] - max total entries
+ * @param {Set<string>} [options.highlight] - files to highlight (e.g. modified)
+ * @param {Set<string>} [options.dim] - files to dim (e.g. already scanned)
+ * @param {boolean} [options.icons=true] - show file-type icons
+ * @returns {string}
+ */
+function renderTree(rootPath, options = {}) {
+  const { maxDepth = 4, maxFiles = 60, highlight = new Set(), dim = new Set(), icons = true } = options;
+  const fs = require("fs");
+  const path = require("path");
+  
+  // Patterns to skip
+  const SKIP = new Set([
+    ".git", "node_modules", ".next", "__pycache__", ".venv", "venv",
+    ".cache", "dist", ".nex", "coverage", ".DS_Store", "target",
+  ]);
+  
+  // Icon + color by extension
+  function fileIcon(name, isDir) {
+    if (!icons) return "";
+    if (isDir) return "📁 ";
+    const ext = path.extname(name).toLowerCase();
+    const map = {
+      ".js": "📜 ", ".ts": "🔷 ", ".jsx": "⚛ ", ".tsx": "🔶 ",
+      ".py": "🐍 ", ".rs": "🦀 ", ".go": "🔵 ",
+      ".css": "🎨 ", ".scss": "🎨 ", ".html": "🌐 ",
+      ".md": "📝 ", ".json": "📋 ", ".toml": "⚙ ", ".yml": "⚙ ", ".yaml": "⚙ ",
+      ".sh": "⚡ ", ".env": "🔒 ", ".svg": "🖼 ",
+      ".test.js": "🧪 ", ".test.ts": "🧪 ", ".spec.js": "🧪 ",
+    };
+    return map[ext] || map[name] || "📄 ";
+  }
+  
+  function colorByExt(name, isDir) {
+    if (isDir) return C.cyan;
+    const ext = path.extname(name).toLowerCase();
+    if (/\.(js|ts|jsx|tsx)$/.test(ext)) return C.yellow;
+    if (/\.(py|rs|go|java|rb)$/.test(ext)) return C.green;
+    if (/\.(css|scss|less)$/.test(ext)) return C.magenta;
+    if (/\.(html|xml|svg)$/.test(ext)) return C.primary;
+    if (/\.(md|txt|rst)$/.test(ext)) return C.white;
+    if (/\.(json|toml|yml|yaml)$/.test(ext)) return C.subtle;
+    if (/\.(sh|bash|zsh)$/.test(ext)) return C.success;
+    return C.reset;
+  }
+  
+  const lines = [];
+  let count = 0;
+  const h = hasUnicode();
+  const BRANCH = h ? "├── " : "|-- ";
+  const LAST = h ? "└── " : "`-- ";
+  const PIPE = h ? "│   " : "|   ";
+  const SPACE = "    ";
+  
+  const relRoot = path.relative(process.cwd(), rootPath) || ".";
+  lines.push(`${C.bold}${C.cyan}${relRoot}${C.reset}`);
+  
+  function walk(dir, depth, prefix) {
+    if (depth > maxDepth || count >= maxFiles) return;
+    
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      lines.push(`${prefix}${BRANCH}${C.dim}(unreadable)${C.reset}`);
+      return;
+    }
+    
+    // Sort: dirs first, then alphabetically
+    entries.sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    
+    // Filter skip patterns
+    entries = entries.filter(e => !SKIP.has(e.name) && !e.name.startsWith("."));
+    
+    // Limit entries per directory
+    const MAX_PER_DIR = 20;
+    const overflow = entries.length - MAX_PER_DIR;
+    if (overflow > 0) entries = entries.slice(0, MAX_PER_DIR);
+    
+    for (let i = 0; i < entries.length; i++) {
+      if (count >= maxFiles) {
+        lines.push(`${prefix}${BRANCH}${C.dim}… +${overflow} more${C.reset}`);
+        return;
+      }
+      
+      const entry = entries[i];
+      const isLast = i === entries.length - 1 && overflow <= 0;
+      const conn = isLast ? LAST : BRANCH;
+      const nextPrefix = prefix + (isLast ? SPACE : PIPE);
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(process.cwd(), fullPath);
+      
+      let style = C.reset;
+      if (highlight.has(relPath)) style = C.yellow;
+      else if (dim.has(relPath)) style = C.dim;
+      else style = colorByExt(entry.name, entry.isDirectory());
+      
+      const icon = fileIcon(entry.name, entry.isDirectory());
+      const name = entry.isDirectory() ? `${C.bold}${entry.name}/${C.reset}` : entry.name;
+      
+      lines.push(`${prefix}${conn}${style}${icon}${name}${C.reset}`);
+      count++;
+      
+      if (entry.isDirectory()) {
+        walk(fullPath, depth + 1, nextPrefix);
+      }
+    }
+    
+    if (overflow > 0) {
+      lines.push(`${prefix}${BRANCH}${C.dim}… +${overflow} more${C.reset}`);
+    }
+  }
+  
+  walk(rootPath, 1, "");
+  return lines.join("\n");
+}
+
 module.exports = {
   hasUnicode,
   G,
+  renderTree,
   renderMarkdown,
   renderInline,
   stripHeadingMarkers,

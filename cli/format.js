@@ -1175,10 +1175,51 @@ function formatMilestone(
   let line = `\n${T.success}◆${C.reset} ${C.bold}${phaseName}${C.reset}`;
   line += ` ${T.subtle}━━${T.reset} ${C.dim}${timeStr}`;
   if (filesModified.size > 0)
-    line += ` · ${filesModified.size} file${filesModified.size !== 1 ? "s" : ""} modified`;
+    line += ` · ${T.warning}${filesModified.size} file${filesModified.size !== 1 ? "s" : ""} modified${C.reset}`;
   if (filesRead.size > 0)
-    line += ` · ${filesRead.size} scanned`;
+    line += ` · ${T.subtle}${filesRead.size} scanned${C.reset}`;
   line += C.reset;
+
+  // Compact file tree — show changed files with brief paths
+  const MAX_FILES = 8;
+  const changedFiles = [...filesModified].slice(0, MAX_FILES);
+  const readFiles = [...filesRead].filter(f => !filesModified.has(f)).slice(0, Math.max(0, MAX_FILES - changedFiles.length));
+  
+  if (changedFiles.length > 0 || readFiles.length > 0) {
+    const path = require("path");
+    const h = (() => { try { return require("./render").hasUnicode(); } catch { return true; } })();
+    const BRANCH = h ? "├─ " : "|-- ";
+    const LAST = h ? "└─ " : "`-- ";
+    const PIPE = h ? "│  " : "|   ";
+    const SPACE = "   ";
+    
+    const fileLines = [];
+    let idx = 0;
+    for (const f of changedFiles) {
+      const short = path.relative(process.cwd(), f) || f;
+      const conn = idx === 0 && readFiles.length === 0 && changedFiles.length === 1 ? SPACE : (idx === changedFiles.length - 1 && readFiles.length === 0 ? LAST : BRANCH);
+      fileLines.push(`${T.subtle}  ${conn}${T.reset}${T.warning}${short}${T.reset}`);
+      idx++;
+    }
+    for (let i = 0; i < readFiles.length; i++) {
+      const f = readFiles[i];
+      const short = path.relative(process.cwd(), f) || f;
+      const conn = i === readFiles.length - 1 ? LAST : BRANCH;
+      fileLines.push(`${T.subtle}  ${conn}${T.reset}${T.subtle}${short}${C.reset}`);
+    }
+    
+    const totalMod = filesModified.size;
+    const totalRead = filesRead.size;
+    if (totalMod > MAX_FILES || (changedFiles.length + readFiles.length) < totalMod + totalRead) {
+      const remaining = (totalMod - changedFiles.length) + (totalRead - readFiles.length - (filesRead.size - readFiles.length));
+      fileLines.push(`${T.subtle}  ${LAST}${T.reset}${C.dim}… +${Math.max(0, totalMod + totalRead - changedFiles.length - readFiles.length)} more${C.reset}`);
+    }
+    
+    if (fileLines.length > 0) {
+      line += "\n" + fileLines.join("\n");
+    }
+  }
+  
   return line;
 }
 
