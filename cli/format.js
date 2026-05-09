@@ -4,9 +4,23 @@
  */
 
 const { T } = require("./theme");
+
+// Terminal Unicode capability detection (mirrors render.js logic, avoids circular dep)
+let _uniOk = null;
+function _hasUni() {
+  if (_uniOk !== null) return _uniOk;
+  const lang = (process.env.LANG || process.env.LC_ALL || process.env.LC_CTYPE || "").toLowerCase();
+  if (lang.includes("utf-8") || lang.includes("utf8")) { _uniOk = true; }
+  else if (process.stdout.isTTY && process.stdout.columns > 0) { _uniOk = true; }
+  else { _uniOk = process.env.TERM ? !/^(vt100|vt220|ansi|xterm)$/.test(process.env.TERM) : true; }
+  return _uniOk;
+}
 const C = T;
 const path = require("path");
-const SECTION_DOT_FRAMES = ["⏺", "◉", "◎", "◉"];
+const SECTION_DOT_FRAMES = (() => {
+  if (_hasUni()) return ["◆", "◇", "◎", "◇"];
+  return ["#", "o", "@", "o"];
+})();
 
 // Last 1-2 path segments for compact display: "src/utils/helper.js"
 function _shortPath(p) {
@@ -432,14 +446,14 @@ function _buildFlowTitle(tools) {
  * Falls back to "Step N" if no tools or no mapping found.
  */
 function _dot(fnName, isError = false, frame = null) {
-  if (isError) return `${T.error}⏺${T.reset}`;
+  if (isError) return `${T.error}${_hasUni() ? "✖" : "x"}${T.reset}`;
   const col = TOOL_DOT_COLOR[fnName] || T.tool_default;
-  if (frame === "blink") return `${col}\x1b[5m⏺\x1b[25m${T.reset}`;
+  if (frame === "blink") return `${col}\x1b[5m${_hasUni() ? "●" : "*"}\x1b[25m${T.reset}`;
   const char = typeof frame === "number"
     ? SECTION_DOT_FRAMES[frame % SECTION_DOT_FRAMES.length]
     : frame !== null
       ? frame
-      : "⏺";
+      : _hasUni() ? "●" : "*";
   return `${col}${char}${T.reset}`;
 }
 
@@ -447,7 +461,7 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
   const tools = (prepared || []).filter((p) => p && p.canExecute !== false);
 
   if (tools.length === 0) {
-    return `${_dot("", isError, frame)} Step ${stepNum}`;
+    return `${_dot("", isError, frame)}  Step ${stepNum}`;
   }
 
   if (tools.length === 1) {
@@ -457,7 +471,7 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
       ...a,
       path: a._originalPath || a.path,
     });
-    return `${_dot(t.fnName, isError, frame)} ${formatStageBadge(t.fnName)} ${C.bold}${target}${C.reset}`;
+    return `${_dot(t.fnName, isError, frame)} ${formatStageBadge(t.fnName)}  ${C.bold}${target}${C.reset}`;
   }
 
   // Multi-tool: show the semantic flow instead of a plain tool list
@@ -468,8 +482,8 @@ function formatSectionHeader(prepared, stepNum, isError = false, frame = null) {
     .map((t) => _compactPrimaryArg(t.fnName, t.args || {}))
     .filter(Boolean)
     .join(`${C.dim} · ${C.reset}`);
-  const focusStr = focus ? ` ${T.subtle}·${T.reset} ${C.dim}${focus}${C.reset}` : "";
-  return `${_dot(firstFn, isError, frame)} ${formatStageBadge(firstFn)} ${C.bold}${title}${C.reset}${focusStr}`;
+  const focusStr = focus ? `  ${T.subtle}·${T.reset} ${C.dim}${focus}${C.reset}` : "";
+  return `${_dot(firstFn, isError, frame)} ${formatStageBadge(firstFn)}  ${C.bold}${title}${C.reset}${focusStr}`;
 }
 
 function formatToolCall(name, args) {
@@ -484,7 +498,7 @@ function formatToolCall(name, args) {
       break;
     case "bash":
     case "ssh_exec":
-      primary = (args.command || "").substring(0, 44);
+      primary = (args.command || "").substring(0, 52);
       break;
     case "grep":
     case "search_files":
@@ -505,7 +519,7 @@ function formatToolCall(name, args) {
       primary = JSON.stringify(args).substring(0, 80);
   }
   const label = TOOL_LABELS[name] || name.replace(/_/g, " ");
-  const argStr = primary ? `(${C.dim}${primary}${C.reset})` : "";
+  const argStr = primary ? ` ${C.dim}${primary}${C.reset}` : "";
   const header = `${_dot(name)} ${C.bold}${label}${C.reset}${argStr}`;
 
   if (name === "bash" || name === "ssh_exec") {
@@ -548,10 +562,8 @@ function formatResult(text, maxLines = 8) {
   const lines = text.split("\n");
   const shown = lines.slice(0, maxLines);
   const more = lines.length - maxLines;
-  const prefix0 = `${T.muted}  ⎿  ${T.reset}`;
-  const prefixN = `     `;
   let out = shown
-    .map((l, i) => `${i === 0 ? prefix0 : prefixN}${T.success}${l}${T.reset}`)
+    .map((l) => `${T.subtle}  ⎿${T.reset} ${l}`)
     .join("\n");
   if (more > 0) out += `\n${T.subtle}     … +${more} lines${T.reset}`;
   return out;
