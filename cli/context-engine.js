@@ -954,10 +954,14 @@ function forceCompress(messages, tools, nuclear = false) {
   let oldMessages = messages.slice(startIdx, recentStart);
   let recentMessages = messages.slice(recentStart);
 
-  // Aggressive compression on all old messages
-  let compressed = oldMessages.map((msg) => compressMessage(msg, "aggressive"));
+  // DeepSeek TUI inspired: prefer dropping old messages over mutating them.
+  // Mutating message content breaks prefix caching on Ollama Cloud and other
+  // cache-aware providers — each mutation invalidates ~90% cost discount.
+  // Instead, keep messages as-is and rely on the drop loop to reduce tokens.
+  // Only truncate if dropping isn't enough (nuclear mode or extreme size).
+  let compressed = oldMessages; // no per-message mutation — preserve cache
 
-  // Nuclear: also compress recent messages
+  // Nuclear: compress recent messages aggressively (last resort only)
   if (nuclear) {
     recentMessages = recentMessages.map((msg) =>
       compressMessage(msg, "aggressive"),
@@ -971,6 +975,17 @@ function forceCompress(messages, tools, nuclear = false) {
   while (compressed.length > 0 && tokens > targetMax) {
     const removed = compressed.shift();
     tokens -= estimateMessageTokens(removed);
+  }
+
+  // If dropping wasn't enough and this is non-nuclear, compress remaining old messages
+  if (!nuclear && tokens > targetMax && compressed.length > 0) {
+    compressed = compressed.map((msg) => compressMessage(msg, "aggressive"));
+    result = buildResult(system, compressed, recentMessages);
+    tokens = estimateMessagesTokens(result);
+    while (compressed.length > 0 && tokens > targetMax) {
+      const removed = compressed.shift();
+      tokens -= estimateMessageTokens(removed);
+    }
   }
 
   // Nuclear: if still over budget, keep only the last user message

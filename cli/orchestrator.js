@@ -21,7 +21,7 @@ const { getModelBriefing } = require("./model-profiles");
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_MAX_PARALLEL = parseInt(process.env.NEX_MAX_PARALLEL || "4", 10);
+const DEFAULT_MAX_PARALLEL = parseInt(process.env.NEX_MAX_PARALLEL || "8", 10);
 const DEFAULT_MAX_SUBTASKS = parseInt(process.env.NEX_MAX_SUBTASKS || "8", 10);
 const DEFAULT_WORKER_MODEL = "devstral-2:123b";
 const DEFAULT_ORCHESTRATOR_MODEL = "kimi-k2.5";
@@ -331,13 +331,65 @@ function extractJSON(text) {
  * @param {number} [opts.maxSubTasks=4] - Maximum number of sub-tasks to generate
  * @returns {Promise<Array<{ id: string, task: string, scope: string[], estimatedCalls: number, priority: number }>>}
  */
+// ─── PREVIEW step (DeepSeek TUI inspired) ──────────────────────────────────
+// Before decomposition, quickly scan the project structure so the decomposer
+// can make informed decisions about task boundaries and dependencies.
+// Uses synchronous file I/O for speed — O(1-2) stat calls, no LLM involved.
+
+function _buildPreviewContext() {
+  const fs = require("fs");
+  const path = require("path");
+  const lines = [];
+
+  try {
+    const cwd = process.cwd();
+    // Top-level directory structure
+    const entries = fs.readdirSync(cwd, { withFileTypes: true });
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    const files = entries.filter((e) => e.isFile()).map((e) => e.name);
+    lines.push(`Project root: ${cwd}`);
+    lines.push(`Top-level dirs: ${dirs.join(", ") || "(none)"}`);
+    lines.push(`Top-level files: ${files.join(", ") || "(none)"}`);
+
+    // package.json for script/tool hints
+    const pkgPath = path.join(cwd, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      const scripts = Object.keys(pkg.scripts || {}).slice(0, 6);
+      if (scripts.length) lines.push(`Scripts: ${scripts.join(", ")}`);
+      const deps = Object.keys(pkg.dependencies || {}).slice(0, 8);
+      if (deps.length) lines.push(`Dependencies: ${deps.join(", ")}`);
+    }
+
+    // Language hints from key files
+    if (files.some((f) => /\.tsx?$/.test(f)))
+      lines.push("Language: TypeScript");
+    else if (files.some((f) => /\.jsx?$/.test(f)))
+      lines.push("Language: JavaScript");
+    if (files.some((f) => /\.py$/.test(f))) lines.push("Language: Python");
+    if (dirs.includes("tests") || dirs.includes("test"))
+      lines.push("Test directory: found");
+  } catch {
+    /* non-fatal — preview is a hint only */
+  }
+
+  return lines.length > 1
+    ? `\n## Project Structure Preview\n${lines.join("\n")}\n`
+    : "";
+}
+
 async function decompose(prompt, model, opts = {}) {
   const maxSubTasks = opts.maxSubTasks || DEFAULT_MAX_SUBTASKS;
+
+  const previewContext = _buildPreviewContext();
+  const enrichedPrompt = previewContext
+    ? `${prompt}\n\n${previewContext}\nUse the project structure above to scope sub-tasks to real files and directories. Do not invent paths or files that do not exist.`
+    : prompt;
 
   const systemContent = DECOMPOSE_PROMPT.replace(
     "{maxSubTasks}",
     String(maxSubTasks),
-  ).replace("{prompt}", prompt);
+  ).replace("{prompt}", enrichedPrompt);
 
   const messages = [
     { role: "system", content: systemContent },
