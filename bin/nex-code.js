@@ -350,6 +350,7 @@ function countToolCalls(messages) {
 
 function createJsonModeHooks() {
   process.env.NEX_SERVER = "1";
+  let streamedText = "";
 
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalConsole = {
@@ -379,6 +380,7 @@ function createJsonModeHooks() {
   return {
     hooks: {
       onToken(text) {
+        streamedText += text || "";
         emitJsonLine({ type: "token", text }, originalStdoutWrite);
       },
       onThinkingToken() {
@@ -400,6 +402,9 @@ function createJsonModeHooks() {
         }, originalStdoutWrite);
       },
     },
+    getStreamedText() {
+      return streamedText;
+    },
     restore() {
       process.stdout.write = passthroughStdout;
       process.stderr.write = passthroughStderr;
@@ -413,6 +418,7 @@ function createJsonModeHooks() {
 
 function createPlainHeadlessHooks() {
   process.env.NEX_SERVER = "1";
+  let streamedText = "";
 
   const originalConsole = {
     log: console.log,
@@ -439,10 +445,15 @@ function createPlainHeadlessHooks() {
 
   return {
     hooks: {
-      onToken() {},
+      onToken(text) {
+        streamedText += text || "";
+      },
       onThinkingToken() {},
       onToolStart() {},
       onToolEnd() {},
+    },
+    getStreamedText() {
+      return streamedText;
     },
     restore() {
       process.stdout.write = passthroughStdout;
@@ -490,11 +501,49 @@ function runHeadlessTask(task) {
     const msgs = getMessages();
     const lastAssistant = msgs.filter((m) => m.role === "assistant").pop();
     const response = sanitizeFinalAnswer(getAssistantText(lastAssistant?.content));
+    const streamedResponse = String(
+      jsonModeState?.getStreamedText?.() || plainModeState?.getStreamedText?.() || "",
+    ).trim();
+    const finalResponse =
+      typeof response === "string" && response.trim().length > 0
+        ? response
+        : streamedResponse;
+    const hasFinalResponse =
+      typeof finalResponse === "string" && finalResponse.trim().length > 0;
+
+    if (!hasFinalResponse) {
+      const errorMessage =
+        "Headless run ended without a final assistant response. Stopping to avoid a false success.";
+
+      if (!jsonModeState) {
+        if (plainModeState) plainModeState.restore();
+        console.error(errorMessage);
+        process.exit(1);
+        return;
+      }
+
+      const { getSessionCosts } = require("../cli/costs");
+      const costs = getSessionCosts();
+      jsonModeState.restore();
+      emitJsonLine({
+        type: "error",
+        success: false,
+        error: errorMessage,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(1);
+      return;
+    }
 
     if (!jsonModeState) {
       if (plainModeState) {
         plainModeState.restore();
-        if (response) process.stdout.write(response + "\n");
+        if (finalResponse) process.stdout.write(finalResponse + "\n");
       }
       process.exit(0);
       return;
@@ -506,7 +555,7 @@ function runHeadlessTask(task) {
     emitJsonLine({
       type: "done",
       success: true,
-      response,
+      response: finalResponse,
       usage: {
         input: costs.totalInput || 0,
         output: costs.totalOutput || 0,
