@@ -243,7 +243,10 @@ function scenarioFFixedNginxConfig() {
 function detectScenario(promptText) {
   const text = String(promptText || "");
   if (/malformed tool call/i.test(text)) return "malformed";
+  if (/Scenario I|bounded backlog same-file locate/i.test(text)) return "i";
   if (/Scenario G|merge conflicts/i.test(text)) return "g";
+  if (/Scenario H|bounded backlog missing prompt example/i.test(text))
+    return "h";
   if (/Scenario F|dummy systemctl|sandboxed nginx config typo/i.test(text))
     return "f";
   if (/Scenario E|legacy callback processor|nested callback/i.test(text))
@@ -662,10 +665,270 @@ function buildDeterministicResponse(messages) {
     };
   }
 
+  if (stableScenario === "h") {
+    const userText = allUserText(messages);
+    const correctionRequested = /previous plan named implementation files that do not exist/i.test(
+      userText,
+    );
+    const stepFromMessages = hasToolResult(messages, "h5")
+      ? 5
+      : hasToolResult(messages, "h4")
+        ? 4
+        : hasToolResult(messages, "h3")
+          ? 3
+          : hasToolResult(messages, "h2")
+            ? 2
+            : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+
+    if (!correctionRequested && state.lastStep < 1) {
+      return {
+        content:
+          "Selected improvement: add an accessible label to the notation toolbar\n" +
+          "Selection rationale: current UI evidence shows active editing controls need clearer labels\n" +
+          "Files: components/NotationToolbar.tsx\n" +
+          "Implementation outline: update one existing button label\n" +
+          "Verification plan: npm test && npm run build\n" +
+          "Browser/UI applicability: not required for this deterministic harness scenario",
+        tool_calls: [],
+      };
+    }
+
+    if (correctionRequested && state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content:
+          "Selected improvement: add an accessible label to the command center insert action\n" +
+          "Selection rationale: components/CommandCenter.tsx is existing UI evidence and the active editing action needs clearer assistive text\n" +
+          "Files: components/CommandCenter.tsx\n" +
+          "Implementation outline: read the current button line, then add one aria-label without changing behavior\n" +
+          "Verification plan: npm test && npm run build\n" +
+          "Browser/UI applicability: not required for this deterministic harness scenario",
+        tool_calls: [],
+      };
+    }
+
+    if (state.lastStep < 2) {
+      state.lastStep = 2;
+      return {
+        content: "Reading the corrected implementation file.",
+        tool_calls: [
+          toolCall(
+            "read_file",
+            { path: "components/CommandCenter.tsx", line_start: 1, line_end: 80 },
+            "h2",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Applying the scoped accessibility label.",
+        tool_calls: [
+          toolCall(
+            "edit_file",
+            {
+              path: "components/CommandCenter.tsx",
+              old_text:
+                '<button className="command-action">Insert note</button>',
+              new_text:
+                '<button className="command-action" aria-label="Insert note">Insert note</button>',
+            },
+            "h3",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 4) {
+      state.lastStep = 4;
+      return {
+        content: "Verifying the scoped UI change.",
+        tool_calls: [
+          toolCall("bash", { command: "npm test && npm run build" }, "h4"),
+        ],
+      };
+    }
+
+    if (state.lastStep < 5) {
+      state.lastStep = 5;
+      return {
+        content: "Staging, committing, pushing, and checking final status.",
+        tool_calls: [
+          toolCall(
+            "bash",
+            {
+              command:
+                'git status --short --branch && git add components/CommandCenter.tsx && git commit -m "fix: clarify command center action label" && git push origin main && git status --short --branch',
+            },
+            "h5",
+          ),
+        ],
+      };
+    }
+
+    return {
+      content:
+        "Corrected the missing prompt example path, implemented the command center accessibility label, verified with npm test and npm run build, committed the scoped change, pushed main to origin, and confirmed the worktree is clean.",
+      tool_calls: [],
+    };
+  }
+
+  if (stableScenario === "i") {
+    const stepFromMessages = hasToolResult(messages, "i8")
+      ? 8
+      : hasToolResult(messages, "i7")
+        ? 7
+        : hasToolResult(messages, "i6")
+          ? 6
+          : hasToolResult(messages, "i5")
+            ? 5
+            : hasToolResult(messages, "i4")
+              ? 4
+              : hasToolResult(messages, "i3")
+                ? 3
+                : hasToolResult(messages, "i2")
+                  ? 2
+                  : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content:
+          "Selected improvement: add an accessible label to the command center apply action\n" +
+          "Selection rationale: components/CommandCenter.tsx is an existing active editing UI and the Apply action needs clearer assistive text\n" +
+          "Files: components/CommandCenter.tsx\n" +
+          "Implementation outline: read the planned implementation file, locate the Apply button if the first range misses it, then add one aria-label without changing behavior\n" +
+          "Verification plan: npm test && npm run build\n" +
+          "Browser/UI applicability: not required for this deterministic harness scenario",
+        tool_calls: [],
+      };
+    }
+
+    if (state.lastStep < 2) {
+      state.lastStep = 2;
+      return {
+        content: "Reading the accepted implementation file.",
+        tool_calls: [
+          toolCall(
+            "read_file",
+            { path: "components/CommandCenter.tsx", line_start: 90, line_end: 150 },
+            "i2",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 3) {
+      state.lastStep = 3;
+      return {
+        content: "Checking labels inside the same planned file.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { path: "components/CommandCenter.tsx", pattern: "Apply" },
+            "i3",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 4) {
+      state.lastStep = 4;
+      return {
+        content: "Trying the more specific Apply label in the same file.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { path: "components/CommandCenter.tsx", pattern: "Apply changes" },
+            "i4",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 5) {
+      state.lastStep = 5;
+      return {
+        content: "Locating the Apply action class inside the same planned file.",
+        tool_calls: [
+          toolCall(
+            "grep",
+            { path: "components/CommandCenter.tsx", pattern: "apply-action" },
+            "i5",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 6) {
+      state.lastStep = 6;
+      return {
+        content: "Reading the located Apply button range.",
+        tool_calls: [
+          toolCall(
+            "read_file",
+            {
+              path: "components/CommandCenter.tsx",
+              line_start: 200,
+              line_end: 230,
+            },
+            "i6",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 7) {
+      state.lastStep = 7;
+      return {
+        content: "Applying the scoped accessibility label.",
+        tool_calls: [
+          toolCall(
+            "edit_file",
+            {
+              path: "components/CommandCenter.tsx",
+              old_text: '<button className="apply-action">Apply</button>',
+              new_text:
+                '<button className="apply-action" aria-label="Apply changes">Apply</button>',
+            },
+            "i7",
+          ),
+        ],
+      };
+    }
+
+    if (state.lastStep < 8) {
+      state.lastStep = 8;
+      return {
+        content: "Verifying, committing, pushing, and checking final status.",
+        tool_calls: [
+          toolCall(
+            "bash",
+            {
+              command:
+                'npm test && npm run build && git status --short --branch && git add components/CommandCenter.tsx && git commit -m "fix: clarify command center apply label" && git push origin main && git status --short --branch',
+            },
+            "i8",
+          ),
+        ],
+      };
+    }
+
+    return {
+      content:
+        "Located the Apply button with a same-file search after the initial range missed it, implemented the command center accessibility label, verified with npm test and npm run build, committed the scoped change, pushed main to origin, and confirmed the worktree is clean.",
+      tool_calls: [],
+    };
+  }
+
   // Fallback: no scenario matched — return a benign final answer.
   return {
     content:
-      "No mock scenario matched this prompt. Set a Scenario A–G prompt (or enable malformed mode) to run deterministic E2E flows.",
+      "No mock scenario matched this prompt. Set a Scenario A–I prompt (or enable malformed mode) to run deterministic E2E flows.",
     tool_calls: [],
   };
 }
@@ -693,10 +956,12 @@ class MockProvider extends BaseProvider {
   }
 
   async chat(messages, _tools, _options = {}) {
+    if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
     return buildDeterministicResponse(messages);
   }
 
   async stream(messages, _tools, options = {}) {
+    if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
     const onToken =
       typeof options.onToken === "function" ? options.onToken : () => {};
     const res = buildDeterministicResponse(messages);

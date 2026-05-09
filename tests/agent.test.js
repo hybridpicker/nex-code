@@ -3495,11 +3495,11 @@ describe("agent.js", () => {
       getAutoConfirm.mockReturnValue(false);
     });
 
-    it("exits after 8 consecutive read-only tool iterations in headless mode", async () => {
+    it("injects stagnation nudges before exiting in headless mode", async () => {
       clearConversation();
       getAutoConfirm.mockReturnValue(true);
 
-      // Set up 9 consecutive read-only tool iterations (8 triggers exit)
+      // Set up 9 read-only iterations → triggers first nudge (soft warn)
       for (let n = 0; n < 9; n++) {
         mockStream("reading", [
           {
@@ -3512,7 +3512,20 @@ describe("agent.js", () => {
         ]);
         executeTool.mockResolvedValueOnce(`content of file${n}`);
       }
-      // This should NOT be reached
+      // After first nudge, model tries another 9 read-only → second nudge
+      for (let n = 0; n < 20; n++) {
+        mockStream("reading", [
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `/more${n}.js` },
+            },
+            id: `d${n}`,
+          },
+        ]);
+        executeTool.mockResolvedValueOnce(`content`);
+      }
+      // This should NOT be reached — exit after 2nd nudge exhausted
       mockStream("SHOULD NOT REACH");
 
       await processInput("Investigate the codebase");
@@ -3524,6 +3537,14 @@ describe("agent.js", () => {
           m.content.includes("SHOULD NOT REACH"),
       );
       expect(hasUnreached).toBe(false);
+
+      // Verify nudge messages were injected
+      const nudgeMessages = msgs.filter(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("investigating without making changes"),
+      );
+      expect(nudgeMessages.length).toBeGreaterThanOrEqual(1);
     });
 
     it("resets stagnation counter when a write tool is used", async () => {
@@ -3641,7 +3662,7 @@ describe("agent.js", () => {
             ),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("exits cleanly in headless verify phase after verification evidence and a substantive summary", async () => {
       clearConversation();
@@ -3691,7 +3712,7 @@ describe("agent.js", () => {
             m.content.includes("Verification is incomplete"),
         ),
       ).toBe(false);
-    });
+    }, 15000);
 
     it("continues from headless implement summary into verification", async () => {
       clearConversation();
@@ -4324,6 +4345,534 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
+    it("allows targeted implementation reads for prompt-named planned files", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-implementation-read";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.mkdirSync(`${fixtureDir}/docs`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/NotationToolbar.js`,
+        "export function renderNotationToolbar() { return '<button>Note</button>'; }\n",
+      );
+      fs.writeFileSync(`${fixtureDir}/docs/keyboard-shortcuts.md`, "Note: N\n");
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValue("File content");
+
+      try {
+        callStream
+          .mockResolvedValueOnce({
+            content:
+              "Selected improvement: add toolbar aria label\n" +
+              "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+              "Files: components/NotationToolbar.js\n" +
+              "Implementation outline: read the toolbar lines, then add one aria label\n" +
+              "Verification plan: npm test\n" +
+              "Browser/UI applicability: required",
+            tool_calls: [],
+          })
+          .mockResolvedValueOnce({
+            content: "Reading the planned implementation file.",
+            tool_calls: [
+              {
+                id: "read-toolbar",
+                function: {
+                  name: "read_file",
+                  arguments: {
+                    path: "components/NotationToolbar.js",
+                    line_start: 1,
+                    line_end: 40,
+                  },
+                },
+              },
+            ],
+          })
+          .mockResolvedValue({
+            content: "Implementation stalled before edits.",
+            tool_calls: [],
+          });
+
+        await processInput(
+          "Automation: active editing workflow improvement\n" +
+            "Work from main only. At the start, run git status. " +
+            "Prefer components/NotationToolbar.js. " +
+            "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+            "Pick at most one tightly scoped improvement.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+
+        const plannedFileReads = executeTool.mock.calls.filter(
+          ([name, args]) =>
+            name === "read_file" &&
+            JSON.stringify(args || {}).includes("components/NotationToolbar.js"),
+        );
+        expect(plannedFileReads.length).toBeGreaterThanOrEqual(2);
+        expect(JSON.stringify(plannedFileReads.at(-1)?.[1] || {})).toContain(
+          "line_start",
+        );
+        expect(
+          getConversationMessages().some(
+            (m) =>
+              m.role === "tool" &&
+              typeof m.content === "string" &&
+              m.content.includes("Do not re-read backlog files"),
+          ),
+        ).toBe(false);
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    });
+
+    it("stops when bounded backlog implementation ignores edit-only blocks", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValue("File content");
+
+      const blockedReadCall = {
+        content: "Checking the implementation file again.",
+        tool_calls: [
+          {
+            id: "blocked-read",
+            function: {
+              name: "read_file",
+              arguments: {
+                path: "components/NotationToolbar.js",
+                line_start: 1,
+                line_end: 40,
+              },
+            },
+          },
+        ],
+      };
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.js\n" +
+            "Implementation outline: read the toolbar lines, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  line_start: 1,
+                  line_end: 40,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue(blockedReadCall);
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.js. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      const messages = getConversationMessages();
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("next response must contain exactly one edit_file"),
+        ),
+      ).toBe(true);
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file was already in context") &&
+            m.content.includes("instead of editing"),
+        ),
+      ).toBe(true);
+    }, 15000);
+
+    it("allows narrow same-file search after initial bounded backlog read", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Command center file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("Lines 90-150 without target")
+        .mockResolvedValueOnce("212:  <button>Apply</button>")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add command center apply aria label\n" +
+            "Selection rationale: components/CommandCenter.tsx is an existing active editing UI\n" +
+            "Files: components/CommandCenter.tsx\n" +
+            "Implementation outline: read the command center lines, locate Apply if needed, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-command-center",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/CommandCenter.tsx",
+                  line_start: 90,
+                  line_end: 150,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Locating the Apply button within the same planned file.",
+          tool_calls: [
+            {
+              id: "grep-command-center",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/CommandCenter.tsx",
+                  pattern: "Apply",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/CommandCenter.tsx. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "grep",
+        expect.objectContaining({
+          path: "components/CommandCenter.tsx",
+          pattern: "Apply",
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
+    });
+
+    it("allows targeted read after repeated same-file grep hits", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("Lines 204-264 without target")
+        .mockResolvedValueOnce("260:  <ToolBtn title={t('toolbar.undo')} />")
+        .mockResolvedValueOnce("458:  onInsertRest={onInsertRest}")
+        .mockResolvedValueOnce("458:  onInsertRest={onInsertRest}")
+        .mockResolvedValueOnce("Lines 260-340 without target")
+        .mockResolvedValueOnce("Lines 340-420 without target")
+        .mockResolvedValueOnce("Lines 420-500 with onInsertRest")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar insert rest label\n" +
+            "Selection rationale: components/NotationToolbar.tsx is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: read the toolbar range, locate Insert Rest if needed, then make one label edit\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 204,
+                  line_end: 264,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Checking same-file labels.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-undo",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "toolbar",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Looking for insert handlers in the same file.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-insert",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "Insert",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Narrowing to insert rest.",
+          tool_calls: [
+            {
+              id: "grep-toolbar-rest",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  pattern: "onInsertRest",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the first located target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-a",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 260,
+                  line_end: 340,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the adjacent target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-b",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 340,
+                  line_end: 420,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the final located target range.",
+          tool_calls: [
+            {
+              id: "read-toolbar-target-c",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.tsx",
+                  line_start: 420,
+                  line_end: 500,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.tsx. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "read_file",
+        expect.objectContaining({
+          path: "components/NotationToolbar.tsx",
+          line_start: 420,
+          line_end: 500,
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
+    }, 15000);
+
+    it("allows narrow edit recovery search after bounded backlog edit mismatch", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValueOnce("Toolbar file")
+        .mockResolvedValueOnce("Keyboard shortcuts")
+        .mockResolvedValueOnce("File content")
+        .mockResolvedValueOnce("ERROR: old_text not found in components/NotationToolbar.js")
+        .mockResolvedValueOnce("2:  return '<button class=\"note\">Note</button>';")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.js is an existing active editing UI\n" +
+            "Files: components/NotationToolbar.js\n" +
+            "Implementation outline: read the toolbar lines, then add one aria label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the planned implementation file.",
+          tool_calls: [
+            {
+              id: "read-toolbar",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  line_start: 1,
+                  line_end: 40,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit.",
+          tool_calls: [
+            {
+              id: "edit-toolbar",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "components/NotationToolbar.js",
+                  old_text: "<button>Add Note</button>",
+                  new_text: "<button aria-label=\"Add Note\">Add Note</button>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Finding the exact current line after edit mismatch.",
+          tool_calls: [
+            {
+              id: "grep-toolbar",
+              function: {
+                name: "bash",
+                arguments: {
+                  command: "grep -n \"Note\" components/NotationToolbar.js",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValue({
+          content: "Implementation stalled before edits.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: active editing workflow improvement\n" +
+          "Work from main only. At the start, run git status. " +
+          "Prefer components/NotationToolbar.js. " +
+          "Use docs/keyboard-shortcuts.md as backlog/reference material. " +
+          "Pick at most one tightly scoped improvement.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 12 },
+      );
+
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        expect.objectContaining({
+          command: "grep -n \"Note\" components/NotationToolbar.js",
+        }),
+        expect.any(Object),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "tool" &&
+            typeof m.content === "string" &&
+            m.content.includes("planned implementation file has already been read"),
+        ),
+      ).toBe(false);
+    });
+
     it("prefetches current UI component evidence when the prompt asks for it", async () => {
       const fs = require("fs");
       const fixtureDir = ".tmp-agent-ui-prefetch";
@@ -4486,6 +5035,71 @@ describe("agent.js", () => {
       ).toBe(true);
     });
 
+    it("reprompts bounded backlog plans that use missing prompt example files", async () => {
+      const fs = require("fs");
+      const fixtureDir = ".tmp-agent-plan-prompt-paths";
+      fs.mkdirSync(`${fixtureDir}/components`, { recursive: true });
+      fs.mkdirSync(`${fixtureDir}/docs`, { recursive: true });
+      fs.writeFileSync(
+        `${fixtureDir}/components/CommandCenter.tsx`,
+        "export function CommandCenter() { return null; }\n",
+      );
+      fs.writeFileSync(`${fixtureDir}/docs/keyboard-shortcuts.md`, "# Keys\n");
+      fs.writeFileSync(`${fixtureDir}/docs/user-manual.md`, "# Manual\n");
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: improve toolbar labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValue({
+          content:
+            "Selected improvement: improve command center labels\n" +
+            "Selection rationale: current UI evidence shows unclear labels\n" +
+            "Files: components/CommandCenter.tsx\n" +
+            "Implementation outline: update one label\n" +
+            "Verification plan: npm test\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Automation: MuseScore parity and UX improvements\n" +
+            "Work from main only. At the start, inspect git status. " +
+            "Prefer existing components/NotationToolbar.tsx or components/CommandCenter.tsx. " +
+            "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+            "Also inspect the current UI/components for obvious friction before choosing a task. " +
+            "Pick at most one tightly scoped improvement.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("implementation files that do not exist") &&
+            m.content.includes("components/CommandCenter.tsx"),
+        ),
+      ).toBe(true);
+    });
+
     it("reports stalled bounded backlog implementation on a final empty response", async () => {
       executeTool
         .mockResolvedValueOnce("## main...origin/main\n")
@@ -4586,6 +5200,50 @@ describe("agent.js", () => {
             m.content.includes("Implementation stalled before edits"),
         ),
       ).toBe(true);
+    });
+
+    it("rejects false implementation completion claims without edits", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+      executeTool
+        .mockResolvedValueOnce("## main...origin/main\n")
+        .mockResolvedValue("File content");
+
+      callStream
+        .mockResolvedValueOnce({
+          content:
+            "Selected improvement: add toolbar aria label\n" +
+            "Selection rationale: components/NotationToolbar.tsx needs clearer accessibility\n" +
+            "Files: components/NotationToolbar.tsx\n" +
+            "Implementation outline: add one aria-label\n" +
+            "Verification plan: npm test -- tests/agent.test.js\n" +
+            "Browser/UI applicability: required",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Implemented the accessibility improvement by adding an aria-label to the Insert Note button. The project was built successfully, all tests continue to pass, and the repository is clean.",
+          tool_calls: [],
+        });
+
+      await processInput(
+        "Automation: MuseScore parity and UX improvements\n" +
+          "Work from main only. At the start, run git status. " +
+          "Use docs/keyboard-shortcuts.md and docs/user-manual.md as the primary backlog. " +
+          "Pick at most one tightly scoped improvement in priority order.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      const msgs = getConversationMessages();
+      const hasFalseClaimStall = msgs.some(
+        (m) =>
+          m.role === "assistant" &&
+          typeof m.content === "string" &&
+          m.content.includes("claimed changes, verification, or a clean worktree") &&
+          m.content.includes("without any successful file edit"),
+      );
+      expect(hasFalseClaimStall).toBe(true);
     });
 
     it("reprompts false git/tool blocking claims in bounded backlog implementation", async () => {
