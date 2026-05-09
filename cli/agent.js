@@ -240,6 +240,14 @@ function _emitMilestone(ms) {
   // blank lines in terminal scrollback (copy-paste artifact) and caused visible
   // gaps when linesBack was off by even one line. Append is simpler and correct.
   process.stdout.write(`${banner}\n`);
+
+  // Update footer with live file counts
+  if (global._nexFooter) {
+    global._nexFooter.setFileInfo({
+      modified: ms.filesModified?.size || 0,
+      scanned: ms.filesRead?.size || 0,
+    });
+  }
 }
 
 // ─── Vision / Image Helpers ──────────────────────────────────

@@ -80,6 +80,8 @@ class StickyFooter {
     this._statusBranch = "";
     this._statusProject = "";
     this._statusMode = ""; // e.g. 'plan · semi' or 'always'
+    this._statusFilesMod = 0;
+    this._statusFilesScan = 0;
   }
 
   /**
@@ -91,6 +93,16 @@ class StickyFooter {
     if (branch !== undefined) this._statusBranch = branch;
     if (project !== undefined) this._statusProject = project;
     if (mode !== undefined) this._statusMode = mode;
+    if (this._active) this.drawFooter();
+  }
+
+  /**
+   * Update file-change counters shown in the status bar.
+   * @param {{ modified?: number, scanned?: number }} info
+   */
+  setFileInfo({ modified, scanned } = {}) {
+    if (modified !== undefined) this._statusFilesMod = modified;
+    if (scanned !== undefined) this._statusFilesScan = scanned;
     if (this._active) this.drawFooter();
   }
 
@@ -138,9 +150,22 @@ class StickyFooter {
     if (branchChip) parts.push(branchChip);
     if (projectChip) parts.push(projectChip);
     const info = parts.join(divider);
-    const visibleInfo = [model, branch ? `git:${branch}` : "", project]
+
+    // File change info segment
+    let fileChip = "";
+    let fileChipVisible = 0;
+    if (this._statusFilesMod > 0 || this._statusFilesScan > 0) {
+      const pieces = [];
+      if (this._statusFilesMod > 0) pieces.push(`${T.warning}✎ ${this._statusFilesMod}${C_RESET}`);
+      if (this._statusFilesScan > 0) pieces.push(`${T.subtle}◌ ${this._statusFilesScan}${C_RESET}`);
+      fileChip = ` ${T.footer_divider}│${C_RESET} ${pieces.join(" · ")}`;
+      fileChipVisible = pieces.reduce((sum, p) => sum + p.replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, "").length, 0) + 5;
+    }
+
+    const baseInfo = [model, branch ? `git:${branch}` : "", project]
       .filter(Boolean)
-      .join(" · ").length;
+      .join(" · ");
+    const visibleInfo = baseInfo.length + fileChipVisible;
     const prefix = "╼ ";
 
     if (mode) {
@@ -154,7 +179,7 @@ class StickyFooter {
       const trail = "═".repeat(trailLen);
       return (
         `${T.footer_sep}${prefix}${C_RESET}` +
-        `${info}${T.footer_sep} ${trail} ${C_RESET}` +
+        `${info}${fileChip}${T.footer_sep} ${trail} ${C_RESET}` +
         `${T.footer_mode}${modeLabel}${C_RESET}` +
         `${T.footer_sep} ╾${C_RESET}`
       );
@@ -162,7 +187,7 @@ class StickyFooter {
 
     const trailLen = Math.max(0, cols - prefix.length - visibleInfo - 2);
     const trail = "═".repeat(trailLen);
-    return `${T.footer_sep}${prefix}${C_RESET}${info}${T.footer_sep} ${trail}${C_RESET}`;
+    return `${T.footer_sep}${prefix}${C_RESET}${info}${fileChip}${T.footer_sep} ${trail}${C_RESET}`;
   }
 
   drawFooter(promptOverride) {
