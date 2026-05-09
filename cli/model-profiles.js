@@ -4,10 +4,13 @@
  * investigation caps, and post-edit budgets.
  */
 
+// Stale thresholds doubled for Ollama Cloud reliability (DeepSeek TUI inspired).
+// Ollama Cloud has variable latency — aggressive abort causes premature task termination.
+// The model gets the time it needs; stale auto-switch falls back to a faster model instead.
 const PROFILES = {
   "devstral-2": {
-    staleWarn: 30000,
-    staleAbort: 90000,
+    staleWarn: 60000,
+    staleAbort: 180000,
     investigationCap: 18,
     postEditCap: 10,
     briefing: `You are devstral-2, a strong coding model optimized for agentic tasks.
@@ -16,8 +19,8 @@ You excel at sysadmin, frontend, and multi-step coding tasks.
 Prefer action over narration — read, fix, verify, done.`,
   },
   "devstral-small": {
-    staleWarn: 20000,
-    staleAbort: 60000,
+    staleWarn: 40000,
+    staleAbort: 120000,
     investigationCap: 10,
     postEditCap: 8,
     briefing: `You are devstral-small, a fast and lightweight coding model.
@@ -25,8 +28,8 @@ Be decisive — read only what you need, then fix immediately.
 Keep investigation short: identify the target file, edit it, move on.`,
   },
   "qwen3-coder": {
-    staleWarn: 60000,
-    staleAbort: 180000,
+    staleWarn: 120000,
+    staleAbort: 300000,
     investigationCap: 15,
     postEditCap: 12,
     briefing: `You are qwen3-coder, a top-ranked model for complex multi-step tasks.
@@ -34,8 +37,8 @@ Trust your reasoning and use tools thoroughly when the task demands it.
 You handle large codebases and data tasks well — don't cut corners prematurely.`,
   },
   "kimi-k2": {
-    staleWarn: 45000,
-    staleAbort: 120000,
+    staleWarn: 90000,
+    staleAbort: 240000,
     investigationCap: 15,
     postEditCap: 12,
     briefing: `You are kimi-k2, a large-context model with strong reasoning.
@@ -43,8 +46,8 @@ Use your context window effectively — read broadly when needed, then act decis
 Focus on correctness over speed.`,
   },
   "ministral-3": {
-    staleWarn: 20000,
-    staleAbort: 60000,
+    staleWarn: 40000,
+    staleAbort: 120000,
     investigationCap: 10,
     postEditCap: 8,
     briefing: `You are ministral-3, one of the fastest coding models available.
@@ -52,8 +55,8 @@ Prioritize decisive, targeted edits. Read only what you need, then fix.
 Stay on-scope — your strength is focused, efficient coding tasks.`,
   },
   "qwen3-vl": {
-    staleWarn: 60000,
-    staleAbort: 180000,
+    staleWarn: 120000,
+    staleAbort: 300000,
     investigationCap: 15,
     postEditCap: 12,
     briefing: `You are qwen3-vl, the highest-ranked model for data, frontend, and agentic tasks.
@@ -63,8 +66,8 @@ You handle complex multi-step tasks well — don't cut corners prematurely.`,
 };
 
 const DEFAULTS = {
-  staleWarn: 60000,
-  staleAbort: 120000,
+  staleWarn: 120000,
+  staleAbort: 240000,
   investigationCap: 18,
   postEditCap: 10,
 };

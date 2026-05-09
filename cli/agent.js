@@ -1657,6 +1657,8 @@ let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
+let _stagnationNudges = 0; // soft-warning nudges for general stagnation (DeepSeek TUI inspired)
+let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
 let _detectedCategoryId = null; // task category detected on first user message
@@ -2714,6 +2716,8 @@ function _commandForScript(scriptName) {
   return `npm run ${scriptName}`;
 }
 
+// DeepSeek TUI inspired verification principle: read back what you wrote.
+// After every edit, confirm the file content matches intent before continuing.
 function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   const modifiedList =
     [...(filesModified || [])].slice(0, 6).join(", ") ||
@@ -2722,7 +2726,7 @@ function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   const tests = (relatedTests || []).slice(0, 3);
   const lines = [
     `[SYSTEM] You already changed code in: ${modifiedList}.`,
-    "Run one narrow verification step next before more exploration.",
+    "Verification is mandatory before further exploration — do not read other files. STEP 1: read_file the modified file(s) to confirm the edit was applied correctly. Do not trust memory — verify the actual file content on disk. STEP 2: run the narrowest relevant verification command (lint, test, typecheck).",
   ];
   if (checks.length > 0) {
     lines.push(`Suggested verification commands: ${checks.join(" | ")}`);
@@ -2731,7 +2735,7 @@ function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
     lines.push(`Likely related tests: ${tests.join(", ")}`);
   }
   lines.push(
-    "Do not continue broad read/search loops until the latest edit has been checked.",
+    "If verification passes: report \"Verification passed\" and you may continue. If verification fails: fix the issue before any other work.",
   );
   return lines.join("\n");
 }
@@ -5866,7 +5870,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           signal: combinedAbort.signal,
           ...(_phaseModelOverride ? { model: _phaseModelOverride } : {}),
           onThinkingToken: () => {
-            // Thinking-model reasoning tokens: reset stale timer but don't display
+            // DeepSeek TUI inspired: thinking tokens keep the model alive.
+            // Reset stale timer — the model IS working, even if output isn't visible yet.
             lastTokenTime = Date.now();
             staleWarned = false;
             if (_serverHooks?.onThinkingToken) {
@@ -10924,6 +10929,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         _postEditVerifyPending &&
         !(_phaseEnabled && _currentPhase === "verify")
       ) {
+        _needsPostEditVerifyPrompt = false; // reset after injection
         const suggestedChecks = await _inferVerificationCommands(filesModified);
         const relatedTests = await _inferRelevantTests(filesModified);
         const verifyMsg = {
@@ -11193,10 +11199,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       // ─── Stagnation detection (headless mode) ────────────────────────────
+      // DeepSeek TUI inspired: soft warnings instead of hard abort.
       // In headless/auto-confirm mode, track consecutive iterations where only
       // read-only tools (read_file, grep, glob, list_directory, bash) run with
       // no file modifications. If the model keeps investigating without acting
-      // for too many iterations, it's stagnating — force early exit.
+      // for too many iterations, inject a nudge instead of aborting — the model
+      // may still find the right target and get back on track.
       if (getAutoConfirm() && !opts.skillLoop) {
         const _batchHasWrite = prepared.some(
           (p) =>
@@ -11204,12 +11212,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         );
         if (_batchHasWrite) {
           _readOnlyToolStreak = 0;
+          _stagnationNudges = 0;
         } else {
           if (_readOnlyToolStreak === 0)
             _filesModifiedAtStreakStart = filesModified.size;
           _readOnlyToolStreak++;
         }
-        // After 9+ read-only iterations with no new file writes, force exit
+        // After 9+ read-only iterations with no new file writes, inject a nudge
         if (
           _readOnlyToolStreak >= 9 &&
           totalSteps >= 4 &&
@@ -11263,13 +11272,35 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _scoreAndPrint(conversationMessages);
             break outer;
           }
+          // Non-implement stagnation: inject a soft nudge instead of force-exit.
+          // Reset the streak to give the model room to recover.
+          if (_stagnationNudges < 2) {
+            _stagnationNudges++;
+            _readOnlyToolStreak = 0;
+            const nudgeMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] You have spent several iterations investigating without making changes. " +
+                "If you have enough information: summarize findings and ask the user what to do next. " +
+                "If the task requires file edits: make them now instead of continuing to read. " +
+                "Do not invent facts — if blocked, state the blocker plainly.",
+            };
+            conversationMessages.push(nudgeMsg);
+            apiMessages.push(nudgeMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Stagnation nudge ${_stagnationNudges}/2 — ${_readOnlyToolStreakSaved || _readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
+            );
+            _readOnlyToolStreakSaved = _readOnlyToolStreak;
+            continue;
+          }
+          // After 2 nudges without recovery: exit with summary instead of silent abort
           debugLog(
-            `${C.green}  ✓ Stagnation exit: ${_readOnlyToolStreak} read-only iterations, no new file changes${C.reset}`,
+            `${C.yellow}  ⚠ Stagnation persistence: ${_readOnlyToolStreakSaved || 9}+ read-only iterations — exiting with summary${C.reset}`,
           );
           if (process.stdout.isTTY) {
             process.stderr.write(
-              `${C.yellow}  ⚠ Stagnation detected: ${_readOnlyToolStreak} iterations without edits — exiting. ` +
-                `The model investigated but did not apply changes.${C.reset}\n`,
+              `${C.yellow}  ⚠ Investigation stalled: ${_readOnlyToolStreakSaved || 9}+ iterations without edits. ` +
+                `Exiting so you can adjust the task or provide feedback.${C.reset}\n`,
             );
           }
           if (taskProgress) {
