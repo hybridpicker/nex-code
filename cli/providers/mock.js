@@ -956,10 +956,12 @@ class MockProvider extends BaseProvider {
   }
 
   async chat(messages, _tools, _options = {}) {
+    if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
     return buildDeterministicResponse(messages);
   }
 
   async stream(messages, _tools, options = {}) {
+    if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
     const onToken =
       typeof options.onToken === "function" ? options.onToken : () => {};
     const res = buildDeterministicResponse(messages);
