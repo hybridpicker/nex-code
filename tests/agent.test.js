@@ -3495,11 +3495,11 @@ describe("agent.js", () => {
       getAutoConfirm.mockReturnValue(false);
     });
 
-    it("exits after 8 consecutive read-only tool iterations in headless mode", async () => {
+    it("injects stagnation nudges before exiting in headless mode", async () => {
       clearConversation();
       getAutoConfirm.mockReturnValue(true);
 
-      // Set up 9 consecutive read-only tool iterations (8 triggers exit)
+      // Set up 9 read-only iterations → triggers first nudge (soft warn)
       for (let n = 0; n < 9; n++) {
         mockStream("reading", [
           {
@@ -3512,7 +3512,20 @@ describe("agent.js", () => {
         ]);
         executeTool.mockResolvedValueOnce(`content of file${n}`);
       }
-      // This should NOT be reached
+      // After first nudge, model tries another 9 read-only → second nudge
+      for (let n = 0; n < 20; n++) {
+        mockStream("reading", [
+          {
+            function: {
+              name: "read_file",
+              arguments: { path: `/more${n}.js` },
+            },
+            id: `d${n}`,
+          },
+        ]);
+        executeTool.mockResolvedValueOnce(`content`);
+      }
+      // This should NOT be reached — exit after 2nd nudge exhausted
       mockStream("SHOULD NOT REACH");
 
       await processInput("Investigate the codebase");
@@ -3524,6 +3537,14 @@ describe("agent.js", () => {
           m.content.includes("SHOULD NOT REACH"),
       );
       expect(hasUnreached).toBe(false);
+
+      // Verify nudge messages were injected
+      const nudgeMessages = msgs.filter(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("investigating without making changes"),
+      );
+      expect(nudgeMessages.length).toBeGreaterThanOrEqual(1);
     });
 
     it("resets stagnation counter when a write tool is used", async () => {
