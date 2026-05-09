@@ -1178,6 +1178,50 @@ async function prepareToolCall(tc) {
     };
   }
 
+  // ─── Scope enforcement (--scope flag) ─────────────────────────────
+  // When NEX_SCOPE is set, block write_file/edit_file/patch_file on paths
+  // outside the allowed scope. Prevents model over-refactoring in headless mode.
+  const _writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+  if (_writeTools.has(fnName) && process.env.NEX_SCOPE) {
+    const filePath = finalArgs.path || finalArgs.file_path || "";
+    if (filePath) {
+      const scopePatterns = process.env.NEX_SCOPE.split(",").map((s) => s.trim());
+      const normalizedPath = filePath.replace(/\\/g, "/");
+      const inScope = scopePatterns.some((pattern) => {
+        // Simple glob: * matches any characters, ** matches across directories
+        const regex = new RegExp(
+          "^" +
+            pattern
+              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+              .replace(/\*\*/g, "___DOUBLESTAR___")
+              .replace(/\*/g, "[^/]*")
+              .replace(/___DOUBLESTAR___/g, ".*") +
+            "$",
+        );
+        return regex.test(normalizedPath) || normalizedPath.endsWith(pattern) || normalizedPath === pattern;
+      });
+      if (!inScope) {
+        debugLog(
+          `${C.yellow}  ✗ ${fnName}: ${filePath} outside scope (--scope ${process.env.NEX_SCOPE})${C.reset}`,
+        );
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `SCOPE BLOCKED: '${filePath}' is outside the allowed scope. ` +
+              `Only these files may be edited: ${process.env.NEX_SCOPE}. ` +
+              `Use read_file to inspect other files, but do not edit them.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+    }
+  }
+
   // Permission check
   const perm = checkPermission(fnName);
   if (perm === "deny") {
