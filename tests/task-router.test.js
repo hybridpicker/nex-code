@@ -132,11 +132,35 @@ describe("task-router.js", () => {
       expect(detectCategory(input).id).toBe("agentic");
     });
 
-    // Coding fallback
+    // Bug-fix
+    it.each([
+      "Debug the stack trace in production",
+      "Patch the vulnerability in auth middleware",
+      "Resolve the TypeError in the login handler",
+    ])("detects bug-fix: %s", (input) => {
+      expect(detectCategory(input).id).toBe("bug-fix");
+    });
+
+    // Feature-add (matches after domain-specific categories)
+    it.each([
+      "Create a new endpoint for user profiles",
+      "Implement a caching middleware for the API",
+    ])("detects feature-add: %s", (input) => {
+      expect(detectCategory(input).id).toBe("feature-add");
+    });
+
+    // Refactor (matches after domain-specific categories)
     it.each([
       "Refactor the auth module",
-      "Add unit tests for the parser",
-      "Fix the memory leak in worker.js",
+      "Restructure the notification system",
+    ])("detects refactor: %s", (input) => {
+      expect(detectCategory(input).id).toBe("refactor");
+    });
+
+    // Coding fallback
+    it.each([
+      "Optimize the slow function",
+      "Write the error handler",
     ])("falls back to coding: %s", (input) => {
       expect(detectCategory(input).id).toBe("coding");
     });
