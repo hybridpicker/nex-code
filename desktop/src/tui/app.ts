@@ -11,7 +11,7 @@
 
 import * as blessed from 'blessed';
 import { EventBus, eventBus, TuiEventType } from './event-bus';
-import { C, STYLE, BORDER, LAYOUT, formatUSD, formatTokens, label, emerald, cyan, dim } from './theme';
+import { C, STYLE, LAYOUT, formatUSD, formatTokens, label, emerald, cyan, dim, coral } from './theme';
 import { AgentLoop, AgentState } from '../state/agent-loop';
 import { ProviderRouter } from '../state/routing';
 import { CostCalculator, CostSnapshot } from '../state/cost-calculator';
@@ -62,10 +62,11 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
     left: 0,
     width: '100%',
     height: LAYOUT.HEADER_H,
-    border: BORDER.glass,
+    border: 'line' as any,
     style: {
       bg: C.BG_PANEL,
       fg: C.TEXT_PRIMARY,
+      border: { fg: C.BORDER },
     },
     content: buildHeader(demoData),
     tags: true,
@@ -79,7 +80,7 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
     left: 0,
     width: LAYOUT.SIDEBAR_L_W,
     height: `100%-${LAYOUT.HEADER_H + LAYOUT.CMD_H}`,
-    border: BORDER.glass,
+    border: 'line' as any,
     style: {
       bg: C.BG_PANEL,
       fg: C.TEXT_PRIMARY,
@@ -101,7 +102,7 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
     left: LAYOUT.SIDEBAR_L_W,
     width: `100%-${LAYOUT.SIDEBAR_L_W + LAYOUT.SIDEBAR_R_W}`,
     height: `100%-${LAYOUT.HEADER_H + LAYOUT.CMD_H}`,
-    border: BORDER.glass,
+    border: 'line' as any,
     style: {
       bg: C.BG_DEEP,
       fg: C.TEXT_PRIMARY,
@@ -123,7 +124,7 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
     right: 0,
     width: LAYOUT.SIDEBAR_R_W,
     height: `100%-${LAYOUT.HEADER_H + LAYOUT.CMD_H}`,
-    border: BORDER.glass,
+    border: 'line' as any,
     style: {
       bg: C.BG_PANEL,
       fg: C.TEXT_PRIMARY,
@@ -145,7 +146,7 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
     left: 0,
     width: '100%',
     height: LAYOUT.CMD_H,
-    border: BORDER.glass,
+    border: 'line' as any,
     style: {
       bg: C.BG_SURFACE,
       fg: C.TEXT_PRIMARY,
@@ -166,7 +167,7 @@ export function createApp(screen: blessed.Widgets.Screen, appConfig: AppConfig):
       fg: C.TEXT_PRIMARY,
       bg: C.BG_SURFACE,
     },
-    border: { type: 'line' as const, fg: C.BG_SURFACE },
+    border: 'line' as any,
   });
 
   // Shortcut chips
@@ -430,7 +431,7 @@ function buildCenter(agentLoop: AgentLoop, data: AppConfig['demoData']): string 
 
   if (phase === 'done') {
     lines.push(`{bold}${emerald('◆ SUCCESS — All phases complete')}{/bold}`);
-    lines.push(`${dim(data.tests.passed)} tests passed, ${dim(data.tests.failed)} failed`);
+    lines.push(`${dim(String(data.tests.passed))} tests passed, ${dim(String(data.tests.failed))} failed`);
   } else if (phase === 'error') {
     lines.push(`{bold}${coral('◆ ERROR')}{/bold}`);
     lines.push(`${coral(state.error || 'Unknown error')}`);
