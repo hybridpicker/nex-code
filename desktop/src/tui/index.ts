@@ -137,7 +137,7 @@ async function main(): Promise<void> {
   const screen = blessed.screen({
     smartCSR: true,
     title: 'nex-code — Cyber-Obsidian',
-    cursor: { artificial: true, shape: 'line' as const, blink: true, color: 'white' },
+    cursor: { artificial: true, shape: 'line', blink: true },
     terminal: 'xterm-256color',
     fullUnicode: true,
   });
