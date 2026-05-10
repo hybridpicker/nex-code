@@ -494,7 +494,7 @@ function runHeadlessTask(task) {
   if (!hasExplicitModel) {
     const { setActiveModel } = require("../cli/providers/registry");
     const fastHeadlessModel =
-      process.env.HEADLESS_MODEL || "devstral-small-2:24b";
+      process.env.HEADLESS_MODEL || "devstral-2:123b";
     setActiveModel(fastHeadlessModel);
   }
   const autoOrchestrate = !args.includes("--no-auto-orchestrate") &&
