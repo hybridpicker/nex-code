@@ -48,6 +48,9 @@ Options:
   --max-turns <n>          Max agentic loop iterations (default: 50)
   --scope <files>          Restrict file edits to these files/dirs (comma-separated, globs ok)
                            e.g. --scope 'src/index.js,src/components/*.tsx'
+  --decompose              Shell alias hint: multi-file tasks work best as
+                           sequential single-file runs. Use a shell loop:
+                           for f in a.js b.js; do nex-code --scope "$f" --task "..." --auto; done
   --orchestrate            Use multi-agent orchestrator (with --task)
   --no-auto-orchestrate    Disable auto-orchestration for multi-goal prompts (on by default)
   --orchestrator-model <m> Model for orchestrator (default: kimi-k2.5)
@@ -477,7 +480,34 @@ function createPlainHeadlessHooks() {
 }
 
 // ─── helper: run headless task ───────────────────────────────
-function runHeadlessTask(task) {
+async function runHeadlessTask(task) {
+  // ─── --decompose: split multi-file scope into sequential single-file runs ──
+  if (args.includes("--decompose") && process.env.NEX_SCOPE) {
+    const files = process.env.NEX_SCOPE.split(",").map((s) => s.trim()).filter(Boolean);
+    if (files.length > 1) {
+      const { execSync } = require("child_process");
+      const binPath = process.argv[1];
+      const allFlags = process.argv.slice(2)
+        .filter(f => f !== "--decompose" && f !== process.env.NEX_SCOPE)
+        .join(" ");
+      console.error(`Decomposing into ${files.length} sequential tasks...`);
+      for (let fi = 0; fi < files.length; fi++) {
+        const file = files[fi];
+        console.error(`  [${fi + 1}/${files.length}] ${file}`);
+        try {
+          execSync(
+            `${process.execPath} ${binPath} ${allFlags} --scope '${file}' --task "${task.replace(/"/g, '\\"')}"`,
+            { stdio: "inherit", timeout: 600000 },
+          );
+        } catch (e) {
+          console.error(`  ⚠ Subtask ${fi + 1} failed (exit ${e.status})`);
+        }
+      }
+      console.error(`All ${files.length} subtasks complete.`);
+      process.exit(0);
+    }
+  }
+
   if (args.includes("--auto")) {
     const { setAutoConfirm } = require("../cli/safety");
     setAutoConfirm(true);
@@ -653,13 +683,12 @@ function runHeadlessTask(task) {
     if (skillResult && skillResult.agentPrompt) {
       // Skill returned an agent prompt — run it through processInput
       const { processInput, getConversationMessages } = require("../cli/agent");
-      processInput(skillResult.agentPrompt, agentHooks, {
+      return processInput(skillResult.agentPrompt, agentHooks, {
         autoOrchestrate,
         orchestratorModel,
       })
         .then(() => finishSuccess(getConversationMessages))
         .catch((err) => finishError(err));
-      return;
     }
     const { handleSlashCommand } = require("../cli/commands/index");
     handleSlashCommand(task, null)
