@@ -1,9 +1,8 @@
 /**
  * desktop/main.js — Electron Main Process
  *
- * Manages the application window, spawns the nex-code CLI backend,
- * and bridges IPC between the renderer (Cyber-Obsidian UI) and
- * the nex-code agent logic.
+ * Spawns the real nex-code CLI via --server mode (JSON-lines IPC).
+ * No project → welcome screen. Open project → nex-code --server.
  */
 
 "use strict";
@@ -12,529 +11,133 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require("electron")
 const path = require("path");
 const { spawn } = require("child_process");
 const fs = require("fs");
-
-// ─── State ───────────────────────────────────────────────────────────────────
+const readline = require("readline");
 
 let mainWindow = null;
-let nexProcess = null;
-let sessionState = {
-  project: null,
-  branch: null,
-  model: "auto (GPT-4o / Claude 3.5)",
-  budget: { used: 1.42, limit: 10.0 },
-  sessionHealth: "Excellent",
-  tasks: [],
-  activeTask: null,
-  agenticNodes: [],
-  testResults: { passed: 0, failed: 0, total: 0 },
-  toolActions: [],
-  costHistory: [],
-};
+let serverProcess = null;
+let serverReady = false;
+let projectName = null;
+let projectBranch = null;
 
-// ─── Window Creation ─────────────────────────────────────────────────────────
+function getNexCliPath() {
+  if (app.isPackaged) return path.join(process.resourcesPath, "nex-code-cli", "nex-code.js");
+  return path.join(__dirname, "..", "dist", "nex-code.js");
+}
+
+function spawnServer(dirPath) {
+  killServer();
+  const cliPath = getNexCliPath();
+  if (!fs.existsSync(cliPath)) {
+    send("nex:server-error", { message: "nex-code CLI not found. Run npm run build in project root." });
+    return;
+  }
+  serverProcess = spawn("node", [cliPath, "--server"], {
+    cwd: dirPath, stdio: ["pipe", "pipe", "pipe"],
+    env: Object.assign({}, process.env, { NEX_SERVER: "1", FORCE_COLOR: "0" }),
+  });
+  serverReady = false;
+  const rl = readline.createInterface({ input: serverProcess.stdout, terminal: false });
+  rl.on("line", function (line) {
+    try { handleMsg(JSON.parse(line.trim())); } catch (e) {}
+  });
+  serverProcess.stderr.on("data", function (d) {
+    send("nex:server-log", { text: d.toString().trim() });
+  });
+  serverProcess.on("close", function (code) {
+    serverProcess = null; serverReady = false;
+    send("nex:server-closed", { code: code });
+  });
+  serverProcess.on("error", function (e) {
+    send("nex:server-error", { message: e.message });
+  });
+}
+
+function killServer() {
+  if (serverProcess) {
+    try { serverProcess.kill(); } catch (e) {}
+    serverProcess = null;
+    serverReady = false;
+  }
+}
+
+function handleMsg(msg) {
+  if (msg.type === "ready") { serverReady = true; send("nex:server-ready", {}); return; }
+  if (msg.type === "token") { send("nex:server-token", msg); return; }
+  if (msg.type === "tool_start") { send("nex:server-tool-start", msg); return; }
+  if (msg.type === "tool_end") { send("nex:server-tool-end", msg); return; }
+  if (msg.type === "confirm_request") { send("nex:server-confirm", msg); return; }
+  if (msg.type === "done") { send("nex:server-done", msg); return; }
+  if (msg.type === "error") { send("nex:server-error", msg); return; }
+  
+  // Fallback for other message types
+  var ch = "nex:server-" + msg.type.replace(/_/g, "-");
+  send(ch, msg);
+}
+
+function send(ch, data) {
+  try { if (mainWindow && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(ch, data); } catch (e) {}
+}
+
+function sendToServer(obj) {
+  if (!serverProcess) {
+    send("nex:server-error", { message: "No project open. Use File → Open Project." });
+    return;
+  }
+  serverProcess.stdin.write(JSON.stringify(obj) + "\n");
+}
 
 function createWindow() {
-  const preloadPath = path.join(__dirname, "preload.js");
-
   mainWindow = new BrowserWindow({
-    width: 1600,
-    height: 1000,
-    minWidth: 1200,
-    minHeight: 800,
-    title: "nex-code",
-    backgroundColor: "#0D1117",
-    titleBarStyle: "hiddenInset",
-    vibrancy: "dark",
-    visualEffectState: "active",
+    width: 1600, height: 1000, minWidth: 1200, minHeight: 800,
+    title: "nex-code", backgroundColor: "#0D1117",
+    titleBarStyle: "hiddenInset", vibrancy: "dark", visualEffectState: "active",
     webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true, nodeIntegration: false, sandbox: false,
     },
     show: false,
   });
-
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
-
-  mainWindow.once("ready-to-show", () => {
+  mainWindow.once("ready-to-show", function () {
     mainWindow.show();
-    if (process.argv.includes("--dev")) {
-      mainWindow.webContents.openDevTools({ mode: "detach" });
-    }
+    if (process.argv.includes("--dev")) mainWindow.webContents.openDevTools({ mode: "detach" });
   });
+  mainWindow.on("closed", function () { killServer(); mainWindow = null; });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-
-  // Build application menu
-  const menuTemplate = buildMenu();
-  const menu = Menu.buildFromTemplate(menuTemplate);
-  Menu.setApplicationMenu(menu);
+  var isMac = process.platform === "darwin";
+  var template = [];
+  if (isMac) template.push({ label: "nex-code", submenu: [{ role: "about" }, { type: "separator" }, { role: "quit" }] });
+  template.push({ label: "File", submenu: [{ label: "Open Project...", accelerator: "CmdOrCtrl+O", click: openDialog }, { type: "separator" }, { role: "quit" }] });
+  template.push({ label: "View", submenu: [{ role: "reload" }, { role: "toggleDevTools" }, { role: "togglefullscreen" }] });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function buildMenu() {
-  const isMac = process.platform === "darwin";
-
-  return [
-    ...(isMac
-      ? [
-          {
-            label: "nex-code",
-            submenu: [
-              { role: "about" },
-              { type: "separator" },
-              { role: "services" },
-              { type: "separator" },
-              { role: "hide" },
-              { role: "hideOthers" },
-              { role: "unhide" },
-              { type: "separator" },
-              { role: "quit" },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: "File",
-      submenu: [
-        {
-          label: "Open Project...",
-          accelerator: "CmdOrCtrl+O",
-          click: async () => {
-            const result = await dialog.showOpenDialog(mainWindow, {
-              properties: ["openDirectory"],
-            });
-            if (!result.canceled && result.filePaths.length > 0) {
-              openProject(result.filePaths[0]);
-            }
-          },
-        },
-        { type: "separator" },
-        isMac ? { role: "close" } : { role: "quit" },
-      ],
-    },
-    {
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
-    },
-    {
-      label: "View",
-      submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-      ],
-    },
-    {
-      label: "Agent",
-      submenu: [
-        {
-          label: "New Task",
-          accelerator: "CmdOrCtrl+T",
-          click: () => mainWindow.webContents.send("nex:focus-command"),
-        },
-        {
-          label: "Plan Only",
-          click: () => mainWindow.webContents.send("nex:command", "/plan"),
-        },
-        {
-          label: "Implement Only",
-          click: () => mainWindow.webContents.send("nex:command", "/impl"),
-        },
-        {
-          label: "Verify Only",
-          click: () => mainWindow.webContents.send("nex:command", "/verify"),
-        },
-        { type: "separator" },
-        {
-          label: "Start Orchestrator",
-          click: () =>
-            mainWindow.webContents.send("nex:command", "/orchestrate"),
-        },
-        {
-          label: "Benchmark",
-          click: () => mainWindow.webContents.send("nex:command", "/bench"),
-        },
-      ],
-    },
-    {
-      label: "Git",
-      submenu: [
-        {
-          label: "View Diff",
-          accelerator: "CmdOrCtrl+D",
-          click: () => mainWindow.webContents.send("nex:command", "/git diff"),
-        },
-        {
-          label: "Show Status",
-          click: () =>
-            mainWindow.webContents.send("nex:command", "/git status"),
-        },
-        { type: "separator" },
-        {
-          label: "Create PR",
-          click: () =>
-            mainWindow.webContents.send("nex:command", "/deploy"),
-        },
-      ],
-    },
-    {
-      label: "Help",
-      submenu: [
-        {
-          label: "Documentation",
-          click: () =>
-            shell.openExternal("https://github.com/hybridpicker/nex-code"),
-        },
-        { type: "separator" },
-        {
-          label: "About nex-code Desktop",
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: "info",
-              title: "About nex-code Desktop",
-              message: "nex-code Desktop v1.0.0",
-              detail:
-                "Cyber-Obsidian coding assistant.\nOpen-model-first, multi-provider, agentic workflow.",
-            });
-          },
-        },
-      ],
-    },
-  ];
+async function openDialog() {
+  var r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"], title: "Open Project" });
+  if (!r.canceled && r.filePaths.length > 0) openProject(r.filePaths[0]);
 }
 
-// ─── Project Management ──────────────────────────────────────────────────────
-
-async function openProject(dirPath) {
-  sessionState.project = path.basename(dirPath);
-  process.chdir(dirPath);
-
-  // Detect git branch
+function openProject(dirPath) {
+  projectName = path.basename(dirPath);
+  projectBranch = null;
   try {
-    const { execSync } = require("child_process");
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-      cwd: dirPath,
-      encoding: "utf-8",
-    }).trim();
-    sessionState.branch = branch;
-  } catch {
-    sessionState.branch = null;
-  }
-
-  mainWindow.webContents.send("nex:project-opened", {
-    project: sessionState.project,
-    branch: sessionState.branch,
-    path: dirPath,
-  });
-
-  // Scan repository
-  try {
-    const files = fs
-      .readdirSync(dirPath, { recursive: true })
-      .filter(
-        (f) =>
-          !f.startsWith(".git") &&
-          !f.startsWith("node_modules") &&
-          !f.startsWith("dist")
-      )
-      .slice(0, 500);
-    mainWindow.webContents.send("nex:workspace-scan", {
-      fileCount: files.length,
-      files,
-    });
-  } catch {
-    // silent
-  }
+    var hp = path.join(dirPath, ".git", "HEAD");
+    if (fs.existsSync(hp)) projectBranch = fs.readFileSync(hp, "utf-8").trim().replace("ref: refs/heads/", "");
+  } catch (e) {}
+  spawnServer(dirPath);
+  send("nex:project-opened", { project: projectName, branch: projectBranch || "unknown", path: dirPath });
 }
 
-// ─── Nex-code Backend Integration ────────────────────────────────────────────
-
-function spawnNexBackend() {
-  // In production, use the bundled CLI; in dev, use the local one
-  const cliPath = path.join(__dirname, "..", "bin", "nex-code.js");
-
-  if (!fs.existsSync(cliPath)) {
-    console.warn("nex-code CLI not found at", cliPath, "— backend disabled");
-    return;
-  }
-
-  nexProcess = spawn("node", [cliPath, "--server"], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, NEX_NO_COLOR: "1" },
-  });
-
-  let buffer = "";
-
-  nexProcess.stdout.on("data", (data) => {
-    buffer += data.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop(); // keep incomplete line
-
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line);
-        mainWindow?.webContents.send("nex:backend-message", msg);
-      } catch {
-        // non-JSON line (e.g., banner), forward as log
-        mainWindow?.webContents.send("nex:backend-log", line);
-      }
-    }
-  });
-
-  nexProcess.stderr.on("data", (data) => {
-    mainWindow?.webContents.send("nex:backend-error", data.toString());
-  });
-
-  nexProcess.on("close", (code) => {
-    mainWindow?.webContents.send("nex:backend-closed", code);
-    nexProcess = null;
-    // Auto-restart after 1 second
-    setTimeout(spawnNexBackend, 1000);
-  });
-}
-
-function sendToBackend(command) {
-  if (nexProcess && nexProcess.stdin.writable) {
-    nexProcess.stdin.write(JSON.stringify(command) + "\n");
-  } else {
-    // Backend not available — notify the renderer so the UI stays responsive
-    mainWindow?.webContents.send("nex:backend-log",
-      `[nex-code] Command queued (backend unavailable): ${JSON.stringify(command)}`);
-  }
-}
-
-// ─── IPC Handlers ────────────────────────────────────────────────────────────
-
-function setupIPC() {
-  // Renderer requests initial state
-  ipcMain.handle("nex:get-state", () => sessionState);
-
-  // Renderer sends a command
-  ipcMain.on("nex:command", (_event, command) => {
-    handleCommand(command);
-  });
-
-  // Renderer requests project open
-  ipcMain.handle("nex:open-project", async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ["openDirectory"],
-    });
-    if (!result.canceled && result.filePaths.length > 0) {
-      return result.filePaths[0];
-    }
-    return null;
-  });
-
-  // External link handler
-  ipcMain.on("nex:open-external", (_event, url) => {
-    shell.openExternal(url);
-  });
-
-  // Window controls
-  ipcMain.on("nex:window-minimize", () => mainWindow?.minimize());
-  ipcMain.on("nex:window-maximize", () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow?.maximize();
-    }
-  });
-  ipcMain.on("nex:window-close", () => mainWindow?.close());
-}
-
-async function handleCommand(command) {
-  const cmd = command.trim();
-  if (!cmd) return;
-
-  // Always acknowledge the command immediately
-  mainWindow?.webContents.send("nex:backend-log", `[nex-code] ${cmd}`);
-
-  if (cmd.startsWith("/")) {
-    sendToBackend({ type: "command", command: cmd });
-  } else {
-    mainWindow?.webContents.send("nex:agent-thinking", { prompt: cmd });
-    addAgenticNode("PLAN", `Analyzing: "${cmd}"`, "cyan");
-    sendToBackend({ type: "task", prompt: cmd });
-  }
-}
-
-function addAgenticNode(phase, detail, color) {
-  const node = {
-    id: Date.now().toString(),
-    phase,
-    detail,
-    color,
-    timestamp: new Date().toISOString(),
-    status: "active",
-  };
-  sessionState.agenticNodes.push(node);
-  mainWindow?.webContents.send("nex:agentic-node", node);
-}
-
-// ─── App Lifecycle ───────────────────────────────────────────────────────────
-
-app.whenReady().then(() => {
-  setupIPC();
-  createWindow();
-  spawnNexBackend();
-
-  // Auto-open last project
-  const lastProjectPath = path.join(
-    app.getPath("userData"),
-    "last-project.json"
-  );
-  try {
-    if (fs.existsSync(lastProjectPath)) {
-      const { projectPath } = JSON.parse(
-        fs.readFileSync(lastProjectPath, "utf-8")
-      );
-      if (projectPath && fs.existsSync(projectPath)) {
-        openProject(projectPath);
-      }
-    }
-  } catch {
-    // silent
-  }
+ipcMain.handle("nex:get-state", function () {
+  return { project: projectName, branch: projectBranch, serverReady: serverReady };
 });
+ipcMain.handle("nex:open-project", async function () { await openDialog(); return null; });
+ipcMain.on("nex:command", function (_e, cmd) { sendToServer({ type: "chat", id: "c-" + Date.now(), text: cmd.trim() }); });
+ipcMain.on("nex:confirm-answer", function (_e, d) { sendToServer({ type: "confirm", id: d.id, answer: d.answer }); });
+ipcMain.on("nex:cancel", function () { sendToServer({ type: "cancel" }); });
+ipcMain.on("nex:clear", function () { sendToServer({ type: "clear" }); });
+ipcMain.on("nex:open-external", function (_e, url) { shell.openExternal(url); });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
-});
-
-app.on("before-quit", () => {
-  if (nexProcess) {
-    nexProcess.kill();
-    nexProcess = null;
-  }
-
-  // Save last project
-  if (sessionState.project) {
-    const lastProjectPath = path.join(
-      app.getPath("userData"),
-      "last-project.json"
-    );
-    try {
-      fs.writeFileSync(
-        lastProjectPath,
-        JSON.stringify({ projectPath: process.cwd() })
-      );
-    } catch {
-      // silent
-    }
-  }
-});
-
-// ─── Simulated Data for UI Demo ──────────────────────────────────────────────
-
-// When backend is not available, provide realistic demo data
-ipcMain.handle("nex:get-demo-data", () => {
-  return {
-    project: "orbit-control",
-    branch: "feat/telemetry-refactor",
-    model: "auto (GPT-4o / Claude 3.5)",
-    sessionHealth: "Excellent",
-    budget: { used: 1.42, limit: 10.0 },
-    tokens: { used: 312400, limit: 1000000 },
-    requests: 158,
-    workspaces: [
-      "orbit-control",
-      "nex-code",
-      "api-gateway",
-      "dashboard-v2",
-    ],
-    agenticNodes: [
-      {
-        id: "n1",
-        phase: "PLAN",
-        detail: "Repository scan & analysis",
-        color: "cyan",
-        status: "complete",
-        timestamp: new Date(Date.now() - 300000).toISOString(),
-        extras: {
-          filesScanned: 247,
-          diff: { added: 142, modified: 38, removed: 12 },
-          relevantFiles: [
-            "src/telemetry/collector.ts",
-            "src/telemetry/buffer.ts",
-            "src/telemetry/exporters/otlp.ts",
-          ],
-        },
-      },
-      {
-        id: "n2",
-        phase: "IMPLEMENT",
-        detail: "Telemetry refactor — batch processing",
-        color: "emerald",
-        status: "complete",
-        timestamp: new Date(Date.now() - 180000).toISOString(),
-        extras: {
-          files: [
-            { name: "src/telemetry/collector.ts", progress: 100 },
-            { name: "src/telemetry/buffer.ts", progress: 100 },
-            { name: "src/telemetry/exporters/otlp.ts", progress: 100 },
-            { name: "tests/telemetry.test.ts", progress: 100 },
-          ],
-          formatters: ["Prettier ✓", "ESLint ✓", "TypeScript ✓"],
-        },
-      },
-      {
-        id: "n3",
-        phase: "VERIFY",
-        detail: "Unit tests & benchmarks",
-        color: "teal",
-        status: "complete",
-        timestamp: new Date(Date.now() - 60000).toISOString(),
-        extras: {
-          tests: { passed: 109, failed: 0, total: 109 },
-          benchmark: { metric: "telemetry throughput", value: 1420, unit: "ops/s" },
-        },
-      },
-    ],
-    testResults: { passed: 109, failed: 0, total: 109 },
-    branchSafety: { score: 98, status: "Safe to merge" },
-    toolActions: [
-      { tool: "repo.scan", detail: "Scanned 247 files", time: "2s ago" },
-      { tool: "file.read", detail: "src/telemetry/collector.ts", time: "5s ago" },
-      { tool: "file.write", detail: "src/telemetry/buffer.ts (+34, -8)", time: "8s ago" },
-      { tool: "shell.exec", detail: "npm run test -- --coverage", time: "12s ago" },
-      { tool: "git.diff", detail: "3 files changed", time: "15s ago" },
-      { tool: "git.status", detail: "feat/telemetry-refactor", time: "18s ago" },
-    ],
-    costHistory: Array.from({ length: 24 }, (_, i) => ({
-      hour: i,
-      tokens: Math.floor(Math.random() * 15000 + 5000),
-      cost: parseFloat((Math.random() * 0.5 + 0.1).toFixed(2)),
-    })),
-    recentSessions: [
-      { name: "telemetry-refactor", tokens: "12.4k", time: "2h ago", model: "claude-3.5" },
-      { name: "api-rate-limiting", tokens: "8.1k", time: "5h ago", model: "gpt-4o" },
-      { name: "dashboard-perf", tokens: "23.7k", time: "1d ago", model: "devstral-2" },
-    ],
-    shortcutChips: ["/plan", "/impl", "/verify", "/bench", "/git", "/deploy"],
-  };
-});
+app.whenReady().then(createWindow);
+app.on("window-all-closed", function () { killServer(); if (process.platform !== "darwin") app.quit(); });
+app.on("before-quit", killServer);

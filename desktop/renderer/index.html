@@ -65,54 +65,59 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .center::after{content:'';position:absolute;top:30%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;background:radial-gradient(ellipse,rgba(57,255,20,0.03)0%,transparent 70%);pointer-events:none;z-index:0}
 .welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;opacity:.5}
 .welcome h1{font-family:var(--font-mono);font-size:30px;font-weight:700;background:linear-gradient(135deg,var(--accent-emerald),var(--accent-cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.timeline{max-width:740px;margin:0 auto}
+.timeline{max-width:840px;margin:0 auto}
 .tl-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
-.tl-header h2{font-family:var(--font-mono);font-size:16px;font-weight:600}
+.tl-header h2{font-family:var(--font-mono);font-size:22px;font-weight:700;letter-spacing:-0.5px}
+.tl-status-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;background:rgba(57,255,20,0.08);border:1px solid rgba(57,255,20,0.2);border-radius:12px;color:var(--accent-emerald);font-family:var(--font-mono);font-size:11px;font-weight:700;text-transform:uppercase}
 .tl-track{position:relative;padding-left:48px}
 .tl-track::before{content:'';position:absolute;left:18px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,rgba(0,255,255,0.4),rgba(57,255,20,0.35),rgba(0,229,255,0.3))}
 .tl-node{position:relative;margin-bottom:32px;animation:nodeIn .5s ease-out}
-.tl-dot{position:absolute;left:-34px;top:6px;width:10px;height:10px;border-radius:50%;border:2px solid;background:var(--bg-deep);z-index:1}
+.tl-dot{position:absolute;left:-34px;top:10px;width:10px;height:10px;border-radius:50%;border:2px solid;background:var(--bg-deep);z-index:1}
 .tl-dot.cyan{border-color:var(--accent-cyan);box-shadow:0 0 14px rgba(0,255,255,.55)}
 .tl-dot.emerald{border-color:var(--accent-emerald);box-shadow:0 0 14px rgba(57,255,20,.55)}
 .tl-dot.teal{border-color:var(--accent-teal);box-shadow:0 0 14px rgba(0,229,255,.55)}
-.tl-card{background:var(--bg-panel);border:1px solid var(--border-thin);border-radius:var(--radius-md);padding:20px 22px;transition:all .3s}
+.tl-card{background:var(--bg-panel);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-md);padding:24px;transition:all .3s;position:relative;box-shadow:0 10px 30px rgba(0,0,0,0.2)}
 .tl-card:hover{border-color:var(--border-active)}
-.tl-card-hdr{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.tl-phase{font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:1.2px;padding:4px 12px;border-radius:5px}
-.tl-phase.cyan{background:rgba(0,255,255,.08);color:var(--accent-cyan);border:1px solid rgba(0,255,255,.18)}
-.tl-phase.emerald{background:rgba(57,255,20,.08);color:var(--accent-emerald);border:1px solid rgba(57,255,20,.18)}
-.tl-phase.teal{background:rgba(0,229,255,.08);color:var(--accent-teal);border:1px solid rgba(0,229,255,.18)}
-.tl-check{color:var(--accent-emerald);font-size:13px;margin-left:auto}
-.tl-detail{font-size:13px;color:var(--text-secondary);margin-bottom:14px;font-weight:500}
-.term{font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);line-height:1.7}
-.diff-sum{display:flex;gap:14px;font-family:var(--font-mono);font-size:12px;font-weight:600;margin-bottom:8px}
-.diff-sum .add{color:var(--accent-emerald)}.diff-sum .mod{color:var(--accent-gold)}.diff-sum .rem{color:var(--accent-coral)}
-.diff-bar{display:flex;height:4px;border-radius:2px;overflow:hidden;margin-bottom:10px}
-.diff-bar-s{height:100%}.diff-bar-s.add{background:var(--accent-emerald)}.diff-bar-s.mod{background:var(--accent-gold)}.diff-bar-s.rem{background:var(--accent-coral)}
-.fp-list{display:flex;flex-direction:column;gap:8px}
-.fp-item{display:flex;align-items:center;gap:12px}
-.fp-name{font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fp-bar{flex:1;height:4px;background:var(--bg-active);border-radius:2px;overflow:hidden}
-.fp-fill{height:100%;background:linear-gradient(90deg,var(--accent-emerald),var(--accent-cyan));border-radius:2px;transition:width .8s}
-.fp-pct{font-family:var(--font-mono);font-size:10px;color:var(--accent-emerald);width:36px;text-align:right}
-.test-mini{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:14px;font-weight:700}
-.test-mini .pass{color:var(--accent-emerald)}.test-mini .fail{color:var(--accent-coral)}.test-mini .sep{color:var(--text-tertiary)}
-.chart-box{margin-top:12px;height:48px}
-.chart-box svg{width:100%;height:100%}
-.chart-glow{stroke:var(--accent-cyan);stroke-width:2;fill:none;filter:drop-shadow(0 0 8px rgba(0,255,255,.4))}
-.chart-area{fill:url(#vGrad);opacity:.25}
-.success{margin-top:40px;animation:bannerIn .6s ease-out}
-.success-inner{display:flex;align-items:center;gap:20px;padding:24px 28px;background:rgba(57,255,20,.04);border:1px solid rgba(57,255,20,.20);border-radius:var(--radius-md);box-shadow:0 0 40px rgba(57,255,20,.06)}
-.success-icon{width:48px;height:48px;border-radius:50%;background:rgba(57,255,20,.10);border:2px solid var(--accent-emerald);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--accent-emerald);flex-shrink:0}
-.success-title{font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--accent-emerald);letter-spacing:2px;margin-bottom:6px}
-.success-detail{font-size:12px;color:var(--text-secondary)}
-.success-acts{display:flex;gap:10px;margin-left:auto}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 22px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-elevated);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;font-weight:500;cursor:pointer;transition:all .25s}
-.btn:hover{background:var(--bg-hover)}.btn:active{transform:scale(.98)}
-.btn-p{background:rgba(57,255,20,.08);border-color:rgba(57,255,20,.25);color:var(--accent-emerald)}
-.btn-p:hover{background:rgba(57,255,20,.16);border-color:var(--accent-emerald);box-shadow:0 0 24px rgba(57,255,20,.1)}
-.btn-s{background:rgba(0,255,255,.06);border-color:rgba(0,255,255,.18);color:var(--accent-cyan)}
-.btn-s:hover{background:rgba(0,255,255,.12);border-color:var(--accent-cyan)}
+.tl-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.tl-phase{font-family:var(--font-mono);font-size:11px;font-weight:800;letter-spacing:1px;padding:4px 12px;border-radius:4px;text-transform:uppercase}
+.tl-phase.cyan{background:rgba(0,255,255,.15);color:var(--accent-cyan)}
+.tl-phase.emerald{background:rgba(57,255,20,.15);color:var(--accent-emerald)}
+.tl-stop{width:14px;height:14px;background:var(--accent-emerald);border-radius:2px;cursor:pointer;transition:opacity .2s}
+.tl-stop:hover{opacity:0.8}
+.tl-content-box{background:rgba(107,114,128,0.12);border-radius:6px;padding:16px;border:1px solid rgba(255,255,255,0.05)}
+.tl-detail{font-size:13px;color:var(--text-secondary);line-height:1.6;font-weight:500;white-space:pre-wrap}
+
+/* ═══════════════ CINEMATIC RESPONSE ═══════════════ */
+.tl-node.response{margin-top:40px;margin-bottom:60px;padding-left:0}
+.tl-node.response .tl-dot{display:none}
+.tl-node.response .tl-card{
+  width:100%;max-width:900px;margin:0 auto;
+  background:rgba(22,27,36,0.8);
+  border:1px solid var(--accent-cyan);
+  box-shadow:0 0 40px rgba(0,255,255,0.08);
+  padding:40px;
+}
+.tl-node.response .tl-card-hdr{display:none}
+.tl-node.response .tl-content-box{background:transparent;border:none;padding:0}
+.tl-node.response .tl-detail{
+  font-size:15px;color:var(--text-primary);line-height:1.8;
+  font-family:var(--font-sans);
+}
+
+/* Markdown Styles */
+.md h3{color:var(--accent-cyan);margin:24px 0 12px;font-family:var(--font-mono);font-size:16px;letter-spacing:1px;text-transform:uppercase}
+.md p{margin-bottom:16px}
+.md ul{margin:0 0 20px 20px;list-style:none}
+.md li{position:relative;margin-bottom:8px}
+.md li::before{content:'*';position:absolute;left:-15px;color:var(--accent-emerald);font-weight:bold}
+.md b, .md strong{color:var(--text-primary);font-weight:700}
+.md code{background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:13px;color:var(--accent-gold)}
+
+/* ═══════════════ SERVER OUTPUT ═══════════════ */
+.server-output{border-top:1px solid var(--border-thin);margin-top:auto}
+.log-line{padding:4px 16px;font-family:var(--font-mono);font-size:12px;color:rgba(0,255,255,0.7)}
+.cmd-line{padding:6px 16px;background:rgba(0,255,255,0.1);color:var(--accent-cyan);font-family:var(--font-mono);font-size:13px;font-weight:700;margin-top:4px}
+
 
 /* ═══════════════ RIGHT SIDEBAR ═══════════════ */
 .sidebar-r{width:var(--rightbar-w);min-width:var(--rightbar-w);display:flex;flex-direction:column;gap:14px;padding:16px;overflow-y:auto;flex-shrink:0}
@@ -180,16 +185,16 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <span class="tb-branch" id="tb-branch">main</span>
   </div>
   <div class="tb-center">
-    <div class="model-rtr" id="model-rtr" onclick="toggleModelMenu()">
+    <div class="model-rtr" id="model-rtr">
       <span class="model-rtr-label">Model Router</span>
-      <span class="model-rtr-val" id="model-val">auto (GPT-4o / Claude 3.5)</span>
+      <span class="model-rtr-val" id="model-val">qwen3-coder:480b</span>
     </div>
   </div>
   <div class="tb-right">
-    <div class="health">Session Health: Excellent</div>
+    <div class="health" id="health-text">Session Health: Excellent</div>
     <div class="budget">
-      <span class="budget-val" id="budget-val">$1.42 / $10.00</span>
-      <div class="budget-bar"><div class="budget-fill" id="budget-fill" style="width:14.2%"></div></div>
+      <span class="budget-val" id="budget-val">$0.00 / $10.00</span>
+      <div class="budget-bar"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
     </div>
   </div>
 </header>
@@ -198,36 +203,15 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 
 <!-- ═══ LEFT SIDEBAR ═══ -->
 <aside class="sidebar-l glass">
-  <nav class="sidebar-nav">
-    <div class="side-sec"><div class="side-sec-hdr">Workspace</div>
-      <div class="side-item active" onclick="navClick(this,'/context')">📁 Files <span class="side-badge">247</span></div>
-      <div class="side-item" onclick="navClick(this,'/tree')">🌳 Tree</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Tasks</div>
-      <div class="side-item" onclick="navClick(this,'/tasks')">● Active</div>
-      <div class="side-item" onclick="navClick(this,'/tasks')">☰ Queue</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Memory</div>
-      <div class="side-item" onclick="navClick(this,'/remember')">🧠 Brain Index</div>
-      <div class="side-item" onclick="navClick(this,'/sessions')">💬 Sessions</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Tools</div>
-      <div class="side-item" onclick="navClick(this,'/providers')">⚙ Registry</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Git</div>
-      <div class="side-item" onclick="navClick(this,'/git status')">⎇ Status</div>
-      <div class="side-item" onclick="navClick(this,'/git diff')">≡ Diff</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Deploy</div>
-      <div class="side-item" onclick="navClick(this,'/deploy')">⇧ Create PR</div>
-    </div>
-    <div class="side-sec"><div class="side-sec-hdr">Benchmarks</div>
-      <div class="side-item" onclick="navClick(this,'/bench')">⏱ Run</div>
-    </div>
+  <nav class="sidebar-nav" id="sidebar-nav">
+    <!-- Populated by sidebar.js -->
   </nav>
   <div class="side-profile">
-    <div class="prof-avatar">DO</div>
-    <div><div class="prof-name">dev@orbit</div><div class="prof-plan">Pro Plan</div></div>
+    <div class="prof-avatar">LX</div>
+    <div class="prof-info">
+      <div class="prof-name">Developer</div>
+      <div class="prof-plan">Pro Plan</div>
+    </div>
   </div>
 </aside>
 
@@ -235,20 +219,46 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <main class="center" id="center">
   <div class="welcome" id="welcome">
     <h1>⚡ nex-code</h1>
-    <p style="color:var(--text-secondary);margin-top:12px">Cyber-Obsidian Agentic Workflow</p>
-    <p style="color:var(--text-tertiary);margin-top:6px;font-size:12px">Type a command or click a sidebar item</p>
+    <p style="color:var(--text-secondary);margin-top:12px">Open-model-first CLI coding assistant</p>
+    <p style="color:var(--text-tertiary);margin-top:6px;font-size:12px">Open a project to start</p>
+    <button class="btn btn-p" style="margin-top:16px" onclick="window.nexAPI.openProject()">📂 Open Project…</button>
   </div>
+  
   <div class="timeline hidden" id="timeline">
-    <div class="tl-header"><h2>Agentic Loop</h2><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-emerald)">● Active</span></div>
-    <div class="tl-track" id="tl-track"></div>
+    <div class="tl-header">
+      <h2 id="timeline-title">Active Investigation</h2>
+      <div class="tl-status-pill" id="timeline-status-pill" style="display:none">
+        <span style="color:var(--accent-emerald)">●</span>
+        <span id="timeline-status-text">THINK...</span>
+      </div>
+    </div>
+    <div class="tl-track" id="tl-track">
+      <!-- Nodes added dynamically -->
+    </div>
+    
     <div class="success hidden" id="success">
       <div class="success-inner">
         <div class="success-icon">✓</div>
-        <div><div class="success-title">SUCCESS</div><div class="success-detail" id="success-detail">All phases completed</div></div>
-        <div class="success-acts">
-          <button class="btn btn-p" onclick="runCmd('/deploy')">Open PR</button>
-          <button class="btn btn-s" onclick="document.getElementById('cmd-input').focus()">Keep Iterating</button>
+        <div class="success-content">
+          <div class="success-title">TASK COMPLETE</div>
+          <div class="success-detail">All phases completed successfully.</div>
         </div>
+        <div class="success-acts">
+          <button class="btn btn-p" id="btn-open-pr">Wrap up PR</button>
+          <button class="btn btn-s" id="btn-keep-iterating">Keep Iterating</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="server-output hidden" id="server-output">
+    <div id="server-header" style="padding:12px 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);border-bottom:1px solid var(--border-thin)"></div>
+    <div id="server-stream" style="flex:1;overflow-y:auto;padding:12px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.7;white-space:pre-wrap"></div>
+    <div id="server-confirm" class="hidden" style="padding:12px 16px;border-top:1px solid var(--border-thin);background:var(--bg-elevated)">
+      <div id="confirm-question" style="color:var(--text-primary);margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-p" id="confirm-allow">✓ Allow</button>
+        <button class="btn btn-s" id="confirm-deny">✗ Deny</button>
       </div>
     </div>
   </div>
@@ -257,17 +267,17 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <!-- ═══ RIGHT SIDEBAR ═══ -->
 <aside class="sidebar-r">
   <div class="widget glass">
-    <div class="w-header"><span class="w-title">Branch Safety</span><span class="w-status">Safe to merge</span></div>
+    <div class="w-header"><span class="w-title">Project Status</span><span class="w-status" id="safety-status">Unknown</span></div>
     <div class="gauge-wrap">
       <svg viewBox="0 0 120 120" width="120" height="120">
         <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="2"/>
         <circle cx="60" cy="60" r="52" fill="none" stroke="url(#gGrad)" stroke-width="2" stroke-linecap="round"
-          stroke-dasharray="326.7" stroke-dashoffset="6.5" transform="rotate(-90 60 60)" id="gauge-arc"/>
+          stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)" id="gauge-arc"/>
         <defs><linearGradient id="gGrad" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="var(--accent-coral)"/><stop offset="50%" stop-color="var(--accent-teal)"/><stop offset="100%" stop-color="var(--accent-emerald)"/>
         </linearGradient></defs>
       </svg>
-      <div class="gauge-val">98</div>
+      <div class="gauge-val" id="gauge-val">--</div>
       <div class="gauge-lbl">Score</div>
     </div>
   </div>
@@ -278,12 +288,12 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
       <svg viewBox="0 0 100 100" width="100" height="100">
         <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="2"/>
         <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent-emerald)" stroke-width="2"
-          stroke-dasharray="251.3" stroke-dashoffset="0" stroke-linecap="round" id="donut-arc"/>
+          stroke-dasharray="251.3" stroke-dashoffset="251.3" stroke-linecap="round" id="donut-arc"/>
       </svg>
-      <div class="donut-center"><div class="donut-val" id="donut-passed">109</div><div class="donut-lbl">passed</div></div>
+      <div class="donut-center"><div class="donut-val" id="donut-passed">0</div><div class="donut-lbl">passed</div></div>
     </div>
     <div class="test-stats">
-      <div class="ts-item"><div class="ts-dot em"></div><span class="ts-label">Passed</span><span class="ts-val" id="stat-passed">109</span></div>
+      <div class="ts-item"><div class="ts-dot em"></div><span class="ts-label">Passed</span><span class="ts-val" id="stat-passed">0</span></div>
       <div class="ts-item"><div class="ts-dot co"></div><span class="ts-label">Failed</span><span class="ts-val" id="stat-failed">0</span></div>
     </div>
   </div>
@@ -291,8 +301,8 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
   <div class="widget glass">
     <div class="w-header"><span class="w-title">Cost &amp; Usage</span></div>
     <div class="cost-sum">
-      <div><div class="cost-val" id="cost-tokens">312.4k</div><div class="cost-lbl">tokens</div></div>
-      <div><div class="cost-val" id="cost-requests">158</div><div class="cost-lbl">requests</div></div>
+      <div><div class="cost-val" id="cost-tokens">0</div><div class="cost-lbl">tokens</div></div>
+      <div><div class="cost-val" id="cost-requests">0</div><div class="cost-lbl">requests</div></div>
     </div>
     <div class="spark-box" id="spark-box"></div>
   </div>
@@ -310,311 +320,20 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
   <div class="cmd-wrap">
     <span class="cmd-prompt">❯</span>
     <input type="text" class="cmd-input" id="cmd-input" placeholder="Ask nex-code anything..." autofocus>
-    <button class="cmd-submit" onclick="submitCmd()">➤</button>
+    <button class="cmd-submit" id="cmd-submit">➤</button>
   </div>
-  <div class="chips">
-    <button class="chip" onclick="runCmd('/plan')"><span class="chip-icon">◈</span>/plan</button>
-    <button class="chip" onclick="runCmd('/impl')"><span class="chip-icon">◆</span>/impl</button>
-    <button class="chip" onclick="runCmd('/verify')"><span class="chip-icon">✓</span>/verify</button>
-    <button class="chip" onclick="runCmd('/bench')"><span class="chip-icon">⏱</span>/bench</button>
-    <button class="chip" onclick="runCmd('/git')"><span class="chip-icon">⎇</span>/git</button>
-    <button class="chip" onclick="runCmd('/deploy')"><span class="chip-icon">⇧</span>/deploy</button>
+  <div class="chips" id="command-chips">
+    <!-- Populated by app.js -->
   </div>
 </footer>
 
 </div>
 
-<script>
-// ═══════════════ SINGLE-FILE APP LOGIC ═══════════════
-
-const state = {
-  project: 'orbit-control', branch: 'feat/telemetry-refactor',
-  model: 'auto (GPT-4o / Claude 3.5)',
-  budget: { used: 1.42, limit: 10.0 },
-  nodes: [],
-  testResults: { passed: 109, failed: 0 },
-  branchSafety: { score: 98 }
-};
-
-const history = [];
-let histIdx = -1;
-
-// ── INIT ──
-(function init() {
-  // Set initial values
-  document.getElementById('tb-project').textContent = state.project;
-  document.getElementById('tb-branch').innerHTML = state.branch;
-  document.getElementById('model-val').textContent = state.model;
-  document.getElementById('budget-val').textContent = '$' + state.budget.used.toFixed(2) + ' / $' + state.budget.limit.toFixed(2);
-  document.getElementById('budget-fill').style.width = (state.budget.used / state.budget.limit * 100) + '%';
-  document.getElementById('donut-passed').textContent = state.testResults.passed;
-  document.getElementById('stat-passed').textContent = state.testResults.passed;
-  document.getElementById('stat-failed').textContent = state.testResults.failed;
-  document.getElementById('cost-tokens').textContent = '312.4k';
-  document.getElementById('cost-requests').textContent = '158';
-
-  // Render tool log
-  const tools = [
-    { tool: 'repo.scan', detail: 'Scanned 247 files', time: '2s ago' },
-    { tool: 'file.read', detail: 'src/telemetry/collector.ts', time: '5s ago' },
-    { tool: 'file.write', detail: 'src/telemetry/buffer.ts (+34, -8)', time: '8s ago' },
-    { tool: 'shell.exec', detail: 'npm run test -- --coverage', time: '12s ago' },
-    { tool: 'git.diff', detail: '3 files changed', time: '15s ago' },
-    { tool: 'git.status', detail: 'feat/telemetry-refactor', time: '18s ago' },
-  ];
-  document.getElementById('tool-log').innerHTML = tools.map(t =>
-    `<div class="tl-entry"><span class="tl-tool">${t.tool}</span><span class="tl-dtl">${t.detail}</span><span class="tl-time">${t.time}</span></div>`
-  ).join('');
-
-  // Render cost sparkline
-  renderCostSparkline();
-
-  // Keyboard: Enter submits
-  const inp = document.getElementById('cmd-input');
-  inp.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') { e.preventDefault(); submitCmd(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); navHistory(-1); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); navHistory(1); }
-  });
-  document.addEventListener('keydown', function(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); inp.focus(); }
-  });
-})();
-
-// ── COMMAND EXECUTION ──
-function submitCmd() {
-  const inp = document.getElementById('cmd-input');
-  const cmd = inp.value.trim();
-  if (!cmd) return;
-  history.push(cmd);
-  if (history.length > 50) history.shift();
-  histIdx = history.length;
-  inp.value = '';
-  runCmd(cmd);
-}
-
-function runCmd(cmd) {
-  if (!cmd) return;
-  cmd = cmd.trim();
-
-  if (!cmd.startsWith('/')) {
-    // Natural language — full agentic loop
-    addNode('PLAN', 'Processing: "' + cmd + '"', 'cyan', planExtras(247, {added:142,modified:38,removed:12}, ['src/telemetry/collector.ts','src/telemetry/buffer.ts']));
-    setTimeout(function() {
-      addNode('IMPLEMENT', 'Applying changes', 'emerald', implExtras([
-        {name:'src/telemetry/collector.ts',pct:100},{name:'src/telemetry/buffer.ts',pct:100},{name:'tests/telemetry.test.ts',pct:100}
-      ], ['Prettier ✓','ESLint ✓']));
-    }, 1500);
-    setTimeout(function() {
-      addNode('VERIFY', 'Running tests & benchmarks', 'teal', verifyExtras({passed:86,failed:0}, {metric:'telemetry throughput',value:1420,unit:'ops/s'}));
-      setTimeout(function() { showSuccess(); }, 800);
-    }, 3000);
-    return;
-  }
-
-  // Slash commands
-  var parts = cmd.split(/\s+/);
-  var base = parts[0].toLowerCase();
-  var arg = parts.slice(1).join(' ');
-
-  switch (base) {
-    case '/plan':
-      addNode('PLAN', 'Planning phase initiated', 'cyan', planExtras(Math.floor(Math.random()*200+50), {added:0,modified:0,removed:0}, ['Scanning repository…']));
-      break;
-    case '/impl': case '/implement':
-      addNode('IMPLEMENT', 'Implementation phase initiated', 'emerald', implExtras([{name:'Awaiting task…',pct:0}], []));
-      break;
-    case '/verify':
-      addNode('VERIFY', 'Verification phase initiated', 'teal', verifyExtras({passed:0,failed:0}, {metric:'pending',value:0,unit:'...'}));
-      break;
-    case '/git':
-      if (arg === 'diff') {
-        addNode('PLAN', 'Git Diff — changes in working tree', 'cyan', planExtras(3, {added:142,modified:38,removed:12}, ['src/telemetry/collector.ts','src/telemetry/buffer.ts','tests/telemetry.test.ts']));
-      } else {
-        addNode('PLAN', 'Git Status — checking working tree', 'cyan', planExtras(247, {added:0,modified:0,removed:0}, ['Branch: '+state.branch,'Remote: origin','Status: clean']));
-      }
-      break;
-    case '/deploy':
-      addNode('IMPLEMENT', 'Deploy — preparing pull request', 'emerald', implExtras([
-        {name:'Branch: '+state.branch,pct:100},{name:'Tests: '+state.testResults.passed+' passed',pct:100},{name:'Safety: '+state.branchSafety.score,pct:100}
-      ], ['CI/CD pipeline','Code review ready']));
-      break;
-    case '/bench': case '/benchmark':
-      addNode('VERIFY', 'Benchmark — running performance suite', 'teal', verifyExtras({passed:0,failed:0}, {metric:'Benchmark smoke tests',value:7,unit:'tasks'}));
-      break;
-    case '/tasks':
-      addNode('PLAN', 'Tasks — active and queued work', 'cyan', planExtras(state.nodes.length, {added:0,modified:0,removed:0}, state.nodes.map(function(n){return '['+n.phase+'] '+n.detail})));
-      break;
-    case '/context':
-      addNode('PLAN', 'Project Context — '+state.project, 'cyan', planExtras(247, {added:0,modified:0,removed:0}, ['Project: '+state.project,'Branch: '+state.branch,'Model: '+state.model,'Budget: $'+state.budget.used.toFixed(2)]));
-      break;
-    case '/tree':
-      addNode('PLAN', 'File Tree — depth 3', 'cyan', planExtras(42, {added:0,modified:0,removed:0}, ['src/','  telemetry/','    collector.ts','    buffer.ts']));
-      break;
-    case '/remember': case '/memory':
-      addNode('PLAN', 'Memory — Brain Index', 'cyan', planExtras(3, {added:0,modified:0,removed:0}, ['telemetry-refactor (12.4k, claude-3.5)','api-rate-limiting (8.1k, gpt-4o)','dashboard-perf (23.7k, devstral-2)']));
-      break;
-    case '/sessions':
-      addNode('PLAN', 'Sessions — saved conversations', 'cyan', planExtras(3, {added:0,modified:0,removed:0}, ['telemetry-refactor — 12.4k • claude-3.5 • 2h ago','api-rate-limiting — 8.1k • gpt-4o • 5h ago','dashboard-perf — 23.7k • devstral-2 • 1d ago']));
-      break;
-    case '/providers':
-      addNode('PLAN', 'Providers & Models', 'cyan', planExtras(9, {added:0,modified:0,removed:0}, ['auto (GPT-4o / Claude 3.5)','GPT-4o — openai','Claude 3.5 Sonnet — anthropic','Devstral-2 123B — ollama-cloud','Kimi K2.5 — ollama-cloud','Qwen3 236B — ollama-cloud','Gemini 3.1 Pro — google','DeepSeek V4 — deepseek','Local Ollama — local']));
-      break;
-    case '/model':
-      var mn = arg || 'auto';
-      addNode('PLAN', 'Model switched to: '+mn, 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Active: '+mn]));
-      document.getElementById('model-val').textContent = mn;
-      state.model = mn;
-      break;
-    case '/load':
-      addNode('PLAN', 'Session loaded: '+(arg||'latest'), 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Restoring: '+(arg||'latest')]));
-      break;
-    case '/orchestrate':
-      addNode('PLAN', 'Orchestrator — multi-agent decomposition', 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Decomposing task…','Spawning sub-agents…']));
-      break;
-    default:
-      addNode('PLAN', 'Command: '+cmd, 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Sending to backend…']));
-  }
-  setTimeout(function() { showSuccess(); }, 300);
-}
-
-// ── SIDEBAR NAV ──
-function navClick(el, cmd) {
-  document.querySelectorAll('.side-item').forEach(function(i) { i.classList.remove('active'); });
-  el.classList.add('active');
-  runCmd(cmd);
-}
-
-// ── MODEL MENU ──
-function toggleModelMenu() {
-  var existing = document.getElementById('model-menu');
-  if (existing) { existing.remove(); return; }
-  var models = ['auto (GPT-4o / Claude 3.5)','GPT-4o','Claude 3.5 Sonnet','Devstral-2 123B','Kimi K2.5','Qwen3 236B','Gemini 3.1 Pro','DeepSeek V4','Local Ollama'];
-  var menu = document.createElement('div');
-  menu.id = 'model-menu';
-  menu.style.cssText = 'position:fixed;min-width:280px;background:var(--bg-elevated);border:1px solid var(--border-active);border-radius:var(--radius-md);box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:1000;overflow:hidden';
-  var rtr = document.getElementById('model-rtr');
-  var rect = rtr.getBoundingClientRect();
-  menu.style.top = (rect.bottom + 4) + 'px';
-  menu.style.left = rect.left + 'px';
-  menu.innerHTML = '<div style="padding:10px 14px;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;border-bottom:1px solid var(--border)">Select Model</div>' +
-    models.map(function(m) {
-      return '<div style="display:flex;justify-content:space-between;padding:9px 14px;cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--text-primary)'+(m===state.model?';background:rgba(57,255,20,.06);border-left:2px solid var(--accent-emerald)':'')+'" onmouseover="this.style.background=\'var(--bg-hover)\'" onmouseout="this.style.background=\''+(m===state.model?'rgba(57,255,20,.06)':'')+'\'" onclick="selectModel(\''+m+'\')">'+m+'</div>';
-    }).join('');
-  document.body.appendChild(menu);
-  setTimeout(function() {
-    document.addEventListener('click', function close(e) {
-      if (!menu.contains(e.target) && e.target !== rtr) { menu.remove(); document.removeEventListener('click', close); }
-    });
-  }, 0);
-}
-function selectModel(m) {
-  document.getElementById('model-val').textContent = m;
-  state.model = m;
-  var menu = document.getElementById('model-menu');
-  if (menu) menu.remove();
-  addNode('PLAN', 'Model switched to: '+m, 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Active: '+m,'Routing updated']));
-  showSuccess();
-}
-
-// ── HISTORY NAV ──
-function navHistory(dir) {
-  if (history.length === 0) return;
-  var inp = document.getElementById('cmd-input');
-  if (dir < 0) { // up
-    if (histIdx === history.length) inp.dataset.saved = inp.value;
-    if (histIdx > 0) { histIdx--; inp.value = history[histIdx]; }
-  } else { // down
-    if (histIdx < history.length - 1) { histIdx++; inp.value = history[histIdx]; }
-    else { histIdx = history.length; inp.value = inp.dataset.saved || ''; }
-  }
-}
-
-// ── TIMELINE RENDERING ──
-function addNode(phase, detail, color, extrasHTML) {
-  state.nodes.push({phase:phase, detail:detail, color:color});
-  var track = document.getElementById('tl-track');
-  var el = document.createElement('div');
-  el.className = 'tl-node';
-  el.style.animationDelay = (state.nodes.length * 0.1) + 's';
-  el.innerHTML = '<div class="tl-dot '+color+'"></div><div class="tl-card"><div class="tl-card-hdr"><span class="tl-phase '+color+'">'+phase+'</span><span class="tl-check">✓</span></div><div class="tl-detail">'+detail+'</div>'+extrasHTML+'</div>';
-  track.appendChild(el);
-  document.getElementById('welcome').classList.add('hidden');
-  document.getElementById('timeline').classList.remove('hidden');
-}
-
-function showSuccess() {
-  var s = document.getElementById('success');
-  if (s && state.nodes.length > 0) s.classList.remove('hidden');
-}
-
-// ── EXTRAS BUILDERS ──
-function planExtras(files, diff, relevant) {
-  var h = '<div class="term" style="margin-bottom:10px">'+files+' files scanned</div>';
-  var total = (diff.added||0)+(diff.modified||0)+(diff.removed||0);
-  if (total > 0) {
-    h += '<div class="diff-sum"><span class="add">+'+diff.added+'</span><span class="mod">~'+diff.modified+'</span><span class="rem">-'+diff.removed+'</span></div>';
-    h += '<div class="diff-bar">';
-    h += '<div class="diff-bar-s add" style="width:'+((diff.added||0)/total*100).toFixed(0)+'%"></div>';
-    h += '<div class="diff-bar-s mod" style="width:'+((diff.modified||0)/total*100).toFixed(0)+'%"></div>';
-    h += '<div class="diff-bar-s rem" style="width:'+((diff.removed||0)/total*100).toFixed(0)+'%"></div>';
-    h += '</div>';
-  }
-  if (relevant && relevant.length > 0) {
-    h += '<div class="term" style="margin-top:10px">'+relevant.map(function(f){return '  '+f}).join('<br>')+'</div>';
-  }
-  return h;
-}
-function implExtras(files, formatters) {
-  var h = '<div class="fp-list">';
-  files.forEach(function(f) {
-    h += '<div class="fp-item"><span class="fp-name">'+f.name+'</span><div class="fp-bar"><div class="fp-fill'+(f.pct===100?' shimmer-bar':'')+'" style="width:'+f.pct+'%"></div></div><span class="fp-pct">'+f.pct+'%</span></div>';
-  });
-  h += '</div>';
-  if (formatters && formatters.length > 0) {
-    h += '<div class="term" style="margin-top:10px">'+formatters.map(function(f){return '<span style="color:var(--accent-emerald)">'+f+'</span>'}).join('  ')+'</div>';
-  }
-  return h;
-}
-function verifyExtras(tests, bench) {
-  var h = '<div class="test-mini"><span class="pass">'+tests.passed+' passed</span><span class="sep">|</span><span class="fail">'+tests.failed+' failed</span></div>';
-  if (bench) {
-    var pts = bezierPath(genTelemetry(24), 360, 48, 2);
-    h += '<div class="chart-box"><svg viewBox="0 0 360 48" preserveAspectRatio="none"><defs><linearGradient id="vGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-cyan)" stop-opacity="0.30"/><stop offset="50%" stop-color="var(--accent-teal)" stop-opacity="0.06"/><stop offset="100%" stop-color="var(--accent-cyan)" stop-opacity="0.01"/></linearGradient></defs><path d="'+pts.area+'" class="chart-area"/><path d="'+pts.path+'" class="chart-glow"/></svg></div>';
-    h += '<div class="term" style="margin-top:6px">'+bench.metric+': '+bench.value+' '+bench.unit+'</div>';
-  }
-  return h;
-}
-
-// ── BEZIER CURVES ──
-function bezierPath(values, w, h, pad) {
-  var n = values.length;
-  if (n < 2) return {path:'',area:''};
-  var max = Math.max.apply(null, values.concat([1]));
-  var iw = w - pad*2, ih = h - pad*2, step = iw/(n-1);
-  var pts = values.map(function(v,i) { return {x:pad+i*step, y:pad+ih-(v/max)*ih}; });
-  var pathD = 'M'+pts[0].x+','+pts[0].y;
-  var areaD = 'M'+pts[0].x+','+h+' L'+pts[0].x+','+pts[0].y;
-  for (var i=0; i<n-1; i++) {
-    var p0=pts[i], p1=pts[i+1];
-    var cx1=p0.x+step*.4, cx2=p1.x-step*.4;
-    pathD += ' C'+cx1+','+p0.y+' '+cx2+','+p1.y+' '+p1.x+','+p1.y;
-    areaD += ' C'+cx1+','+p0.y+' '+cx2+','+p1.y+' '+p1.x+','+p1.y;
-  }
-  areaD += ' L'+pts[n-1].x+','+h+' L'+pts[0].x+','+h+' Z';
-  return {path:pathD, area:areaD};
-}
-function genTelemetry(n) {
-  var vals=[], v=1200;
-  for (var i=0;i<n;i++) { v+=Math.sin(i*.35)*80+Math.cos(i*.15)*40+(Math.random()-.5)*30; v=Math.max(900,Math.min(1600,v)); vals.push(Math.round(v)); }
-  return vals;
-}
-function renderCostSparkline() {
-  var vals=[];
-  for (var i=0;i<24;i++) vals.push(Math.floor(Math.random()*15000+5000));
-  var p=bezierPath(vals,260,56,4);
-  document.getElementById('spark-box').innerHTML='<svg viewBox="0 0 260 56" preserveAspectRatio="none"><defs><linearGradient id="cGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-cyan)" stop-opacity="0.35"/><stop offset="50%" stop-color="var(--accent-teal)" stop-opacity="0.08"/><stop offset="100%" stop-color="var(--accent-cyan)" stop-opacity="0.01"/></linearGradient></defs><path d="'+p.area+'" class="cost-area"/><path d="'+p.path+'" class="cost-glow"/></svg>';
-}
-</script>
+<script src="js/components/topbar.js"></script>
+<script src="js/components/sidebar.js"></script>
+<script src="js/components/agentic-timeline.js"></script>
+<script src="js/components/right-panel.js"></script>
+<script src="js/components/command-palette.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
