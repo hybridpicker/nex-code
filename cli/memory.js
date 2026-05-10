@@ -463,6 +463,58 @@ function loadProjectInstructions() {
   }
 }
 
+// ─── Learned Pattern Persistence ───────────────────────────────────────
+/**
+ * Save a learned pattern that persists across sessions.
+ * Patterns are stored in .nex/memory/reference/learned-patterns.md
+ * as a cumulative markdown list.
+ *
+ * @param {string} pattern — description of the learned pattern
+ * @param {string} [context] — optional context (e.g. which task triggered it)
+ */
+function saveLearnedPattern(pattern, context) {
+  const dir = ensureTypeDir("reference");
+  const filePath = path.join(dir, "learned-patterns.md");
+  const timestamp = new Date().toISOString().split("T")[0];
+  const entry = context
+    ? `- **${pattern}** (${context}, ${timestamp})\n`
+    : `- **${pattern}** (${timestamp})\n`;
+
+  let content = "";
+  if (fs.existsSync(filePath)) {
+    content = fs.readFileSync(filePath, "utf-8");
+  }
+  // Avoid exact duplicates
+  if (content.includes(pattern)) return;
+
+  if (!content.startsWith("# Learned Patterns")) {
+    content = "# Learned Patterns\n\n" + entry;
+  } else {
+    content += entry;
+  }
+  atomicWrite(filePath, content);
+  rebuildIndex();
+}
+
+/**
+ * Retrieve all learned patterns from the persisted file.
+ * @returns {string[]}
+ */
+function getLearnedPatterns() {
+  const dir = ensureTypeDir("reference");
+  const filePath = path.join(dir, "learned-patterns.md");
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+    return lines
+      .filter((l) => l.startsWith("- **"))
+      .map((l) => l.replace(/^-\s*\*\*/, "").replace(/\*\*.*$/, "").trim());
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Get memory context for system prompt inclusion.
  * Returns NEX.md instructions + MEMORY.md index (typed files).
@@ -520,6 +572,9 @@ module.exports = {
   recall,
   forget,
   listMemories,
+  // Learned patterns (session-persistent)
+  saveLearnedPattern,
+  getLearnedPatterns,
   // NEX.md
   loadGlobalInstructions,
   loadProjectInstructions,
