@@ -25,6 +25,7 @@ const DEEPSEEK_MODELS = {
     speed: "balanced",
     quality: 96,
     recommendedFor: ["coding", "agentic", "reasoning", "review"],
+    thinking: "enabled", // Default thinking on for agentic reasoning
   },
 };
 
@@ -56,7 +57,13 @@ class DeepSeekProvider extends OpenAIProvider {
   }
 
   prepareRequestBody(body, options = {}) {
-    const thinkingType = options.thinking || process.env.DEEPSEEK_THINKING;
+    // Resolve thinking type: explicit option > model-level config > env var > disabled
+    const modelId = body?.model || this.defaultModel;
+    const modelConfig = this.getModel(modelId);
+    const thinkingType =
+      options.thinking ??
+      modelConfig?.thinking ??
+      process.env.DEEPSEEK_THINKING;
     return {
       ...body,
       thinking:
