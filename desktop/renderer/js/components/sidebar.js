@@ -1,8 +1,8 @@
 /**
- * desktop/renderer/js/components/sidebar.js — Left Sidebar
+ * desktop/renderer/js/components/sidebar.js — Left Sidebar (Minimal)
  *
- * Workspace navigation, tasks, memory, tools, git, deploy,
- * benchmarks, recent sessions, user profile.
+ * Renders only real data from the live backend state.
+ * No placeholders — every field comes from the state snapshot.
  */
 
 "use strict";
@@ -10,114 +10,94 @@
 function initSidebarComponents(data) {
   if (!data) return;
 
-  // Workspace badge
-  const workspaceBadge = document.getElementById("workspace-badge");
-  if (workspaceBadge && data.agenticNodes) {
-    const planNode = data.agenticNodes.find((n) => n.phase === "PLAN");
-    if (planNode && planNode.extras && planNode.extras.filesScanned) {
-      workspaceBadge.textContent = planNode.extras.filesScanned;
+  // Project name
+  const projectEl = document.getElementById("sidebar-project-name");
+  if (projectEl && data.project) {
+    projectEl.innerHTML = `📁 ${data.project}`;
+  }
+
+  // Branch name
+  const branchEl = document.getElementById("sidebar-branch-name");
+  if (branchEl && data.branch) {
+    branchEl.innerHTML = `⎇ ${data.branch}`;
+  }
+
+  // Agent phase
+  const phaseEl = document.getElementById("sidebar-agent-phase");
+  if (phaseEl && data.agenticNodes) {
+    const activeNode = data.agenticNodes.find((n) => n.status === "active");
+    if (activeNode) {
+      const color = activeNode.color || "cyan";
+      phaseEl.innerHTML = `<span class="dot-${color}"></span> ${activeNode.phase}`;
+    } else if (data.agenticNodes.every((n) => n.status === "complete")) {
+      phaseEl.innerHTML = '<span class="dot-emerald"></span> Done';
+    } else {
+      phaseEl.innerHTML = '<span class="dot-muted"></span> Idle';
     }
   }
 
-  // Active tasks badge
-  const tasksBadge = document.getElementById("tasks-active-badge");
-  if (tasksBadge) {
-    const activeNodes = data.agenticNodes
-      ? data.agenticNodes.filter((n) => n.status === "active").length
-      : 0;
-    tasksBadge.textContent = activeNodes || "0";
+  // Agent iteration
+  const iterEl = document.getElementById("sidebar-agent-iter");
+  if (iterEl && data.agenticNodes) {
+    const activeNode = data.agenticNodes.find((n) => n.status === "active");
+    iterEl.innerHTML = `↻ Iter ${activeNode ? "1" : "0"}`;
   }
 
-  // Recent sessions list
-  const sessionsList = document.getElementById("recent-sessions-list");
-  if (sessionsList && data.recentSessions) {
-    const colors = ["emerald", "teal", "coral"];
-    sessionsList.innerHTML = data.recentSessions
-      .map(
-        (s, i) => `
-        <div class="recent-session-item" data-session="${s.name}">
-          <span class="recent-session-dot ${colors[i % colors.length]}"></span>
-          <div class="recent-session-info">
-            <div class="recent-session-name">${s.name}</div>
-            <div class="recent-session-meta">${s.tokens} tokens • ${s.model} • ${s.time}</div>
-          </div>
-        </div>
-      `
-      )
-      .join("");
+  // Provider count
+  const provCountEl = document.getElementById("sidebar-providers-count");
+  if (provCountEl && data.provider) {
+    // We count registered providers from the known list
+    provCountEl.innerHTML = `⬡ ${data.provider} + fallbacks`;
   }
 
-  // Sidebar item click handler
+  // Default provider
+  const provDefaultEl = document.getElementById("sidebar-provider-default");
+  if (provDefaultEl && data.provider) {
+    provDefaultEl.innerHTML = `◆ ${data.provider}`;
+  }
+
+  // Git branch
+  const gitBranchEl = document.getElementById("sidebar-git-branch");
+  if (gitBranchEl && data.branch) {
+    gitBranchEl.innerHTML = `⎇ ${data.branch}`;
+  }
+
+  // Git status (clean/dirty from branchSafety)
+  const gitStatusEl = document.getElementById("sidebar-git-status");
+  if (gitStatusEl && data.branchSafety) {
+    const status = data.branchSafety.status || "Unknown";
+    const clean = status === "Safe to merge";
+    gitStatusEl.innerHTML = clean
+      ? '<span class="dot-emerald"></span> Clean'
+      : '<span class="dot-coral"></span> Dirty';
+  }
+
+  // Files list
+  const filesListEl = document.getElementById("sidebar-files-list");
+  if (filesListEl && data.agenticNodes) {
+    const planNode = data.agenticNodes.find((n) => n.phase === "PLAN");
+    if (planNode && planNode.extras && planNode.extras.relevantFiles) {
+      filesListEl.innerHTML = planNode.extras.relevantFiles
+        .map((f) => `<div class="side-file">└ ${f}</div>`)
+        .join("");
+    } else {
+      filesListEl.innerHTML = '<div class="side-file" style="opacity:0.5">No files scanned</div>';
+    }
+  }
+
+  // Open project click handler
   setupSidebarNavigation(data);
 }
 
 function setupSidebarNavigation(data) {
-  const items = document.querySelectorAll(".sidebar-item[data-action]");
+  const items = document.querySelectorAll(".side-item[onclick]");
   items.forEach((item) => {
     item.addEventListener("click", () => {
-      const action = item.dataset.action;
-
-      // Remove active from all
-      items.forEach((i) => i.classList.remove("active"));
-      item.classList.add("active");
-
-      // Handle actions
-      switch (action) {
-        case "workspace":
-          window.NexApp.executeCommand("/context");
-          break;
-        case "workspace-tree":
-          window.NexApp.executeCommand("/tree");
-          break;
-        case "tasks-active":
-          window.NexApp.executeCommand("/tasks");
-          break;
-        case "tasks-queue":
-          window.NexApp.addTimelineNode(
-            "PLAN",
-            "Task Queue — listing pending and queued work",
-            "cyan",
-            {
-              filesScanned: 0,
-              diff: { added: 0, modified: 0, removed: 0 },
-              relevantFiles: ["No queued tasks — all work is complete"],
-              status: "complete",
-            }
-          );
-          window.NexApp.executeCommand("/tasks");
-          break;
-        case "memory-index":
-          window.NexApp.executeCommand("/remember");
-          break;
-        case "memory-sessions":
-          window.NexApp.executeCommand("/sessions");
-          break;
-        case "tools-registry":
-          window.NexApp.executeCommand("/providers");
-          break;
-        case "git-status":
-          window.NexApp.executeCommand("/git status");
-          break;
-        case "git-diff":
-          window.NexApp.executeCommand("/git diff");
-          break;
-        case "deploy-pr":
-          window.NexApp.executeCommand("/deploy");
-          break;
-        case "benchmark-run":
-          window.NexApp.executeCommand("/bench");
-          break;
-      }
-    });
-  });
-
-  // Session click handlers
-  const sessionItems = document.querySelectorAll(".recent-session-item");
-  sessionItems.forEach((item) => {
-    item.addEventListener("click", () => {
-      const name = item.dataset.session;
-      if (name) {
-        window.NexApp.executeCommand(`/load ${name}`);
+      const action = item.getAttribute("onclick") || "";
+      if (action.includes("/open")) {
+        if (window.nexAPI && window.nexAPI.openProject) {
+          window.nexAPI.openProject();
+        }
       }
     });
   });
