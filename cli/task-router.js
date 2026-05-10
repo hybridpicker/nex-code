@@ -164,6 +164,16 @@ const BUILTIN_PHASE_DEFAULTS = {
   // plan: "kimi-k2-thinking" — reasoning model for complex planning tasks
 };
 
+// Built-in phase defaults for DeepSeek users. DeepSeek V4 Pro handles deep
+// reasoning natively through its thinking mode; V4 Flash is the fast path.
+// These activate automatically when provider is "deepseek".
+const BUILTIN_PHASE_DEFAULTS_DEEPSEEK = {
+  explore: "deepseek-v4-flash", // fast, efficient file reading and search
+  plan: "deepseek-v4-pro",      // 1M context, strong chain-of-thought reasoning
+  implement: null,              // null = use active model
+  verify: "deepseek-v4-flash",  // fast verification, good enough for test/lint
+};
+
 /**
  * Get the effective phase config: explicit config > builtin defaults (ollama only).
  * Returns null if phase routing should not be active.
@@ -175,12 +185,12 @@ function _resolvePhaseConfig() {
   if (config.phases && Object.keys(config.phases).length > 0) {
     return config.phases;
   }
-  // Auto-enable for Ollama Cloud users: check if active provider is ollama
+  // Auto-enable for Ollama Cloud / DeepSeek users: provider-specific builtin defaults
   try {
     const { getActiveProviderName } = require("./providers/registry");
-    if (getActiveProviderName() === "ollama") {
-      return BUILTIN_PHASE_DEFAULTS;
-    }
+    const providerName = getActiveProviderName();
+    if (providerName === "ollama") return BUILTIN_PHASE_DEFAULTS;
+    if (providerName === "deepseek") return BUILTIN_PHASE_DEFAULTS_DEEPSEEK;
   } catch {
     /* registry not initialized yet — skip auto-enable */
   }
@@ -294,6 +304,7 @@ module.exports = {
   isPhaseRoutingEnabled,
   DEFAULT_PHASE_BUDGETS,
   BUILTIN_PHASE_DEFAULTS,
+  BUILTIN_PHASE_DEFAULTS_DEEPSEEK,
   saveRoutingConfig,
   loadRoutingConfig,
   ROUTING_CONFIG_PATH,

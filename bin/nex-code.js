@@ -108,11 +108,14 @@ const _modelSpecEarly =
     : "";
 const _modelProviderEarly = (() => {
   const prefix = _modelSpecEarly.split(":")[0];
-  return ["ollama", "openai", "deepseek", "anthropic", "gemini", "local", "mock"].includes(
-    prefix,
-  )
-    ? prefix
-    : null;
+  const known = ["ollama", "openai", "deepseek", "anthropic", "gemini", "local", "mock"];
+  // Direct match (e.g. "ollama:qwen3-coder" → "ollama")
+  if (known.includes(prefix)) return prefix;
+  // Fuzzy match for un-prefixed model IDs (e.g. "deepseek-v4-pro" → "deepseek")
+  for (const k of known) {
+    if (_modelSpecEarly.startsWith(k)) return k;
+  }
+  return null;
 })();
 const _defaultProviderEarly = process.env.DEFAULT_PROVIDER || "ollama";
 const _autoFlatrateAllowed =
@@ -450,7 +453,8 @@ function createPlainHeadlessHooks() {
   }
 
   process.stdout.write = swallowWrite;
-  process.stderr.write = swallowWrite;
+  // Keep stderr alive for debug output in headless mode
+  // process.stderr.write = swallowWrite;
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};

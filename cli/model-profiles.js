@@ -63,6 +63,28 @@ Stay on-scope — your strength is focused, efficient coding tasks.`,
 Trust your reasoning. Use tools thoroughly when the task demands it.
 You handle complex multi-step tasks well — don't cut corners prematurely.`,
   },
+  "deepseek-v4-pro": {
+    staleWarn: 120000,
+    staleAbort: 300000,
+    investigationCap: 12,
+    postEditCap: 14,
+    briefing: `You are DeepSeek V4 Pro, a top-tier coding and reasoning model with 1M token context.
+
+CRITICAL RULES:
+1. After reading a file with read_file, you have its COMPLETE contents in the tool result. Do NOT re-read it — proceed directly to edit_file or write_file.
+2. Files shown in tool results (marked "File: name (N lines)") are already fully in your context. Use them. Never request the same file twice.
+3. Read → Fix → Verify. One read per file is enough. If blocked from re-reading, that means you already have the content — edit now.
+4. Prefer action over narration. When you identify a bug, fix it immediately with edit_file. Do not describe what you will do — just do it.`,
+  },
+  "deepseek-v4-flash": {
+    staleWarn: 40000,
+    staleAbort: 120000,
+    investigationCap: 6,
+    postEditCap: 8,
+    briefing: `You are DeepSeek V4 Flash, a fast and efficient coding model.
+
+CRITICAL: Read a file ONCE, then edit it. Never re-read. Tool results already contain the full file content — use it directly. Read → Fix → Done. No second reads.`,
+  },
 };
 
 const DEFAULTS = {

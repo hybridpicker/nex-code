@@ -26,6 +26,18 @@ const DEFAULT_MAX_SUBTASKS = parseInt(process.env.NEX_MAX_SUBTASKS || "8", 10);
 const DEFAULT_WORKER_MODEL = "devstral-2:123b";
 const DEFAULT_ORCHESTRATOR_MODEL = "kimi-k2.5";
 
+// Provider-specific defaults: resolved dynamically in runOrchestrated()
+const PROVIDER_DEFAULTS = {
+  ollama: {
+    orchestrator: "kimi-k2.5",
+    worker: "devstral-2:123b",
+  },
+  deepseek: {
+    orchestrator: "deepseek-v4-pro",
+    worker: "deepseek-v4-flash",
+  },
+};
+
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
 const DECOMPOSE_PROMPT = `You are a task decomposition engine. Given a complex user request, split it into independent, atomic sub-tasks.
@@ -578,11 +590,15 @@ function shouldSuppressCommit(synthesis, subTaskResults) {
  * });
  */
 async function runOrchestrated(prompt, opts = {}) {
+  // Resolve provider-specific defaults from active provider
+  const providerName = getActiveProviderName();
+  const providerDefaults = PROVIDER_DEFAULTS[providerName] || PROVIDER_DEFAULTS.ollama;
+
   const orchestratorModel =
     opts.orchestratorModel ||
     process.env.NEX_ORCHESTRATOR_MODEL ||
-    DEFAULT_ORCHESTRATOR_MODEL;
-  const workerModel = opts.workerModel || DEFAULT_WORKER_MODEL;
+    providerDefaults.orchestrator;
+  const workerModel = opts.workerModel || providerDefaults.worker;
   const maxParallel = opts.maxParallel || DEFAULT_MAX_PARALLEL;
   const maxSubTasks = opts.maxSubTasks || DEFAULT_MAX_SUBTASKS;
   const onProgress = opts.onProgress || (() => {});
@@ -1134,6 +1150,7 @@ module.exports = {
   createSemaphore,
   DECOMPOSE_PROMPT,
   SYNTHESIZE_PROMPT,
+  PROVIDER_DEFAULTS,
   DEFAULT_ORCHESTRATOR_MODEL,
   DEFAULT_WORKER_MODEL,
   DEFAULT_MAX_PARALLEL,

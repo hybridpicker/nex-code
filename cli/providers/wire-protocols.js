@@ -122,6 +122,7 @@ class OpenAIStreamParser extends StreamParser {
   constructor(onToken, callbacks = {}) {
     super(onToken, callbacks);
     this.toolCallsMap = {}; // index -> { id, name, arguments }
+    this.onReasoningToken = callbacks.onReasoningToken || (() => {});
   }
 
   parseLine(line) {
@@ -141,6 +142,11 @@ class OpenAIStreamParser extends StreamParser {
 
     const delta = parsed.choices?.[0]?.delta;
     if (!delta) return { done: false };
+
+    // DeepSeek reasoning_content (thinking tokens) — forwarded to callback
+    if (delta.reasoning_content) {
+      this.onReasoningToken(delta.reasoning_content);
+    }
 
     if (delta.content) {
       this.onToken(delta.content);
