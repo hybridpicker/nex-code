@@ -331,7 +331,7 @@ function extractJSON(text) {
  * @param {number} [opts.maxSubTasks=4] - Maximum number of sub-tasks to generate
  * @returns {Promise<Array<{ id: string, task: string, scope: string[], estimatedCalls: number, priority: number }>>}
  */
-// ─── PREVIEW step (DeepSeek TUI inspired) ──────────────────────────────────
+// ─── PREVIEW step ──────────────────────────────────────────────────────────
 // Before decomposition, quickly scan the project structure so the decomposer
 // can make informed decisions about task boundaries and dependencies.
 // Uses synchronous file I/O for speed — O(1-2) stat calls, no LLM involved.
