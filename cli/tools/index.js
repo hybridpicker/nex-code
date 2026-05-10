@@ -2697,7 +2697,8 @@ async function _executeToolInner(name, args, options = {}) {
           : args.line_start || args.line_end
             ? `lines ${start + 1}-${end} of ${lineCount}`
             : `${lineCount} lines`;
-        const summary = `File: ${shortPath} (${rangeLabel}, ${stats.size} bytes)`;
+        const completeMarker = isTruncated ? "" : " [FULL FILE — complete contents below]";
+        const summary = `File: ${shortPath} (${rangeLabel}, ${stats.size} bytes)${completeMarker}`;
 
         const numberedLines = lines
           .slice(start, end)
