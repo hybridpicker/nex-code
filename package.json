@@ -89,6 +89,10 @@
     "picomatch": ">=4.0.4"
   },
   "jest": {
+    "testPathIgnorePatterns": [
+      "/desktop/",
+      "/node_modules/"
+    ],
     "coverageThreshold": {
       "global": {
         "lines": 45,
