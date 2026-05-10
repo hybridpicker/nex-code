@@ -62,16 +62,24 @@ function killServer() {
 
 function handleMsg(msg) {
   if (msg.type === "ready") { serverReady = true; send("nex:server-ready", {}); return; }
+  if (msg.type === "token") { send("nex:server-token", msg); return; }
+  if (msg.type === "tool_start") { send("nex:server-tool-start", msg); return; }
+  if (msg.type === "tool_end") { send("nex:server-tool-end", msg); return; }
+  if (msg.type === "confirm_request") { send("nex:server-confirm", msg); return; }
+  if (msg.type === "done") { send("nex:server-done", msg); return; }
+  if (msg.type === "error") { send("nex:server-error", msg); return; }
+  
+  // Fallback for other message types
   var ch = "nex:server-" + msg.type.replace(/_/g, "-");
   send(ch, msg);
 }
 
 function send(ch, data) {
-  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data); } catch (e) {}
+  try { if (mainWindow && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(ch, data); } catch (e) {}
 }
 
 function sendToServer(obj) {
-  if (!serverProcess || !serverReady) {
+  if (!serverProcess) {
     send("nex:server-error", { message: "No project open. Use File → Open Project." });
     return;
   }
