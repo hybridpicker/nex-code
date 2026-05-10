@@ -213,6 +213,7 @@ const {
 const {
   getConfiguredProviders,
   getActiveProviderName,
+  getActiveProvider,
   getActiveModelId,
   setActiveModel,
   MODEL_EQUIVALENTS,
@@ -4981,6 +4982,61 @@ function _extractTechHints(text) {
   return hints;
 }
 
+/**
+ * Inline small files directly referenced in the task description into the prompt.
+ * This helps models (especially DeepSeek) that get stuck in re-read loops — by 
+ * pre-loading file contents, the model can edit immediately without calling read_file.
+ * 
+ * @param {string} taskText - The user's task description
+ * @returns {string|null} - Formatted file contents block, or null if no files found
+ */
+async function _inlineRelevantFiles(taskText) {
+  const INLINE_MAX_BYTES = parseInt(process.env.NEX_INLINE_MAX_BYTES || "8192", 10);
+  if (INLINE_MAX_BYTES <= 0) return null;
+  
+  const cwd = process.cwd();
+  
+  // Extract file paths from task text: common extensions + optional directory prefix
+  const FILE_PATH_RE = /(?:^|[^\w\/.-])((?:[\w.-]+\/)*[\w.-]+\.(?:jsx?|tsx?|py|json|ya?ml|toml|cfg|ini|md|css|scss|html|vue|svelte|go|rs|java|rb|php|sh|bash|zsh|sql|graphql|prisma|env|txt))(?=[^\w\/.-]|$)/gi;
+  
+  const seen = new Set();
+  const files = [];
+  
+  let match;
+  while ((match = FILE_PATH_RE.exec(taskText)) !== null) {
+    let relPath = match[1];
+    // Normalize: strip leading ./ and /
+    relPath = relPath.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (!relPath || seen.has(relPath)) continue;
+    seen.add(relPath);
+    
+    const absPath = path.resolve(cwd, relPath);
+    try {
+      const stat = fsSync.statSync(absPath);
+      if (!stat.isFile()) continue;
+      if (stat.size > INLINE_MAX_BYTES) continue;
+      const content = fsSync.readFileSync(absPath, "utf-8");
+      const lineCount = content.split("\n").length;
+      files.push({ relPath, absPath, content, size: stat.size, lineCount });
+    } catch {
+      // File doesn't exist or can't be read — skip
+    }
+  }
+  
+  if (files.length === 0) return null;
+  
+  // Format as a clear [FILE CONTENTS] block
+  let block = "[PRE-LOADED FILE CONTENTS — these files are already in your context. Do NOT call read_file for them. Edit them directly with edit_file or write_file.]\n";
+  for (const f of files) {
+    block += `\n--- ${f.relPath} (${f.lineCount} lines, ${f.size} bytes) ---\n`;
+    block += f.content;
+    if (!f.content.endsWith("\n")) block += "\n";
+  }
+  block += "\n[END PRE-LOADED FILES]";
+  
+  return block;
+}
+
 // Module-level server hooks — set by processInput in server mode, null in normal CLI mode.
 let _serverHooks = null;
 // Per-turn quiet flag (opts.silent) — used for out-of-band logs (e.g. preflight evidence)
@@ -5056,6 +5112,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     typeof userInput === "string" && _isSimpleDirectAnswerPrompt(userInput);
   const expectedTurnLanguage =
     typeof userInput === "string" ? _detectResponseLanguage(userInput) : "English";
+
+  // Inline file contents for providers that prefer upfront context (e.g. DeepSeek)
+  // This avoids re-read loops by pre-loading referenced files into the prompt.
+  if (typeof _resolvedInput === "string") {
+    try {
+      const _provider = getActiveProvider();
+      if (_provider?.prefersInlineContext) {
+        const _inline = await _inlineRelevantFiles(_resolvedInput);
+        if (_inline) {
+          _resolvedInput += "\n\n" + _inline;
+          debugLog(
+            `${C.green}  ▶ Inlined file contents into prompt (provider prefers inline context)${C.reset}`,
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — fall through to normal tool-based file reading
+    }
+  }
 
   let userContent = buildUserContent(_resolvedInput);
   // buildUserContent may return a Promise when remote URLs or clipboard are involved
