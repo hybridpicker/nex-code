@@ -4,6 +4,8 @@
  * Exposes a minimal, typed API to the renderer process via
  * contextBridge. All communication with the main process goes
  * through well-defined channels — no raw ipcRenderer in the UI.
+ *
+ * Backend is live — no demo/placeholder data.
  */
 
 "use strict";
@@ -13,7 +15,6 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("nexAPI", {
   // ─── State ──────────────────────────────────────────────────
   getState: () => ipcRenderer.invoke("nex:get-state"),
-  getDemoData: () => ipcRenderer.invoke("nex:get-demo-data"),
 
   // ─── Commands ───────────────────────────────────────────────
   sendCommand: (command) => ipcRenderer.send("nex:command", command),
@@ -30,16 +31,18 @@ contextBridge.exposeInMainWorld("nexAPI", {
   closeWindow: () => ipcRenderer.send("nex:window-close"),
 
   // ─── Event Listeners ────────────────────────────────────────
+
+  /** Fired when the full application state changes */
+  onStateUpdated: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("nex:state-updated", handler);
+    return () => ipcRenderer.removeListener("nex:state-updated", handler);
+  },
+
   onProjectOpened: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on("nex:project-opened", handler);
     return () => ipcRenderer.removeListener("nex:project-opened", handler);
-  },
-
-  onWorkspaceScan: (callback) => {
-    const handler = (_event, data) => callback(data);
-    ipcRenderer.on("nex:workspace-scan", handler);
-    return () => ipcRenderer.removeListener("nex:workspace-scan", handler);
   },
 
   onAgenticNode: (callback) => {
