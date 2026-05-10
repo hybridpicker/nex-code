@@ -182,11 +182,7 @@ function buildAgenticNodes(agentState) {
       status: done ? "complete" : active ? "active" : "pending",
       timestamp: new Date(Date.now() - (3 - i) * 60000).toISOString(),
       extras: i === 0 && (done || active)
-        ? {
-            filesScanned: fsMock.getFileCount(),
-            diff: { added: 0, modified: 0, removed: 0 },
-            relevantFiles: fsMock.listDir().map((f) => f.path),
-          }
+        ? { filesScanned: fsMock.getFileCount(), diff: { added: 0, modified: 0, removed: 0 } }
         : i === 1 && (done || active)
           ? { files: [], formatters: ["Prettier ✓", "ESLint ✓", "TypeScript ✓"] }
           : i === 2 && (done || active)
