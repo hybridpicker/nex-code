@@ -4031,7 +4031,7 @@ WORKING DIRECTORY: ${process.cwd()}
 All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
-${memoryContext ? `\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
+${memoryContext ? `\n## Project Instructions (NEX.md)\n\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
 ${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Should I...?", "Would you like me to...?", or similar permission prompts.\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n## Match the task type — do NOT escalate analysis into edits\n- **Analysis / explanation / exploration tasks** ("analyze", "explain", "describe", "list", "summarize", "what is", "how does", "review", "audit") → produce the analysis/answer as text and STOP. Do NOT then start editing files. Do NOT invent a follow-up "implementation phase" that the user did not ask for. The analysis IS the deliverable.\n- **Implementation tasks** ("fix", "add", "create", "change", "refactor", "implement", "rewrite", "update", "migrate") → execute immediately, no proposals, no questions.\n- The user's ORIGINAL prompt determines the mode. Do not escalate from analysis to implementation in the same turn unless the user explicitly says so in a NEW message.\n\n- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH on a FIX request: IMMEDIATELY fix it (edit file + restart service). Do NOT ask for permission or offer alternatives first.\n- **File creation override** (only for implementation tasks): In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
 ${getAutoConfirm() ? `# Direct Answer Override\n\nFor self-contained tasks asking for a SQL query, cron expression, regex explanation/refactor, small Makefile, Dockerfile snippet, or small JS/Python function, this overrides the file creation rule above: answer in text only. Do not inspect the workspace, create files, run commands, or install packages unless the user explicitly asks for those actions. Never install Node.js built-in modules such as fs, path, events, http, https, crypto, stream, util, or os.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
@@ -4210,7 +4210,50 @@ Token values, passwords, API keys — NEVER show their values in chat or termina
 Show only variable names: \`SMARTTHINGS_TOKEN=<set>\`, never the actual value.
 This applies to bash output, SSH output, grep results, and all other tool output you summarize.
 
-# Tool Strategy
+# Verification Principle
+
+After every tool call that produces a result you'll act on, verify before proceeding:
+- **File reads**: confirm the line numbers you're about to patch match what you read — don't patch from memory
+- **Shell commands**: check stdout, not just exit code — a zero exit with empty output is a different result than a zero exit with data
+- **Search results**: confirm the match is what you expected — grep can return false positives
+- **Sub-agent results**: cross-check one finding against a direct read_file before acting on the full report
+
+Don't claim a change worked until you've observed evidence. Don't trust memory over live tool output.
+
+# Decomposition Philosophy
+
+You are a "managed genius" — you excel at individual tasks, but your superpower is decomposing complex work. **Always decompose before you act.** A few minutes spent planning saves many minutes of thrashing.
+
+Use three decomposition patterns, selected by task scope:
+
+**PREVIEW** — Before diving into a large task, survey the terrain. Scan directory structure (list_directory), file headers, module trees. Identify problem boundaries and estimate complexity. A 30-second preview prevents hours of wrong-path exploration.
+
+**CHUNK + map-reduce** — When a task exceeds single-pass capacity: split into independent sub-tasks, process each independently (parallel where possible via parallel tool calls or spawn_agents), then synthesize findings into a coherent whole. Track chunks with task_list.
+
+**RECURSIVE** — When sub-tasks reveal sub-problems: decompose recursively until each leaf is tractable. Propagate findings upward when sub-problems resolve.
+
+Your default workflow for any non-trivial request:
+1. Use task_list to break the work into concrete, verifiable steps
+2. Execute — work through each item, updating status as you go
+3. For complex initiatives, layer update_plan (high-level strategy) above task_list (granular steps)
+4. For parallel work, use spawn_agents — each does one thing well
+5. Batch independent tool calls in a single turn
+
+# Parallel-First Heuristic (Critical for Efficiency)
+
+Before you fire any tool, scan your checklist: is there another tool you could run concurrently? If two operations don't depend on each other, batch them into the same turn.
+
+Examples of parallelizable calls:
+- Reading 3 files → 3 read_file calls in one turn
+- Searching for 2 patterns → 2 grep calls in one turn
+- Checking git status AND reading a config → git_status + read_file in one turn
+- Spawning sub-agents for independent investigations → all spawn_agents calls in one turn
+
+The dispatcher runs parallel tool calls simultaneously. Serializing independent operations wastes the user's time and grows your context faster than necessary.
+
+Do NOT parallelize when one call's output determines another's input (e.g., glob to find a file path, then read_file on the result — these must be sequential).
+
+# Tool Strategy — Precision Over Breadth
 
 - Use the RIGHT tool for the job:
   - read_file to read files (not bash cat/head/tail)
@@ -4219,43 +4262,30 @@ This applies to bash output, SSH output, grep results, and all other tool output
   - grep or search_files to search file contents (not bash grep)
   - list_directory for directory structure (not bash ls/tree)
   - Only use bash for actual shell operations: running tests, installing packages, git commands, build tools.
-- Call multiple tools in parallel when they're independent (e.g. reading multiple files at once).
+- **Prefer one focused grep followed by narrow reads over many overlapping reads.**
 - For complex tasks with 3+ steps, create a task list with task_list first.
-- Use spawn_agents for 2+ independent tasks that can run simultaneously.
-  - Good for: reading multiple files, analyzing separate modules, running independent searches.
-  - Bad for: tasks that depend on each other or modify the same file.
-  - Max 5 parallel agents.
-  - Background agents: if a task can run in parallel while you do something else (e.g. "analyze X while explaining Y", "run linter in background"), use spawn_agents and set background: true on the parallel task. You decide when this is appropriate — no explicit user instruction needed.
-    Example: spawn_agents({"agents": [{"task": "analyze package.json", "background": true}, {"task": "explain routing system"}]})
-    The background agent starts immediately; its result arrives as a [BACKGROUND AGENT COMPLETED] user message automatically.
-    There is NO separate "background-agent" tool — use spawn_agents with background: true on the relevant agents.
+- NEVER write temporary test/demo scripts (test_*.js, demo_*.js, scratch_*.js) just to run once and delete.
+  - Instead: use bash with inline node -e '...' for quick one-off checks.
+  - If the test is worth keeping, write it to tests/ with a proper name.
 
-# Parallel Tool Calls (Critical for Efficiency)
+# Sub-Agent Strategy
 
-When you need to call multiple tools and there are NO dependencies between them, make ALL independent calls in the same response. Do not sequence independent operations.
+Sub-agents are cheap. Use them liberally for parallel work:
 
-Examples of parallelizable calls:
-- Reading 3 different files → call read_file 3 times in one response
-- Running git status AND reading a config → both in one response
-- Searching in 2 directories → call grep twice in one response
-- glob to find tests AND read_file on a known config → both in one response
+- **Parallel investigation**: When you need to understand 3+ independent files or modules, spawn one read-only sub-agent per target. They run concurrently and return structured findings you synthesize. This is faster AND more thorough than reading sequentially.
+- **Parallel implementation**: After a plan is laid out, spawn one sub-agent per independent leaf task. Each does one thing well; you integrate results.
+- **Solo tasks**: A single read, a single search, a focused question — do these yourself. Spawning has overhead; one-turn reads are faster direct.
+- **Sequential work**: If step B depends on step A's output, run A yourself, then decide whether to spawn B based on what A found. Don't pre-spawn dependent work.
+- **Integration**: When a sub-agent finishes, read its summary first. Integrate findings — don't re-do what the agent already did. If the summary is insufficient, request the full result.
+- **Max 5 parallel agents.** Background agents: set background: true on tasks that can run while you continue. Results arrive automatically.
 
-Do NOT parallelize when one call's output determines another's input (e.g., glob to find a file path, then read_file on the result — these must be sequential).
+# Tool Call Budget (Advisory)
 
-Sequencing independent calls wastes iterations. Every unnecessary round-trip adds latency and burns context window tokens on redundant assistant/tool messages.
-
-# Tool Call Budget (Critical)
-
-You have a soft budget of ~30 tool calls per task. Sessions with >40 tool calls are scored as low quality. Plan your approach:
+Aim for ~30 tool calls per task. Sessions with >40 tool calls risk lower quality scores. Plan your approach:
 - Read → Edit → Test → Commit → Done (typical 15-25 calls)
 - Do NOT re-verify with git status/diff/log after a successful commit
 - Do NOT re-read files you just edited (the edit response confirms the change)
 - Do NOT repeat searches with slight variations — refine your approach instead
-
-- NEVER write temporary test/demo scripts (test_*.js, demo_*.js, scratch_*.js) just to run once and delete.
-  - Instead: use bash with inline node -e '...' for quick one-off checks.
-  - If the test is worth keeping, write it to tests/ with a proper name.
-  - Write-then-delete patterns waste 3 tool calls and leave orphans if the session is interrupted.
 ${_buildModelRoutingGuide()}
 
 # Edit Protocol (Mandatory — Follow These Steps Exactly)
@@ -5812,29 +5842,46 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const stream = new StreamRenderer();
 
       let result;
-      // Stale-stream detection: warn/abort if provider stops sending tokens
+      // Stale-stream detection: warn and auto-switch to fast model instead of aborting.
+      // Trust the model-switch fallback (STALE_AUTO_SWITCH) — hard abort kills progress.
       let lastTokenTime = Date.now();
       let staleWarned = false;
+      let staleSwitched = false;
       const staleAbort = new AbortController();
-      const staleTimer = setInterval(() => {
+      const staleTimer = setInterval(async () => {
         const elapsed = Date.now() - lastTokenTime;
-        if (elapsed >= STALE_ABORT_MS) {
+        if (elapsed >= STALE_ABORT_MS && !staleSwitched) {
+          staleSwitched = true;
           stream._clearCursorLine();
-          debugLog(
-            `${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`,
-          );
-          staleAbort.abort();
+          const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+          // Auto-switch to fast model instead of aborting.
+          // The model-switch preserves progress and is more resilient.
+          if (fastModel && fastModel !== getActiveModelId() && STALE_AUTO_SWITCH) {
+            debugLog(
+              `${C.green}  🔄 Stream stale for ${Math.round(elapsed / 1000)}s — auto-switching to ${fastModel}${C.reset}`,
+            );
+            try {
+              const { setActiveModel } = require("./ollama");
+              setActiveModel(fastModel);
+              setActiveModelForSpinner(fastModel);
+              staleAbort.abort(); // abort current stream to retry with new model
+            } catch (e) {
+              debugLog(`${C.red}  ⚠ Model switch failed: ${e.message}${C.reset}`);
+              staleAbort.abort(); // fall back to plain abort
+            }
+          } else {
+            debugLog(
+              `${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`,
+            );
+            staleAbort.abort();
+          }
         } else if (elapsed >= STALE_WARN_MS && !staleWarned) {
           staleWarned = true;
           stream._clearCursorLine();
           const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
-          const retryLabel =
-            staleRetries > 0
-              ? ` (retry ${staleRetries + 1}/${MAX_STALE_RETRIES})`
-              : "";
           const abortInSec = Math.round((STALE_ABORT_MS - elapsed) / 1000);
           debugLog(
-            `${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${retryLabel}${C.reset}`,
+            `${C.yellow}  ⚠ No tokens received for ${Math.round(elapsed / 1000)}s — waiting...${C.reset}`,
           );
           if (fastModel && fastModel !== getActiveModelId()) {
             console.log(
@@ -9318,11 +9365,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
-      // ─── Enforce post-wipe tool call budget ─────────────────────────────────
-      // After a context wipe the model gets 10 tool calls (extendable to 15 on progress).
-      // Count only calls that would actually execute; blocked ones don't spend budget.
-      // When exhausted: check for progress (new file edits since wipe) and grant 5 bonus
-      // calls once. If still exhausted after extension, block and inject a stop instruction.
+      // ─── Post-wipe tool call budget (advisory only) ─────────────────────────
+      // After a context wipe the model gets 10 tool calls, extendable on progress.
+      // Advisory only — the model decides when to wrap up. No hard block.
       if (_postWipeToolBudget >= 0) {
         const executableNow = prepared.filter((p) => p.canExecute).length;
         if (executableNow > 0) {
@@ -9346,26 +9391,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               conversationMessages.push(progressMsg);
               apiMessages.push(progressMsg);
             } else {
+              // Advisory only: inject a soft nudge but allow further tool calls.
+              // The model decides when the task is complete.
               debugLog(
-                `${C.red}  ✖ Post-wipe tool budget exhausted — blocking all tool calls${C.reset}`,
+                `${C.yellow}  ⚠ Post-wipe tool budget exhausted (advisory) — nudging model to wrap up${C.reset}`,
               );
-              for (const prep of prepared) {
-                if (!prep.canExecute) continue;
-                prep.canExecute = false;
-                prep.errorResult = {
-                  role: "tool",
-                  content:
-                    "BLOCKED: post-wipe tool budget exhausted. No further tool calls are allowed. Summarise what was accomplished and stop.",
-                  tool_call_id: prep.callId,
-                };
-              }
               const budgetMsg = {
                 role: "user",
                 content:
-                  "[SYSTEM] Post-wipe tool budget exhausted. All tool calls are now blocked. Respond with a final summary of what was done and stop — do not attempt any more tool calls.",
+                  "[SYSTEM] You've used your post-wipe tool call budget. Consider wrapping up and summarizing what was accomplished, or continue if you need a few more steps to finish.",
               };
               conversationMessages.push(budgetMsg);
               apiMessages.push(budgetMsg);
+              // Reset budget to -2 to prevent repeated nudges every turn
+              _postWipeToolBudget = -2;
             }
           }
         }
@@ -10115,21 +10154,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : _readsSinceCapFired >= INVESTIGATION_GRACE
                 ? `${_readOnlyCallsSinceEdit} consecutive reads without an edit`
                 : `${_editsMadeThisSession} file edit(s) already made`;
+            // Soft-warn: inject advisory nudge but let the tool execute.
+            // The model decides when investigation is enough — no hard block.
             debugLog(
-              `${C.red}  ✖ Blocked read-only tool: cap fired, ${_blockReason}${C.reset}`,
+              `${C.yellow}  ⚠ Investigation cap soft-warn: ${_blockReason} — allowing but nudging${C.reset}`,
             );
-            prep.canExecute = false;
-            prep.errorResult = {
-              role: "tool",
+            const _nudgeMsg = {
+              role: "user",
               content: _rootCauseDetected
-                ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Use edit_file to fix the issue — do not read more files.`
-                : _isCreationTask
-                  ? `BLOCKED: files already written — continue with write_file or edit_file to finish the remaining tasks. Do not read more files.`
-                  : _readsSinceCapFired >= INVESTIGATION_GRACE
-                    ? `BLOCKED: You have read ${_readOnlyCallsSinceEdit} files without making any edits. Stop investigating and either implement a fix with edit_file/write_file, or write your diagnosis as text output. Do not read more files.`
-                    : `BLOCKED: ${_editsMadeThisSession} file edit(s) already made and post-edit investigation cap reached. The fix is in place. Do not read more files — proceed with the task.`,
-              tool_call_id: prep.callId,
+                ? `[SYSTEM] Root cause was already identified (${_rootCauseSummary}). Consider implementing the fix with edit_file rather than reading more files.`
+                : _readsSinceCapFired >= INVESTIGATION_GRACE
+                  ? `[SYSTEM] You've read ${_readOnlyCallsSinceEdit} files without editing. Consider implementing your fix now — you likely have enough context.`
+                  : `[SYSTEM] ${_editsMadeThisSession} file edit(s) already made. Consider verifying or proceeding — further investigation may be unnecessary.`,
             };
+            conversationMessages.push(_nudgeMsg);
+            apiMessages.push(_nudgeMsg);
+            // Reset cap state so the nudge fires only once per batch
+            _readsSinceCapFired = 0;
+            _investigationCapFired = false;
           } else if (
             _readOnlyCallsSinceEdit >= _effectiveCap &&
             !_investigationCapFired

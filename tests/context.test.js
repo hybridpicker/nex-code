@@ -97,7 +97,7 @@ describe("context.js", () => {
       });
 
       const ctx = await gatherProjectContext(tmpDir);
-      expect(ctx).toContain("PACKAGE SCRIPTS:");
+      expect(ctx).toContain("AVAILABLE TOOL COMMANDS");
       expect(ctx).toContain("test=jest --runInBand");
       expect(ctx).toContain("benchmark:gate=node scripts/benchmark-gate.js");
     });
