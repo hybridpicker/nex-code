@@ -954,11 +954,10 @@ function forceCompress(messages, tools, nuclear = false) {
   let oldMessages = messages.slice(startIdx, recentStart);
   let recentMessages = messages.slice(recentStart);
 
-  // DeepSeek TUI inspired: prefer dropping old messages over mutating them.
-  // Mutating message content breaks prefix caching on Ollama Cloud and other
-  // cache-aware providers — each mutation invalidates ~90% cost discount.
-  // Instead, keep messages as-is and rely on the drop loop to reduce tokens.
-  // Only truncate if dropping isn't enough (nuclear mode or extreme size).
+  // Prefer dropping old messages over mutating them. Mutating message content
+  // breaks prefix caching on cache-aware providers — each mutation invalidates
+  // the ~90% cost discount. Keep messages as-is and rely on the drop loop.
+  // Only truncate individual messages if dropping alone is insufficient.
   let compressed = oldMessages; // no per-message mutation — preserve cache
 
   // Nuclear: compress recent messages aggressively (last resort only)

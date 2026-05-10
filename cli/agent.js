@@ -1709,7 +1709,7 @@ let _verifyLoopBack = 0; // max 1 loop-back from verify → implement
 let _verifyToolCalls = 0; // successful verification-phase tool calls in the current verify pass
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
-let _stagnationNudges = 0; // soft-warning nudges for general stagnation (DeepSeek TUI inspired)
+let _stagnationNudges = 0; // soft-warning nudges for general stagnation detection
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
@@ -2768,7 +2768,7 @@ function _commandForScript(scriptName) {
   return `npm run ${scriptName}`;
 }
 
-// DeepSeek TUI inspired verification principle: read back what you wrote.
+// Verification principle: read back what you wrote.
 // After every edit, confirm the file content matches intent before continuing.
 function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   const modifiedList =
@@ -5969,8 +5969,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           signal: combinedAbort.signal,
           ...(_phaseModelOverride ? { model: _phaseModelOverride } : {}),
           onThinkingToken: () => {
-            // DeepSeek TUI inspired: thinking tokens keep the model alive.
-            // Reset stale timer — the model IS working, even if output isn't visible yet.
+            // Thinking tokens keep the stale timer alive.
+            // Reset it — the model IS working, even if output isn't visible yet.
             lastTokenTime = Date.now();
             staleWarned = false;
             if (_serverHooks?.onThinkingToken) {
@@ -11293,12 +11293,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       // ─── Stagnation detection (headless mode) ────────────────────────────
-      // DeepSeek TUI inspired: soft warnings instead of hard abort.
+      // Soft-warn stagnation: inject nudges instead of hard abort.
       // In headless/auto-confirm mode, track consecutive iterations where only
-      // read-only tools (read_file, grep, glob, list_directory, bash) run with
-      // no file modifications. If the model keeps investigating without acting
-      // for too many iterations, inject a nudge instead of aborting — the model
-      // may still find the right target and get back on track.
+      // read-only tools run with no file modifications. If the model keeps
+      // investigating without acting, inject a nudge — it may still find the
+      // right target and get back on track.
       if (getAutoConfirm() && !opts.skillLoop) {
         const _batchHasWrite = prepared.some(
           (p) =>
