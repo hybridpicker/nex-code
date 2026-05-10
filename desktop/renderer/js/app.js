@@ -1,117 +1,14 @@
 /**
- * desktop/renderer/js/app.js — Main Application Controller
+ * desktop/renderer/js/app.js — Main Application Controller (Restored & Modular)
  *
- * Coordinates all UI components, manages state, handles IPC
- * communication with the Electron main process, and renders
- * the Cyber-Obsidian dashboard.
+ * Coordinates all UI components, manages state, and handles IPC
+ * communication with the Electron main process.
  */
 
 "use strict";
 
-
-// ─── nexAPI Polyfill (browser dev / no Electron) ─────────────────────────────
-
-if (!window.nexAPI) {
-  window.nexAPI = {
-    getState: () => Promise.resolve(null),
-    sendCommand: (cmd) => { console.log("[nexAPI polyfill] sendCommand:", cmd); },
-    openProject: () => Promise.resolve(null),
-    openExternal: (url) => { window.open(url, "_blank"); },
-    minimizeWindow: () => {},
-    maximizeWindow: () => {},
-    closeWindow: () => {},
-    onStateUpdated: () => () => {},
-    onProjectOpened: () => () => {},
-    onAgenticNode: () => () => {},
-    onAgentThinking: () => () => {},
-    onBackendMessage: () => () => {},
-    onBackendLog: () => () => {},
-    onBackendError: () => () => {},
-    onFocusCommand: () => () => {},
-    onCommand: () => () => {},
-  };
-}
-
-// ─── Global State ────────────────────────────────────────────────────────────
-
 const AppState = {
-  data: null,
-  loaded: false,
-};
-
-// ─── Initialization ──────────────────────────────────────────────────────────
-
-document.addEventListener("DOMContentLoaded", async () => {
-  // Load live state from the backend (no placeholders)
-  try {
-    AppState.data = await window.nexAPI.getState();
-    AppState.loaded = true;
-  } catch (err) {
-    console.warn("Failed to load state, using defaults:", err.message);
-    AppState.data = getDefaultState();
-    AppState.loaded = true;
-  }
-
-  // Initialize all components with live data
-  initTopBar();
-  initSidebar();
-  initAgenticTimeline();
-  initRightPanel();
-  initCommandCenter();
-
-  // Sub-component modules (loaded via script tags) have their own initEntryPoints
-  refreshAllComponents();
-
-  // Subscribe to events from main process
-  subscribeToEvents();
-});
-
-/** Re-render all components with current state */
-function refreshAllComponents() {
-  if (typeof initTopBarComponents === "function") {
-    initTopBarComponents(AppState.data);
-  }
-  if (typeof initSidebarComponents === "function") {
-    initSidebarComponents(AppState.data);
-  }
-  if (typeof initTimelineComponents === "function") {
-    initTimelineComponents(AppState.data);
-  }
-  if (typeof initRightPanelComponents === "function") {
-    initRightPanelComponents(AppState.data);
-  }
-  if (typeof initCommandPaletteComponents === "function") {
-    initCommandPaletteComponents(AppState.data);
-  }
-}
-
-// ─── Event Subscriptions ────────────────────────────────────────────────────
-
-function subscribeToEvents() {
-  try { window.nexAPI.onFocusCommand(() => { const el = document.getElementById("command-input"); if (el) el.focus(); }); } catch(e) {}
-  try { window.nexAPI.onCommand((cmd) => { handleCommand(cmd); }); } catch(e) {}
-
-  // Live state updates from the backend
-  try {
-    window.nexAPI.onStateUpdated((data) => {
-      if (data) {
-        AppState.data = data;
-        AppState.loaded = true;
-        refreshAllComponents();
-      }
-    });
-  } catch(e) {}
-
-  try { window.nexAPI.onBackendLog((log) => { if (AppState.data) { if (!AppState.data.toolActions) AppState.data.toolActions = []; AppState.data.toolActions.unshift({ tool: "nex-code", detail: log, time: "now" }); if (AppState.data.toolActions.length > 20) AppState.data.toolActions.length = 20; if (typeof initRightPanelComponents === "function") initRightPanelComponents(AppState.data); } }); } catch(e) {}
-  try { window.nexAPI.onBackendError((err) => { addTimelineNode("VERIFY", `Error: ${err}`, "coral", { tests: { passed: 0, failed: 1, total: 1 }, status: "complete" }); }); } catch(e) {}
-  try { window.nexAPI.onProjectOpened((data) => { if (AppState.data) { AppState.data.project = data.project; AppState.data.branch = data.branch; } if (typeof initTopBarComponents === "function" && AppState.data) initTopBarComponents(AppState.data); }); } catch(e) {}
-  try { window.nexAPI.onAgenticNode((node) => { if (!AppState.data) AppState.data = { agenticNodes: [] }; if (!AppState.data.agenticNodes) AppState.data.agenticNodes = []; AppState.data.agenticNodes.push(node); renderTimelineNode(node); switchToTimelineView(); }); } catch(e) {}
-}
-
-// ─── Default State (fallback when backend unavailable) ───────────────────────
-
-function getDefaultState() {
-  return {
+  data: {
     project: "nex-code",
     branch: "main",
     model: "qwen3-coder:480b",
@@ -119,409 +16,353 @@ function getDefaultState() {
     budget: { used: 0.0, limit: 10.0 },
     tokens: { used: 0, limit: 1000000 },
     requests: 0,
-    workspaces: ["nex-code"],
     agenticNodes: [],
     testResults: { passed: 0, failed: 0, total: 0 },
     branchSafety: { score: 100, status: "Clean" },
     toolActions: [],
     costHistory: [],
-    recentSessions: [],
     shortcutChips: ["/plan", "/impl", "/verify", "/bench", "/git", "/deploy"],
-  };
-}
+  },
+  activeNodeId: null,
+};
 
-// ─── Command Handling ───────────────────────────────────────────────────────
+// ─── Initialization ──────────────────────────────────────────────────────────
 
-function handleCommand(command) {
-  const input = document.getElementById("command-input");
-  if (input) {
-    input.value = command;
-    input.focus();
-    // Trigger submit
-    executeCommand(command);
-  }
-}
-
-function executeCommand(command) {
-  if (!command.trim()) return;
-
-  try { window.nexAPI.sendCommand(command); } catch (e) { /* polyfill handles this */ }
-
-  if (!command.startsWith("/")) {
-    runNaturalLanguageFlow(command);
-    return;
-  }
-
-  const cmd = command.trim().toLowerCase();
-  const parts = cmd.split(/\s+/);
-  const base = parts[0];
-  const arg = parts.slice(1).join(" ");
-
-  switch (base) {
-    case "/plan":
-      addTimelineNode("PLAN", "Planning phase initiated", "cyan", {
-        filesScanned: Math.floor(Math.random() * 200 + 50),
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: ["Scanning repository…"],
-        status: "active",
-      });
-      break;
-    case "/impl":
-    case "/implement":
-      addTimelineNode("IMPLEMENT", "Implementation phase initiated", "emerald", {
-        files: [{ name: "Awaiting task specification…", progress: 0 }],
-        formatters: [],
-        status: "active",
-      });
-      break;
-    case "/verify":
-      addTimelineNode("VERIFY", "Verification phase initiated", "teal", {
-        tests: { passed: 0, failed: 0, total: 0 },
-        benchmark: { metric: "pending", value: 0, unit: "..." },
-        status: "active",
-      });
-      break;
-    case "/git":
-      if (arg === "status" || !arg) {
-        addTimelineNode("PLAN", "Git Status — checking working tree", "cyan", {
-          filesScanned: AppState.data?.agenticNodes?.[0]?.extras?.filesScanned || 247,
-          diff: { added: 0, modified: 0, removed: 0 },
-          relevantFiles: ["Branch: " + (AppState.data?.branch || "main"), "Remote: origin", "Status: clean"],
-          status: "complete",
-        });
-      } else if (arg === "diff") {
-        addTimelineNode("PLAN", "Git Diff — changes in working tree", "cyan", {
-          filesScanned: 3,
-          diff: { added: 142, modified: 38, removed: 12 },
-          relevantFiles: ["src/telemetry/collector.ts", "src/telemetry/buffer.ts", "tests/telemetry.test.ts"],
-          status: "complete",
-        });
-      } else {
-        addTimelineNode("PLAN", `Git: ${command}`, "cyan", {
-          filesScanned: 0, diff: { added: 0, modified: 0, removed: 0 },
-          relevantFiles: ["Running git command…"], status: "complete",
-        });
-      }
-      break;
-    case "/deploy":
-      addTimelineNode("IMPLEMENT", "Deploy — preparing pull request", "emerald", {
-        files: [
-          { name: "Branch: " + (AppState.data?.branch || "main"), progress: 100 },
-          { name: "Tests: " + (AppState.data?.testResults?.passed || 0) + " passed", progress: 100 },
-          { name: "Safety score: " + (AppState.data?.branchSafety?.score || 100), progress: 100 },
-        ],
-        formatters: ["CI/CD pipeline", "Code review ready"],
-        status: "complete",
-      });
-      break;
-    case "/bench":
-    case "/benchmark":
-      addTimelineNode("VERIFY", "Benchmark — running performance suite", "teal", {
-        tests: { passed: 0, failed: 0, total: 7 },
-        benchmark: { metric: "Benchmark smoke tests", value: 7, unit: "tasks" },
-        status: "active",
-      });
-      break;
-    case "/tasks":
-      addTimelineNode("PLAN", "Tasks — active and queued work", "cyan", {
-        filesScanned: AppState.data?.agenticNodes?.length || 0,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: (AppState.data?.agenticNodes || []).map(
-          (n) => `[${n.phase}] ${n.detail} (${n.status})`
-        ),
-        status: "complete",
-      });
-      break;
-    case "/context":
-      addTimelineNode("PLAN", "Project Context — " + (AppState.data?.project || "nex-code"), "cyan", {
-        filesScanned: AppState.data?.agenticNodes?.[0]?.extras?.filesScanned || 247,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: [
-          "Project: " + (AppState.data?.project || "nex-code"),
-          "Branch: " + (AppState.data?.branch || "main"),
-          "Model: " + (AppState.data?.model || "auto"),
-          "Budget: $" + ((AppState.data?.budget?.used || 0).toFixed(2)),
-        ],
-        status: "complete",
-      });
-      break;
-    case "/tree":
-      addTimelineNode("PLAN", `File Tree — depth ${arg || 3}`, "cyan", {
-        filesScanned: 42,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: ["src/", "  telemetry/", "    collector.ts", "    buffer.ts"],
-        status: "complete",
-      });
-      break;
-    case "/remember":
-    case "/memory":
-      addTimelineNode("PLAN", "Memory — Brain Index", "cyan", {
-        filesScanned: AppState.data?.recentSessions?.length || 0,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: (AppState.data?.recentSessions || []).map(
-          (s) => `${s.name} (${s.tokens}, ${s.model})`
-        ),
-        status: "complete",
-      });
-      break;
-    case "/sessions":
-      addTimelineNode("PLAN", "Sessions — saved conversations", "cyan", {
-        filesScanned: AppState.data?.recentSessions?.length || 0,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: (AppState.data?.recentSessions || []).map(
-          (s) => `${s.name} — ${s.tokens} • ${s.model} • ${s.time}`
-        ),
-        status: "complete",
-      });
-      break;
-    case "/providers":
-      addTimelineNode("PLAN", "Providers & Models", "cyan", {
-        filesScanned: 9,
-        diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: [
-          "Qwen3 Coder 480B — ollama", "Devstral-2 123B — ollama",
-          "Kimi K2.5 — ollama", "DeepSeek V4 — deepseek",
-          "Kimi K2.5 — ollama-cloud", "Qwen3 236B — ollama-cloud",
-          "Gemini 3.1 Pro — google", "DeepSeek V4 — deepseek",
-          "Local Ollama — local",
-        ],
-        status: "complete",
-      });
-      break;
-    case "/model":
-      const mn = arg || "auto";
-      addTimelineNode("PLAN", `Model switched to: ${mn}`, "cyan", {
-        filesScanned: 0, diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: [`Active: ${mn}`, "Routing updated"],
-        status: "complete",
-      });
-      const mv = document.getElementById("model-router-value");
-      if (mv) mv.textContent = mn;
-      if (AppState.data) AppState.data.model = mn;
-      break;
-    case "/load":
-      addTimelineNode("PLAN", `Session loaded: ${arg || "latest"}`, "cyan", {
-        filesScanned: 0, diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: [`Restoring: ${arg || "latest"}`],
-        status: "complete",
-      });
-      break;
-    case "/orchestrate":
-      addTimelineNode("PLAN", "Orchestrator — multi-agent decomposition", "cyan", {
-        filesScanned: 0, diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: ["Decomposing task…", "Spawning sub-agents…"],
-        status: "active",
-      });
-      break;
-    default:
-      addTimelineNode("PLAN", `Command: ${command}`, "cyan", {
-        filesScanned: 0, diff: { added: 0, modified: 0, removed: 0 },
-        relevantFiles: ["Sending to backend…"],
-        status: "complete",
-      });
-  }
-
-  setTimeout(() => {
-    const banner = document.getElementById("success-banner");
-    if (banner && AppState.data?.agenticNodes?.length > 0) {
-      banner.classList.remove("hidden");
+document.addEventListener("DOMContentLoaded", async () => {
+  // Initial state fetch
+  try {
+    const liveState = await window.nexAPI.getState();
+    if (liveState) {
+      AppState.data.project = liveState.project || AppState.data.project;
+      AppState.data.branch = liveState.branch || AppState.data.branch;
     }
-  }, 300);
-}
-
-function runNaturalLanguageFlow(command) {
-  addTimelineNode("PLAN", `Processing: "${command}"`, "cyan", {
-    filesScanned: Math.floor(Math.random() * 200 + 50),
-    diff: { added: Math.floor(Math.random() * 100 + 20), modified: Math.floor(Math.random() * 40 + 5), removed: Math.floor(Math.random() * 15 + 2) },
-    relevantFiles: ["src/telemetry/collector.ts", "src/telemetry/buffer.ts"],
-    status: "active",
-  });
-  setTimeout(() => {
-    addTimelineNode("IMPLEMENT", "Applying changes", "emerald", {
-      files: [{ name: "src/telemetry/collector.ts", progress: 100 }, { name: "src/telemetry/buffer.ts", progress: 100 }, { name: "tests/telemetry.test.ts", progress: 100 }],
-      formatters: ["Prettier \u2713", "ESLint \u2713"],
-      status: "complete",
-    });
-  }, 2000);
-  setTimeout(() => {
-    addTimelineNode("VERIFY", "Running tests & benchmarks", "teal", {
-      tests: { passed: 86, failed: 0, total: 86 },
-      benchmark: { metric: "telemetry throughput", value: 1420, unit: "ops/s" },
-      status: "complete",
-    });
-    setTimeout(() => {
-      const banner = document.getElementById("success-banner");
-      if (banner) banner.classList.remove("hidden");
-    }, 1000);
-  }, 4000);
-}
-
-
-// ─── Timeline Rendering ──────────────────────────────────────────────────────
-
-function addTimelineNode(phase, detail, color, extras = {}) {
-  const node = {
-    id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-    phase, detail, color,
-    status: extras.status || "active",
-    timestamp: new Date().toISOString(),
-    extras,
-  };
-  if (!AppState.data) AppState.data = { agenticNodes: [] };
-  if (!AppState.data.agenticNodes) AppState.data.agenticNodes = [];
-  AppState.data.agenticNodes.push(node);
-  renderTimelineNode(node);
-  switchToTimelineView();
-}
-
-function renderTimelineNode(node) {
-  const track = document.getElementById("timeline-track");
-  if (!track) return;
-  const nodeEl = document.createElement("div");
-  nodeEl.className = "timeline-node animate-node-enter";
-  nodeEl.id = `node-${node.id}`;
-  const colorClass = node.color || "cyan";
-  const e = node.extras || {};
-  let extraHTML = "";
-  if (node.phase === "PLAN") extraHTML = buildPlanExtras(e);
-  else if (node.phase === "IMPLEMENT") extraHTML = buildImplementExtras(e);
-  else if (node.phase === "VERIFY") extraHTML = buildVerifyExtras(e);
-  nodeEl.innerHTML = `<div class="timeline-node-dot ${colorClass}"></div><div class="timeline-node-card"><div class="timeline-node-header"><span class="timeline-node-phase ${colorClass}">${node.phase}</span><span class="timeline-node-check">\u2713</span></div><div class="timeline-node-detail">${node.detail || ""}</div>${extraHTML}</div>`;
-  track.appendChild(nodeEl);
-}
-
-function buildPlanExtras(e) {
-  if (!e.filesScanned && !e.diff) return "";
-  const diff = e.diff || {};
-  const filesScanned = e.filesScanned || 0;
-  const totalDiff = (diff.added || 0) + (diff.modified || 0) + (diff.removed || 0);
-  let html = `<div class="terminal-text" style="margin-bottom:10px">${filesScanned} files scanned</div>`;
-  if (totalDiff > 0) {
-    html += '<div class="diff-summary">';
-    html += `<span class="diff-stat added">+${diff.added || 0}</span>`;
-    html += `<span class="diff-stat modified">~${diff.modified || 0}</span>`;
-    html += `<span class="diff-stat removed">-${diff.removed || 0}</span>`;
-    html += "</div>";
-    const addPct = ((diff.added || 0) / totalDiff * 100).toFixed(0);
-    const modPct = ((diff.modified || 0) / totalDiff * 100).toFixed(0);
-    const remPct = ((diff.removed || 0) / totalDiff * 100).toFixed(0);
-    html += '<div class="diff-bar">';
-    html += `<div class="diff-bar-segment added" style="width:${addPct}%"></div>`;
-    html += `<div class="diff-bar-segment modified" style="width:${modPct}%"></div>`;
-    html += `<div class="diff-bar-segment removed" style="width:${remPct}%"></div>`;
-    html += "</div>";
+  } catch (err) {
+    console.warn("Failed to load initial state:", err.message);
   }
-  if (e.relevantFiles && e.relevantFiles.length > 0) {
-    html += '<div class="terminal-text" style="margin-top:10px">';
-    html += e.relevantFiles.map((f) => `  ${f}`).join("<br>");
-    html += "</div>";
-  }
-  return html;
+
+  // Initialize all components
+  refreshAllComponents();
+
+  // Subscribe to events from main process
+  subscribeToEvents();
+  setupCommandInput();
+});
+
+let refreshTimer = null;
+function refreshAllComponents() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    if (typeof initTopBarComponents === "function") initTopBarComponents(AppState.data);
+    if (typeof initSidebarComponents === "function") initSidebarComponents(AppState.data);
+    if (typeof initTimelineComponents === "function") initTimelineComponents(AppState.data);
+    if (typeof initRightPanelComponents === "function") initRightPanelComponents(AppState.data);
+    if (typeof initCommandPaletteComponents === "function") initCommandPaletteComponents(AppState.data);
+    refreshTimer = null;
+  }, 100); // 10fps is enough for UI state
 }
 
-function buildImplementExtras(e) {
-  if (!e.files && !e.formatters) return "";
-  let html = '<div class="file-progress-list">';
-  if (e.files) {
-    e.files.forEach((f) => {
-      const pct = f.progress || 100;
-      html += `<div class="file-progress-item"><span class="file-progress-name">${f.name}</span><div class="file-progress-bar"><div class="file-progress-fill ${pct === 100 ? "shimmer-bar" : ""}" style="width:${pct}%"></div></div><span class="file-progress-pct">${pct}%</span></div>`;
-    });
+// Separate high-frequency token update
+function refreshTokens() {
+  const tokensEl = document.getElementById("cost-tokens");
+  if (tokensEl && AppState.data.tokens) {
+    // Direct DOM update for token counter
+    tokensEl.textContent = formatTokenCountOriginal(AppState.data.tokens.used);
   }
-  html += "</div>";
-  if (e.formatters && e.formatters.length > 0) {
-    html += '<div class="formatter-status">';
-    html += e.formatters.map((f) => `<span>${f}</span>`).join("  ");
-    html += "</div>";
-  }
-  return html;
 }
 
-function buildVerifyExtras(e) {
-  if (!e.tests && !e.benchmark) return "";
-  let html = "";
-  if (e.tests) {
-    html += '<div class="test-results-mini">';
-    html += `<span class="passed">${e.tests.passed} passed</span>`;
-    html += '<span class="separator">|</span>';
-    html += `<span class="failed">${e.tests.failed} failed</span>`;
-    html += "</div>";
-  }
-  if (e.benchmark) {
-    const values = generateTelemetryData(24);
-    const { path, area } = buildBezierChart(values, 360, 48, 2);
-    html += `<div class="verify-chart-container"><svg viewBox="0 0 360 48" preserveAspectRatio="none"><defs><linearGradient id="verifyAreaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-cyan)" stop-opacity="0.30" /><stop offset="50%" stop-color="var(--accent-teal)" stop-opacity="0.06" /><stop offset="100%" stop-color="var(--accent-cyan)" stop-opacity="0.01" /></linearGradient></defs><path d="${area}" class="verify-chart-area" /><path d="${path}" class="verify-chart-glow" /></svg></div>`;
-    html += `<div class="terminal-text" style="margin-top:6px">${e.benchmark.metric}: ${e.benchmark.value} ${e.benchmark.unit}</div>`;
-  }
-  return html;
-}
-
-function generateTelemetryData(count) {
-  const values = [];
-  let v = 1200;
-  for (let i = 0; i < count; i++) {
-    v += Math.sin(i * 0.35) * 80 + Math.cos(i * 0.15) * 40 + (Math.random() - 0.5) * 30;
-    v = Math.max(900, Math.min(1600, v));
-    values.push(Math.round(v));
-  }
-  return values;
-}
-
-function buildBezierChart(values, width, height, padding) {
-  const n = values.length;
-  if (n < 2) return { path: "", area: "" };
-  const max = Math.max(...values, 1);
-  const innerW = width - padding * 2;
-  const innerH = height - padding * 2;
-  const step = innerW / (n - 1);
-  const points = values.map((v, i) => ({
-    x: padding + i * step,
-    y: padding + innerH - (v / max) * innerH,
-  }));
-  let pathD = `M${points[0].x},${points[0].y}`;
-  let areaD = `M${points[0].x},${height} L${points[0].x},${points[0].y}`;
-  for (let i = 0; i < n - 1; i++) {
-    const p0 = points[i], p1 = points[i + 1];
-    const cp1x = p0.x + step * 0.4, cp2x = p1.x - step * 0.4;
-    pathD += ` C${cp1x},${p0.y} ${cp2x},${p1.y} ${p1.x},${p1.y}`;
-    areaD += ` C${cp1x},${p0.y} ${cp2x},${p1.y} ${p1.x},${p1.y}`;
-  }
-  areaD += ` L${points[n - 1].x},${height} L${points[0].x},${height} Z`;
-  return { path: pathD, area: areaD };
-}
-
-
-function switchToTimelineView() {
-  const welcome = document.getElementById("welcome-screen");
-  const timeline = document.getElementById("agentic-timeline");
-  if (welcome) welcome.classList.add("hidden");
-  if (timeline) timeline.classList.remove("hidden");
-}
-
-// ─── Utility Helpers ────────────────────────────────────────────────────────
-
-function formatNumber(n) {
+function formatTokenCountOriginal(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(1) + "k";
   return n.toString();
 }
 
-function timeAgo(date) {
-  const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+// ─── Event Subscriptions ────────────────────────────────────────────────────
+
+function subscribeToEvents() {
+  if (!window.nexAPI) return;
+
+  // CLI Ready
+  window.nexAPI.onServerReady(() => {
+    addServerLog("nex-code ready — type a prompt below");
+  });
+
+  // Project Opened
+  window.nexAPI.onProjectOpened((d) => {
+    AppState.data.project = d.project;
+    AppState.data.branch = d.branch;
+    
+    // Switch from welcome to timeline
+    document.getElementById("welcome").classList.add("hidden");
+    document.getElementById("timeline").classList.remove("hidden");
+    
+    refreshAllComponents();
+    addServerLog(`Project opened: ${d.project} (branch: ${d.branch})`);
+  });
+
+  // Token Streaming
+  window.nexAPI.onServerToken((d) => {
+    if (AppState.activeNodeId) {
+      updateActiveNode(d.text);
+    } else {
+      // Fallback to server output if no active agentic node
+      const stream = document.getElementById("server-stream");
+      if (stream) {
+        stream.textContent += d.text;
+        stream.scrollTop = stream.scrollHeight;
+      }
+    }
+    // Update token count
+    AppState.data.tokens.used += d.text.length;
+    refreshTokens();
+  });
+
+  // Tool Start
+  window.nexAPI.onServerToolStart((d) => {
+    const action = { tool: d.tool, detail: "started", time: "now" };
+    AppState.data.toolActions.unshift(action);
+    if (AppState.data.toolActions.length > 20) AppState.data.toolActions.pop();
+    
+    AppState.data.requests += 1;
+    
+    // Add a node to timeline if it looks like a new phase
+    if (["grep_search", "glob", "read_file"].includes(d.tool) && !AppState.activeNodeId) {
+       startAgenticPhase("RESEARCH", "Exploring codebase...", "cyan");
+    }
+
+    refreshAllComponents();
+  });
+
+  // Tool End
+  window.nexAPI.onServerToolEnd((d) => {
+    const entry = AppState.data.toolActions.find(a => a.tool === d.tool && a.detail === "started");
+    if (entry) entry.detail = d.summary || (d.ok ? "completed" : "failed");
+    refreshAllComponents();
+  });
+
+  // Confirm Request
+  window.nexAPI.onServerConfirm((d) => {
+    const panel = document.getElementById("server-confirm");
+    const question = document.getElementById("confirm-question");
+    const output = document.getElementById("server-output");
+    
+    if (panel && question && output) {
+      output.classList.remove("hidden");
+      panel.classList.remove("hidden");
+      question.textContent = d.question;
+      
+      const actions = panel.querySelector(".confirm-actions") || panel;
+      // Clear old buttons except the template ones if any
+      actions.innerHTML = "";
+      
+      if (d.options && d.options.length > 0) {
+        // Render options as buttons
+        d.options.forEach(opt => {
+          const btn = document.createElement("button");
+          btn.className = "btn btn-p";
+          btn.style.marginRight = "8px";
+          btn.style.marginBottom = "8px";
+          btn.textContent = opt;
+          btn.onclick = () => {
+            window.nexAPI.sendConfirm(d.id, opt);
+            panel.classList.add("hidden");
+          };
+          actions.appendChild(btn);
+        });
+        
+        // Add custom answer input
+        const customWrap = document.createElement("div");
+        customWrap.style.marginTop = "12px";
+        customWrap.style.display = "flex";
+        customWrap.style.gap = "8px";
+        
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "cmd-input";
+        input.style.background = "var(--bg-surface)";
+        input.style.border = "1px solid var(--border)";
+        input.placeholder = "Custom answer...";
+        
+        const sendBtn = document.createElement("button");
+        sendBtn.className = "btn btn-s";
+        sendBtn.textContent = "Send";
+        sendBtn.onclick = () => {
+          window.nexAPI.sendConfirm(d.id, input.value.trim() || "Yes");
+          panel.classList.add("hidden");
+        };
+        
+        customWrap.appendChild(input);
+        customWrap.appendChild(sendBtn);
+        actions.appendChild(customWrap);
+        input.focus();
+      } else {
+        // Standard Yes/No
+        const allowBtn = document.createElement("button");
+        allowBtn.className = "btn btn-p";
+        allowBtn.textContent = "✓ Allow";
+        allowBtn.onclick = () => { window.nexAPI.sendConfirm(d.id, true); panel.classList.add("hidden"); };
+        
+        const denyBtn = document.createElement("button");
+        denyBtn.className = "btn btn-s";
+        denyBtn.textContent = "✗ Deny";
+        denyBtn.onclick = () => { window.nexAPI.sendConfirm(d.id, false); panel.classList.add("hidden"); };
+        
+        actions.appendChild(allowBtn);
+        actions.appendChild(denyBtn);
+      }
+    }
+  });
+
+  // Done / Error
+  window.nexAPI.onServerDone(() => {
+    if (AppState.activeNodeId) {
+      const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
+      if (node && node.tokens && node.tokens.length > 50) {
+        // If it's a substantive response, transform it into a beautiful RESPONSE node
+        node.phase = "RESPONSE";
+        node.status = "complete";
+        node.isMarkdown = true;
+      } else {
+        completeActiveNode();
+      }
+    }
+    addServerLog("✓ Done");
+    refreshAllComponents();
+    
+    // Smooth scroll to bottom
+    const center = document.getElementById("center");
+    if (center) center.scrollTo({ top: center.scrollHeight, behavior: "smooth" });
+  });
+
+  window.nexAPI.onServerError((d) => {
+    addServerLog(`✗ Error: ${d.message}`);
+    if (AppState.activeNodeId) {
+      const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
+      if (node) {
+        node.status = "error";
+        node.detail += `\nError: ${d.message}`;
+      }
+      AppState.activeNodeId = null;
+      refreshAllComponents();
+    }
+  });
 }
 
-// Export for component modules
-window.NexApp = {
-  addTimelineNode,
-  handleCommand,
-  executeCommand,
-  formatNumber,
-  timeAgo,
-  getState: () => AppState,
-};
+// ─── Markdown Parser ────────────────────────────────────────────────────────
+
+function parseMarkdown(text) {
+  if (!text) return "";
+  let html = text
+    .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+    .replace(/^\* (.*$)/gim, "<li>$1</li>")
+    .replace(/\*\*(.*)\*\*/gim, "<b>$1</b>")
+    .replace(/`(.*)`/gim, "<code>$1</code>")
+    .replace(/\n\n/gim, "</p><p>");
+  
+  // Wrap li in ul
+  html = html.replace(/(<li>.*<\/li>)/gim, "<ul>$1</ul>");
+  // Clean up adjacent uls
+  html = html.replace(/<\/ul>\s*<ul>/gim, "");
+  
+  return `<div class="md"><p>${html}</p></div>`;
+}
+
+// ─── UI Orchestration ───────────────────────────────────────────────────────
+
+function startAgenticPhase(phase, detail, color) {
+  const id = "node-" + Date.now();
+  const node = {
+    id: id,
+    phase: phase,
+    detail: detail,
+    color: color,
+    status: "active",
+    tokens: "",
+    extras: {}
+  };
+  AppState.data.agenticNodes.push(node);
+  AppState.activeNodeId = id;
+  
+  // Hide welcome, show timeline
+  document.getElementById("welcome").classList.add("hidden");
+  document.getElementById("timeline").classList.remove("hidden");
+  
+  refreshAllComponents();
+}
+
+function updateActiveNode(text) {
+  const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
+  if (node) {
+    node.tokens = (node.tokens || "") + text;
+    // Update the DOM directly for performance
+    const nodeEl = document.querySelector(`#node-${node.id} .tl-detail`);
+    if (nodeEl) {
+      nodeEl.textContent = node.detail + "\n" + node.tokens;
+      const card = nodeEl.closest(".tl-card");
+      if (card) card.scrollTop = card.scrollHeight;
+    }
+  }
+}
+
+function completeActiveNode() {
+  const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
+  if (node) {
+    node.status = "complete";
+  }
+  AppState.activeNodeId = null;
+  refreshAllComponents();
+}
+
+function addServerLog(text) {
+  const stream = document.getElementById("server-stream");
+  if (stream) {
+    const output = document.getElementById("server-output");
+    output.classList.remove("hidden");
+    const div = document.createElement("div");
+    div.className = "log-line";
+    div.textContent = text;
+    stream.appendChild(div);
+    stream.scrollTop = stream.scrollHeight;
+  }
+}
+
+// ─── Command Input ──────────────────────────────────────────────────────────
+
+function setupCommandInput() {
+  const input = document.getElementById("cmd-input");
+  const submit = document.getElementById("cmd-submit");
+
+  if (input) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") executeCommand();
+    });
+  }
+  if (submit) {
+    submit.addEventListener("click", executeCommand);
+  }
+}
+
+function executeCommand() {
+  const input = document.getElementById("cmd-input");
+  const cmd = input.value.trim();
+  if (!cmd) return;
+
+  // UI Feedback
+  const stream = document.getElementById("server-stream");
+  if (stream) {
+    document.getElementById("server-output").classList.remove("hidden");
+    const cmdDiv = document.createElement("div");
+    cmdDiv.className = "cmd-line";
+    cmdDiv.textContent = `❯ ${cmd}`;
+    stream.appendChild(cmdDiv);
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  // Determine if we should start a specific timeline phase
+  if (cmd.startsWith("/plan")) startAgenticPhase("PLAN", "Generating implementation strategy...", "cyan");
+  else if (cmd.startsWith("/impl")) startAgenticPhase("IMPLEMENT", "Applying changes to codebase...", "emerald");
+  else if (cmd.startsWith("/verify")) startAgenticPhase("VERIFY", "Running tests and benchmarks...", "teal");
+  else if (!cmd.startsWith("/")) startAgenticPhase("THINK", "Analyzing request...", "cyan");
+
+  window.nexAPI.sendCommand(cmd);
+  input.value = "";
+}

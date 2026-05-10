@@ -72,6 +72,30 @@ function startServerMode() {
     });
   });
 
+  // ─── ask_user handler for server mode ──────────────────────────────────────
+  const { setAskUserHandler } = require("./tools");
+  setAskUserHandler(async (question, options) => {
+    const id = "ask-" + ++confirmSeq;
+    emit({
+      type: "confirm_request",
+      id,
+      question,
+      options: options || [],
+      tool: "ask_user",
+    });
+
+    return new Promise((resolve) => {
+      pendingConfirms.set(id, (answer) => {
+        // If answer is a boolean from a confirm dialog, map it to options or just return it as string
+        if (typeof answer === "boolean") {
+          resolve(answer ? (options?.[0] || "Yes") : (options?.[1] || "No"));
+        } else {
+          resolve(String(answer));
+        }
+      });
+    });
+  });
+
   // Current active message id (for token/tool events)
   let activeMsgId = null;
 

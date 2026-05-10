@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("nexAPI", {
   sendCommand: (cmd) => ipcRenderer.send("nex:command", cmd),
   sendConfirm: (id, answer) => ipcRenderer.send("nex:confirm-answer", { id: id, answer: answer }),
   sendCancel: () => ipcRenderer.send("nex:cancel"),
+  sendClear: () => ipcRenderer.send("nex:clear"),
   openProject: () => ipcRenderer.invoke("nex:open-project"),
   openExternal: (url) => ipcRenderer.send("nex:open-external", url),
   minimizeWindow: function () { ipcRenderer.send("nex:window-minimize"); },
@@ -23,4 +24,9 @@ contextBridge.exposeInMainWorld("nexAPI", {
   onServerClosed: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-closed", h); return function () { ipcRenderer.removeListener("nex:server-closed", h); }; },
   onProjectOpened: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:project-opened", h); return function () { ipcRenderer.removeListener("nex:project-opened", h); }; },
   onFocusCommand: function (cb) { var h = function () { cb(); }; ipcRenderer.on("nex:focus-command", h); return function () { ipcRenderer.removeListener("nex:focus-command", h); }; },
+  
+  // High-level events for app.js
+  onStateUpdated: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:state-updated", h); return function () { ipcRenderer.removeListener("nex:state-updated", h); }; },
+  onAgenticNode: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:agentic-node", h); return function () { ipcRenderer.removeListener("nex:agentic-node", h); }; },
+  onAgentThinking: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:agent-thinking", h); return function () { ipcRenderer.removeListener("nex:agent-thinking", h); }; },
 });
