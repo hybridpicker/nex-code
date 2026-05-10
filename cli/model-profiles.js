@@ -4,7 +4,7 @@
  * investigation caps, and post-edit budgets.
  */
 
-// Stale thresholds doubled for Ollama Cloud reliability (DeepSeek TUI inspired).
+// Stale thresholds doubled for Ollama Cloud reliability.
 // Ollama Cloud has variable latency — aggressive abort causes premature task termination.
 // The model gets the time it needs; stale auto-switch falls back to a faster model instead.
 const PROFILES = {
