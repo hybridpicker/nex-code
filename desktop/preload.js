@@ -1,89 +1,26 @@
-/**
- * desktop/preload.js — Secure IPC Bridge
- *
- * Exposes a minimal, typed API to the renderer process via
- * contextBridge. All communication with the main process goes
- * through well-defined channels — no raw ipcRenderer in the UI.
- *
- * Backend is live — no demo/placeholder data.
- */
-
 "use strict";
-
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("nexAPI", {
-  // ─── State ──────────────────────────────────────────────────
   getState: () => ipcRenderer.invoke("nex:get-state"),
-
-  // ─── Commands ───────────────────────────────────────────────
-  sendCommand: (command) => ipcRenderer.send("nex:command", command),
-
-  // ─── Project ────────────────────────────────────────────────
+  sendCommand: (cmd) => ipcRenderer.send("nex:command", cmd),
+  sendConfirm: (id, answer) => ipcRenderer.send("nex:confirm-answer", { id: id, answer: answer }),
+  sendCancel: () => ipcRenderer.send("nex:cancel"),
   openProject: () => ipcRenderer.invoke("nex:open-project"),
-
-  // ─── External Links ─────────────────────────────────────────
   openExternal: (url) => ipcRenderer.send("nex:open-external", url),
+  minimizeWindow: function () { ipcRenderer.send("nex:window-minimize"); },
+  maximizeWindow: function () { ipcRenderer.send("nex:window-maximize"); },
+  closeWindow: function () { ipcRenderer.send("nex:window-close"); },
 
-  // ─── Window Controls ────────────────────────────────────────
-  minimizeWindow: () => ipcRenderer.send("nex:window-minimize"),
-  maximizeWindow: () => ipcRenderer.send("nex:window-maximize"),
-  closeWindow: () => ipcRenderer.send("nex:window-close"),
-
-  // ─── Event Listeners ────────────────────────────────────────
-
-  /** Fired when the full application state changes */
-  onStateUpdated: (callback) => {
-    const handler = (_event, data) => callback(data);
-    ipcRenderer.on("nex:state-updated", handler);
-    return () => ipcRenderer.removeListener("nex:state-updated", handler);
-  },
-
-  onProjectOpened: (callback) => {
-    const handler = (_event, data) => callback(data);
-    ipcRenderer.on("nex:project-opened", handler);
-    return () => ipcRenderer.removeListener("nex:project-opened", handler);
-  },
-
-  onAgenticNode: (callback) => {
-    const handler = (_event, node) => callback(node);
-    ipcRenderer.on("nex:agentic-node", handler);
-    return () => ipcRenderer.removeListener("nex:agentic-node", handler);
-  },
-
-  onAgentThinking: (callback) => {
-    const handler = (_event, data) => callback(data);
-    ipcRenderer.on("nex:agent-thinking", handler);
-    return () => ipcRenderer.removeListener("nex:agent-thinking", handler);
-  },
-
-  onBackendMessage: (callback) => {
-    const handler = (_event, msg) => callback(msg);
-    ipcRenderer.on("nex:backend-message", handler);
-    return () => ipcRenderer.removeListener("nex:backend-message", handler);
-  },
-
-  onBackendLog: (callback) => {
-    const handler = (_event, log) => callback(log);
-    ipcRenderer.on("nex:backend-log", handler);
-    return () => ipcRenderer.removeListener("nex:backend-log", handler);
-  },
-
-  onBackendError: (callback) => {
-    const handler = (_event, err) => callback(err);
-    ipcRenderer.on("nex:backend-error", handler);
-    return () => ipcRenderer.removeListener("nex:backend-error", handler);
-  },
-
-  onFocusCommand: (callback) => {
-    const handler = () => callback();
-    ipcRenderer.on("nex:focus-command", handler);
-    return () => ipcRenderer.removeListener("nex:focus-command", handler);
-  },
-
-  onCommand: (callback) => {
-    const handler = (_event, cmd) => callback(cmd);
-    ipcRenderer.on("nex:command", handler);
-    return () => ipcRenderer.removeListener("nex:command", handler);
-  },
+  onServerReady: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-ready", h); return function () { ipcRenderer.removeListener("nex:server-ready", h); }; },
+  onServerToken: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-token", h); return function () { ipcRenderer.removeListener("nex:server-token", h); }; },
+  onServerToolStart: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-tool-start", h); return function () { ipcRenderer.removeListener("nex:server-tool-start", h); }; },
+  onServerToolEnd: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-tool-end", h); return function () { ipcRenderer.removeListener("nex:server-tool-end", h); }; },
+  onServerConfirm: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-confirm", h); return function () { ipcRenderer.removeListener("nex:server-confirm", h); }; },
+  onServerDone: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-done", h); return function () { ipcRenderer.removeListener("nex:server-done", h); }; },
+  onServerError: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-error", h); return function () { ipcRenderer.removeListener("nex:server-error", h); }; },
+  onServerLog: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-log", h); return function () { ipcRenderer.removeListener("nex:server-log", h); }; },
+  onServerClosed: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-closed", h); return function () { ipcRenderer.removeListener("nex:server-closed", h); }; },
+  onProjectOpened: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:project-opened", h); return function () { ipcRenderer.removeListener("nex:project-opened", h); }; },
+  onFocusCommand: function (cb) { var h = function () { cb(); }; ipcRenderer.on("nex:focus-command", h); return function () { ipcRenderer.removeListener("nex:focus-command", h); }; },
 });
