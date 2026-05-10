@@ -63,6 +63,26 @@ Stay on-scope — your strength is focused, efficient coding tasks.`,
 Trust your reasoning. Use tools thoroughly when the task demands it.
 You handle complex multi-step tasks well — don't cut corners prematurely.`,
   },
+  "deepseek-v4-pro": {
+    staleWarn: 120000,
+    staleAbort: 300000,
+    investigationCap: 20,
+    postEditCap: 14,
+    briefing: `You are DeepSeek V4 Pro, a top-tier coding and reasoning model with 1M token context.
+Use your large context window to read broadly when needed, then act decisively.
+You excel at complex multi-step tasks, architecture design, and deep debugging.
+Trust your chain-of-thought reasoning — think before acting, then execute precisely.`,
+  },
+  "deepseek-v4-flash": {
+    staleWarn: 40000,
+    staleAbort: 120000,
+    investigationCap: 10,
+    postEditCap: 8,
+    briefing: `You are DeepSeek V4 Flash, a fast and efficient coding model.
+Be decisive — read only what you need, then fix immediately.
+Keep investigation short: identify the target file, edit it, move on.
+Your strength is focused, efficient coding tasks with rapid turnaround.`,
+  },
 };
 
 const DEFAULTS = {
