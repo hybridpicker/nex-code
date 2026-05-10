@@ -647,12 +647,33 @@ function matchSkillTriggers(taskDescription) {
   for (const skill of loadedSkills) {
     if (!skill.enabled || !skill.triggers || skill.triggers.length === 0)
       continue;
-    const hit = skill.triggers.some((t) => lower.includes(t.toLowerCase()));
-    if (hit) {
-      const lines = (skill.instructions || "").split("\n").slice(0, 3).join("\n");
-      matched.push({ name: skill.name, instructions: lines });
+    // Score: count how many triggers match (multi-word triggers get more weight).
+    // A trigger like "code review" matches both word-boundary and substring.
+    let bestScore = 0;
+    for (const trigger of skill.triggers) {
+      const tLower = trigger.toLowerCase();
+      // Word-boundary match (stricter, higher score)
+      const wordBoundaryRegex = new RegExp(
+        "\\b" + tLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
+      );
+      if (wordBoundaryRegex.test(lower)) {
+        bestScore = Math.max(bestScore, 3);
+      } else if (lower.includes(tLower)) {
+        // Substring match (looser, lower score)
+        bestScore = Math.max(bestScore, 1);
+      }
+    }
+    if (bestScore > 0) {
+      const instructions = (skill.instructions || "").trim();
+      matched.push({
+        name: skill.name,
+        instructions,
+        score: bestScore,
+      });
     }
   }
+  // Sort by score descending — best match first
+  matched.sort((a, b) => b.score - a.score);
   return matched;
 }
 

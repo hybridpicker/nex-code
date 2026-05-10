@@ -24,6 +24,30 @@ const ROUTING_CONFIG_PATH = path.join(
 // ─── Category Definitions ─────────────────────────────────────────────────────
 
 const CATEGORIES = {
+  "bug-fix": {
+    id: "bug-fix",
+    label: "Bug Fix",
+    icon: "🐛",
+    envVar: "NEX_ROUTE_BUG_FIX",
+    pattern:
+      /\b(bug|crash|broken|fail|patch|stack\s*trace|typeerror|referenceerror|syntaxerror|unhandled|throw|throws|exception|root\s*cause|debug\s+(?:the\s+)?(?:stack|trace|issue|error)|resolve\s*(?:the|this)\s*(?:issue|bug|error|problem))\b/i,
+  },
+  "feature-add": {
+    id: "feature-add",
+    label: "Feature",
+    icon: "✨",
+    envVar: "NEX_ROUTE_FEATURE",
+    pattern:
+      /\b(add|create|implement|build|scaffold|generate|new\s+feature|feature\s+request|enhancement|extend|introduce)\b/i,
+  },
+  refactor: {
+    id: "refactor",
+    label: "Refactor",
+    icon: "🔧",
+    envVar: "NEX_ROUTE_REFACTOR",
+    pattern:
+      /\b(refactor|rewrite|restructure|reorgani[sz]e|clean\s*up|cleanup|simplify|extract\s+(?:function|method|class|component|module)|rename|move\s+(?:to|into)|split\s+(?:into|up)|consolidate|moderni[sz]e)\b/i,
+  },
   frontend: {
     id: "frontend",
     label: "Frontend",
@@ -66,7 +90,10 @@ const CATEGORIES = {
 };
 
 // Priority order: more specific first, coding is the final fallback
-const DETECTION_ORDER = ["agentic", "frontend", "sysadmin", "data", "coding"];
+// Priority order: more precise patterns first, then general ones, coding last.
+// bug-fix/feature-add/refactor come after domain categories so "fix Docker container"
+// matches "sysadmin" not "bug-fix", and "add chart component" matches "frontend" not "feature-add".
+const DETECTION_ORDER = ["agentic", "frontend", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 

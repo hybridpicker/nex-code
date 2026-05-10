@@ -453,7 +453,11 @@ async function gatherProjectContext(cwd) {
             .map((name) => `${name}=${pkg.scripts[name]}`)
             .slice(0, 8);
           if (keyScripts.length > 0) {
-            parts.push(`PACKAGE SCRIPTS:\n${keyScripts.join("\n")}`);
+            parts.push(
+              `AVAILABLE TOOL COMMANDS (use bash to run these):\n${keyScripts
+                .map((s) => `  npm run ${s.split("=")[0]}  # ${s}`)
+                .join("\n")}`,
+            );
           }
         }
       } catch {

@@ -116,17 +116,17 @@ function getFewShotForInput(userInput) {
   const category = detectCategory(userInput);
   if (!category) return null;
 
-  // The "coding" category is a catch-all fallback — its example is a
-  // bug-fix scenario, which actively confuses small plan models when the
-  // real prompt is exploration ("analyze", "explain", "list", "summarize").
-  // Only inject it when the user's prompt actually looks like a code change
-  // request.
+  // The "coding" category is a catch-all fallback. Specific categories
+  // (bug-fix, feature-add, refactor) are now detected above it, so coding
+  // only fires for truly ambiguous prompts — safe to inject unconditionally.
+  // The guard is retained but relaxed: only suppress for pure-analysis prompts
+  // that clearly don't need code changes.
   if (category.id === "coding") {
-    const looksLikeCodeTask =
-      /\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port)\b/i.test(
+    const looksLikeAnalysis =
+      /\b(analy[sz]e|explain|describe|list|summari[sz]e|what is|how does|tell me about|review|audit)\b/i.test(
         userInput,
       );
-    if (!looksLikeCodeTask) return null;
+    if (looksLikeAnalysis) return null;
   }
 
   return loadExampleForCategory(category.id);
