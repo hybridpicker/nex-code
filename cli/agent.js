@@ -1710,6 +1710,7 @@ let _verifyToolCalls = 0; // successful verification-phase tool calls in the cur
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
 let _stagnationNudges = 0; // soft-warning nudges for general stagnation detection
+let _consecutiveNoToolCalls = 0; // auto-escalate to stronger model if model produces no tool calls
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
@@ -2788,6 +2789,9 @@ function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
   }
   lines.push(
     "If verification passes: report \"Verification passed\" and you may continue. If verification fails: fix the issue before any other work.",
+  );
+  lines.push(
+    "MULTI-STEP CHECK: If you created a new file or extracted code into a module, verify that all files that should import/require it have been updated. If the task mentions multiple files, check that each one has been handled.",
   );
   return lines.join("\n");
 }
@@ -4532,6 +4536,8 @@ function _resetSessionTracking() {
   _verifyToolCalls = 0;
   _verifyCompletionNudges = 0;
   _implementNoProgressNudges = 0;
+  _stagnationNudges = 0;
+  _consecutiveNoToolCalls = 0;
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
@@ -7002,6 +7008,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       const assistantMsg = { role: "assistant", content: content || "" };
       if (tool_calls && tool_calls.length > 0) {
         assistantMsg.tool_calls = tool_calls;
+        _consecutiveNoToolCalls = 0; // reset auto-escalation counter
       }
       conversationMessages.push(assistantMsg);
       apiMessages.push(assistantMsg);
@@ -7082,6 +7089,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       // No tool calls → response complete (or nudge if empty after tools)
       if (!tool_calls || tool_calls.length === 0) {
+        // Auto-escalate: if model produces 0 tool calls for 3 consecutive turns,
+        // switch to a stronger model. Common with 24B models that silently fail
+        // on complex tasks instead of calling tools.
+        if (getAutoConfirm() && _consecutiveNoToolCalls < 3) {
+          _consecutiveNoToolCalls++;
+        }
+        if (
+          getAutoConfirm() &&
+          _consecutiveNoToolCalls >= 3 &&
+          totalToolCalls === 0 &&
+          !_boundedBacklogPlanActive
+        ) {
+          const currentModel = getActiveModelId();
+          const strongerModel = "devstral-2:123b";
+          if (
+            currentModel &&
+            !currentModel.includes("123b") &&
+            !currentModel.includes("480b") &&
+            !currentModel.includes("1t")
+          ) {
+            setActiveModel(`${getActiveProviderName()}:${strongerModel}`);
+            _consecutiveNoToolCalls = 0;
+            debugLog(
+              `${C.yellow}  ⚡ Auto-escalate: 0 tool calls in 3 turns → switching to ${strongerModel}${C.reset}`,
+            );
+            continue;
+          }
+        }
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
         if (
