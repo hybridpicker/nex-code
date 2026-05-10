@@ -182,7 +182,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
   <div class="tb-center">
     <div class="model-rtr" id="model-rtr" onclick="toggleModelMenu()">
       <span class="model-rtr-label">Model Router</span>
-      <span class="model-rtr-val" id="model-val">qwen3-coder:480b</span>
+      <span class="model-rtr-val" id="model-val">auto (GPT-4o / Claude 3.5)</span>
     </div>
   </div>
   <div class="tb-right">
@@ -319,12 +319,12 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 // ═══════════════ SINGLE-FILE APP LOGIC ═══════════════
 
 const state = {
-  project: 'nex-code', branch: 'devel',
-  model: 'qwen3-coder:480b (ollama)',
-  budget: { used: 0, limit: 0 },
+  project: 'orbit-control', branch: 'feat/telemetry-refactor',
+  model: 'auto (GPT-4o / Claude 3.5)',
+  budget: { used: 1.42, limit: 10.0 },
   nodes: [],
-  testResults: { passed: 0, failed: 0 },
-  branchSafety: { score: 100 }
+  testResults: { passed: 109, failed: 0 },
+  branchSafety: { score: 98 }
 };
 
 const history = [];
@@ -449,7 +449,7 @@ function runCmd(cmd) {
       addNode('PLAN', 'Sessions — saved conversations', 'cyan', planExtras(3, {added:0,modified:0,removed:0}, ['telemetry-refactor — 12.4k • claude-3.5 • 2h ago','api-rate-limiting — 8.1k • gpt-4o • 5h ago','dashboard-perf — 23.7k • devstral-2 • 1d ago']));
       break;
     case '/providers':
-      addNode('PLAN', 'Providers & Models', 'cyan', planExtras(7, {added:0,modified:0,removed:0}, ['Qwen3 Coder 480B — ollama','Devstral-2 123B — ollama','Kimi K2.5 — ollama','DeepSeek V4 — deepseek','Gemini 3.1 Pro — gemini','GPT-4o — openai','Claude 3.5 Sonnet — anthropic']));
+      addNode('PLAN', 'Providers & Models', 'cyan', planExtras(9, {added:0,modified:0,removed:0}, ['auto (GPT-4o / Claude 3.5)','GPT-4o — openai','Claude 3.5 Sonnet — anthropic','Devstral-2 123B — ollama-cloud','Kimi K2.5 — ollama-cloud','Qwen3 236B — ollama-cloud','Gemini 3.1 Pro — google','DeepSeek V4 — deepseek','Local Ollama — local']));
       break;
     case '/model':
       var mn = arg || 'auto';
@@ -480,7 +480,7 @@ function navClick(el, cmd) {
 function toggleModelMenu() {
   var existing = document.getElementById('model-menu');
   if (existing) { existing.remove(); return; }
-  var models = ['Qwen3 Coder 480B','Devstral-2 123B','Kimi K2.5','DeepSeek V4','Gemini 3.1 Pro','GPT-4o','Claude 3.5 Sonnet'];
+  var models = ['auto (GPT-4o / Claude 3.5)','GPT-4o','Claude 3.5 Sonnet','Devstral-2 123B','Kimi K2.5','Qwen3 236B','Gemini 3.1 Pro','DeepSeek V4','Local Ollama'];
   var menu = document.createElement('div');
   menu.id = 'model-menu';
   menu.style.cssText = 'position:fixed;min-width:280px;background:var(--bg-elevated);border:1px solid var(--border-active);border-radius:var(--radius-md);box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:1000;overflow:hidden';
