@@ -8751,7 +8751,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           let advice;
           if (hasReRead) {
             urgency = "WARNING";
-            advice = `Full-file read of ${reReadFiles.join(", ")} already done — use line_start/line_end for specific sections instead.`;
+            advice = `Full-file read of ${reReadFiles.join(", ")} already done — you have the content. Use edit_file or write_file to apply the fix now.`;
           } else if (hasUnboundedRead) {
             advice = `Unbounded read at ${Math.round(ctxPct)}% context — use line_start/line_end to avoid overflow.`;
           } else {
@@ -9014,15 +9014,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
               const escalateMsg = {
                 role: "user",
-                content: `[SYSTEM] read_file("${path}") was blocked again — full-file reads are disabled after the first read. Use line_start/line_end for a specific section, or use grep_search to find what you need.`,
+                content: `[SYSTEM] read_file("${path}") was blocked again — full-file reads are disabled after the first read. You already have the content. Use edit_file or write_file to fix the bug — do NOT re-read.`,
               };
               conversationMessages.push(escalateMsg);
               apiMessages.push(escalateMsg);
+              // Force phase transition to implement so edit_file/write_file are allowed
+              if (_phaseEnabled && _currentPhase === "plan") {
+                _currentPhase = "implement";
+                _phaseIterations = 0;
+                debugLog(
+                  `${C.green}  ▶ Phase auto-transitioned to implement (re-read loop detected)${C.reset}`,
+                );
+              }
             }
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
-              content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). Use line_start/line_end to read a specific section instead of the full file.`,
+              content: `BLOCKED: read_file("${path}") denied — file already in context (read ${alreadyRead}×). You already have the full contents. Do NOT re-read — proceed to fix the bug using edit_file or write_file.`,
               tool_call_id: prep.callId,
             };
           } // end else (no recovery budget)
