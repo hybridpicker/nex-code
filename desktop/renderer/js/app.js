@@ -14,15 +14,14 @@
 if (!window.nexAPI) {
   window.nexAPI = {
     getState: () => Promise.resolve(null),
-    getDemoData: () => Promise.resolve(null),
     sendCommand: (cmd) => { console.log("[nexAPI polyfill] sendCommand:", cmd); },
     openProject: () => Promise.resolve(null),
     openExternal: (url) => { window.open(url, "_blank"); },
     minimizeWindow: () => {},
     maximizeWindow: () => {},
     closeWindow: () => {},
+    onStateUpdated: () => () => {},
     onProjectOpened: () => () => {},
-    onWorkspaceScan: () => () => {},
     onAgenticNode: () => () => {},
     onAgentThinking: () => () => {},
     onBackendMessage: () => () => {},
@@ -43,17 +42,17 @@ const AppState = {
 // ─── Initialization ──────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Load demo data (real data when backend is connected)
+  // Load live state from the backend (no placeholders)
   try {
-    AppState.data = await window.nexAPI.getDemoData();
+    AppState.data = await window.nexAPI.getState();
     AppState.loaded = true;
   } catch (err) {
-    console.warn("Failed to load data, using defaults:", err.message);
+    console.warn("Failed to load state, using defaults:", err.message);
     AppState.data = getDefaultState();
     AppState.loaded = true;
   }
 
-  // Initialize all components
+  // Initialize all components with live data
   initTopBar();
   initSidebar();
   initAgenticTimeline();
@@ -61,6 +60,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   initCommandCenter();
 
   // Sub-component modules (loaded via script tags) have their own initEntryPoints
+  refreshAllComponents();
+
+  // Subscribe to events from main process
+  subscribeToEvents();
+});
+
+/** Re-render all components with current state */
+function refreshAllComponents() {
   if (typeof initTopBarComponents === "function") {
     initTopBarComponents(AppState.data);
   }
@@ -76,22 +83,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (typeof initCommandPaletteComponents === "function") {
     initCommandPaletteComponents(AppState.data);
   }
-
-  // Subscribe to events from main process
-  subscribeToEvents();
-});
+}
 
 // ─── Event Subscriptions ────────────────────────────────────────────────────
 
 function subscribeToEvents() {
   try { window.nexAPI.onFocusCommand(() => { const el = document.getElementById("command-input"); if (el) el.focus(); }); } catch(e) {}
   try { window.nexAPI.onCommand((cmd) => { handleCommand(cmd); }); } catch(e) {}
-  try { window.nexAPI.onAgentThinking((data) => { addTimelineNode("PLAN", `Analyzing: "${data.prompt}"`, "cyan", { status: "active" }); }); } catch(e) {}
+
+  // Live state updates from the backend
+  try {
+    window.nexAPI.onStateUpdated((data) => {
+      if (data) {
+        AppState.data = data;
+        AppState.loaded = true;
+        refreshAllComponents();
+      }
+    });
+  } catch(e) {}
+
   try { window.nexAPI.onBackendLog((log) => { if (AppState.data) { if (!AppState.data.toolActions) AppState.data.toolActions = []; AppState.data.toolActions.unshift({ tool: "nex-code", detail: log, time: "now" }); if (AppState.data.toolActions.length > 20) AppState.data.toolActions.length = 20; if (typeof initRightPanelComponents === "function") initRightPanelComponents(AppState.data); } }); } catch(e) {}
   try { window.nexAPI.onBackendError((err) => { addTimelineNode("VERIFY", `Error: ${err}`, "coral", { tests: { passed: 0, failed: 1, total: 1 }, status: "complete" }); }); } catch(e) {}
-  try { window.nexAPI.onBackendMessage((msg) => { if (msg.type === "node") addTimelineNode(msg.phase, msg.detail, msg.color, msg.extras); }); } catch(e) {}
   try { window.nexAPI.onProjectOpened((data) => { if (AppState.data) { AppState.data.project = data.project; AppState.data.branch = data.branch; } if (typeof initTopBarComponents === "function" && AppState.data) initTopBarComponents(AppState.data); }); } catch(e) {}
-  try { window.nexAPI.onWorkspaceScan((data) => { addTimelineNode("PLAN", `Repository scanned: ${data.fileCount} files`, "cyan", { filesScanned: data.fileCount, diff: { added: 0, modified: 0, removed: 0 }, status: "complete" }); }); } catch(e) {}
   try { window.nexAPI.onAgenticNode((node) => { if (!AppState.data) AppState.data = { agenticNodes: [] }; if (!AppState.data.agenticNodes) AppState.data.agenticNodes = []; AppState.data.agenticNodes.push(node); renderTimelineNode(node); switchToTimelineView(); }); } catch(e) {}
 }
 
@@ -101,7 +114,7 @@ function getDefaultState() {
   return {
     project: "nex-code",
     branch: "main",
-    model: "auto (GPT-4o / Claude 3.5)",
+    model: "qwen3-coder:480b",
     sessionHealth: "Excellent",
     budget: { used: 0.0, limit: 10.0 },
     tokens: { used: 0, limit: 1000000 },
@@ -266,8 +279,8 @@ function executeCommand(command) {
         filesScanned: 9,
         diff: { added: 0, modified: 0, removed: 0 },
         relevantFiles: [
-          "auto (GPT-4o / Claude 3.5)", "GPT-4o — openai",
-          "Claude 3.5 Sonnet — anthropic", "Devstral-2 123B — ollama-cloud",
+          "Qwen3 Coder 480B — ollama", "Devstral-2 123B — ollama",
+          "Kimi K2.5 — ollama", "DeepSeek V4 — deepseek",
           "Kimi K2.5 — ollama-cloud", "Qwen3 236B — ollama-cloud",
           "Gemini 3.1 Pro — google", "DeepSeek V4 — deepseek",
           "Local Ollama — local",
