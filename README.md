@@ -51,10 +51,11 @@ The goal is not provider abstraction for its own sake. The goal is to make model
 - **Open-model-first defaults** for Ollama Cloud, local Ollama, and strong open coding models
 - **Cost visibility** for token usage, provider cost mode, budget warnings, and fallback routing
 - **Phase-based execution** that separates planning, implementation, and verification
-- **Multi-provider support** for OpenAI, Anthropic, Gemini, Ollama Cloud, and local Ollama
+- **Multi-provider support** for Ollama Cloud, DeepSeek V4, OpenAI, Anthropic, Gemini, and local Ollama
 - **Tool-integrated execution** across files, shell commands, Git, SSH, Docker, and Kubernetes
 - **Headless and interactive modes** for both conversational use and automated task runs
 - **Sub-agent orchestration** for decomposing larger tasks into parallel workstreams
+- **Inline file preloading** — referenced files ≤8KB are pre-loaded into context, eliminating re-read loops for reasoning models like DeepSeek V4
 - **Benchmark-driven routing** to select stronger models for specific task categories
 - **Repository-aware behavior** including context from the current project, config, and Git state
 - **Safety controls** around confirmations, sensitive operations, and destructive commands
