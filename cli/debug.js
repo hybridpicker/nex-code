@@ -32,7 +32,7 @@ function debugLog(...args) {
  * @param {...any} args
  */
 function warnLog(...args) {
-  if (isDebug()) process.stderr.write(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n');
+  if (isDebug()) console.warn(...args);
 }
 
 module.exports = { DEBUG, debugLog, warnLog };
