@@ -226,20 +226,18 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <main class="center" id="center">
   <div class="welcome" id="welcome">
     <h1>⚡ nex-code</h1>
-    <p style="color:var(--text-secondary);margin-top:12px">Cyber-Obsidian Agentic Workflow</p>
-    <p style="color:var(--text-tertiary);margin-top:6px;font-size:12px">Type a command or click a sidebar item</p>
+    <p style="color:var(--text-secondary);margin-top:12px">Open-model-first CLI coding assistant</p>
+    <p style="color:var(--text-tertiary);margin-top:6px;font-size:12px">Open a project to start</p>
+    <button class="btn btn-p" style="margin-top:16px" onclick="window.nexAPI.openProject()">📂 Open Project…</button>
   </div>
-  <div class="timeline hidden" id="timeline">
-    <div class="tl-header"><h2>Agentic Loop</h2><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-emerald)">● Active</span></div>
-    <div class="tl-track" id="tl-track"></div>
-    <div class="success hidden" id="success">
-      <div class="success-inner">
-        <div class="success-icon">✓</div>
-        <div><div class="success-title">SUCCESS</div><div class="success-detail" id="success-detail">All phases completed</div></div>
-        <div class="success-acts">
-          <button class="btn btn-p" onclick="runCmd('/deploy')">Open PR</button>
-          <button class="btn btn-s" onclick="document.getElementById('cmd-input').focus()">Keep Iterating</button>
-        </div>
+  <div class="server-output hidden" id="server-output" style="display:flex;flex-direction:column;height:100%">
+    <div id="server-header" style="padding:12px 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);border-bottom:1px solid var(--border-thin)"></div>
+    <div id="server-stream" style="flex:1;overflow-y:auto;padding:12px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.7;white-space:pre-wrap"></div>
+    <div id="server-confirm" class="hidden" style="padding:12px 16px;border-top:1px solid var(--border-thin);background:var(--bg-elevated)">
+      <div id="confirm-question" style="color:var(--text-primary);margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-p" onclick="answerConfirm(true)">✓ Allow</button>
+        <button class="btn btn-s" onclick="answerConfirm(false)">✗ Deny</button>
       </div>
     </div>
   </div>
@@ -329,6 +327,7 @@ const state = {
 
 const history = [];
 let histIdx = -1;
+if (window.nexAPI) setupServer(); else window.addEventListener('load', setupServer);
 
 // ── INIT ──
 (function init() {
@@ -373,6 +372,8 @@ let histIdx = -1;
 })();
 
 // ── COMMAND EXECUTION ──
+let pendingConfirm = null;
+
 function submitCmd() {
   const inp = document.getElementById('cmd-input');
   const cmd = inp.value.trim();
@@ -387,86 +388,65 @@ function submitCmd() {
 function runCmd(cmd) {
   if (!cmd) return;
   cmd = cmd.trim();
+  // Show server output, hide welcome
+  var w = document.getElementById('welcome');
+  var o = document.getElementById('server-output');
+  if (w) w.classList.add('hidden');
+  if (o) o.classList.remove('hidden');
+  // Send to nex-code --server
+  if (window.nexAPI) window.nexAPI.sendCommand(cmd);
+}
 
-  if (!cmd.startsWith('/')) {
-    // Natural language — full agentic loop
-    addNode('PLAN', 'Processing: "' + cmd + '"', 'cyan', planExtras(247, {added:142,modified:38,removed:12}, ['src/telemetry/collector.ts','src/telemetry/buffer.ts']));
-    setTimeout(function() {
-      addNode('IMPLEMENT', 'Applying changes', 'emerald', implExtras([
-        {name:'src/telemetry/collector.ts',pct:100},{name:'src/telemetry/buffer.ts',pct:100},{name:'tests/telemetry.test.ts',pct:100}
-      ], ['Prettier ✓','ESLint ✓']));
-    }, 1500);
-    setTimeout(function() {
-      addNode('VERIFY', 'Running tests & benchmarks', 'teal', verifyExtras({passed:86,failed:0}, {metric:'telemetry throughput',value:1420,unit:'ops/s'}));
-      setTimeout(function() { showSuccess(); }, 800);
-    }, 3000);
-    return;
-  }
+function setupServer() {
+  if (!window.nexAPI) return;
+  window.nexAPI.onProjectOpened(function(d) {
+    var w = document.getElementById('welcome'), o = document.getElementById('server-output');
+    if (w) w.classList.add('hidden'); if (o) o.classList.remove('hidden');
+    var h = document.getElementById('server-header');
+    if (h) h.textContent = '📁 ' + (d.project||'') + '  ⎇ ' + (d.branch||'');
+    var t = document.getElementById('tb-project');
+    if (t) t.textContent = d.project||'nex-code';
+  });
+  window.nexAPI.onServerReady(function() {
+    var s = document.getElementById('server-stream');
+    if (s) s.innerHTML += '<div style="color:var(--text-tertiary);font-size:11px">nex-code ready. Type a prompt below.</div>\n';
+  });
+  window.nexAPI.onServerToken(function(d) {
+    var s = document.getElementById('server-stream');
+    if (s) { s.textContent += d.text; s.scrollTop = s.scrollHeight; }
+  });
+  window.nexAPI.onServerToolStart(function(d) {
+    var s = document.getElementById('server-stream');
+    if (s) { s.textContent += '\n⚙ ' + d.tool + '\n'; s.scrollTop = s.scrollHeight; }
+  });
+  window.nexAPI.onServerToolEnd(function(d) {
+    var s = document.getElementById('server-stream');
+    if (s) { s.textContent += '  ' + (d.ok?'✓':'✗') + ' ' + d.summary + '\n'; s.scrollTop = s.scrollHeight; }
+  });
+  window.nexAPI.onServerConfirm(function(d) {
+    pendingConfirm = d;
+    var p = document.getElementById('server-confirm'), q = document.getElementById('confirm-question');
+    if (p) p.classList.remove('hidden');
+    if (q) q.textContent = '⚠ ' + d.question;
+  });
+  window.nexAPI.onServerDone(function() {
+    var s = document.getElementById('server-stream');
+    if (s) { s.textContent += '\n✓ Done\n'; s.scrollTop = s.scrollHeight; }
+  });
+  window.nexAPI.onServerError(function(d) {
+    var s = document.getElementById('server-stream');
+    if (s) { s.textContent += '\n✗ ' + (d.message||'Error') + '\n'; s.scrollTop = s.scrollHeight; }
+  });
+  window.nexAPI.onServerClosed(function() {
+    var w = document.getElementById('welcome');
+    if (w) w.classList.remove('hidden');
+  });
+}
 
-  // Slash commands
-  var parts = cmd.split(/\s+/);
-  var base = parts[0].toLowerCase();
-  var arg = parts.slice(1).join(' ');
-
-  switch (base) {
-    case '/plan':
-      addNode('PLAN', 'Planning phase initiated', 'cyan', planExtras(Math.floor(Math.random()*200+50), {added:0,modified:0,removed:0}, ['Scanning repository…']));
-      break;
-    case '/impl': case '/implement':
-      addNode('IMPLEMENT', 'Implementation phase initiated', 'emerald', implExtras([{name:'Awaiting task…',pct:0}], []));
-      break;
-    case '/verify':
-      addNode('VERIFY', 'Verification phase initiated', 'teal', verifyExtras({passed:0,failed:0}, {metric:'pending',value:0,unit:'...'}));
-      break;
-    case '/git':
-      if (arg === 'diff') {
-        addNode('PLAN', 'Git Diff — changes in working tree', 'cyan', planExtras(3, {added:142,modified:38,removed:12}, ['src/telemetry/collector.ts','src/telemetry/buffer.ts','tests/telemetry.test.ts']));
-      } else {
-        addNode('PLAN', 'Git Status — checking working tree', 'cyan', planExtras(247, {added:0,modified:0,removed:0}, ['Branch: '+state.branch,'Remote: origin','Status: clean']));
-      }
-      break;
-    case '/deploy':
-      addNode('IMPLEMENT', 'Deploy — preparing pull request', 'emerald', implExtras([
-        {name:'Branch: '+state.branch,pct:100},{name:'Tests: '+state.testResults.passed+' passed',pct:100},{name:'Safety: '+state.branchSafety.score,pct:100}
-      ], ['CI/CD pipeline','Code review ready']));
-      break;
-    case '/bench': case '/benchmark':
-      addNode('VERIFY', 'Benchmark — running performance suite', 'teal', verifyExtras({passed:0,failed:0}, {metric:'Benchmark smoke tests',value:7,unit:'tasks'}));
-      break;
-    case '/tasks':
-      addNode('PLAN', 'Tasks — active and queued work', 'cyan', planExtras(state.nodes.length, {added:0,modified:0,removed:0}, state.nodes.map(function(n){return '['+n.phase+'] '+n.detail})));
-      break;
-    case '/context':
-      addNode('PLAN', 'Project Context — '+state.project, 'cyan', planExtras(247, {added:0,modified:0,removed:0}, ['Project: '+state.project,'Branch: '+state.branch,'Model: '+state.model,'Budget: $'+state.budget.used.toFixed(2)]));
-      break;
-    case '/tree':
-      addNode('PLAN', 'File Tree — depth 3', 'cyan', planExtras(42, {added:0,modified:0,removed:0}, ['src/','  telemetry/','    collector.ts','    buffer.ts']));
-      break;
-    case '/remember': case '/memory':
-      addNode('PLAN', 'Memory — Brain Index', 'cyan', planExtras(3, {added:0,modified:0,removed:0}, ['telemetry-refactor (12.4k, claude-3.5)','api-rate-limiting (8.1k, gpt-4o)','dashboard-perf (23.7k, devstral-2)']));
-      break;
-    case '/sessions':
-      addNode('PLAN', 'Sessions — saved conversations', 'cyan', planExtras(3, {added:0,modified:0,removed:0}, ['telemetry-refactor — 12.4k • claude-3.5 • 2h ago','api-rate-limiting — 8.1k • gpt-4o • 5h ago','dashboard-perf — 23.7k • devstral-2 • 1d ago']));
-      break;
-    case '/providers':
-      addNode('PLAN', 'Providers & Models', 'cyan', planExtras(7, {added:0,modified:0,removed:0}, ['Qwen3 Coder 480B — ollama','Devstral-2 123B — ollama','Kimi K2.5 — ollama','DeepSeek V4 — deepseek','Gemini 3.1 Pro — gemini','GPT-4o — openai','Claude 3.5 Sonnet — anthropic']));
-      break;
-    case '/model':
-      var mn = arg || 'auto';
-      addNode('PLAN', 'Model switched to: '+mn, 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Active: '+mn]));
-      document.getElementById('model-val').textContent = mn;
-      state.model = mn;
-      break;
-    case '/load':
-      addNode('PLAN', 'Session loaded: '+(arg||'latest'), 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Restoring: '+(arg||'latest')]));
-      break;
-    case '/orchestrate':
-      addNode('PLAN', 'Orchestrator — multi-agent decomposition', 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Decomposing task…','Spawning sub-agents…']));
-      break;
-    default:
-      addNode('PLAN', 'Command: '+cmd, 'cyan', planExtras(0, {added:0,modified:0,removed:0}, ['Sending to backend…']));
-  }
-  setTimeout(function() { showSuccess(); }, 300);
+function answerConfirm(answer) {
+  if (pendingConfirm && window.nexAPI) window.nexAPI.sendConfirm(pendingConfirm.id, answer);
+  var p = document.getElementById('server-confirm'); if (p) p.classList.add('hidden');
+  pendingConfirm = null;
 }
 
 // ── SIDEBAR NAV ──
