@@ -246,7 +246,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <!-- ═══ RIGHT SIDEBAR ═══ -->
 <aside class="sidebar-r">
   <div class="widget glass">
-    <div class="w-header"><span class="w-title">Branch Safety</span><span class="w-status">Safe to merge</span></div>
+    <div class="w-header"><span class="w-title">Project Status</span><span class="w-status">No project open</span></div>
     <div class="gauge-wrap">
       <svg viewBox="0 0 120 120" width="120" height="120">
         <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="2"/>
@@ -256,7 +256,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           <stop offset="0%" stop-color="var(--accent-coral)"/><stop offset="50%" stop-color="var(--accent-teal)"/><stop offset="100%" stop-color="var(--accent-emerald)"/>
         </linearGradient></defs>
       </svg>
-      <div class="gauge-val">98</div>
+      <div class="gauge-val" id="gauge-val">—</div>
       <div class="gauge-lbl">Score</div>
     </div>
   </div>
@@ -269,10 +269,10 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
         <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent-emerald)" stroke-width="2"
           stroke-dasharray="251.3" stroke-dashoffset="0" stroke-linecap="round" id="donut-arc"/>
       </svg>
-      <div class="donut-center"><div class="donut-val" id="donut-passed">109</div><div class="donut-lbl">passed</div></div>
+      <div class="donut-center"><div class="donut-val" id="donut-passed">0</div><div class="donut-lbl">passed</div></div>
     </div>
     <div class="test-stats">
-      <div class="ts-item"><div class="ts-dot em"></div><span class="ts-label">Passed</span><span class="ts-val" id="stat-passed">109</span></div>
+      <div class="ts-item"><div class="ts-dot em"></div><span class="ts-label">Passed</span><span class="ts-val" id="stat-passed">0</span></div>
       <div class="ts-item"><div class="ts-dot co"></div><span class="ts-label">Failed</span><span class="ts-val" id="stat-failed">0</span></div>
     </div>
   </div>
@@ -280,8 +280,8 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
   <div class="widget glass">
     <div class="w-header"><span class="w-title">Cost &amp; Usage</span></div>
     <div class="cost-sum">
-      <div><div class="cost-val" id="cost-tokens">312.4k</div><div class="cost-lbl">tokens</div></div>
-      <div><div class="cost-val" id="cost-requests">158</div><div class="cost-lbl">requests</div></div>
+      <div><div class="cost-val" id="cost-tokens">0</div><div class="cost-lbl">tokens</div></div>
+      <div><div class="cost-val" id="cost-requests">0</div><div class="cost-lbl">requests</div></div>
     </div>
     <div class="spark-box" id="spark-box"></div>
   </div>
@@ -317,12 +317,12 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 // ═══════════════ SINGLE-FILE APP LOGIC ═══════════════
 
 const state = {
-  project: 'nex-code', branch: 'devel',
-  model: 'qwen3-coder:480b (ollama)',
+  project: 'nex-code', branch: '',
+  model: 'qwen3-coder:480b',
   budget: { used: 0, limit: 0 },
   nodes: [],
   testResults: { passed: 0, failed: 0 },
-  branchSafety: { score: 100 }
+  branchSafety: { score: 0 }
 };
 
 const history = [];
@@ -377,6 +377,9 @@ function runCmd(cmd) {
   var o = document.getElementById('server-output');
   if (w) w.classList.add('hidden');
   if (o) o.classList.remove('hidden');
+  // Show sending indicator
+  var s = document.getElementById('server-stream');
+  if (s) { s.textContent += '> ' + cmd + '\n'; s.scrollTop = s.scrollHeight; }
   // Send to nex-code --server
   if (window.nexAPI) window.nexAPI.sendCommand(cmd);
 }
@@ -384,16 +387,32 @@ function runCmd(cmd) {
 function setupServer() {
   if (!window.nexAPI) return;
   window.nexAPI.onProjectOpened(function(d) {
+    // Switch from welcome to server output
     var w = document.getElementById('welcome'), o = document.getElementById('server-output');
     if (w) w.classList.add('hidden'); if (o) o.classList.remove('hidden');
     var h = document.getElementById('server-header');
     if (h) h.textContent = '📁 ' + (d.project||'') + '  ⎇ ' + (d.branch||'');
+    // Update topbar
     var t = document.getElementById('tb-project');
     if (t) t.textContent = d.project||'nex-code';
+    // Update right sidebar
+    var gv = document.getElementById('gauge-val');
+    if (gv) gv.textContent = '--';
+    var ws = document.querySelector('.w-status');
+    if (ws) ws.textContent = d.branch ? 'Branch: '+d.branch : 'No project';
+    var tt = document.getElementById('cost-tokens');
+    if (tt) tt.textContent = '0';
+    var tr = document.getElementById('cost-requests');
+    if (tr) tr.textContent = '0';
+    var tl = document.getElementById('tool-log');
+    if (tl) tl.innerHTML = '<div class="tl-entry"><span class="tl-tool">nex-code</span><span class="tl-dtl">Project opened</span><span class="tl-time">now</span></div>';
+    // Reset server stream
+    var s = document.getElementById('server-stream');
+    if (s) s.textContent = '';
   });
   window.nexAPI.onServerReady(function() {
     var s = document.getElementById('server-stream');
-    if (s) s.innerHTML += '<div style="color:var(--text-tertiary);font-size:11px">nex-code ready. Type a prompt below.</div>\n';
+    if (s) s.innerHTML += '<div style="color:var(--text-tertiary);font-size:11px">nex-code ready — type a prompt below</div>\n';
   });
   window.nexAPI.onServerToken(function(d) {
     var s = document.getElementById('server-stream');
@@ -402,6 +421,9 @@ function setupServer() {
   window.nexAPI.onServerToolStart(function(d) {
     var s = document.getElementById('server-stream');
     if (s) { s.textContent += '\n⚙ ' + d.tool + '\n'; s.scrollTop = s.scrollHeight; }
+    // Add to tool log in right sidebar
+    var tl = document.getElementById('tool-log');
+    if (tl) { var de = document.createElement('div'); de.className='tl-entry'; de.innerHTML='<span class=\"tl-tool\">'+d.tool+'</span><span class=\"tl-dtl\">started</span><span class=\"tl-time\">now</span>'; tl.insertBefore(de, tl.firstChild); if (tl.children.length > 20) tl.removeChild(tl.lastChild); }
   });
   window.nexAPI.onServerToolEnd(function(d) {
     var s = document.getElementById('server-stream');
@@ -424,6 +446,8 @@ function setupServer() {
   window.nexAPI.onServerClosed(function() {
     var w = document.getElementById('welcome');
     if (w) w.classList.remove('hidden');
+    var gv = document.getElementById('gauge-val');
+    if (gv) gv.textContent = '--';
   });
 }
 
