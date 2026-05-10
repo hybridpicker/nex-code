@@ -58,7 +58,7 @@ function initTopBarComponents(data) {
   const modelRouter = document.getElementById("model-router");
   if (modelRouter) {
     modelRouter.addEventListener("click", () => {
-      showModelSelector(data.model || "auto (GPT-4o / Claude 3.5)");
+      showModelSelector(data.model || "qwen3-coder:480b");
     });
   }
 }
@@ -74,15 +74,13 @@ function showModelSelector(currentModel) {
   }
 
   const models = [
-    { id: "auto", label: "auto (GPT-4o / Claude 3.5)", provider: "auto" },
+    { id: "qwen3-coder", label: "Qwen3 Coder 480B", provider: "ollama" },
+    { id: "devstral-2", label: "Devstral-2 123B", provider: "ollama" },
+    { id: "kimi-k2.5", label: "Kimi K2.5", provider: "ollama" },
+    { id: "deepseek-v4", label: "DeepSeek V4", provider: "deepseek" },
+    { id: "gemini-pro", label: "Gemini 3.1 Pro", provider: "gemini" },
     { id: "gpt-4o", label: "GPT-4o", provider: "openai" },
     { id: "claude-3.5", label: "Claude 3.5 Sonnet", provider: "anthropic" },
-    { id: "devstral-2", label: "Devstral-2 123B", provider: "ollama-cloud" },
-    { id: "kimi-k2.5", label: "Kimi K2.5", provider: "ollama-cloud" },
-    { id: "qwen3", label: "Qwen3 236B", provider: "ollama-cloud" },
-    { id: "gemini-pro", label: "Gemini 3.1 Pro", provider: "google" },
-    { id: "deepseek-v4", label: "DeepSeek V4", provider: "deepseek" },
-    { id: "local", label: "Local Ollama", provider: "local" },
   ];
 
   const dropdown = document.createElement("div");

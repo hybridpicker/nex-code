@@ -114,7 +114,7 @@ function getDefaultState() {
   return {
     project: "nex-code",
     branch: "main",
-    model: "auto (GPT-4o / Claude 3.5)",
+    model: "qwen3-coder:480b",
     sessionHealth: "Excellent",
     budget: { used: 0.0, limit: 10.0 },
     tokens: { used: 0, limit: 1000000 },
@@ -279,8 +279,8 @@ function executeCommand(command) {
         filesScanned: 9,
         diff: { added: 0, modified: 0, removed: 0 },
         relevantFiles: [
-          "auto (GPT-4o / Claude 3.5)", "GPT-4o — openai",
-          "Claude 3.5 Sonnet — anthropic", "Devstral-2 123B — ollama-cloud",
+          "Qwen3 Coder 480B — ollama", "Devstral-2 123B — ollama",
+          "Kimi K2.5 — ollama", "DeepSeek V4 — deepseek",
           "Kimi K2.5 — ollama-cloud", "Qwen3 236B — ollama-cloud",
           "Gemini 3.1 Pro — google", "DeepSeek V4 — deepseek",
           "Local Ollama — local",
