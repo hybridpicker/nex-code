@@ -4536,6 +4536,8 @@ function _resetSessionTracking() {
   _verifyToolCalls = 0;
   _verifyCompletionNudges = 0;
   _implementNoProgressNudges = 0;
+  _stagnationNudges = 0;
+  _consecutiveNoToolCalls = 0;
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
   _planPhaseBlockedCount = 0;
