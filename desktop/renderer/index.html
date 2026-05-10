@@ -199,27 +199,36 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <!-- ═══ LEFT SIDEBAR ═══ -->
 <aside class="sidebar-l glass">
   <nav class="sidebar-nav">
-    <div class="side-sec"><div class="side-sec-hdr">Project</div>
-      <div class="side-item" id="sidebar-project-name">📁 —</div>
-      <div class="side-item" id="sidebar-branch-name">⎇ —</div>
-      <div class="side-item" onclick="navClick(this,'/open')">📂 Open…</div>
+    <div class="side-sec"><div class="side-sec-hdr">Workspace</div>
+      <div class="side-item active" onclick="navClick(this,'/context')">📁 Files <span class="side-badge">247</span></div>
+      <div class="side-item" onclick="navClick(this,'/tree')">🌳 Tree</div>
     </div>
-    <div class="side-sec"><div class="side-sec-hdr">Agent</div>
-      <div class="side-item" id="sidebar-agent-phase">● Idle</div>
-      <div class="side-item" id="sidebar-agent-iter">↻ Iter 0</div>
+    <div class="side-sec"><div class="side-sec-hdr">Tasks</div>
+      <div class="side-item" onclick="navClick(this,'/tasks')">● Active</div>
+      <div class="side-item" onclick="navClick(this,'/tasks')">☰ Queue</div>
     </div>
-    <div class="side-sec"><div class="side-sec-hdr">Providers</div>
-      <div class="side-item" id="sidebar-providers-count">⬡ 0 registered</div>
-      <div class="side-item" id="sidebar-provider-default">◆ ollama</div>
+    <div class="side-sec"><div class="side-sec-hdr">Memory</div>
+      <div class="side-item" onclick="navClick(this,'/remember')">🧠 Brain Index</div>
+      <div class="side-item" onclick="navClick(this,'/sessions')">💬 Sessions</div>
+    </div>
+    <div class="side-sec"><div class="side-sec-hdr">Tools</div>
+      <div class="side-item" onclick="navClick(this,'/providers')">⚙ Registry</div>
     </div>
     <div class="side-sec"><div class="side-sec-hdr">Git</div>
-      <div class="side-item" id="sidebar-git-branch">⎇ —</div>
-      <div class="side-item" id="sidebar-git-status">● —</div>
+      <div class="side-item" onclick="navClick(this,'/git status')">⎇ Status</div>
+      <div class="side-item" onclick="navClick(this,'/git diff')">≡ Diff</div>
     </div>
-    <div class="side-sec"><div class="side-sec-hdr">Files</div>
-      <div id="sidebar-files-list" class="side-files"></div>
+    <div class="side-sec"><div class="side-sec-hdr">Deploy</div>
+      <div class="side-item" onclick="navClick(this,'/deploy')">⇧ Create PR</div>
+    </div>
+    <div class="side-sec"><div class="side-sec-hdr">Benchmarks</div>
+      <div class="side-item" onclick="navClick(this,'/bench')">⏱ Run</div>
     </div>
   </nav>
+  <div class="side-profile">
+    <div class="prof-avatar">DO</div>
+    <div><div class="prof-name">dev@orbit</div><div class="prof-plan">Pro Plan</div></div>
+  </div>
 </aside>
 
 <!-- ═══ CENTER ═══ -->
