@@ -1,24 +1,17 @@
 {
   "name": "nex-code-desktop",
   "version": "0.0.1",
-  "description": "nex-code Desktop — Cyber-Obsidian coding assistant with TUI and Electron modes",
+  "description": "nex-code Desktop — Cyber-Obsidian coding assistant for Linux, macOS, and Windows",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "tui": "ts-node src/tui/index.ts",
-    "tui:build": "tsc && node dist/tui/index.js",
-    "build": "tsc",
-    "build:electron": "electron-builder",
+    "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
     "build:win": "electron-builder --win",
     "build:all": "electron-builder --mac --linux --win",
-    "postinstall": "electron-builder install-app-deps",
-    "test": "jest --runInBand",
-    "test:watch": "jest --watch",
-    "coverage": "jest --coverage --forceExit",
-    "typecheck": "tsc --noEmit"
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.nexcode.desktop",
@@ -30,7 +23,6 @@
       "main.js",
       "preload.js",
       "renderer/**/*",
-      "dist/**/*",
       "node_modules/**/*"
     ],
     "extraResources": [
@@ -68,19 +60,8 @@
       "allowToChangeInstallationDirectory": true
     }
   },
-  "dependencies": {
-    "blessed": "^0.1.81",
-    "blessed-contrib": "^4.11.0",
-    "dotenv": "^16.4.0"
-  },
   "devDependencies": {
-    "@types/blessed": "^0.1.27",
-    "@types/jest": "^30.0.0",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.4.9",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "electron-builder": "^24.13.0"
   }
 }
