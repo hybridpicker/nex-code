@@ -41,6 +41,7 @@ class DeepSeekProvider extends OpenAIProvider {
       defaultModel: config.defaultModel || "deepseek-v4-flash",
       ...config,
     });
+    this.prefersInlineContext = true; // DeepSeek models perform better with file contents pre-loaded
   }
 
   getApiKey() {
