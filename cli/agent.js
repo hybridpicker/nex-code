@@ -7098,7 +7098,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (
           getAutoConfirm() &&
           _consecutiveNoToolCalls >= 3 &&
-          totalToolCalls === 0
+          totalToolCalls === 0 &&
+          !_boundedBacklogPlanActive
         ) {
           const currentModel = getActiveModelId();
           const strongerModel = "devstral-2:123b";
