@@ -11,7 +11,7 @@ module.exports = {
   },
   collectCoverageFrom: [
     'src/**/*.ts',
-    '!src/tui/index.ts',
+
   ],
   coverageThreshold: {
     global: {
