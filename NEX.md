@@ -15,6 +15,7 @@ cli/providers/           → Multi-Provider Abstraction Layer
 cli/index-engine.js      → In-memory File Index (ripgrep/fallback)
   base.js                → Abstract Provider Interface
   ollama.js              → Ollama Cloud Provider (Kimi K2.5, Qwen3 Coder, DeepSeek R1, Llama 4 Scout, Devstral)
+  deepseek.js            → DeepSeek V4 Provider (V4 Pro, V4 Flash, 1M context, thinking mode)
   openai.js              → OpenAI Provider (GPT-4o, GPT-4.1, o1, o3, o4-mini)
   anthropic.js           → Anthropic Provider (Claude Sonnet, Opus, Haiku, 4.5 Sonnet, 3.5 Sonnet)
   gemini.js              → Google Gemini Provider (Gemini 3.1 Pro, 2.5 Pro/Flash, 1.5 Pro/Flash)
