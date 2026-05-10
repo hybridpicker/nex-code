@@ -1015,7 +1015,60 @@ const PHASE_TASKS = [
   },
 ];
 
-const ALL_TASKS = [...TASKS, ...PHASE_TASKS];
+// ─── Implement-phase tasks (precise edits, tool accuracy) ────────────────────
+const IMPLEMENT_TASKS = [
+  {
+    id: "phase-implement-edit",
+    category: "phase-implement",
+    prompt:
+      "You need to change the default port from 3000 to 8080 in config/server.js. Read the file first, then make the edit.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /server/i.test(args.path),
+  },
+  {
+    id: "phase-implement-write",
+    category: "phase-implement",
+    prompt:
+      "Create a new file src/utils/retry.js that exports an async retry helper function. Use write_file to create it.",
+    expectedTool: "write_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /retry/i.test(args.path),
+  },
+  {
+    id: "phase-implement-grep-edit",
+    category: "phase-implement",
+    prompt:
+      'Find all places where "old_api_endpoint" is used in src/ and update them to "new_api_endpoint". Start by searching for the string.',
+    expectedTool: ["grep", "search_files"],
+    validateArgs: (args) => {
+      const pat = (args.pattern || args.query || args.regex || "").toLowerCase();
+      return pat.includes("old_api_endpoint") || pat.includes("old.api");
+    },
+  },
+  {
+    id: "phase-implement-patch",
+    category: "phase-implement",
+    prompt:
+      "You need to add error handling to src/services/api.js. Read the file first, then use patch_file to add try/catch blocks.",
+    expectedTool: "read_file",
+    validateArgs: (args) =>
+      typeof args.path === "string" && /api/i.test(args.path),
+  },
+  {
+    id: "phase-implement-test-after-edit",
+    category: "phase-implement",
+    prompt:
+      "You just edited src/controllers/user.js to fix a validation bug. After making the edit, what should you do next to verify?",
+    expectedTool: ["bash", "task_list"],
+    validateArgs: (args) => {
+      if (typeof args.command === "string") return looksLikeTestCommand(args.command);
+      return matchesTaskListIntent(args, ["test"]);
+    },
+  },
+];
+
+const ALL_TASKS = [...TASKS, ...PHASE_TASKS, ...IMPLEMENT_TASKS];
 
 // Hardcoded seed list — used only when no benchmark-results.json exists yet.
 // After the first /benchmark --all run this list is superseded by saved results.
@@ -1249,7 +1302,11 @@ function buildSummary(modelResults) {
         "sysadmin",
         "data",
         "agentic",
+        "bug-fix",
+        "feature-add",
+        "refactor",
         "plan",
+        "implement",
         "verify",
       ]) {
         const catResults = results.filter(
@@ -2089,13 +2146,91 @@ async function runScenarioBenchmark({
   return results;
 }
 
+// ─── Phase-Specific Benchmark ───────────────────────────────────────────────
+/**
+ * Run phase-specific benchmark (plan, implement, verify) and save results to
+ * ~/.nex-code/model-routing.json. Used to determine which model is best for
+ * each execution phase.
+ *
+ * @param {object} opts
+ * @param {string[]} [opts.models] — models to test (defaults to quick models)
+ * @param {Function} [opts.onProgress] — callback({ phase, model, score })
+ * @returns {Promise<object>} — { plan, implement, verify } → best model per phase
+ */
+async function runPhaseBenchmark({
+  models = QUICK_MODELS,
+  onProgress,
+} = {}) {
+  const phaseResults = { plan: null, implement: null, verify: null };
+
+  for (const phase of ["plan", "implement", "verify"]) {
+    const phaseTasks = ALL_TASKS.filter(
+      (t) => t.category === `phase-${phase}`,
+    );
+    if (phaseTasks.length === 0) continue;
+
+    let bestScore = -1;
+    let bestModel = null;
+
+    for (const model of models) {
+      const results = [];
+      for (const task of phaseTasks) {
+        try {
+          const result = await evaluateTask(task, model);
+          results.push(result);
+        } catch {
+          results.push({ error: true, task: task.id });
+        }
+      }
+
+      const scores = results.map(scoreResult);
+      const avg =
+        scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+      const rounded = Math.round(avg * 10) / 10;
+
+      onProgress?.({ phase, model, score: rounded });
+
+      if (rounded > bestScore) {
+        bestScore = rounded;
+        bestModel = model;
+      }
+    }
+
+    if (bestModel) {
+      phaseResults[phase] = { model: bestModel, score: bestScore };
+    }
+  }
+
+  // Save to routing config
+  try {
+    const { loadRoutingConfig, saveRoutingConfig } = require("./task-router");
+    const config = loadRoutingConfig();
+    if (!config.phases) config.phases = {};
+    if (phaseResults.plan) config.phases.plan = phaseResults.plan.model;
+    if (phaseResults.implement)
+      config.phases.implement = phaseResults.implement.model;
+    if (phaseResults.verify) config.phases.verify = phaseResults.verify.model;
+    saveRoutingConfig(config);
+
+    console.log(
+      `${C.green}  ✓ Phase routing saved to ~/.nex-code/model-routing.json${C.reset}`,
+    );
+  } catch (e) {
+    /* non-fatal */
+  }
+
+  return phaseResults;
+}
+
 module.exports = {
   runBenchmark,
   runDiscoverBenchmark,
+  runPhaseBenchmark,
   buildSummary,
   buildCategoryWinners,
   TASKS,
   PHASE_TASKS,
+  IMPLEMENT_TASKS,
   ALL_TASKS,
   scoreResult,
   DEFAULT_MODELS,
