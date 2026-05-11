@@ -154,7 +154,7 @@ describe("getDeploymentContextBlock — server rules", () => {
 
   test("omits server rules when no profile has server host", () => {
     loadServerProfiles.mockReturnValue({
-      web: { host: "example.com", user: "deploy", os: "ubuntu" },
+      web: { host: "localhost", user: "deploy", os: "ubuntu" },
     });
     const block = getDeploymentContextBlock();
     expect(block).toBeDefined();
@@ -165,20 +165,20 @@ describe("getDeploymentContextBlock — server rules", () => {
 describe("detectRuntimeDebugTarget", () => {
   test("detects a live app bug report and matches a server profile from the URL", () => {
     loadServerProfiles.mockReturnValue({
-      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
+      "nex-worker": { host: "203.0.113.1", user: "nex-worker" },
     });
     const result = detectRuntimeDebugTarget(
-      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://test.example.com/webapp-epsilon/",
+      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://nex-worker.example.com/webapp-epsilon/",
     );
     expect(result).toBeTruthy();
-    expect(result.url).toBe("https://test.example.com/webapp-epsilon/");
+        expect(result.url).toBe("https://nex-worker.example.com/webapp-epsilon/");
     expect(result.matchedName).toBe("nex-worker");
     expect(result.shouldPreferSsh).toBe(true);
   });
 
   test("ignores image URLs even when the prompt contains analyze wording", () => {
     loadServerProfiles.mockReturnValue({
-      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
+      "nex-worker": { host: "203.0.113.1", user: "nex-worker" },
     });
     expect(
       detectRuntimeDebugTarget(
@@ -191,14 +191,14 @@ describe("detectRuntimeDebugTarget", () => {
 describe("probeUrlServer", () => {
   test("probes the matched server for runtime debug URLs", async () => {
     loadServerProfiles.mockReturnValue({
-      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
+      "nex-worker": { host: "203.0.113.1", user: "nex-worker" },
     });
     sshExec.mockResolvedValue({
       stdout: ":3000\n---services---\nnode server.js\n---data---\n/home/nex-worker/data",
     });
 
     const result = await probeUrlServer(
-      "Deleting ideas fails and they come back in the webui https://test.example.com/webapp-epsilon/",
+      "Deleting ideas fails and they come back in the webui https://nex-worker.example.com/webapp-epsilon/",
     );
 
     expect(result).toContain('Server context for "nex-worker"');

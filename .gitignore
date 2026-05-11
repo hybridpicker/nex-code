@@ -30,3 +30,4 @@ CLAUDE.md
 IMPROVEMENT_LOG.md
 docs/prompts/
 scripts/benchmark-results/
+scripts/nex-auto-update.sh
