@@ -96,7 +96,7 @@ describe("runServerWizard", () => {
       "admin", // user
       "2222", // port
       "", // SSH key path (empty = agent)
-      "1", // OS choice: almalinux
+      "4", // OS choice: almalinux (4th option)
       "y", // allow sudo
       "n", // add another server? no
       "n", // set up deploy config? no

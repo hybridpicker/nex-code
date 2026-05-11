@@ -72,6 +72,15 @@ function detectRuntimeDebugTarget(userInput, profiles = loadServerProfiles()) {
 
 // OS-specific knowledge injected into the system prompt
 const OS_HINTS = {
+  almalinux: [ // alias for almalinux9 (unversioned OS string)
+    "Package manager: dnf (NOT apt). Install: dnf install <pkg>. Update: dnf update.",
+    "Service manager: systemctl. Logs: journalctl -u <service> -n 50.",
+    "Firewall: firewalld. Check: firewall-cmd --list-all. Open port: firewall-cmd --permanent --add-port=PORT/tcp && firewall-cmd --reload.",
+    "SELinux is active by default. Check: getenforce. Diagnose: ausearch -m avc -ts recent | audit2why. Fix context: restorecon -Rv /path.",
+    "Nginx config: /etc/nginx/. Test: nginx -t. Reload: systemctl reload nginx.",
+    "Process list: ps aux. Ports: ss -tuln.",
+    "Python: python3. Pip: pip3. Virtualenv: python3 -m venv.",
+  ],
   almalinux9: [
     "Package manager: dnf (NOT apt). Install: dnf install <pkg>. Update: dnf update.",
     "Service manager: systemctl. Logs: journalctl -u <service> -n 50.",
@@ -145,6 +154,7 @@ function getServerContext() {
     for (const os of osSeen) {
       const label =
         {
+          almalinux: "AlmaLinux",
           almalinux9: "AlmaLinux 9",
           almalinux8: "AlmaLinux 8",
           ubuntu: "Ubuntu",

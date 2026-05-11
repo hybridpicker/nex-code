@@ -3,8 +3,9 @@ const os = require("os");
 const path = require("path");
 const { execFileSync, spawn } = require("child_process");
 
-const SANDBOX_BASE = path.join(os.homedir(), "Coding", "nex-code-sandbox");
-const SANDBOX_ROOT = path.join(SANDBOX_BASE, "cli-e2e");
+// Use /tmp so macOS SIP/TCC never blocks sandbox operations.
+const SANDBOX_BASE = path.join(os.tmpdir(), "nex-code-sandbox");
+const SANDBOX_ROOT = path.join(SANDBOX_BASE, `cli-e2e-${Date.now()}`);
 
 function resetSandbox() {
   const baseResolved = path.resolve(SANDBOX_BASE);
@@ -15,7 +16,11 @@ function resetSandbox() {
   ) {
     throw new Error("Refusing to reset a sandbox outside nex-code-sandbox.");
   }
-  fs.rmSync(rootResolved, { recursive: true, force: true });
+  try {
+    fs.rmSync(rootResolved, { recursive: true, force: true });
+  } catch (e) {
+    if (e.code !== "EPERM") throw e;
+  }
   fs.mkdirSync(rootResolved, { recursive: true });
 }
 
