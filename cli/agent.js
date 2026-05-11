@@ -5516,13 +5516,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     (conversationMessages.length <= 1 ||
       (_isAutomationWorkflowPrompt && !_phaseEnabled));
   if (_shouldInitPhaseRouting) {
+    // Detect task category first — phase routing only activates for
+    // implementation-oriented categories, not for the "coding" fallback
+    // (which includes pure questions, comparisons, and knowledge requests).
+    const _cat = detectCategory(_phaseInitText);
+    _detectedCategoryId = _cat?.id || "coding";
     // Force phase routing for automation/backlog workflows even when the user hasn't
     // enabled phase routing globally. These workflows rely on explicit, testable
     // phase transitions and must not run as a single unphased stream.
-    _phaseEnabled = _isAutomationWorkflowPrompt ? true : isPhaseRoutingEnabled();
+    _phaseEnabled = _isAutomationWorkflowPrompt
+      ? true
+      : (isPhaseRoutingEnabled() && _detectedCategoryId !== "coding");
     if (_phaseEnabled) {
-      const _cat = detectCategory(_phaseInitText);
-      _detectedCategoryId = _cat?.id || "coding";
       const _skipPlanForDirectCreation =
         _shouldSkipPlanPhaseForDirectCreation(_phaseInitText);
       _currentPhase = _skipPlanForDirectCreation ? "implement" : "plan";
