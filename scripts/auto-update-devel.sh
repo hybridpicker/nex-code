@@ -4,10 +4,10 @@
 
 set -euo pipefail
 
-REPO_DIR="<repo>"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_FILE="$REPO_DIR/scripts/auto-update.log"
-NODE="/Users/lukasschonsgibl/.nvm/versions/node/v23.5.0/bin/node"
-NPM="/Users/lukasschonsgibl/.nvm/versions/node/v23.5.0/bin/npm"
+NODE="$(which node)"
+NPM="$(which npm)"
 
 exec >> "$LOG_FILE" 2>&1
 echo "=== $(date) ==="

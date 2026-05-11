@@ -44,12 +44,12 @@ describe("loadServerProfiles", () => {
 
   it("loads profiles from .nex/servers.json", () => {
     writeServers({
-      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux9" },
+      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux" },
     });
     const { loadServerProfiles } = require("../cli/ssh");
     const p = loadServerProfiles();
     expect(p.prod.host).toBe("1.2.3.4");
-    expect(p.prod.os).toBe("almalinux9");
+    expect(p.prod.os).toBe("almalinux");
   });
 
   it("returns empty object on malformed JSON", () => {
@@ -219,9 +219,9 @@ describe("formatProfile", () => {
     const str = formatProfile("prod", {
       host: "1.2.3.4",
       user: "deploy",
-      os: "almalinux9",
+      os: "almalinux",
     });
-    expect(str).toContain("almalinux9");
+    expect(str).toContain("almalinux");
   });
 
   it("includes non-default port", () => {

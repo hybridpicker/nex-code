@@ -2523,7 +2523,7 @@ For each issue, include:
           `\n${C.dim}No servers configured. Create .nex/servers.json:${C.reset}`,
         );
         console.log(
-          `${C.dim}  { "prod": { "host": "1.2.3.4", "user": "deploy", "os": "almalinux9" } }${C.reset}\n`,
+          `${C.dim}  { "prod": { "host": "1.2.3.4", "user": "deploy", "os": "ubuntu" } }${C.reset}\n`,
         );
         return true;
       }

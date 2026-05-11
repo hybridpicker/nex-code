@@ -7,14 +7,14 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string><repo>/scripts/auto-update-devel.sh</string>
+        <string>/path/to/nex-code/scripts/auto-update-devel.sh</string>
     </array>
     <key>StartInterval</key>
     <integer>900</integer>
     <key>StandardOutPath</key>
-    <string><repo>/scripts/auto-update.log</string>
+    <string>/path/to/nex-code/scripts/auto-update.log</string>
     <key>StandardErrorPath</key>
-    <string><repo>/scripts/auto-update.log</string>
+    <string>/path/to/nex-code/scripts/auto-update.log</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

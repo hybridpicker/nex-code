@@ -7286,7 +7286,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const continueNudge = {
               role: "user",
               content:
-                "[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is at 203.0.113.10.",
+                "[SYSTEM] Continue. Do not ask questions — implement the fix yourself using SSH. The server is configured via .nex/servers.json.",
             };
             apiMessages.push(continueNudge);
             conversationMessages.push(continueNudge);

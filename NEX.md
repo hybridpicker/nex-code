@@ -123,11 +123,11 @@ No `Co-Authored-By: Claude` or other AI attributions. NEVER.
 ## WICHTIG: Server-Agent läuft auf dem Server
 
 Wenn der User Server-Fehlermeldungen meldet (set_reminder, cron, Google Auth, SmartThings etc.),
-sind diese IMMER vom deployed System auf 203.0.113.10 — NICHT lokal.
+sind diese IMMER vom deployed System auf der Remote-Maschine — NICHT lokal.
 
 Vorgehen bei Server-Fehlern:
 
-1. ZUERST Server-Logs prüfen: ssh_exec auf 203.0.113.10, tail logs/api.log
+1. ZUERST Server-Logs prüfen: ssh_exec auf den Remote-Host, tail logs/api.log
 2. DANN Code analysieren: /home/deploy/server-agent/ (nicht lokale Kopie)
 3. Fix deployen: git pull + systemctl restart server-api
 

@@ -1956,14 +1956,14 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "remote_agent",
       description:
-        'Delegate a coding task to nex-code running on a remote server. Use this when the task involves server-side projects (musikschule, stadtkapelle, cahill, schoensgibl) that live on almalinux9. Runs nex-code --auto on the server and streams output. Server is a profile name from .nex/servers.json or "user@host".',
+        'Delegate a coding task to nex-code running on a remote server. Use this when the task involves server-side projects that live on a remote host. Runs nex-code --auto on the server and streams output. Server is a profile name from .nex/servers.json or "user@host".',
       parameters: {
         type: "object",
         properties: {
           server: {
             type: "string",
             description:
-              'Profile name from .nex/servers.json (e.g. "almalinux9") or "user@host"',
+              'Profile name from .nex/servers.json (e.g. "my-server") or "user@host"',
           },
           task: {
             type: "string",

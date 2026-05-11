@@ -419,18 +419,18 @@ describe("server-context", () => {
   it("includes server profiles in context", () => {
     // server-context.js uses loadServerProfiles() from cli/ssh — configure the mock
     require("../cli/ssh").loadServerProfiles.mockReturnValue({
-      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux9" },
+      prod: { host: "1.2.3.4", user: "deploy", os: "almalinux" },
     });
     const { getServerContext } = require("../cli/server-context");
     const ctx = getServerContext();
     expect(ctx).toContain("prod");
     expect(ctx).toContain("1.2.3.4");
-    expect(ctx).toContain("almalinux9");
+    expect(ctx).toContain("almalinux");
   });
 
-  it("includes AlmaLinux OS hints when os is almalinux9", () => {
+  it("includes AlmaLinux OS hints when os is almalinux", () => {
     require("../cli/ssh").loadServerProfiles.mockReturnValue({
-      prod: { host: "1.2.3.4", os: "almalinux9" },
+      prod: { host: "1.2.3.4", os: "almalinux" },
     });
     const { getServerContext } = require("../cli/server-context");
     const ctx = getServerContext();
@@ -451,7 +451,7 @@ describe("server-context", () => {
 
   it("handles multiple servers with different OS", () => {
     require("../cli/ssh").loadServerProfiles.mockReturnValue({
-      prod: { host: "1.2.3.4", os: "almalinux9" },
+      prod: { host: "1.2.3.4", os: "almalinux" },
       dev: { host: "localhost", os: "macos" },
     });
     const { getServerContext } = require("../cli/server-context");

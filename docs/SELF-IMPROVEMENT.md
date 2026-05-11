@@ -65,7 +65,7 @@ ssh jarvis@203.0.113.10 "ss -tlnp | grep 2220"
 # SSH config (in ~/.ssh/config)
 Host clawbook
   HostName localhost
-  User schoensgibl-lukas
+  User nex-code-dev
   Port 2220
   ProxyJump jarvis@203.0.113.10
 ```
@@ -280,7 +280,7 @@ The `override: true` on `~/.nex-code/.env` is load-bearing. Without it, a stale 
   supervisor-log.json                # Supervisor run history
 ~/Library/LaunchAgents/
   com.nex-code.supervisor.plist             # Daily at 10:00
-  com.schoensgibl.nex-code-autopull.plist   # Every 30 min — pulls origin/devel
+  com.nex-code.nex-code-autopull.plist   # Every 30 min — pulls origin/devel
 ~/Library/Logs/
   nex-code-autopull.log              # Auto-pull log
 ```
@@ -292,14 +292,14 @@ The MacBook (and any other dev machine) auto-pulls `origin/devel` every 30 minut
 - **Mode:** `git pull --ff-only` (refuses to merge if there are conflicts — safe by default)
 - **Skip:** Aborts if local branch is not `devel`
 - **Log:** Only writes when something changes (no spam at idle)
-- **LaunchAgent:** `com.schoensgibl.nex-code-autopull` (StartInterval=1800)
+- **LaunchAgent:** `com.nex-code.nex-code-autopull` (StartInterval=1800)
 
 Result: Worker commits → Supervisor merges → ≤30 min later all dev machines have the update. Fully automatic.
 
 To install on a new Mac:
 ```bash
-cp scripts/auto-pull-devel.sh.plist ~/Library/LaunchAgents/com.schoensgibl.nex-code-autopull.plist
-launchctl load ~/Library/LaunchAgents/com.schoensgibl.nex-code-autopull.plist
+cp scripts/auto-pull-devel.sh.plist ~/Library/LaunchAgents/com.nex-code.nex-code-autopull.plist
+launchctl load ~/Library/LaunchAgents/com.nex-code.nex-code-autopull.plist
 ```
 
 ## Monitoring
@@ -479,7 +479,7 @@ Two guards prevent silent failure modes where the agent does no real work but st
 | remote-service | Node | 3 | Tool errors, routing, memory leaks |
 | nex-code | Node | 4 | Providers, autoFixPath, context |
 | biohonig | Django | 2 | Templates, SEO |
-| schoensgibl | Django | 2 | Responsive, forms |
+| django-site | Django | 2 | Responsive, forms |
 
 ### Monitoring Practice Results
 
@@ -523,7 +523,7 @@ Also add the project to the `PROJECTS` registry in `scripts/practice-runner.js`.
 
 ## Dashboard
 
-**URL:** https://jarvis.schoensgibl.com/nex-improve/ (login required)
+**URL:** https://nex-improve.example.com/nex-improve/ (login required)
 
 Live web dashboard showing the full improvement pipeline status. Auto-refreshes every 60 seconds.
 

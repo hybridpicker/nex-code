@@ -8,11 +8,11 @@
  * Profile format (.nex/servers.json):
  * {
  *   "prod": {
- *     "host": "203.0.113.10",
+ *     "host": "203.0.113.1",
  *     "user": "deploy",
  *     "port": 22,            // optional, default 22
  *     "key": "~/.ssh/id_rsa", // optional, falls back to SSH agent
- *     "os": "almalinux9",    // optional: almalinux9 | macos | ubuntu | debian
+ *     "os": "ubuntu",    // optional: ubuntu | debian | macos | almalinux
  *     "sudo": true           // optional: whether to allow sudo commands
  *   }
  * }

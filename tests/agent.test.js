@@ -3239,7 +3239,7 @@ describe("agent.js", () => {
       mockStream("I will inspect the live app first");
 
       await processInput(
-        "Wenn ich bei /guitar-mentor Ideen loesche kommen sie immer wieder zurueck ins webui https://jarvis.schoensgibl.com/guitar-mentor/",
+        "Wenn ich bei /guitar-mentor Ideen loesche kommen sie immer wieder zurueck ins webui https://test.example.com/guitar-mentor/",
       );
 
       expect(executeTool).not.toHaveBeenCalled();
@@ -3248,7 +3248,7 @@ describe("agent.js", () => {
         (m) =>
           typeof m.content === "string" &&
           m.content.includes(
-            "Inspect https://jarvis.schoensgibl.com/guitar-mentor/ with browser_open first",
+            "Inspect https://test.example.com/guitar-mentor/ with browser_open first",
           ),
       );
       expect(hasBlockMsg).toBe(true);

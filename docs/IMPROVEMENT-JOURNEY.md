@@ -534,7 +534,7 @@ rules for three common open-model failure modes.
 #### Server auto-probe on URL match (`probeUrlServer`)
 
 When the user's first message contains an `https://` URL whose domain segments
-match a configured SSH profile name (e.g. `server` in `server.schoensgibl.com`),
+match a configured SSH profile name (e.g. `server` in `server.example.com`),
 nex-code runs a 4-second SSH probe concurrently with context fitting:
 
 - Listening ports (`ss -tlnp`)
