@@ -1,0 +1,45 @@
+#!/bin/bash
+# Pre-commit hook: block personal/sensitive data patterns
+# Patterns are stored in .nex/personal-data-patterns (gitignored, local only)
+# This file should NEVER contain sensitive data itself — only regex patterns.
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
+PATTERNS_FILE="$REPO_ROOT/.nex/personal-data-patterns"
+
+if [ ! -f "$PATTERNS_FILE" ]; then
+  echo "⚠ personal-data-patterns not found at $PATTERNS_FILE — skipping personal data check"
+  exit 0
+fi
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+FOUND=0
+while IFS= read -r pattern; do
+  # Skip empty lines and comments
+  [[ -z "$pattern" || "$pattern" =~ ^# ]] && continue
+  
+  MATCHES=$(git diff --cached -G"$pattern" --name-only 2>/dev/null)
+  if [ -n "$MATCHES" ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║  PERSONAL DATA DETECTED — commit blocked               ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Pattern: $pattern"
+    echo "║  Files:"
+    echo "$MATCHES" | while read f; do echo "║    $f"; done
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║  Use generic placeholders: 203.0.113.x, example.com,"
+    echo "║  /path/to/..., project-alpha, etc."
+    echo "╚══════════════════════════════════════════════════════════╝"
+    FOUND=1
+  fi
+done < "$PATTERNS_FILE"
+
+if [ "$FOUND" -eq 1 ]; then
+  exit 1
+fi
+exit 0
