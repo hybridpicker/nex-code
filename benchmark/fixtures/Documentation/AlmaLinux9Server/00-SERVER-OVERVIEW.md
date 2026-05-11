@@ -20,7 +20,7 @@ addresses, usernames, keys, and secrets.
 Production webhook services listen on dedicated localhost ports:
 
 - 9011: stadtkapelle webhook
-- 9012: musikschule webhook
+- 9012: project-alpha webhook
 - 9013: nex-code webhook
 - 9014: cookbook webhook
 - 9016: libremetronome webhook
@@ -29,8 +29,8 @@ Production webhook services listen on dedicated localhost ports:
 - 9019: vocabulary webhook
 - 9020: project manager webhook
 - 9021: pro tuner webhook
-- 9022: musikschule development webhook
-- 9023: cahill webhook
+- 9022: project-alpha development webhook
+- 9023: project-beta webhook
 
 ## Firewall Expectations
 
