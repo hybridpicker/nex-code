@@ -26,9 +26,9 @@ const NEX_DIR = path.join(HOME, "Coding/nex-code");
 const SUPERVISOR_LOG = path.join(HOME, ".nex-code/supervisor-log.json");
 const CLAUDE_BIN = path.join(HOME, ".local/bin/claude");
 const SERVER = process.env.NEX_WORKER_HOST || "user@example.com";
-const SERVER_NEX_DIR = "/home/jarvis/Coding/nex-code";
-const SERVER_CONFIG = "/home/jarvis/.nex-code/improvement-config.json";
-const SERVER_ACTIVITY = "/home/jarvis/.nex-code/worker-activity.json";
+const SERVER_NEX_DIR = "/home/nex-worker/Coding/nex-code";
+const SERVER_CONFIG = "/home/nex-worker/.nex-code/improvement-config.json";
+const SERVER_ACTIVITY = "/home/nex-worker/.nex-code/worker-activity.json";
 
 // ── Logging ───────────────────────────────────────────────────────────────
 function log(...args) {
@@ -113,7 +113,7 @@ function gatherContext() {
   );
 
   // Worker state
-  ctx.workerState = ssh(`cat /home/jarvis/.nex-code/worker-state.json 2>/dev/null`);
+  ctx.workerState = ssh(`cat /home/nex-worker/.nex-code/worker-state.json 2>/dev/null`);
 
   return ctx;
 }
@@ -135,8 +135,8 @@ Server paths:
   - Repo: ${SERVER_NEX_DIR} (on auto-improve branch)
   - Config: ${SERVER_CONFIG}
   - Activity: ${SERVER_ACTIVITY}
-  - Worker state: /home/jarvis/.nex-code/worker-state.json
-  - Worker log: /home/jarvis/.nex-code/worker.log
+  - Worker state: /home/nex-worker/.nex-code/worker-state.json
+  - Worker log: /home/nex-worker/.nex-code/worker.log
 
 ═══ NEW COMMITS (auto-improve ahead of devel) ═══
 ${ctx.newCommits || "(none — worker hasn't committed anything new)"}
@@ -191,7 +191,7 @@ CONFIGEOF
 **Reset worker failures** if you've fixed the cause:
 \`\`\`bash
 ssh -o BatchMode=yes ${SERVER} "node -e \\"
-  const f='/home/jarvis/.nex-code/worker-state.json';
+  const f='/home/nex-worker/.nex-code/worker-state.json';
   const s=JSON.parse(require('fs').readFileSync(f,'utf8'));
   s.consecutiveFailures=0;
   require('fs').writeFileSync(f,JSON.stringify(s,null,2));

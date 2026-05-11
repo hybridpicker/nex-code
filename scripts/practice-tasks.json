@@ -1,5 +1,5 @@
 {
-  "pro-tuner": [
+  "webapp-nu": [
     {
       "category": "bugfix",
       "difficulty": "easy",
@@ -77,7 +77,7 @@
     }
   ],
 
-  "cookbook": [
+  "webapp-alpha": [
     {
       "category": "bugfix",
       "difficulty": "easy",
@@ -92,7 +92,7 @@
     }
   ],
 
-  "vocabulary": [
+  "webapp-gamma": [
     {
       "category": "bugfix",
       "difficulty": "medium",
@@ -107,7 +107,7 @@
     }
   ],
 
-  "jarvis-agent": [
+  "nex-worker-agent": [
     {
       "category": "bugfix",
       "difficulty": "medium",
@@ -149,7 +149,7 @@
     }
   ],
 
-  "biohonig": [
+  "webapp-beta": [
     {
       "category": "bugfix",
       "difficulty": "easy",

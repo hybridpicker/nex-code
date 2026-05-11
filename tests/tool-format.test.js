@@ -36,7 +36,7 @@ describe("Tool Format Validation", () => {
     expect(unique.size).toBe(names.length);
   });
 
-  test("tool names are valid identifiers (snake_case)", () => {
+  test("tool names are valid identifiers (webapp-omicron_case)", () => {
     for (const tool of TOOL_DEFINITIONS) {
       expect(tool.function.name).toMatch(/^[a-z][a-z0-9_]*$/);
     }

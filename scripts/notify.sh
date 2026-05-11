@@ -1,9 +1,9 @@
 #!/bin/bash
-# scripts/notify.sh — Send notification via Matrix (jarvis) or macOS (local)
+# scripts/notify.sh — Send notification via Matrix (nex-worker) or macOS (local)
 #
 # Usage: ./scripts/notify.sh "message text"
 #
-# On jarvis (SERVER_SSH_HOST not needed — posts directly):
+# On nex-worker (SERVER_SSH_HOST not needed — posts directly):
 #   curl -sf http://localhost:3000/matrix/notify
 # On Mac (SERVER_SSH_HOST set in env):
 #   ssh $SERVER_SSH_HOST curl...
@@ -13,7 +13,7 @@ set -euo pipefail
 
 MESSAGE="${1:-nex-code notification}"
 
-# Try direct local Matrix (running on jarvis itself)
+# Try direct local Matrix (running on nex-worker itself)
 if curl -sf -o /dev/null http://localhost:3000/matrix/notify \
   -H 'Content-Type: application/json' \
   -d "{\"message\": $(echo "$MESSAGE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')}" 2>/dev/null; then

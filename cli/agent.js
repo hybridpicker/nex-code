@@ -7724,7 +7724,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                         _boundedBacklogPlanReads >=
                         BOUNDED_BACKLOG_PLAN_HARD_READS,
                     }) +
-                    "\n\nYour previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one nex-note notation-editor workflow improvement.",
+                    "\n\nYour previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one webapp-zeta notation-editor workflow improvement.",
                 };
                 conversationMessages.push(decisionMsg);
                 apiMessages.push(decisionMsg);
@@ -10791,8 +10791,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             return;
           }
           // Core-term similarity detection — catch varied glob patterns targeting the same thing
-          // e.g. "**/guitar-mentor-skill.js", "**/guitar-mentor-skill*", "skills/guitar-mentor/**/*"
-          // all share "guitar-mentor" as core term. 3+ different patterns → warn, 4+ → block.
+          // e.g. "**/webapp-epsilon-skill.js", "**/webapp-epsilon-skill*", "skills/webapp-epsilon/**/*"
+          // all share "webapp-epsilon" as core term. 3+ different patterns → warn, 4+ → block.
           const coreTokens = patKey
             .replace(/\*+/g, " ")
             .replace(/[{}()\[\],.\/\\]/g, " ")

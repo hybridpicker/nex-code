@@ -1705,7 +1705,7 @@ Do not write a final completion summary until this verification evidence exists.
 
 The backlog evidence has already been read into the conversation. Do not describe tool calls, JSON tool calls, or read_file calls in text. Write only the required bounded plan labels now.`};R.push(F),v.push(F),D(`${$.yellow}  \u26A0 Bounded backlog plan: textual tool-call attempt after evidence prefetch${$.reset}`);continue}if(V_(q)){Ps++;let F={role:"user",content:Ns({blocked:Yt})+"\n\nYour previous plan used markdown headings. Rewrite the same plan using exact label lines, for example `Selected improvement:` instead of `### Selected improvement`."};R.push(F),v.push(F),D(`${$.yellow}  \u26A0 Bounded backlog plan: heading labels rejected \u2014 requesting exact labels${$.reset}`);continue}if(K_(q)){Ps++;let F={role:"user",content:Ns({blocked:Sn>=di})+`
 
-Your previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one nex-note notation-editor workflow improvement.`};R.push(F),v.push(F),D(`${$.yellow}  \u26A0 Bounded backlog plan: rejected off-topic selected improvement${$.reset}`);continue}if(Ps++,Ps>=(Yt?4:2)||Sn>=di){let F=`no safe task found
+Your previous plan was rejected because it invented an off-task React/list-component issue or referenced files that do not exist in this repository. Use only the prompt-named backlog evidence above and select one webapp-zeta notation-editor workflow improvement.`};R.push(F),v.push(F),D(`${$.yellow}  \u26A0 Bounded backlog plan: rejected off-topic selected improvement${$.reset}`);continue}if(Ps++,Ps>=(Yt?4:2)||Sn>=di){let F=`no safe task found
 
 Bounded backlog planning requires an explicit selected-improvement decision with files and verification evidence. Stopping before implementation because the plan response did not follow the required template.`,_e={role:"assistant",content:F};R.push(_e),console.log(`
 ${F}`),Ce(R),wt(R);break e}let pe={role:"user",content:Ns({blocked:Sn>=di})};R.push(pe),v.push(pe),D(`${$.yellow}  \u26A0 Bounded backlog plan: missing selected-improvement decision \u2014 re-prompting in plan phase${$.reset}`);continue}if(nt&&Ps<1&&NL(q)){Ps++;let Se=[...br].slice(0,4).join(", "),pe={role:"user",content:Ns({blocked:Yt})+`
@@ -1829,7 +1829,7 @@ Analyze this conversation history and extract actionable learnings the assistant
 Return ONLY valid JSON in this exact format:
 {
   "memories": [
-    { "key": "snake_case_key", "value": "concise actionable value" }
+    { "key": "webapp-omicron_case_key", "value": "concise actionable value" }
   ],
   "nex_additions": [
     "- Instruction line to add to project NEX.md"
@@ -1845,7 +1845,7 @@ Focus on extracting:
 
 Rules:
 - ONLY extract HIGH-CONFIDENCE learnings (user was explicit, not guessed)
-- key: snake_case, max 30 chars, unique and descriptive
+- key: webapp-omicron_case, max 30 chars, unique and descriptive
 - value: concise actionable instruction, max 120 chars
 - nex_additions: project-level instructions/conventions only (not personal preferences)
 - If nothing significant to learn, return {"memories": [], "nex_additions": [], "summary": "..."}

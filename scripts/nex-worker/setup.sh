@@ -1,33 +1,33 @@
 #!/bin/bash
-# scripts/jarvis/setup.sh — Deploy nex-code improvement automation to jarvis
+# scripts/nex-worker/setup.sh — Deploy nex-code improvement automation to nex-worker
 #
 # Run from Mac:
-#   ssh clawbook
-#   cd ~/nex-code && bash scripts/jarvis/setup.sh
+#   ssh dev-machine
+#   cd ~/nex-code && bash scripts/nex-worker/setup.sh
 #
 # Or remotely:
-#   ssh clawbook 'cd ~/nex-code && bash scripts/jarvis/setup.sh'
+#   ssh dev-machine 'cd ~/nex-code && bash scripts/nex-worker/setup.sh'
 #
 # Prerequisites:
-#   - nex-code repo cloned at /home/jarvis/nex-code
+#   - nex-code repo cloned at /home/nex-worker/nex-code
 #   - Node.js >= 18 installed
 #   - Ollama running (for benchmarks)
 
 set -euo pipefail
 
-REPO_DIR="/home/jarvis/nex-code"
+REPO_DIR="/home/nex-worker/nex-code"
 SYSTEMD_DIR="/etc/systemd/system"
-JARVIS_DIR="$REPO_DIR/scripts/jarvis"
+JARVIS_DIR="$REPO_DIR/scripts/nex-worker"
 
 echo "═══════════════════════════════════════════════════"
-echo "  nex-code Jarvis Setup"
+echo "  nex-code NexWorker Setup"
 echo "═══════════════════════════════════════════════════"
 
-# Verify we're on jarvis
-if [ "$(whoami)" = "jarvis" ] || [ "$(whoami)" = "root" ]; then
+# Verify we're on nex-worker
+if [ "$(whoami)" = "nex-worker" ] || [ "$(whoami)" = "root" ]; then
   echo "[setup] Running as $(whoami) on $(hostname)"
 else
-  echo "[setup] WARNING: Expected jarvis or root user, got $(whoami)"
+  echo "[setup] WARNING: Expected nex-worker or root user, got $(whoami)"
 fi
 
 # Verify repo exists

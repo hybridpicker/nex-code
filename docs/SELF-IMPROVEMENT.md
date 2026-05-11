@@ -46,35 +46,35 @@ Branch flow:
 | Machine | Branch | Role | Connection |
 |---------|--------|------|------------|
 | **MacBook** | `devel` | Manual development + Supervisor (daily 10:00) | local |
-| **AlmaLinux 9** | `auto-improve` | Worker daemon (24/7, every 45 min) | `ssh jarvis@203.0.113.10` |
-| **ClawBook** | `devel` | Benchmarks (daily 06:40) | `ssh clawbook` (reverse tunnel via AlmaLinux) |
+| **AlmaLinux 9** | `auto-improve` | Worker daemon (24/7, every 45 min) | `ssh nex-worker@203.0.113.10` |
+| **DevMachine** | `devel` | Benchmarks (daily 06:40) | `ssh dev-machine` (reverse tunnel via AlmaLinux) |
 
-- **MacBook** and **ClawBook** stay on `devel` — they consume stable code
+- **MacBook** and **DevMachine** stay on `devel` — they consume stable code
 - **AlmaLinux** is the only machine on `auto-improve` — it produces experimental fixes
-- The supervisor merges good `auto-improve` commits into `devel`, which MacBook and ClawBook pull
+- The supervisor merges good `auto-improve` commits into `devel`, which MacBook and DevMachine pull
 
-### ClawBook
+### DevMachine
 
-ClawBook connects via reverse SSH tunnel through the AlmaLinux server (port 2220).
-If `ssh clawbook` fails with "Connection refused", the tunnel is down — check if ClawBook is powered on and the autossh service is running.
+DevMachine connects via reverse SSH tunnel through the AlmaLinux server (port 2220).
+If `ssh dev-machine` fails with "Connection refused", the tunnel is down — check if DevMachine is powered on and the autossh service is running.
 
 ```bash
 # Check tunnel on AlmaLinux
-ssh jarvis@203.0.113.10 "ss -tlnp | grep 2220"
+ssh nex-worker@203.0.113.10 "ss -tlnp | grep 2220"
 
 # SSH config (in ~/.ssh/config)
-Host clawbook
+Host dev-machine
   HostName localhost
   User nex-code-dev
   Port 2220
-  ProxyJump jarvis@203.0.113.10
+  ProxyJump nex-worker@203.0.113.10
 ```
 
 ## Components
 
 ### Worker Daemon
 
-**Location:** AlmaLinux 9 server (`jarvis@203.0.113.10`)  
+**Location:** AlmaLinux 9 server (`nex-worker@203.0.113.10`)  
 **Script:** `scripts/improve-daemon-server.js`  
 **Service:** `systemd --user` → `nex-worker.service`  
 **Model:** Gemma 4 (31B) via Ollama Cloud (free)  
@@ -179,7 +179,7 @@ Daily at 10:00:
   "blocked_files": ["scripts/improve-daemon-server.js"],
   "supervisor_notes": "Worker is making good progress on error handling.",
 
-  "target_projects": ["nex-code", "server-agent", "pro-tuner"]
+  "target_projects": ["nex-code", "server-agent", "webapp-nu"]
 }
 ```
 
@@ -220,15 +220,15 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/node /home/jarvis/Coding/nex-code/scripts/improve-daemon-server.js
-WorkingDirectory=/home/jarvis/Coding/nex-code
+ExecStart=/usr/bin/node /home/nex-worker/Coding/nex-code/scripts/improve-daemon-server.js
+WorkingDirectory=/home/nex-worker/Coding/nex-code
 Restart=always
 RestartSec=60
-Environment=HOME=/home/jarvis
-Environment=PATH=/home/jarvis/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=/home/jarvis/.nex-code/models-systemd.env
-StandardOutput=append:/home/jarvis/.nex-code/worker.log
-StandardError=append:/home/jarvis/.nex-code/worker.log
+Environment=HOME=/home/nex-worker
+Environment=PATH=/home/nex-worker/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/home/nex-worker/.nex-code/models-systemd.env
+StandardOutput=append:/home/nex-worker/.nex-code/worker.log
+StandardError=append:/home/nex-worker/.nex-code/worker.log
 
 [Install]
 WantedBy=default.target
@@ -308,16 +308,16 @@ launchctl load ~/Library/LaunchAgents/com.nex-code.nex-code-autopull.plist
 
 ```bash
 # Worker running?
-ssh jarvis@203.0.113.10 "systemctl --user status nex-worker"
+ssh nex-worker@203.0.113.10 "systemctl --user status nex-worker"
 
 # Worker log (live)
-ssh jarvis@203.0.113.10 "tail -f ~/.nex-code/worker.log"
+ssh nex-worker@203.0.113.10 "tail -f ~/.nex-code/worker.log"
 
 # Worker activity (recent passes)
-ssh jarvis@203.0.113.10 "cat ~/.nex-code/worker-activity.json | python3 -m json.tool | tail -30"
+ssh nex-worker@203.0.113.10 "cat ~/.nex-code/worker-activity.json | python3 -m json.tool | tail -30"
 
 # Worker state (daily commits, failures)
-ssh jarvis@203.0.113.10 "cat ~/.nex-code/worker-state.json"
+ssh nex-worker@203.0.113.10 "cat ~/.nex-code/worker-state.json"
 
 # Commits on auto-improve (not yet in devel)
 git fetch origin && git log --oneline origin/devel..origin/auto-improve
@@ -346,18 +346,18 @@ cat ~/.nex-code/supervisor-log.json | python3 -m json.tool
 
 ### Worker not committing
 
-1. Check the log: `ssh jarvis@203.0.113.10 "tail -50 ~/.nex-code/worker.log"`
+1. Check the log: `ssh nex-worker@203.0.113.10 "tail -50 ~/.nex-code/worker.log"`
 2. Common causes:
    - Tests failing → check `npx jest` on server
    - No improvements found → update config with specific priority_issues
    - Daily cap → wait for tomorrow
-   - Consecutive failures → reset: `ssh jarvis@203.0.113.10 "node -e \"const f='/home/jarvis/.nex-code/worker-state.json';const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.consecutiveFailures=0;require('fs').writeFileSync(f,JSON.stringify(s,null,2))\""`
+   - Consecutive failures → reset: `ssh nex-worker@203.0.113.10 "node -e \"const f='/home/nex-worker/.nex-code/worker-state.json';const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.consecutiveFailures=0;require('fs').writeFileSync(f,JSON.stringify(s,null,2))\""`
 
 ### Worker crashed
 
 ```bash
-ssh jarvis@203.0.113.10 "systemctl --user restart nex-worker"
-ssh jarvis@203.0.113.10 "journalctl --user -u nex-worker --since '1 hour ago'"
+ssh nex-worker@203.0.113.10 "systemctl --user restart nex-worker"
+ssh nex-worker@203.0.113.10 "journalctl --user -u nex-worker --since '1 hour ago'"
 ```
 
 ### Supervisor not running
@@ -378,23 +378,23 @@ node ~/Coding/nex-code/scripts/supervisor.js
 
 ```bash
 # Revert on server
-ssh jarvis@203.0.113.10 "cd ~/Coding/nex-code && git revert <hash> --no-edit && git push origin auto-improve"
+ssh nex-worker@203.0.113.10 "cd ~/Coding/nex-code && git revert <hash> --no-edit && git push origin auto-improve"
 ```
 
 ### Update worker config manually
 
 ```bash
 # Edit on server directly
-ssh jarvis@203.0.113.10 "vi ~/.nex-code/improvement-config.json"
+ssh nex-worker@203.0.113.10 "vi ~/.nex-code/improvement-config.json"
 
 # Or push from Mac
-scp ~/.nex-code/improvement-config.json jarvis@203.0.113.10:~/.nex-code/
+scp ~/.nex-code/improvement-config.json nex-worker@203.0.113.10:~/.nex-code/
 ```
 
 ### Update nex-code on server
 
 ```bash
-ssh jarvis@203.0.113.10 "npm install -g nex-code && nex-code --version"
+ssh nex-worker@203.0.113.10 "npm install -g nex-code && nex-code --version"
 ```
 
 ## How the Improvement Cycle Works
@@ -470,26 +470,26 @@ Two guards prevent silent failure modes where the agent does no real work but st
 
 | Project | Type | Tasks | Focus |
 |---------|------|-------|-------|
-| pro-tuner | Node | 4 | A11y, audio tests, validation |
+| webapp-nu | Node | 4 | A11y, audio tests, validation |
 | games-project | Django | 4 | Error handling, models, validators |
 | homemusic | Django | 3 | Security, API tests, ORM |
 | chord-library | Node | 3 | Async errors, schema, transposition |
-| cookbook | Django | 3 | XSS, pagination, model tests |
-| vocabulary | Django | 3 | Auth, N+1 queries, integration |
-| jarvis-agent | Node | 3 | Tool errors, routing, memory leaks |
+| webapp-alpha | Django | 3 | XSS, pagination, model tests |
+| webapp-gamma | Django | 3 | Auth, N+1 queries, integration |
+| nex-worker-agent | Node | 3 | Tool errors, routing, memory leaks |
 | nex-code | Node | 4 | Providers, autoFixPath, context |
-| biohonig | Django | 2 | Templates, SEO |
+| webapp-beta | Django | 2 | Templates, SEO |
 | django-site | Django | 2 | Responsive, forms |
 
 ### Monitoring Practice Results
 
 ```bash
 # Latest practice results
-ssh jarvis@203.0.113.10 "cat ~/.nex-code/practice-results.json | python3 -m json.tool | tail -40"
+ssh nex-worker@203.0.113.10 "cat ~/.nex-code/practice-results.json | python3 -m json.tool | tail -40"
 
 # Practice scores summary
-ssh jarvis@203.0.113.10 "node -e \"
-  const r = JSON.parse(require('fs').readFileSync('/home/jarvis/.nex-code/practice-results.json','utf8'));
+ssh nex-worker@203.0.113.10 "node -e \"
+  const r = JSON.parse(require('fs').readFileSync('/home/nex-worker/.nex-code/practice-results.json','utf8'));
   const last10 = r.slice(-10);
   last10.forEach(x => console.log(x.project.padEnd(15), x.score.total+'/'+x.score.max, x.score.grade, x.task.category));
   const avg = last10.reduce((s,x) => s+x.score.total, 0) / last10.length;
@@ -497,7 +497,7 @@ ssh jarvis@203.0.113.10 "node -e \"
 \""
 
 # Available tasks
-ssh jarvis@203.0.113.10 "node ~/Coding/nex-code/scripts/practice-runner.js --list"
+ssh nex-worker@203.0.113.10 "node ~/Coding/nex-code/scripts/practice-runner.js --list"
 ```
 
 ### Adding Custom Tasks
@@ -540,11 +540,11 @@ Live web dashboard showing the full improvement pipeline status. Auto-refreshes 
 **API endpoint:** `GET /nex-improve/status` (Node.js, reads all data files from `~/.nex-code/`)
 
 **Files:**
-- `jarvis-agent/routes/nex-improve.js` — Node.js API
-- `jarvis-agent/web/templates/nex-improve/index.html` — Frontend
-- `jarvis-agent/web/chat/views.py` — Django view (`nex_improve_dashboard`)
-- `jarvis-agent/web/chat/api.py` — Django API proxy (`nex_improve_status_api`)
-- `jarvis-agent/web/chat/urls.py` — Routes (`/nex-improve/`, `/api/nex-improve/status/`)
+- `nex-worker-agent/routes/nex-improve.js` — Node.js API
+- `nex-worker-agent/web/templates/nex-improve/index.html` — Frontend
+- `nex-worker-agent/web/chat/views.py` — Django view (`nex_improve_dashboard`)
+- `nex-worker-agent/web/chat/api.py` — Django API proxy (`nex_improve_status_api`)
+- `nex-worker-agent/web/chat/urls.py` — Routes (`/nex-improve/`, `/api/nex-improve/status/`)
 
 ## Key Design Decisions
 

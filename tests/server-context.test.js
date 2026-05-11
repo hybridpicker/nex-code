@@ -165,20 +165,20 @@ describe("getDeploymentContextBlock — server rules", () => {
 describe("detectRuntimeDebugTarget", () => {
   test("detects a live app bug report and matches a server profile from the URL", () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "203.0.113.1", user: "jarvis" },
+      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
     });
     const result = detectRuntimeDebugTarget(
-      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://test.example.com/guitar-mentor/",
+      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://test.example.com/webapp-epsilon/",
     );
     expect(result).toBeTruthy();
-    expect(result.url).toBe("https://test.example.com/guitar-mentor/");
-    expect(result.matchedName).toBe("jarvis");
+    expect(result.url).toBe("https://test.example.com/webapp-epsilon/");
+    expect(result.matchedName).toBe("nex-worker");
     expect(result.shouldPreferSsh).toBe(true);
   });
 
   test("ignores image URLs even when the prompt contains analyze wording", () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "203.0.113.1", user: "jarvis" },
+      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
     });
     expect(
       detectRuntimeDebugTarget(
@@ -191,17 +191,17 @@ describe("detectRuntimeDebugTarget", () => {
 describe("probeUrlServer", () => {
   test("probes the matched server for runtime debug URLs", async () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "203.0.113.1", user: "jarvis" },
+      nex-worker: { host: "203.0.113.1", user: "nex-worker" },
     });
     sshExec.mockResolvedValue({
-      stdout: ":3000\n---services---\nnode server.js\n---data---\n/home/jarvis/data",
+      stdout: ":3000\n---services---\nnode server.js\n---data---\n/home/nex-worker/data",
     });
 
     const result = await probeUrlServer(
-      "Deleting ideas fails and they come back in the webui https://test.example.com/guitar-mentor/",
+      "Deleting ideas fails and they come back in the webui https://test.example.com/webapp-epsilon/",
     );
 
-    expect(result).toContain('Server context for "jarvis"');
+    expect(result).toContain('Server context for "nex-worker"');
     expect(sshExec).toHaveBeenCalledTimes(1);
   });
 });

@@ -388,7 +388,7 @@ router.get('/api/recipes/:id', (req, res) => {
 
 module.exports = router;
 `);
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"cookbook-api","version":"1.0.0","dependencies":{"express":"^4.18.0"}}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-alpha-api","version":"1.0.0","dependencies":{"express":"^4.18.0"}}\n');
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
@@ -474,7 +474,7 @@ module.exports = { exportToJSON, formatEntry };
 
 module.exports = { DrumSequencer };
 `);
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"drumcomputer","version":"1.0.0"}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-lambda","version":"1.0.0"}\n');
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
@@ -614,7 +614,7 @@ module.exports = router;
 router.get('/', (req, res) => res.json([]));
 module.exports = router;
 `);
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"arbeitszeiterfassung","version":"1.0.0","dependencies":{"express":"^4.18.0","better-sqlite3":"^9.0.0","cors":"^2.8.5"}}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-rho","version":"1.0.0","dependencies":{"express":"^4.18.0","better-sqlite3":"^9.0.0","cors":"^2.8.5"}}\n');
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
@@ -788,7 +788,7 @@ module.exports = app;
   {
     id: "devops-nginx-reverse-proxy",
     category: "devops",
-    description: "Create an nginx config file at nginx/cookbook.conf that sets up a reverse proxy for the cookbook app running on port 8010. Include: server_name cookbook.example.com, proxy_pass to localhost:8010, proxy headers (Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto).",
+    description: "Create an nginx config file at nginx/webapp-alpha.conf that sets up a reverse proxy for the webapp-alpha app running on port 8010. Include: server_name webapp-alpha.example.com, proxy_pass to localhost:8010, proxy headers (Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto).",
     setupFn(tmpDir) {
       fs.mkdirSync(path.join(tmpDir, "nginx"), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, "nginx/example.conf"), `server {
@@ -804,14 +804,14 @@ module.exports = app;
     }
 }
 `);
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"cookbook","version":"1.0.0"}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-alpha","version":"1.0.0"}\n');
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
-      if (fileExists(tmpDir, "nginx/cookbook.conf")) {
-        const content = fs.readFileSync(path.join(tmpDir, "nginx/cookbook.conf"), "utf-8");
-        if (content.includes("cookbook.example.com")) score.taskCompletion += 25;
+      if (fileExists(tmpDir, "nginx/webapp-alpha.conf")) {
+        const content = fs.readFileSync(path.join(tmpDir, "nginx/webapp-alpha.conf"), "utf-8");
+        if (content.includes("webapp-alpha.example.com")) score.taskCompletion += 25;
         if (content.includes("8010")) score.taskCompletion += 25;
         if (content.includes("proxy_pass")) score.taskCompletion += 25;
         if (content.includes("proxy_set_header")) score.taskCompletion += 25;
@@ -826,22 +826,22 @@ module.exports = app;
   {
     id: "devops-systemd-service",
     category: "devops",
-    description: "Create a systemd service file at deploy/cookbook.service for the cookbook Node.js app. It should: run as user 'webadmin', WorkingDirectory /opt/cookbook, ExecStart with node, Restart=always, set NODE_ENV=production.",
+    description: "Create a systemd service file at deploy/webapp-alpha.service for the webapp-alpha Node.js app. It should: run as user 'webadmin', WorkingDirectory /opt/webapp-alpha, ExecStart with node, Restart=always, set NODE_ENV=production.",
     setupFn(tmpDir) {
       fs.mkdirSync(path.join(tmpDir, "deploy"), { recursive: true });
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"cookbook","version":"1.0.0","scripts":{"start":"node server.js"}}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-alpha","version":"1.0.0","scripts":{"start":"node server.js"}}\n');
       fs.writeFileSync(path.join(tmpDir, "server.js"), `const app = require('./app');
-app.listen(8010, () => console.log('Cookbook running on 8010'));
+app.listen(8010, () => console.log('WebappAlpha running on 8010'));
 `);
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
-      if (fileExists(tmpDir, "deploy/cookbook.service")) {
-        const content = fs.readFileSync(path.join(tmpDir, "deploy/cookbook.service"), "utf-8");
+      if (fileExists(tmpDir, "deploy/webapp-alpha.service")) {
+        const content = fs.readFileSync(path.join(tmpDir, "deploy/webapp-alpha.service"), "utf-8");
         if (content.includes("[Service]")) score.taskCompletion += 20;
         if (content.includes("webadmin")) score.taskCompletion += 20;
-        if (content.includes("/opt/cookbook")) score.taskCompletion += 20;
+        if (content.includes("/opt/webapp-alpha")) score.taskCompletion += 20;
         if (content.includes("Restart=always")) score.taskCompletion += 20;
         if (content.includes("NODE_ENV=production") || content.includes("NODE_ENV") && content.includes("production")) score.taskCompletion += 20;
       }
@@ -855,10 +855,10 @@ app.listen(8010, () => console.log('Cookbook running on 8010'));
   {
     id: "devops-deploy-script",
     category: "devops",
-    description: "Create a deploy.sh script that: 1) Pulls latest from git, 2) Runs npm install --production, 3) Restarts the systemd service 'cookbook', 4) Checks service status. Make it executable-ready with #!/bin/bash and set -e.",
+    description: "Create a deploy.sh script that: 1) Pulls latest from git, 2) Runs npm install --production, 3) Restarts the systemd service 'webapp-alpha', 4) Checks service status. Make it executable-ready with #!/bin/bash and set -e.",
     setupFn(tmpDir) {
       fs.mkdirSync(tmpDir, { recursive: true });
-      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"cookbook","version":"1.0.0"}\n');
+      fs.writeFileSync(path.join(tmpDir, "package.json"), '{"name":"webapp-alpha","version":"1.0.0"}\n');
       fs.writeFileSync(path.join(tmpDir, "server.js"), `require('express')().listen(8010);`);
       initGit(tmpDir);
     },
@@ -887,7 +887,7 @@ app.listen(8010, () => console.log('Cookbook running on 8010'));
     setupFn(tmpDir) {
       fs.mkdirSync(tmpDir, { recursive: true });
       fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({
-        name: "cookbook",
+        name: "webapp-alpha",
         version: "1.0.0",
         scripts: { start: "node server.js", build: "echo build" },
         dependencies: { express: "^4.18.0" },
@@ -1533,7 +1533,7 @@ console.log('All basic tests passed');
     setupFn(tmpDir) {
       fs.mkdirSync(tmpDir, { recursive: true });
       fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({
-        name: "practice-wizard",
+        name: "webapp-kappa",
         version: "2.0.0",
         scripts: {
           start: "node server.js",
@@ -1820,9 +1820,9 @@ module.exports = app;
       "Read DATABASE_README.md and create a schema-summary.json that lists all tables, " +
       "their columns with types, foreign key relationships, and indexes. " +
       "Include a 'statistics' field counting total tables, columns, and relationships.",
-    sourceProject: "practice-wizard",
+    sourceProject: "webapp-kappa",
     setupFn(tmpDir) {
-      copyFiles("practice-wizard", ["DATABASE_README.md"], tmpDir);
+      copyFiles("webapp-kappa", ["DATABASE_README.md"], tmpDir);
       initGit(tmpDir);
     },
     evaluateFn(tmpDir) {
