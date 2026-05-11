@@ -13,6 +13,10 @@ fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
+
+# Personal data guard — runs before secret scanner
+bash "$(git rev-parse --git-dir)/../hooks/pre-commit-personal-data" || exit 1
+
 if [ "${NEX_SKIP_SECRET_CHECK:-0}" = "1" ]; then
   echo "[pre-commit] Secret check skipped (NEX_SKIP_SECRET_CHECK=1)"
 else

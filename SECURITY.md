@@ -66,3 +66,49 @@ Tool results (e.g., `read_file`, `bash`) are automatically scanned for common se
 - Review `.nex/config.json` permissions before use
 - Keep `bash`, `write_file`, and `edit_file` on `ask` mode (default)
 - Do not store API keys in project directories — use environment variables
+
+## Personal Data Prevention (2026-05-11)
+
+The repository previously contained personal/sensitive data in tracked files across
+~24 commits dating back to early versions. This included server IPs, internal
+hostnames, personal usernames, and project names. While the current HEAD is clean,
+the git history still contains this data.
+
+**What was exposed:**
+- Server IP address and internal hostnames
+- Personal macOS username and file paths
+- Internal project names used as server identifiers
+- Personal domains and launchd identifiers
+
+**Prevention measures deployed:**
+- `hooks/pre-commit-personal-data`: blocks commits containing personal IPs,
+  domains, usernames, paths, or project names
+- `.nex/push-allowlist`: whitelists safe patterns (TEST-NET IPs, example.com,
+  generic env var templates) for the existing secret scanner
+- All sensitive data replaced with RFC 5737 TEST-NET addresses, example.com
+  domains, and generic placeholders across 28 source files
+
+**To scrub git history (REQUIRED — data still in old commits):**
+```bash
+# Install git-filter-repo (recommended over filter-branch)
+brew install git-filter-repo
+
+# Scrub all sensitive patterns from entire history
+git filter-repo --force \
+  --replace-text <(cat <<EOF
+94\.130\.37\.43==>203.0.113.1
+internal.example.com==>public.example.com
+old-username==>new-username
+/home/username==>/home/nex-code-dev
+com.old-identifier.app==>com.new-identifier.app
+old-app.example.com==>new-app.example.com
+EOF
+) --refs devel main
+
+# Force push cleaned history (DESTRUCTIVE — coordinate with all contributors)
+git push origin --force --all
+```
+
+⚠️ **Warning:** `git filter-repo` rewrites ALL commit hashes. Anyone with
+cloned copies must re-clone after the force push. Coordinate with all
+contributors before running.
