@@ -257,21 +257,21 @@ ${serverList}
 }
 
 /**
- * Return server-specific debugging rules if any profile points to 94.130.37.43.
+ * Return server-specific debugging rules if any profile has a host configured.
  * @param {Object} profiles
  * @returns {string}
  */
 function _getServerRules(profiles) {
   const hasServer = Object.values(profiles).some(
-    (p) => p.host === "94.130.37.43",
+    (p) => p.host && p.host !== "localhost" && p.host !== "127.0.0.1",
   );
   if (!hasServer) return "";
   return `
 
 ## Server Debugging Rules
 
-- Server errors (set_reminder, cron, Google Auth, SmartThings) come from the DEPLOYED server at 94.130.37.43
-- ALWAYS use ssh_exec to investigate: ssh_exec on 94.130.37.43, check /home/deploy/server-agent/logs/
+- Server errors come from the DEPLOYED server — check .nex/servers.json for host
+- ALWAYS use ssh_exec to investigate: ssh_exec on the configured host, check application logs
 - NEVER run local bash/find/sqlite3 commands when debugging server issues
 - Local server-agent/ is just source code — the running system is on the server
 - CRITICAL: When the user pastes a server error message (error logs), this is NEVER a "simple question" to answer from training knowledge. You MUST ssh_exec to verify if the error is still occurring BEFORE writing any explanation. Do NOT explain from memory — investigate first, always.
@@ -286,9 +286,9 @@ function _getServerRules(profiles) {
  *
  * Matching strategy (in priority order):
  *  1. Any hostname segment matches a profile name exactly
- *     e.g. "server.schoensgibl.com" → profile "server"
+ *     e.g. "server.example.com" → profile "server"
  *  2. Profile host matches the URL hostname directly
- *     e.g. "94.130.37.43" → profile with host "94.130.37.43"
+ *     e.g. "203.0.113.1" → profile with host "203.0.113.1"
  *
  * On a match, runs a fast 4-second SSH probe and returns a context block
  * that tells the model which ports are listening and what data dirs exist.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# fix-auth-and-redeploy.sh — run ON the nex-code worker host (almalinux9)
+# fix-auth-and-redeploy.sh — run ON the nex-code worker host
 #
 # Fixes the "rotated OLLAMA_API_KEY silently shadowed by stale systemd
 # EnvironmentFile" outage:

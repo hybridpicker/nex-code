@@ -782,18 +782,18 @@ module.exports = app;
   },
 
   // ═══════════════════════════════════════════════════════════════
-  // Category 4: Server/DevOps (4 tasks, weight: 15%)
+  // Category 4: Server/DevOps (12 tasks, weight: 15%)
   // ═══════════════════════════════════════════════════════════════
 
   {
     id: "devops-nginx-reverse-proxy",
     category: "devops",
-    description: "Create an nginx config file at nginx/cookbook.conf that sets up a reverse proxy for the cookbook app running on port 8010. Include: server_name kochbuch.schoensgibl.com, proxy_pass to localhost:8010, proxy headers (Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto).",
+    description: "Create an nginx config file at nginx/cookbook.conf that sets up a reverse proxy for the cookbook app running on port 8010. Include: server_name cookbook.example.com, proxy_pass to localhost:8010, proxy headers (Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto).",
     setupFn(tmpDir) {
       fs.mkdirSync(path.join(tmpDir, "nginx"), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, "nginx/example.conf"), `server {
     listen 80;
-    server_name example.schoensgibl.com;
+    server_name example.com;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -811,7 +811,7 @@ module.exports = app;
       const score = { taskCompletion: 0, editPrecision: 100, quality: 100 };
       if (fileExists(tmpDir, "nginx/cookbook.conf")) {
         const content = fs.readFileSync(path.join(tmpDir, "nginx/cookbook.conf"), "utf-8");
-        if (content.includes("kochbuch.schoensgibl.com")) score.taskCompletion += 25;
+        if (content.includes("cookbook.example.com")) score.taskCompletion += 25;
         if (content.includes("8010")) score.taskCompletion += 25;
         if (content.includes("proxy_pass")) score.taskCompletion += 25;
         if (content.includes("proxy_set_header")) score.taskCompletion += 25;
@@ -910,6 +910,289 @@ app.listen(8010, () => console.log('Cookbook running on 8010'));
     },
     maxToolCalls: 8,
     maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  // ── Server application tasks ──────────────────────────────────
+
+  {
+    id: "devops-fix-express-500",
+    category: "devops",
+    description: "The Express app crashes with a 500 error when POSTing to /api/users. The route in routes/users.js tries to access req.body.name.length without checking if req.body or req.body.name exists. Fix the route to validate input and return a 400 error for missing fields instead of crashing.",
+    setupFn(tmpDir) {
+      fs.mkdirSync(path.join(tmpDir, "routes"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const express = require('express');
+const usersRouter = require('./routes/users');
+const app = express();
+app.use(express.json());
+app.use('/api/users', usersRouter);
+app.listen(3000);
+`);
+      fs.writeFileSync(path.join(tmpDir, "routes/users.js"), `const router = require('express').Router();
+
+router.post('/', (req, res) => {
+  // BUG: crashes if req.body is undefined or name is missing
+  const name = req.body.name;
+  if (name.length < 3) {
+    return res.status(400).json({ error: 'Name too short' });
+  }
+  res.json({ created: true, name });
+});
+
+module.exports = router;
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "routes/users.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "routes/users.js"), "utf-8");
+        if (/if\s*\(!req\.body|if\s*\(!name|if\s*\(name\s*===\s*undefined|if\s*\(typeof\s+name/i.test(content)) score.taskCompletion += 25;
+        const nameIdx = content.indexOf("name.length");
+        const checkIdx = Math.max(
+          content.indexOf("if (!req.body"),
+          content.indexOf("if (!name"),
+          content.indexOf("if (name ==="),
+          content.indexOf("if (typeof name"),
+        );
+        if (nameIdx > -1 && checkIdx > -1 && checkIdx < nameIdx) score.taskCompletion += 25;
+        if (content.includes("400")) score.taskCompletion += 25;
+        if (!content.includes("req.body.name.length") || checkIdx < nameIdx) score.taskCompletion += 25;
+      }
+      return score;
+    },
+    maxToolCalls: 8,
+    maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-add-rate-limit",
+    category: "devops",
+    description: "Add rate limiting to POST /api/contact in routes/contact.js: maximum 3 requests per minute per IP address. Requests exceeding the limit should return HTTP 429 with a JSON error message. Track IPs in-memory (no external packages).",
+    setupFn(tmpDir) {
+      fs.mkdirSync(path.join(tmpDir, "routes"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const express = require('express');
+const contactRouter = require('./routes/contact');
+const app = express();
+app.use(express.json());
+app.use('/api/contact', contactRouter);
+app.listen(3000);
+`);
+      fs.writeFileSync(path.join(tmpDir, "routes/contact.js"), `const router = require('express').Router();
+
+router.post('/', (req, res) => {
+  const { email, message } = req.body;
+  if (!email || !message) {
+    return res.status(400).json({ error: 'Email and message required' });
+  }
+  res.json({ sent: true });
+});
+
+module.exports = router;
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "routes/contact.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "routes/contact.js"), "utf-8");
+        if (content.includes("ip") || content.includes("req.ip") || content.includes("req.connection")) score.taskCompletion += 20;
+        if (/counter|rateLimit|requestCount|timestamps|Map|Object\.(keys|entries)/i.test(content)) score.taskCompletion += 20;
+        if (content.includes("429")) score.taskCompletion += 20;
+        if (/3\b|three|per.minute|per min|60\s*\*\s*1000|60000/.test(content)) score.taskCompletion += 20;
+        if (/Date\.now|filter|splice|shift|clean|expire/i.test(content)) score.taskCompletion += 20;
+      }
+      return score;
+    },
+    maxToolCalls: 10,
+    maxTurns: 15,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-fix-jwt-auth",
+    category: "devops",
+    description: "The auth middleware in middleware/auth.js extracts the JWT from the Authorization header but never verifies it — any token is accepted. Fix the middleware to verify the token using jsonwebtoken.verify() with a secret from an environment variable JWT_SECRET (default: 'changeme'). Return 401 for invalid/missing tokens.",
+    setupFn(tmpDir) {
+      fs.mkdirSync(path.join(tmpDir, "middleware"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "routes"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const express = require('express');
+const auth = require('./middleware/auth');
+const dashboardRouter = require('./routes/dashboard');
+const app = express();
+app.use('/api/dashboard', auth, dashboardRouter);
+app.listen(3000);
+`);
+      fs.writeFileSync(path.join(tmpDir, "middleware/auth.js"), `const jwt = require('jsonwebtoken');
+
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Malformed token' });
+  }
+  // BUG: token extracted but never verified — any string passes
+  req.user = { id: 1, role: 'admin' };
+  next();
+}
+
+module.exports = authMiddleware;
+`);
+      fs.writeFileSync(path.join(tmpDir, "routes/dashboard.js"), `const router = require('express').Router();
+router.get('/', (req, res) => {
+  res.json({ user: req.user, data: [] });
+});
+module.exports = router;
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "middleware/auth.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "middleware/auth.js"), "utf-8");
+        if (content.includes("jwt.verify") || content.includes("verify(")) score.taskCompletion += 25;
+        if (content.includes("JWT_SECRET") || content.includes("secret") || content.includes("process.env")) score.taskCompletion += 25;
+        if (/try\s*\{|\.catch|callback|if\s*\(err/i.test(content)) score.taskCompletion += 25;
+        if ((content.match(/401/g) || []).length >= 2) score.taskCompletion += 25;
+      }
+      return score;
+    },
+    maxToolCalls: 8,
+    maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-add-healthcheck",
+    category: "devops",
+    description: "Add a GET /health endpoint to this Express server (server.js) that returns JSON with: status 'ok', uptime in seconds, memory usage in MB (process.memoryUsage), and the Node.js version. The endpoint should be accessible without authentication.",
+    setupFn(tmpDir) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => {
+  res.json({ message: 'API running' });
+});
+
+app.listen(3000, () => {
+  console.log('Server on port 3000');
+});
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "server.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "server.js"), "utf-8");
+        if (content.includes("/health")) score.taskCompletion += 25;
+        if (content.includes("uptime") || content.includes("process.uptime")) score.taskCompletion += 25;
+        if (content.includes("memoryUsage") || content.includes("memory")) score.taskCompletion += 25;
+        if (content.includes("status") && content.includes("ok")) score.taskCompletion += 25;
+      }
+      return score;
+    },
+    maxToolCalls: 6,
+    maxTurns: 10,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-fix-async-handler",
+    category: "devops",
+    description: "The route handler in routes/data.js uses async/await but has no error handling — a rejected promise crashes the server. Wrap the handler with try/catch or add a .catch() so that errors return a 500 JSON response instead of crashing the process.",
+    setupFn(tmpDir) {
+      fs.mkdirSync(path.join(tmpDir, "routes"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const express = require('express');
+const dataRouter = require('./routes/data');
+const app = express();
+app.use('/api/data', dataRouter);
+app.listen(3000);
+`);
+      fs.writeFileSync(path.join(tmpDir, "routes/data.js"), `const router = require('express').Router();
+
+function fetchData() {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => reject(new Error('Database connection failed')), 100);
+  });
+}
+
+router.get('/', async (req, res) => {
+  // BUG: no try/catch — unhandled promise rejection crashes the server
+  const data = await fetchData();
+  res.json({ data });
+});
+
+router.get('/latest', async (req, res) => {
+  const latest = await fetchData();
+  res.json({ latest });
+});
+
+module.exports = router;
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "routes/data.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "routes/data.js"), "utf-8");
+        if (/try\s*\{/.test(content)) score.taskCompletion += 25;
+        if (/catch\s*\(/.test(content)) score.taskCompletion += 25;
+        if (content.includes("500")) score.taskCompletion += 25;
+        if (/console\.(error|log)|res\.status\(500\)|next\(/i.test(content)) score.taskCompletion += 25;
+      }
+      return score;
+    },
+    maxToolCalls: 8,
+    maxTurns: 12,
+    timeoutMs: 180000,
+  },
+
+  {
+    id: "devops-fix-env-config",
+    category: "devops",
+    description: "The config loader in config/index.js reads settings from environment variables but crashes if any variable is missing — it uses process.env directly without fallback defaults. Fix it so every variable has a sensible default (PORT=3000, DB_HOST=localhost, DB_PORT=5432, NODE_ENV=development, LOG_LEVEL=info) and the app doesn't crash on startup.",
+    setupFn(tmpDir) {
+      fs.mkdirSync(path.join(tmpDir, "config"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "config/index.js"), `// BUG: crashes if any env var is missing — no fallback defaults
+const config = {
+  port: parseInt(process.env.PORT),
+  db: {
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT),
+  },
+  env: process.env.NODE_ENV,
+  logLevel: process.env.LOG_LEVEL,
+};
+
+if (!config.port) throw new Error('PORT is required');
+if (!config.db.host) throw new Error('DB_HOST is required');
+
+module.exports = config;
+`);
+      fs.writeFileSync(path.join(tmpDir, "server.js"), `const config = require('./config');
+console.log('Starting on port', config.port);
+`);
+      initGit(tmpDir);
+    },
+    evaluateFn(tmpDir) {
+      const score = { taskCompletion: 0, editPrecision: 100, efficiency: 100, quality: 0 };
+      if (fileExists(tmpDir, "config/index.js")) {
+        const content = fs.readFileSync(path.join(tmpDir, "config/index.js"), "utf-8");
+        if (/\|\||\?\?/.test(content)) score.taskCompletion += 20;
+        if (/3000/.test(content)) score.taskCompletion += 20;
+        if (/localhost/.test(content)) score.taskCompletion += 20;
+        if (/5432/.test(content)) score.taskCompletion += 20;
+        if (/development/.test(content) || /info/.test(content)) score.taskCompletion += 20;
+      }
+      return score;
+    },
+    maxToolCalls: 6,
+    maxTurns: 10,
     timeoutMs: 180000,
   },
 

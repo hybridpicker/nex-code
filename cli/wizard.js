@@ -150,8 +150,8 @@ async function runServerWizard() {
     const key = await ask("SSH key path (leave empty for SSH agent)", "");
     const osType = await askChoice(
       "Operating system",
-      ["almalinux9", "macos", "ubuntu", "debian", "other"],
-      "almalinux9",
+      ["ubuntu", "debian", "macos", "almalinux", "other"],
+      "ubuntu",
     );
     const sudo = await askBool("Allow sudo commands?", true);
 

@@ -164,7 +164,7 @@
     }
   ],
 
-  "schoensgibl": [
+  "django-app": [
     {
       "category": "bugfix",
       "difficulty": "easy",

@@ -151,7 +151,7 @@ function runImprovementPass(score, issues) {
     `nex-code Auto-Improvement Pass — Session Score: ${score}/10.` +
     issueText +
     `\n\nAnalysiere die letzte nex-code Session (${SESSION_FILE}) und implementiere gezielte Fixes ` +
-    `für das wichtigste offene Problem in /Users/lukasschonsgibl/Coding/nex-code/cli/. ` +
+    `für das wichtigste offene Problem in ${process.cwd()}/cli/. ` +
     `Teste mit: node -e "require('./cli/agent.js')". ` +
     `Führe npm test -- --forceExit aus und committe + pushe nach devel wenn alle Tests grünen. ` +
     `Fokus: NUR das wichtigste Issue beheben, nicht alles auf einmal. ` +

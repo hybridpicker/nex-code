@@ -64,7 +64,7 @@ const PROJECTS = {
   "cookbook":        { path: path.join(HOME, "apps/cookbook"),           type: "django" },
   "vocabulary":     { path: path.join(HOME, "apps/vocabulary"),        type: "django" },
   "biohonig":       { path: path.join(HOME, "apps/biohonig"),          type: "django" },
-  "schoensgibl":    { path: path.join(HOME, "apps/schoensgibl/schoensgibl"), type: "django" },
+  "django-app":     { path: path.join(HOME, "apps/django-app/django-app"), type: "django" },
   "jarvis-agent":   { path: path.join(HOME, "jarvis-agent"),           type: "node" },
   "nex-code":       { path: path.join(HOME, "Coding/nex-code"),        type: "node" },
 };

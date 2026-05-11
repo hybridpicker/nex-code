@@ -141,9 +141,9 @@ describe("getDeploymentContextBlock — server rules", () => {
     jest.restoreAllMocks();
   });
 
-  test("includes server rules when profile has host 94.130.37.43", () => {
+  test("includes server rules when profile has host 203.0.113.1", () => {
     loadServerProfiles.mockReturnValue({
-      prod: { host: "94.130.37.43", user: "root", os: "almalinux9" },
+      prod: { host: "203.0.113.1", user: "root", os: "almalinux9" },
     });
     const block = getDeploymentContextBlock();
     expect(block).toBeDefined();
@@ -165,24 +165,24 @@ describe("getDeploymentContextBlock — server rules", () => {
 describe("detectRuntimeDebugTarget", () => {
   test("detects a live app bug report and matches a server profile from the URL", () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "94.130.37.43", user: "jarvis" },
+      jarvis: { host: "203.0.113.1", user: "jarvis" },
     });
     const result = detectRuntimeDebugTarget(
-      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://jarvis.schoensgibl.com/guitar-mentor/",
+      "Wenn ich Ideen loesche kommen sie wieder zurueck ins webui https://test.example.com/guitar-mentor/",
     );
     expect(result).toBeTruthy();
-    expect(result.url).toBe("https://jarvis.schoensgibl.com/guitar-mentor/");
+    expect(result.url).toBe("https://test.example.com/guitar-mentor/");
     expect(result.matchedName).toBe("jarvis");
     expect(result.shouldPreferSsh).toBe(true);
   });
 
   test("ignores image URLs even when the prompt contains analyze wording", () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "94.130.37.43", user: "jarvis" },
+      jarvis: { host: "203.0.113.1", user: "jarvis" },
     });
     expect(
       detectRuntimeDebugTarget(
-        "Analyze this mockup and implement it https://jarvis.schoensgibl.com/mockup.png",
+        "Analyze this mockup and implement it https://test.example.com/mockup.png",
       ),
     ).toBeNull();
   });
@@ -191,14 +191,14 @@ describe("detectRuntimeDebugTarget", () => {
 describe("probeUrlServer", () => {
   test("probes the matched server for runtime debug URLs", async () => {
     loadServerProfiles.mockReturnValue({
-      jarvis: { host: "94.130.37.43", user: "jarvis" },
+      jarvis: { host: "203.0.113.1", user: "jarvis" },
     });
     sshExec.mockResolvedValue({
       stdout: ":3000\n---services---\nnode server.js\n---data---\n/home/jarvis/data",
     });
 
     const result = await probeUrlServer(
-      "Deleting ideas fails and they come back in the webui https://jarvis.schoensgibl.com/guitar-mentor/",
+      "Deleting ideas fails and they come back in the webui https://test.example.com/guitar-mentor/",
     );
 
     expect(result).toContain('Server context for "jarvis"');

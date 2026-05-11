@@ -88,7 +88,7 @@ describe("setWizardRL", () => {
 
 describe("runServerWizard", () => {
   test("creates servers.json with correct structure", async () => {
-    // Answers: profile name, host, user, port, key path, OS choice (1=almalinux9), sudo (y), add another (n),
+    // Answers: profile name, host, user, port, key path, OS choice (1=almalinux), sudo (y), add another (n),
     // add to gitignore — no .gitignore exists so skipped, deploy config (n)
     const rl = mockRL([
       "myserver", // profile name
@@ -96,7 +96,7 @@ describe("runServerWizard", () => {
       "admin", // user
       "2222", // port
       "", // SSH key path (empty = agent)
-      "1", // OS choice: almalinux9
+      "1", // OS choice: almalinux
       "y", // allow sudo
       "n", // add another server? no
       "n", // set up deploy config? no
@@ -113,7 +113,7 @@ describe("runServerWizard", () => {
     expect(data.myserver.host).toBe("192.168.1.100");
     expect(data.myserver.user).toBe("admin");
     expect(data.myserver.port).toBe(2222);
-    expect(data.myserver.os).toBe("almalinux9");
+    expect(data.myserver.os).toBe("almalinux");
     expect(data.myserver.sudo).toBe(true);
   });
 

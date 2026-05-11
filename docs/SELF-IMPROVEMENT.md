@@ -46,7 +46,7 @@ Branch flow:
 | Machine | Branch | Role | Connection |
 |---------|--------|------|------------|
 | **MacBook** | `devel` | Manual development + Supervisor (daily 10:00) | local |
-| **AlmaLinux 9** | `auto-improve` | Worker daemon (24/7, every 45 min) | `ssh jarvis@94.130.37.43` |
+| **AlmaLinux 9** | `auto-improve` | Worker daemon (24/7, every 45 min) | `ssh jarvis@203.0.113.10` |
 | **ClawBook** | `devel` | Benchmarks (daily 06:40) | `ssh clawbook` (reverse tunnel via AlmaLinux) |
 
 - **MacBook** and **ClawBook** stay on `devel` — they consume stable code
@@ -60,21 +60,21 @@ If `ssh clawbook` fails with "Connection refused", the tunnel is down — check 
 
 ```bash
 # Check tunnel on AlmaLinux
-ssh jarvis@94.130.37.43 "ss -tlnp | grep 2220"
+ssh jarvis@203.0.113.10 "ss -tlnp | grep 2220"
 
 # SSH config (in ~/.ssh/config)
 Host clawbook
   HostName localhost
-  User schoensgibl-lukas
+  User nex-code-dev
   Port 2220
-  ProxyJump jarvis@94.130.37.43
+  ProxyJump jarvis@203.0.113.10
 ```
 
 ## Components
 
 ### Worker Daemon
 
-**Location:** AlmaLinux 9 server (`jarvis@94.130.37.43`)  
+**Location:** AlmaLinux 9 server (`jarvis@203.0.113.10`)  
 **Script:** `scripts/improve-daemon-server.js`  
 **Service:** `systemd --user` → `nex-worker.service`  
 **Model:** Gemma 4 (31B) via Ollama Cloud (free)  
@@ -280,7 +280,7 @@ The `override: true` on `~/.nex-code/.env` is load-bearing. Without it, a stale 
   supervisor-log.json                # Supervisor run history
 ~/Library/LaunchAgents/
   com.nex-code.supervisor.plist             # Daily at 10:00
-  com.schoensgibl.nex-code-autopull.plist   # Every 30 min — pulls origin/devel
+  com.nex-code.nex-code-autopull.plist   # Every 30 min — pulls origin/devel
 ~/Library/Logs/
   nex-code-autopull.log              # Auto-pull log
 ```
@@ -292,14 +292,14 @@ The MacBook (and any other dev machine) auto-pulls `origin/devel` every 30 minut
 - **Mode:** `git pull --ff-only` (refuses to merge if there are conflicts — safe by default)
 - **Skip:** Aborts if local branch is not `devel`
 - **Log:** Only writes when something changes (no spam at idle)
-- **LaunchAgent:** `com.schoensgibl.nex-code-autopull` (StartInterval=1800)
+- **LaunchAgent:** `com.nex-code.nex-code-autopull` (StartInterval=1800)
 
 Result: Worker commits → Supervisor merges → ≤30 min later all dev machines have the update. Fully automatic.
 
 To install on a new Mac:
 ```bash
-cp scripts/auto-pull-devel.sh.plist ~/Library/LaunchAgents/com.schoensgibl.nex-code-autopull.plist
-launchctl load ~/Library/LaunchAgents/com.schoensgibl.nex-code-autopull.plist
+cp scripts/auto-pull-devel.sh.plist ~/Library/LaunchAgents/com.nex-code.nex-code-autopull.plist
+launchctl load ~/Library/LaunchAgents/com.nex-code.nex-code-autopull.plist
 ```
 
 ## Monitoring
@@ -308,16 +308,16 @@ launchctl load ~/Library/LaunchAgents/com.schoensgibl.nex-code-autopull.plist
 
 ```bash
 # Worker running?
-ssh jarvis@94.130.37.43 "systemctl --user status nex-worker"
+ssh jarvis@203.0.113.10 "systemctl --user status nex-worker"
 
 # Worker log (live)
-ssh jarvis@94.130.37.43 "tail -f ~/.nex-code/worker.log"
+ssh jarvis@203.0.113.10 "tail -f ~/.nex-code/worker.log"
 
 # Worker activity (recent passes)
-ssh jarvis@94.130.37.43 "cat ~/.nex-code/worker-activity.json | python3 -m json.tool | tail -30"
+ssh jarvis@203.0.113.10 "cat ~/.nex-code/worker-activity.json | python3 -m json.tool | tail -30"
 
 # Worker state (daily commits, failures)
-ssh jarvis@94.130.37.43 "cat ~/.nex-code/worker-state.json"
+ssh jarvis@203.0.113.10 "cat ~/.nex-code/worker-state.json"
 
 # Commits on auto-improve (not yet in devel)
 git fetch origin && git log --oneline origin/devel..origin/auto-improve
@@ -346,18 +346,18 @@ cat ~/.nex-code/supervisor-log.json | python3 -m json.tool
 
 ### Worker not committing
 
-1. Check the log: `ssh jarvis@94.130.37.43 "tail -50 ~/.nex-code/worker.log"`
+1. Check the log: `ssh jarvis@203.0.113.10 "tail -50 ~/.nex-code/worker.log"`
 2. Common causes:
    - Tests failing → check `npx jest` on server
    - No improvements found → update config with specific priority_issues
    - Daily cap → wait for tomorrow
-   - Consecutive failures → reset: `ssh jarvis@94.130.37.43 "node -e \"const f='/home/jarvis/.nex-code/worker-state.json';const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.consecutiveFailures=0;require('fs').writeFileSync(f,JSON.stringify(s,null,2))\""`
+   - Consecutive failures → reset: `ssh jarvis@203.0.113.10 "node -e \"const f='/home/jarvis/.nex-code/worker-state.json';const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.consecutiveFailures=0;require('fs').writeFileSync(f,JSON.stringify(s,null,2))\""`
 
 ### Worker crashed
 
 ```bash
-ssh jarvis@94.130.37.43 "systemctl --user restart nex-worker"
-ssh jarvis@94.130.37.43 "journalctl --user -u nex-worker --since '1 hour ago'"
+ssh jarvis@203.0.113.10 "systemctl --user restart nex-worker"
+ssh jarvis@203.0.113.10 "journalctl --user -u nex-worker --since '1 hour ago'"
 ```
 
 ### Supervisor not running
@@ -378,23 +378,23 @@ node ~/Coding/nex-code/scripts/supervisor.js
 
 ```bash
 # Revert on server
-ssh jarvis@94.130.37.43 "cd ~/Coding/nex-code && git revert <hash> --no-edit && git push origin auto-improve"
+ssh jarvis@203.0.113.10 "cd ~/Coding/nex-code && git revert <hash> --no-edit && git push origin auto-improve"
 ```
 
 ### Update worker config manually
 
 ```bash
 # Edit on server directly
-ssh jarvis@94.130.37.43 "vi ~/.nex-code/improvement-config.json"
+ssh jarvis@203.0.113.10 "vi ~/.nex-code/improvement-config.json"
 
 # Or push from Mac
-scp ~/.nex-code/improvement-config.json jarvis@94.130.37.43:~/.nex-code/
+scp ~/.nex-code/improvement-config.json jarvis@203.0.113.10:~/.nex-code/
 ```
 
 ### Update nex-code on server
 
 ```bash
-ssh jarvis@94.130.37.43 "npm install -g nex-code && nex-code --version"
+ssh jarvis@203.0.113.10 "npm install -g nex-code && nex-code --version"
 ```
 
 ## How the Improvement Cycle Works
@@ -479,16 +479,16 @@ Two guards prevent silent failure modes where the agent does no real work but st
 | jarvis-agent | Node | 3 | Tool errors, routing, memory leaks |
 | nex-code | Node | 4 | Providers, autoFixPath, context |
 | biohonig | Django | 2 | Templates, SEO |
-| schoensgibl | Django | 2 | Responsive, forms |
+| django-site | Django | 2 | Responsive, forms |
 
 ### Monitoring Practice Results
 
 ```bash
 # Latest practice results
-ssh jarvis@94.130.37.43 "cat ~/.nex-code/practice-results.json | python3 -m json.tool | tail -40"
+ssh jarvis@203.0.113.10 "cat ~/.nex-code/practice-results.json | python3 -m json.tool | tail -40"
 
 # Practice scores summary
-ssh jarvis@94.130.37.43 "node -e \"
+ssh jarvis@203.0.113.10 "node -e \"
   const r = JSON.parse(require('fs').readFileSync('/home/jarvis/.nex-code/practice-results.json','utf8'));
   const last10 = r.slice(-10);
   last10.forEach(x => console.log(x.project.padEnd(15), x.score.total+'/'+x.score.max, x.score.grade, x.task.category));
@@ -497,7 +497,7 @@ ssh jarvis@94.130.37.43 "node -e \"
 \""
 
 # Available tasks
-ssh jarvis@94.130.37.43 "node ~/Coding/nex-code/scripts/practice-runner.js --list"
+ssh jarvis@203.0.113.10 "node ~/Coding/nex-code/scripts/practice-runner.js --list"
 ```
 
 ### Adding Custom Tasks
@@ -523,7 +523,7 @@ Also add the project to the `PROJECTS` registry in `scripts/practice-runner.js`.
 
 ## Dashboard
 
-**URL:** https://jarvis.schoensgibl.com/nex-improve/ (login required)
+**URL:** https://nex-improve.example.com/nex-improve/ (login required)
 
 Live web dashboard showing the full improvement pipeline status. Auto-refreshes every 60 seconds.
 
@@ -572,7 +572,7 @@ Live web dashboard showing the full improvement pipeline status. Auto-refreshes 
 
 ## Infrastructure Decision: Shared vs Dedicated Server
 
-**Current setup:** Everything runs on the existing AlmaLinux 9 server (94.130.37.43) alongside production apps.
+**Current setup:** Everything runs on the existing AlmaLinux 9 server (203.0.113.10) alongside production apps.
 
 **Server utilization (as of 2026-04-09):**
 - CPU: 8 cores i7-7700, load ~0.02 (idle)
