@@ -80,7 +80,7 @@ else
     TEST_CMD="npm test --silent"
     echo "[pre-push] Running full test suite..."
   else
-    SLOW_PATTERN="git\.test|ssh\.test|ssh-tools\.test|hooks\.test|hooks-pre-push\.test|tools\.test"
+    SLOW_PATTERN="git\.test|ssh\.test|ssh-tools\.test|hooks\.test|hooks-pre-push\.test|tools\.test|/desktop/"
     TEST_CMD="npm test --silent -- --testPathIgnorePatterns='${SLOW_PATTERN}'"
     echo "[pre-push] Running fast tests (slow integration tests run in CI)..."
   fi
