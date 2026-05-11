@@ -19,7 +19,7 @@ addresses, usernames, keys, and secrets.
 
 Production webhook services listen on dedicated localhost ports:
 
-- 9011: stadtkapelle webhook
+- 9011: project-gamma webhook
 - 9012: project-alpha webhook
 - 9013: nex-code webhook
 - 9014: cookbook webhook
