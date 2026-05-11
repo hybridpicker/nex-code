@@ -1,0 +1,743 @@
+{
+  "date": "2026-05-10T09:22:44.060Z",
+  "runId": "2026-05-10T09-17-56-862Z-116822-9eaa19",
+  "harnessVersion": "2026-04-15.1",
+  "model": "devstral-2:123b",
+  "finalScore": 72,
+  "categoryScores": {
+    "devops": 72
+  },
+  "categoryMetrics": {
+    "devops": {
+      "avgScore": 72,
+      "passRate": 25,
+      "timeoutRate": 0,
+      "avgToolCalls": 2
+    }
+  },
+  "metrics": {
+    "avgElapsed": 23907,
+    "avgToolCalls": 2,
+    "timeoutRate": 0,
+    "errorRate": 0,
+    "invalidHarnessRate": 0,
+    "statusCounts": {
+      "success": 12
+    },
+    "avgTokens": {
+      "input": 62275,
+      "output": 292
+    },
+    "totalToolCalls": 24
+  },
+  "totalTokens": {
+    "input": 747295,
+    "output": 3501
+  },
+  "totalElapsed": 287185,
+  "taskCount": 12,
+  "passing": 3,
+  "results": [
+    {
+      "id": "devops-nginx-reverse-proxy",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 90,
+      "elapsed": 20496,
+      "completionReason": "success",
+      "toolCalls": 4,
+      "tokens": {
+        "input": 66164,
+        "output": 381
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 344,
+        "toolStartCount": 4,
+        "hasDoneEvent": true,
+        "stdoutBytes": 12953,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 20496
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 100,
+        "qualitySignals": {
+          "verificationRan": true,
+          "verificationCommands": [],
+          "verificationReads": [
+            "nginx/cookbook.conf"
+          ],
+          "missingVerification": false,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": true,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404697370.json",
+            ".nex/history/1778404681122-cookbook-conf.json",
+            ".nex/sessions/_autosave.json",
+            "nginx/cookbook.conf"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-systemd-service",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 90,
+      "elapsed": 16394,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 39187,
+        "output": 208
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 199,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 7990,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 16394
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 100,
+        "qualitySignals": {
+          "verificationRan": true,
+          "verificationCommands": [],
+          "verificationReads": [
+            "deploy/cookbook.service"
+          ],
+          "missingVerification": false,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": true,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/history/1778404703257-cookbook-service.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json",
+            "deploy/cookbook.service"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-deploy-script",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 90,
+      "elapsed": 20867,
+      "completionReason": "success",
+      "toolCalls": 4,
+      "tokens": {
+        "input": 78776,
+        "output": 87
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 90,
+        "toolStartCount": 4,
+        "hasDoneEvent": true,
+        "stdoutBytes": 4243,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 20867
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 100,
+        "qualitySignals": {
+          "verificationRan": true,
+          "verificationCommands": [],
+          "verificationReads": [
+            "deploy.sh"
+          ],
+          "missingVerification": false,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": true,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404734684.json",
+            ".nex/history/1778404717593-deploy-sh.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json",
+            "deploy.sh"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-dockerfile",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 55,
+      "elapsed": 7031,
+      "completionReason": "success",
+      "toolCalls": 0,
+      "tokens": {
+        "input": 12995,
+        "output": 386
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 366,
+        "toolStartCount": 0,
+        "hasDoneEvent": true,
+        "stdoutBytes": 13458,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 7031
+      },
+      "details": {
+        "taskCompletion": 0,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 100,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": false,
+          "falseSuccessClaim": true,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-fix-express-500",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 22760,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 92245,
+        "output": 310
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 171,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 7357,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 22760
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "routes/users.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404764525.json",
+            ".nex/history/1778404747861-users-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-add-rate-limit",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 36184,
+      "completionReason": "success",
+      "toolCalls": 3,
+      "tokens": {
+        "input": 104872,
+        "output": 248
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 167,
+        "toolStartCount": 3,
+        "hasDoneEvent": true,
+        "stdoutBytes": 7867,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 36184
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "routes/contact.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404800737.json",
+            ".nex/history/1778404779142-contact-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-fix-jwt-auth",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 37018,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 91957,
+        "output": 227
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 138,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 6676,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 37018
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "middleware/auth.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404837779.json",
+            ".nex/history/1778404815084-auth-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-add-healthcheck",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 31529,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 91294,
+        "output": 152
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 95,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 4721,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 31529
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "server.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404869331.json",
+            ".nex/history/1778404847066-server-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-fix-async-handler",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 32051,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 91718,
+        "output": 257
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 174,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 6879,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 32051
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "routes/data.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404901407.json",
+            ".nex/history/1778404878676-data-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-fix-env-config",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 23941,
+      "completionReason": "success",
+      "toolCalls": 2,
+      "tokens": {
+        "input": 52289,
+        "output": 44
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 39,
+        "toolStartCount": 2,
+        "hasDoneEvent": true,
+        "stdoutBytes": 2791,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 23941
+      },
+      "details": {
+        "taskCompletion": 100,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            "config/index.js",
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/dream-logs/dream-1778404925373.json",
+            ".nex/history/1778404909333-index-js.json",
+            ".nex/index/content-index.json",
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-firewall-rules",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 70,
+      "elapsed": 17558,
+      "completionReason": "success",
+      "toolCalls": 1,
+      "tokens": {
+        "input": 12862,
+        "output": 40
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 31,
+        "toolStartCount": 1,
+        "hasDoneEvent": true,
+        "stdoutBytes": 3585,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 17558
+      },
+      "details": {
+        "taskCompletion": 80,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 100,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": true,
+          "falseSuccessClaim": false,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/audit/2026-05-10.jsonl",
+            ".nex/history/1778404942073-firewall-setup-sh.json",
+            ".nex/sessions/_autosave.json",
+            "firewall_setup.sh"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    },
+    {
+      "id": "devops-ssh-key-rotation",
+      "category": "devops",
+      "taskVersion": 1,
+      "determinism": "high",
+      "score": 45,
+      "elapsed": 21051,
+      "completionReason": "success",
+      "toolCalls": 0,
+      "tokens": {
+        "input": 12936,
+        "output": 1161
+      },
+      "telemetry": {
+        "valid": true,
+        "source": "json",
+        "reason": null
+      },
+      "harnessDiagnostics": {
+        "jsonEventCount": 1313,
+        "toolStartCount": 0,
+        "hasDoneEvent": true,
+        "stdoutBytes": 45702,
+        "stderrBytes": 0,
+        "exitCompletionReason": "success",
+        "measuredCompletionReason": "success",
+        "elapsed": 21051
+      },
+      "details": {
+        "taskCompletion": 0,
+        "editPrecision": 100,
+        "efficiency": 100,
+        "quality": 0,
+        "qualitySignals": {
+          "verificationRan": false,
+          "verificationCommands": [],
+          "verificationReads": [],
+          "missingVerification": false,
+          "falseSuccessClaim": true,
+          "weakVerificationOnly": false,
+          "toolOveruse": false,
+          "changedFiles": [
+            ".nex/sessions/_autosave.json"
+          ],
+          "unnecessaryFileEdits": [],
+          "contextSelection": {
+            "readProjectInstructions": false,
+            "readPackageConfig": false,
+            "inspectedGitState": false
+          },
+          "stderrBytes": 0
+        }
+      }
+    }
+  ]
+}

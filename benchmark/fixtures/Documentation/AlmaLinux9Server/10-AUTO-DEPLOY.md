@@ -18,7 +18,7 @@ The server reserves ports 9011-9023 for webhook listeners. Example mapping:
 - 9011: project A
 - 9017: practice wizard
 - 9018: chord library
-- 9023: cahill
+- 9023: project-beta
 
 ## Deployment Checklist
 
