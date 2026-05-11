@@ -17,7 +17,7 @@ firewall-cmd --list-all
 firewall-cmd --list-ports
 ss -tulpn
 systemctl status nginx
-journalctl -u webhook-practice-wizard
+journalctl -u webhook-webapp-kappa
 ```
 
 ## Rate Limiting Notes

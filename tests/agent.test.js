@@ -3239,7 +3239,7 @@ describe("agent.js", () => {
       mockStream("I will inspect the live app first");
 
       await processInput(
-        "Wenn ich bei /guitar-mentor Ideen loesche kommen sie immer wieder zurueck ins webui https://test.example.com/guitar-mentor/",
+        "Wenn ich bei /webapp-epsilon Ideen loesche kommen sie immer wieder zurueck ins webui https://test.example.com/webapp-epsilon/",
       );
 
       expect(executeTool).not.toHaveBeenCalled();
@@ -3248,7 +3248,7 @@ describe("agent.js", () => {
         (m) =>
           typeof m.content === "string" &&
           m.content.includes(
-            "Inspect https://test.example.com/guitar-mentor/ with browser_open first",
+            "Inspect https://test.example.com/webapp-epsilon/ with browser_open first",
           ),
       );
       expect(hasBlockMsg).toBe(true);
@@ -3318,7 +3318,7 @@ describe("agent.js", () => {
       // Auto-match should be logged in resume output (console.log)
       const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
       // The match fires when filename tokens overlap with task description tokens.
-      // "out1" doesn't overlap with "snakegame" — use a matching filename instead.
+      // "out1" doesn't overlap with "webapp-omicrongame" — use a matching filename instead.
       // This test verifies the registry is populated (no crash) and log is clean.
       expect(output).not.toMatch(/Error|TypeError/);
     });
@@ -3402,7 +3402,7 @@ describe("agent.js", () => {
         writeCall(3, "/project/style.css"),
       ]);
       executeTool.mockResolvedValue("written");
-      mockStream("Done, snake game created!");
+      mockStream("Done, webapp-omicron game created!");
 
       await processInput("Create a Snake game in plain JS");
 

@@ -19,7 +19,7 @@ Analyze this conversation history and extract actionable learnings the assistant
 Return ONLY valid JSON in this exact format:
 {
   "memories": [
-    { "key": "snake_case_key", "value": "concise actionable value" }
+    { "key": "webapp-omicron_case_key", "value": "concise actionable value" }
   ],
   "nex_additions": [
     "- Instruction line to add to project NEX.md"
@@ -35,7 +35,7 @@ Focus on extracting:
 
 Rules:
 - ONLY extract HIGH-CONFIDENCE learnings (user was explicit, not guessed)
-- key: snake_case, max 30 chars, unique and descriptive
+- key: webapp-omicron_case, max 30 chars, unique and descriptive
 - value: concise actionable instruction, max 120 chars
 - nex_additions: project-level instructions/conventions only (not personal preferences)
 - If nothing significant to learn, return {"memories": [], "nex_additions": [], "summary": "..."}

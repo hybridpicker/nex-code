@@ -20,7 +20,7 @@ const path = require("path");
 const { spawnSync, execSync } = require("child_process");
 
 // ── Paths ─────────────────────────────────────────────────────────────────
-const HOME = process.env.HOME || "/home/jarvis";
+const HOME = process.env.HOME || "/home/nex-worker";
 const NEX_DIR = path.join(HOME, "Coding/nex-code");
 const CONFIG_FILE = path.join(HOME, ".nex-code/improvement-config.json");
 const ACTIVITY_LOG = path.join(HOME, ".nex-code/worker-activity.json");

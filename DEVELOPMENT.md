@@ -122,7 +122,7 @@ Legacy `remember(key, value)` / `recall(key)` API remains for backward compatibi
 ---
 trigger:
   - drums
-  - sample-react-app
+  - webapp-lambda
   - beat sequencer
 ---
 

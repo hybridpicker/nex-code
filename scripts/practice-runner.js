@@ -23,7 +23,7 @@
  *
  * Usage:
  *   node scripts/practice-runner.js                    # run one random task
- *   node scripts/practice-runner.js --project sample-static-app  # specific project
+ *   node scripts/practice-runner.js --project webapp-nu  # specific project
  *   node scripts/practice-runner.js --list              # list available tasks
  */
 
@@ -34,7 +34,7 @@ const path = require("path");
 const { spawnSync, execSync } = require("child_process");
 
 // ── Config ────────────────────────────────────────────────────────────────
-const HOME = process.env.HOME || "/home/jarvis";
+const HOME = process.env.HOME || "/home/nex-worker";
 const PLAYGROUND_DIR = path.join(HOME, "playground");
 const RESULTS_FILE = path.join(HOME, ".nex-code/practice-results.json");
 const TASKS_FILE = path.join(__dirname, "practice-tasks.json");
@@ -57,15 +57,15 @@ const BLOCKED_PATTERNS = [
 // ── Project registry ──────────────────────────────────────────────────────
 // Maps project names to their git repo paths on the server
 const PROJECTS = {
-  "sample-static-app":      { path: path.join(HOME, "apps/sample-static-app"),         type: "node" },
+  "webapp-nu":      { path: path.join(HOME, "apps/webapp-nu"),         type: "node" },
   "games-project":  { path: path.join(HOME, "apps/games-project"),     type: "django" },
   "homemusic":      { path: path.join(HOME, "apps/homemusic"),         type: "django" },
   "chord-library":  { path: path.join(HOME, "apps/chord-library"),     type: "node" },
-  "cookbook":        { path: path.join(HOME, "apps/cookbook"),           type: "django" },
-  "vocabulary":     { path: path.join(HOME, "apps/vocabulary"),        type: "django" },
-  "biohonig":       { path: path.join(HOME, "apps/biohonig"),          type: "django" },
+  "webapp-alpha":        { path: path.join(HOME, "apps/webapp-alpha"),           type: "django" },
+  "webapp-gamma":     { path: path.join(HOME, "apps/webapp-gamma"),        type: "django" },
+  "webapp-beta":       { path: path.join(HOME, "apps/webapp-beta"),          type: "django" },
   "django-app":     { path: path.join(HOME, "apps/django-app/django-app"), type: "django" },
-  "remote-service":   { path: path.join(HOME, "remote-service"),           type: "node" },
+  "nex-worker-agent":   { path: path.join(HOME, "nex-worker-agent"),           type: "node" },
   "nex-code":       { path: path.join(HOME, "Coding/nex-code"),        type: "node" },
 };
 

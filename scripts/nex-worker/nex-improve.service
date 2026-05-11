@@ -1,0 +1,20 @@
+[Unit]
+Description=nex-code improvement loop
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nex-worker/nex-code
+ExecStart=/bin/bash /home/nex-worker/nex-code/scripts/improve-reallife-overnight.sh
+Environment=HOME=/home/nex-worker
+Environment=NODE_ENV=production
+Environment=NEX_SKIP_COMPACTOR=1
+Restart=no
+StandardOutput=append:/home/nex-worker/nex-code/scripts/benchmark-results/nex-worker-improve.log
+StandardError=append:/home/nex-worker/nex-code/scripts/benchmark-results/nex-worker-improve.log
+CPUQuota=80%
+MemoryMax=4G
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

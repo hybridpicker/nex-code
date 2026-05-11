@@ -42,9 +42,9 @@ describe("benchmark real-life task fixtures", () => {
   it("resolves committed repo fixtures without relying on the Coding fallback", () => {
     delete process.env.NEX_BENCHMARK_FIXTURES_DIR;
 
-    const resolved = resolveFixtureProjectRoot("practice-wizard");
+    const resolved = resolveFixtureProjectRoot("webapp-kappa");
 
-    expect(resolved).toContain(path.join("benchmark", "fixtures", "practice-wizard"));
+    expect(resolved).toContain(path.join("benchmark", "fixtures", "webapp-kappa"));
     expect(fs.existsSync(path.join(resolved, "DATABASE_README.md"))).toBe(true);
   });
 

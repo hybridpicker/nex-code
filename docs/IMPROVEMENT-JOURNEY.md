@@ -474,7 +474,7 @@ command itself matches a health/status/check/ping/validate pattern. Prevents
 false stops when `tail logs/api.log` returns app logs that happen to contain
 that JSON fragment.
 
-#### Server-local guard: German crash vocabulary
+#### Server-local guard: German crash webapp-gamma
 
 Extended `_isServerDebugging` regex to cover German crash terms (`gecrasht`,
 `abgestürzt`) and Swarm-agent crash patterns. Previously `"Swarm: 2 Agents
@@ -678,7 +678,7 @@ Additional details:
 
 #### `e7f13e2` — Flatrate mode no longer corrupts headless benchmark runs
 
-**Problem:** The external clawbook benchmark (15 Q&A coding tasks, scored by
+**Problem:** The external dev-machine benchmark (15 Q&A coding tasks, scored by
 claude-sonnet-4-6) produced an average of 5.67/10 despite the model giving
 technically correct answers. Almost every task was penalised for "irrelevant
 agentic tool-call output" — Glob, List, Write operations that had nothing to do
@@ -704,7 +704,7 @@ irrelevant context that ended up in the response text.
    automatically in yolo mode, loading a stale session without any user
    acknowledgement.
 
-3. **clawbook `run-benchmark.sh`** — Added `NEX_NO_FLATRATE=1` to the
+3. **dev-machine `run-benchmark.sh`** — Added `NEX_NO_FLATRATE=1` to the
    `nex-code` invocation so flatrate never activates for benchmark tasks
    regardless of which env vars are present in the cron environment.
 
