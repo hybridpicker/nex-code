@@ -957,6 +957,19 @@ class MockProvider extends BaseProvider {
 
   async chat(messages, _tools, _options = {}) {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
+    if (process.env.NEX_MOCK_WRITE_THEN_NULL === "1") {
+      if (hasToolResult(messages, "write-null-1")) return null;
+      return {
+        content: "Writing a file before simulating a missing final response.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            { path: "write-null.txt", content: "changed\n" },
+            "write-null-1",
+          ),
+        ],
+      };
+    }
     return buildDeterministicResponse(messages);
   }
 
@@ -964,7 +977,21 @@ class MockProvider extends BaseProvider {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
     const onToken =
       typeof options.onToken === "function" ? options.onToken : () => {};
-    const res = buildDeterministicResponse(messages);
+    const res = process.env.NEX_MOCK_WRITE_THEN_NULL === "1"
+      ? hasToolResult(messages, "write-null-1")
+        ? null
+        : {
+            content: "Writing a file before simulating a missing final response.",
+            tool_calls: [
+              toolCall(
+                "write_file",
+                { path: "write-null.txt", content: "changed\n" },
+                "write-null-1",
+              ),
+            ],
+          }
+      : buildDeterministicResponse(messages);
+    if (!res) return null;
 
     // Simulate streaming: emit content in a couple chunks for realism.
     const content = String(res.content || "");

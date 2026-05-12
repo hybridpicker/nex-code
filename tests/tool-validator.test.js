@@ -233,6 +233,14 @@ describe("validateToolArgs()", () => {
       expect(result.corrected.path).toBe("123");
     });
 
+    it("rejects object values when schema expects a string", () => {
+      const result = validateToolArgs("bash", {
+        command: { cmd: "npm run lint" },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Parameter "command" must be a string');
+    });
+
     it("converts string number to number when schema expects number", () => {
       const result = validateToolArgs("read_file", {
         path: "test.js",

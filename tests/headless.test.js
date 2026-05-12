@@ -1,4 +1,7 @@
 const { runCli } = require("./helpers/cli-harness");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 describe("headless mode (bin/nex-code.js)", () => {
   // ─── --version ──────────────────────────────────────────────
@@ -83,6 +86,39 @@ describe("headless mode (bin/nex-code.js)", () => {
       expect(last.type).toBe("error");
       expect(last.success).toBe(false);
       expect(last.error).toContain("without a final assistant response");
+    });
+
+    it("exits non-zero when writes occur without a final summary", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-"));
+      const r = runCli(
+        ["--auto", "--json", "--task", "Write a file and then stop."],
+        {
+          expectError: true,
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_WRITE_THEN_NULL: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      expect(fs.readFileSync(path.join(cwd, "write-null.txt"), "utf-8")).toBe(
+        "changed\n",
+      );
+      const lines = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const last = JSON.parse(lines[lines.length - 1]);
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toContain("modified files");
     });
   });
 });

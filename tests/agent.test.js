@@ -341,6 +341,14 @@ const {
   _isBoundedBacklogPlanningPrompt,
   _buildBoundedBacklogPlanInstruction,
   _looksLikeBoundedBacklogDecision,
+  _isToolResultError,
+  _pathMatchesScope,
+  _isDependencyMutationCommand,
+  _masksCommandFailure,
+  _scopeAllowsDependencyMutation,
+  _looksLikeCommentedOutCode,
+  _detectAddedCommentedOutCode,
+  _buildCommentedOutCodeNudge,
 } = require("../cli/agent");
 const {
   callStream,
@@ -1545,6 +1553,63 @@ describe("agent.js", () => {
 
   // ─── tool result detection ────────────────────────────────
   describe("tool result detection", () => {
+    it("treats non-zero bash exits as tool errors", () => {
+      expect(_isToolResultError("bash", "EXIT 1\nlint failed")).toBe(true);
+      expect(_isToolResultError("bash", "EXIT 127\nnot found")).toBe(true);
+      expect(_isToolResultError("bash", "ok")).toBe(false);
+    });
+
+    it("detects scoped dependency mutations", () => {
+      const sourceScope = "src/components/GameControls.jsx,src/utils/sound.js";
+      expect(_isDependencyMutationCommand("npm install")).toBe(true);
+      expect(_isDependencyMutationCommand("npm i baseline-browser-mapping@latest -D")).toBe(true);
+      expect(_scopeAllowsDependencyMutation(sourceScope)).toBe(false);
+      expect(_scopeAllowsDependencyMutation("package.json,package-lock.json")).toBe(true);
+      expect(_pathMatchesScope("src/utils/sound.js", sourceScope)).toBe(true);
+    });
+
+    it("detects commands that mask verification failures", () => {
+      expect(_masksCommandFailure("npm run lint || true")).toBe(true);
+      expect(_masksCommandFailure("npm test || exit 0")).toBe(true);
+      expect(_masksCommandFailure("set +e; npm run lint")).toBe(true);
+      expect(_masksCommandFailure("npm run lint")).toBe(false);
+    });
+
+    it("detects newly added commented-out code in source diffs", () => {
+      const diff = [
+        "diff --git a/src/utils/sound.js b/src/utils/sound.js",
+        "--- a/src/utils/sound.js",
+        "+++ b/src/utils/sound.js",
+        "@@ -10,0 +11,3 @@",
+        "+// const unusedAudio = new Audio('/click.mp3');",
+        "+// Explains why sound is optional in tests.",
+        "+const enabled = true;",
+      ].join("\n");
+
+      expect(_looksLikeCommentedOutCode("// const stale = 1;")).toBe(true);
+      expect(_looksLikeCommentedOutCode("// Explains behavior.")).toBe(false);
+      expect(_detectAddedCommentedOutCode(diff)).toEqual([
+        {
+          path: "src/utils/sound.js",
+          line: 11,
+          text: "// const unusedAudio = new Audio('/click.mp3');",
+        },
+      ]);
+    });
+
+    it("builds a guard nudge for commented-out code findings", () => {
+      const message = _buildCommentedOutCodeNudge([
+        {
+          path: "src/utils/sound.js",
+          line: 42,
+          text: "// return false;",
+        },
+      ]);
+      expect(message).toContain("SYSTEM QUALITY GUARD");
+      expect(message).toContain("src/utils/sound.js:42");
+      expect(message).toContain("Remove dead/commented-out code");
+    });
+
     it("ERROR result detected in summary", async () => {
       mockStream("", [
         {
@@ -2806,6 +2871,7 @@ describe("agent.js", () => {
       expect(staticPart).toContain("# Core Behavior");
       expect(staticPart).toContain("# Tool Strategy");
       expect(staticPart).toContain("# Edit Protocol");
+      expect(staticPart).toContain("Do not leave commented-out code");
     });
 
     it("dynamic part contains session-specific content", async () => {

@@ -1186,22 +1186,7 @@ async function prepareToolCall(tc) {
   if (_writeTools.has(fnName) && process.env.NEX_SCOPE) {
     const filePath = finalArgs.path || finalArgs.file_path || "";
     if (filePath) {
-      const scopePatterns = process.env.NEX_SCOPE.split(",").map((s) => s.trim());
-      const normalizedPath = filePath.replace(/\\/g, "/");
-      const inScope = scopePatterns.some((pattern) => {
-        // Simple glob: * matches any characters, ** matches across directories
-        const regex = new RegExp(
-          "^" +
-            pattern
-              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-              .replace(/\*\*/g, "___DOUBLESTAR___")
-              .replace(/\*/g, "[^/]*")
-              .replace(/___DOUBLESTAR___/g, ".*") +
-            "$",
-        );
-        return regex.test(normalizedPath) || normalizedPath.endsWith(pattern) || normalizedPath === pattern;
-      });
-      if (!inScope) {
+      if (!_pathMatchesScope(filePath)) {
         debugLog(
           `${C.yellow}  ✗ ${fnName}: ${filePath} outside scope (--scope ${process.env.NEX_SCOPE})${C.reset}`,
         );
@@ -1221,6 +1206,46 @@ async function prepareToolCall(tc) {
         };
       }
     }
+  }
+  if (
+    fnName === "bash" &&
+    process.env.NEX_SCOPE &&
+    _isDependencyMutationCommand(finalArgs.command) &&
+    !_scopeAllowsDependencyMutation()
+  ) {
+    debugLog(
+      `${C.yellow}  ✗ bash: dependency mutation outside scope (--scope ${process.env.NEX_SCOPE})${C.reset}`,
+    );
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `SCOPE BLOCKED: dependency install/update commands can modify package manifests or lockfiles, ` +
+          `which are outside the allowed scope: ${process.env.NEX_SCOPE}. ` +
+          `Do not install or update dependencies for warning cleanup. Fix the scoped source files or ask for a wider scope.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+  if (fnName === "bash" && _masksCommandFailure(finalArgs.command)) {
+    debugLog(`${C.yellow}  ✗ bash: command masks failures${C.reset}`);
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `BLOCKED: '${finalArgs.command}' masks command failures. ` +
+          `Run verification commands without '|| true', 'exit 0', or 'set +e' so failures remain visible and actionable.`,
+        tool_call_id: callId,
+      },
+    };
   }
 
   // Permission check
@@ -1289,6 +1314,175 @@ async function executeToolRouted(fnName, args, options = {}) {
   const mcpResult = await routeMCPCall(fnName, args);
   if (mcpResult !== null) return mcpResult;
   return executeTool(fnName, args, options);
+}
+
+function _isToolResultError(fnName, content) {
+  const firstLine = String(content || "").split("\n")[0];
+  return (
+    firstLine.startsWith("ERROR") ||
+    firstLine.includes("CANCELLED") ||
+    firstLine.includes("BLOCKED") ||
+    (fnName === "bash" && /^EXIT\s+(?!0\b)/.test(firstLine)) ||
+    (fnName === "spawn_agents" &&
+      !/✓ Agent/.test(content) &&
+      /✗ Agent/.test(content))
+  );
+}
+
+function _pathMatchesScope(filePath, scopeValue = process.env.NEX_SCOPE || "") {
+  if (!filePath || !scopeValue) return false;
+  const scopePatterns = scopeValue.split(",").map((s) => s.trim()).filter(Boolean);
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  return scopePatterns.some((pattern) => {
+    const regex = new RegExp(
+      "^" +
+        pattern
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*\*/g, "___DOUBLESTAR___")
+          .replace(/\*/g, "[^/]*")
+          .replace(/___DOUBLESTAR___/g, ".*") +
+        "$",
+    );
+    return (
+      regex.test(normalizedPath) ||
+      normalizedPath.endsWith(pattern) ||
+      normalizedPath === pattern
+    );
+  });
+}
+
+function _isDependencyMutationCommand(command) {
+  return /\b(?:npm\s+(?:install|i|add|update|dedupe)|yarn\s+(?:add|install|upgrade)|pnpm\s+(?:add|install|update)|bun\s+(?:add|install)|pip3?\s+install)\b/i.test(
+    String(command || ""),
+  );
+}
+
+function _masksCommandFailure(command) {
+  return /(?:\|\|\s*(?:true|:|exit\s+0)\b|;\s*true\s*$|;\s*exit\s+0\s*$|\bset\s+\+e\b)/.test(
+    String(command || ""),
+  );
+}
+
+function _scopeAllowsDependencyMutation(scopeValue = process.env.NEX_SCOPE || "") {
+  return [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "requirements.txt",
+    "pyproject.toml",
+    "poetry.lock",
+  ].some((file) => _pathMatchesScope(file, scopeValue));
+}
+
+function _isSourceLikePath(filePath) {
+  return /\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp|css|scss|sass)$/i.test(
+    String(filePath || ""),
+  );
+}
+
+function _looksLikeCommentedOutCode(line) {
+  const raw = String(line || "").trim();
+  if (!raw) return false;
+
+  let body = "";
+  if (/^\/\//.test(raw)) body = raw.replace(/^\/\/+/, "").trim();
+  else if (/^#/.test(raw)) body = raw.replace(/^#+/, "").trim();
+  else if (/^\/\*/.test(raw)) body = raw.replace(/^\/\*+/, "").replace(/\*\/$/, "").trim();
+  else if (/^\*/.test(raw)) body = raw.replace(/^\*+/, "").replace(/\*\/$/, "").trim();
+  else return false;
+
+  if (!body) return false;
+  if (/^(todo|fixme|note|eslint-|stylelint-|ts-ignore|ts-expect-error|@|copyright|license)\b/i.test(body)) {
+    return false;
+  }
+
+  return (
+    /^(?:const|let|var|function|class|import|export|return|if|else|for|while|switch|case|try|catch|finally|await|async|def|from|print|console\.|describe\(|it\(|test\(|expect\(|module\.exports|public|private|protected)\b/.test(
+      body,
+    ) ||
+    /^<\/?[A-Za-z][\w:-]*(?:\s|>|\/>)/.test(body) ||
+    /(?:=>|[{};=]|\w+\s*\([^)]*\)\s*(?:\{|;)?$)/.test(body)
+  );
+}
+
+function _detectAddedCommentedOutCode(diffText, fallbackPath = "") {
+  const findings = [];
+  let currentPath = fallbackPath || "";
+  let nextLine = null;
+
+  for (const line of String(diffText || "").split(/\r?\n/)) {
+    const fileMatch = line.match(/^\+\+\+\s+b\/(.+)$/);
+    if (fileMatch) {
+      currentPath = fileMatch[1];
+      nextLine = null;
+      continue;
+    }
+
+    const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunkMatch) {
+      nextLine = Number(hunkMatch[1]);
+      continue;
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      const added = line.slice(1);
+      if (_isSourceLikePath(currentPath) && _looksLikeCommentedOutCode(added)) {
+        findings.push({
+          path: currentPath || fallbackPath,
+          line: Number.isFinite(nextLine) ? nextLine : null,
+          text: added.trim(),
+        });
+      }
+      if (nextLine !== null) nextLine++;
+      continue;
+    }
+
+    if (!line.startsWith("-") && nextLine !== null) nextLine++;
+  }
+
+  return findings;
+}
+
+function _getAddedCommentedOutCodeFindings(filePath) {
+  if (!_isSourceLikePath(filePath)) return [];
+  try {
+    const { execFileSync } = require("child_process");
+    const insideWorkTree = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 32,
+    }).trim();
+    if (insideWorkTree !== "true") return [];
+
+    const diff = execFileSync("git", ["diff", "--unified=0", "--", filePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 1024,
+    });
+    return _detectAddedCommentedOutCode(diff, filePath);
+  } catch {
+    return [];
+  }
+}
+
+function _buildCommentedOutCodeNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path}${f.line ? `:${f.line}` : ""} -> ${f.text}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit added commented-out code that looks like disabled source.\n" +
+    `${shown}\n` +
+    "Remove dead/commented-out code instead of silencing lint or type errors. Make a targeted edit now, then rerun the relevant verification command before finalizing."
+  );
 }
 
 /**
@@ -1387,14 +1581,7 @@ async function executeSingleTool(prep, quiet = false) {
         `\n...(truncated ${safeResult.length - 50000} chars)`
       : safeResult;
 
-  const firstLine = truncated.split("\n")[0];
-  const isError =
-    firstLine.startsWith("ERROR") ||
-    firstLine.includes("CANCELLED") ||
-    firstLine.includes("BLOCKED") ||
-    (prep.fnName === "spawn_agents" &&
-      !/✓ Agent/.test(truncated) &&
-      /✗ Agent/.test(truncated));
+  const isError = _isToolResultError(prep.fnName, truncated);
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
 
   if (!quiet) {
@@ -1429,6 +1616,9 @@ async function executeSingleTool(prep, quiet = false) {
   // the LLM sees the correction in its very next context window and can course-
   // correct for subsequent steps. We never block these — just nudge.
   let finalContent = compressedContent;
+  if (isError && prep.fnName === "bash" && /^EXIT\s+(?!0\b)/.test(compressedContent)) {
+    finalContent = `ERROR: bash command failed.\n${compressedContent}`;
+  }
   if (prep.fnName === "bash" && prep.args?.command) {
     const cmd = prep.args.command.trim();
     const isWrite = /cat\s*>|<</.test(cmd);
@@ -1696,6 +1886,7 @@ let _gitPushDetected = false; // true once a successful git push is detected in 
 let _gitPushRaw = ""; // last seen git push output (for summary honesty)
 let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
 let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --branch"
+const _commentedOutCodeNudges = new Set(); // path:line:text keys already nudged this session
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -3029,6 +3220,7 @@ async function _transitionPhase(
   _sessionRangeBlockCounts.clear();
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
+  _commentedOutCodeNudges.clear();
 
   // Extract structured TODOs from plan findings + files already read.
   if (targetPhase === "implement") {
@@ -4158,6 +4350,7 @@ After frontend_recon returns:
   - Don't add features, refactoring, or "improvements" beyond what was asked.
   - Don't add error handling for impossible scenarios. Only validate at system boundaries.
   - Don't add docstrings/comments to code you didn't change.
+  - Do not leave commented-out code to silence lint or type errors. Delete unused code instead.
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
 - MANDATORY FINAL RESPONSE: When your task is complete, you MUST write at least 2 sentences summarizing (1) what you changed, (2) why you changed it, and (3) what the expected impact is. Example: "Added null-check in parseArgs() to handle missing flags gracefully. This prevents a crash when the user runs nex-code without arguments, which was causing silent exits." NEVER end with just "Done", "Done.", "Complete", "Finished", "Analysis complete", or any single word or short phrase. A bare one-liner is a quality failure — always write a substantive closing paragraph.
@@ -4504,6 +4697,7 @@ function _resetSessionTracking() {
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
   _sessionDupeToolCounts.clear();
+  _commentedOutCodeNudges.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _planRejectionCount = 0;
@@ -10042,6 +10236,25 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _postEditVerifyNudges = 0;
               _needsPostEditVerifyPrompt = true;
             }
+            const commentedOutFindings = _getAddedCommentedOutCodeFindings(
+              prep.args.path,
+            ).filter((finding) => {
+              const key = `${finding.path}:${finding.line || ""}:${finding.text}`;
+              if (_commentedOutCodeNudges.has(key)) return false;
+              _commentedOutCodeNudges.add(key);
+              return true;
+            });
+            if (commentedOutFindings.length > 0) {
+              const qualityMsg = {
+                role: "user",
+                content: _buildCommentedOutCodeNudge(commentedOutFindings),
+              };
+              conversationMessages.push(qualityMsg);
+              apiMessages.push(qualityMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Diff quality guard: commented-out code detected in ${prep.args.path}${C.reset}`,
+              );
+            }
           }
         }
         // ─── Investigation cap: force implementation after too many read-only calls ───
@@ -11797,6 +12010,15 @@ module.exports = {
   _buildBoundedBacklogPlanInstruction,
   _looksLikeBoundedBacklogDecision,
   _looksLikeGatedAutomationFinalSummary,
+  _isToolResultError,
+  _pathMatchesScope,
+  _isDependencyMutationCommand,
+  _masksCommandFailure,
+  _scopeAllowsDependencyMutation,
+  _isSourceLikePath,
+  _looksLikeCommentedOutCode,
+  _detectAddedCommentedOutCode,
+  _buildCommentedOutCodeNudge,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

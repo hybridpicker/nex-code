@@ -337,6 +337,15 @@ function getAssistantText(content) {
     .join("\n");
 }
 
+function hasAssistantToolCalls(message) {
+  if (!message || message.role !== "assistant") return false;
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    return true;
+  }
+  return Array.isArray(message.content) &&
+    message.content.some((block) => block && block.type === "tool_use");
+}
+
 function cleanToolSummary(summary) {
   const lines = stripAnsi(summary || "")
     .split("\n")
@@ -364,9 +373,30 @@ function countToolCalls(messages) {
   }, 0);
 }
 
+function countWriteToolCalls(messages) {
+  if (!Array.isArray(messages)) return 0;
+  const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+  return messages.reduce((total, msg) => {
+    if (!msg || msg.role !== "assistant") return total;
+    const toolCalls =
+      msg.tool_calls ||
+      (Array.isArray(msg.content)
+        ? msg.content.filter((block) => block && block.type === "tool_use")
+        : []);
+    return (
+      total +
+      toolCalls.filter((tc) => {
+        const name = tc?.function?.name || tc?.name || "";
+        return writeTools.has(name);
+      }).length
+    );
+  }, 0);
+}
+
 function createJsonModeHooks() {
   process.env.NEX_SERVER = "1";
   let streamedText = "";
+  const pendingTools = [];
 
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalConsole = {
@@ -403,6 +433,7 @@ function createJsonModeHooks() {
         emitJsonLine({ type: "thinking" }, originalStdoutWrite);
       },
       onToolStart(toolName, args) {
+        pendingTools.push({ tool: toolName, args: args || {} });
         emitJsonLine({
           type: "tool_start",
           tool: toolName,
@@ -410,6 +441,10 @@ function createJsonModeHooks() {
         }, originalStdoutWrite);
       },
       onToolEnd(toolName, summary, ok) {
+        const idx = pendingTools
+          .map((entry) => entry.tool)
+          .lastIndexOf(toolName);
+        if (idx !== -1) pendingTools.splice(idx, 1);
         emitJsonLine({
           type: "tool_end",
           tool: toolName,
@@ -420,6 +455,9 @@ function createJsonModeHooks() {
     },
     getStreamedText() {
       return streamedText;
+    },
+    getPendingTools() {
+      return pendingTools.slice();
     },
     restore() {
       process.stdout.write = passthroughStdout;
@@ -543,14 +581,49 @@ async function runHeadlessTask(task) {
   function finishSuccess(getMessages) {
     const { sanitizeFinalAnswer } = require("../cli/format");
     const msgs = getMessages();
+    const pendingTools = jsonModeState?.getPendingTools?.() || [];
+    if (pendingTools.length > 0) {
+      const names = pendingTools.map((entry) => entry.tool).join(", ");
+      const errorMessage =
+        `Headless run ended with unfinished tool call(s): ${names}. ` +
+        "Stopping to avoid a false success.";
+
+      if (!jsonModeState) {
+        if (plainModeState) plainModeState.restore();
+        console.error(errorMessage);
+        process.exit(1);
+        return;
+      }
+
+      const { getSessionCosts } = require("../cli/costs");
+      const costs = getSessionCosts();
+      jsonModeState.restore();
+      emitJsonLine({
+        type: "error",
+        success: false,
+        error: errorMessage,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(1);
+      return;
+    }
+
     // Walk backwards through assistant messages to find one with text content.
     // When the model makes edits and verifies but its last turn produces only
     // tool calls (read-back, lint), the headless runner would previously fail
     // with "no final assistant response" even though the task was completed.
     let response = "";
+    let hasTerminalAssistantMessage = false;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.role === "assistant") {
+        if (hasAssistantToolCalls(m)) continue;
+        hasTerminalAssistantMessage = true;
         const text = sanitizeFinalAnswer(getAssistantText(m.content));
         if (text && text.trim().length > 0) {
           response = text;
@@ -564,50 +637,17 @@ async function runHeadlessTask(task) {
     const finalResponse =
       typeof response === "string" && response.trim().length > 0
         ? response
-        : streamedResponse;
+        : hasTerminalAssistantMessage
+          ? streamedResponse
+          : "";
     const hasFinalResponse =
       typeof finalResponse === "string" && finalResponse.trim().length > 0;
 
     if (!hasFinalResponse) {
-      // Check if any write/edit tool calls were made — indicates the task was
-      // actively worked on, even though the model produced no final summary.
-      const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
-      let hadWrites = false;
-      for (const m of msgs) {
-        if (m.role !== "assistant") continue;
-        const tcs = m.tool_calls || (Array.isArray(m.content) ? m.content.filter(b => b && b.type === "tool_use") : []);
-        for (const tc of tcs) {
-          const name = tc.function?.name || tc.name || "";
-          if (writeTools.has(name)) { hadWrites = true; break; }
-        }
-        if (hadWrites) break;
-      }
-
-      if (hadWrites) {
-        const warnMsg = "Headless run: files were modified but no final summary was produced. Exiting cleanly (writes detected).";
-        if (!jsonModeState) {
-          if (plainModeState) plainModeState.restore();
-          console.error(warnMsg);
-          process.exit(0);
-          return;
-        }
-        const { getSessionCosts } = require("../cli/costs");
-        const costs = getSessionCosts();
-        jsonModeState.restore();
-        emitJsonLine({
-          type: "result",
-          success: true,
-          warning: warnMsg,
-          response: "(files modified, no text summary)",
-          usage: { input: costs.totalInput || 0, output: costs.totalOutput || 0, cacheRead: costs.totalCacheRead || 0 },
-          toolCalls: countToolCalls(msgs),
-        });
-        process.exit(0);
-        return;
-      }
-
-      const errorMessage =
-        "Headless run ended without a final assistant response. Stopping to avoid a false success.";
+      const writeCount = countWriteToolCalls(msgs);
+      const errorMessage = writeCount > 0
+        ? "Headless run modified files but ended without a final assistant response. Stopping to avoid a false success."
+        : "Headless run ended without a final assistant response. Stopping to avoid a false success.";
 
       if (!jsonModeState) {
         if (plainModeState) plainModeState.restore();
