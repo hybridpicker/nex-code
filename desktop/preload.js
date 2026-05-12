@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("nexAPI", {
   sendCancel: () => ipcRenderer.send("nex:cancel"),
   sendClear: () => ipcRenderer.send("nex:clear"),
   openProject: () => ipcRenderer.invoke("nex:open-project"),
+  openProjectPath: (projectPath) => ipcRenderer.invoke("nex:open-project-path", projectPath),
   openExternal: (url) => ipcRenderer.send("nex:open-external", url),
   minimizeWindow: function () { ipcRenderer.send("nex:window-minimize"); },
   maximizeWindow: function () { ipcRenderer.send("nex:window-maximize"); },

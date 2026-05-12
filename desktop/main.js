@@ -18,6 +18,9 @@ let serverProcess = null;
 let serverReady = false;
 let projectName = null;
 let projectBranch = null;
+let projectPath = null;
+let projectIsGit = false;
+let projectIsDeployable = false;
 
 function getNexCliPath() {
   if (app.isPackaged) return path.join(process.resourcesPath, "nex-code-cli", "nex-code.js");
@@ -118,20 +121,50 @@ async function openDialog() {
 }
 
 function openProject(dirPath) {
+  projectPath = dirPath;
   projectName = path.basename(dirPath);
   projectBranch = null;
+  projectIsGit = false;
+  projectIsDeployable = false;
   try {
     var hp = path.join(dirPath, ".git", "HEAD");
-    if (fs.existsSync(hp)) projectBranch = fs.readFileSync(hp, "utf-8").trim().replace("ref: refs/heads/", "");
+    if (fs.existsSync(hp)) {
+      projectIsGit = true;
+      projectBranch = fs.readFileSync(hp, "utf-8").trim().replace("ref: refs/heads/", "");
+    }
+  } catch (e) {}
+  try {
+    projectIsDeployable = fs.existsSync(path.join(dirPath, ".nex", "deploy.json"));
   } catch (e) {}
   spawnServer(dirPath);
-  send("nex:project-opened", { project: projectName, branch: projectBranch || "unknown", path: dirPath });
+  send("nex:project-opened", {
+    project: projectName,
+    branch: projectBranch || "unknown",
+    path: dirPath,
+    isGitRepository: projectIsGit,
+    isDeployable: projectIsDeployable,
+  });
 }
 
 ipcMain.handle("nex:get-state", function () {
-  return { project: projectName, branch: projectBranch, serverReady: serverReady };
+  return {
+    project: projectName,
+    branch: projectBranch,
+    path: projectPath,
+    serverReady: serverReady,
+    isGitRepository: projectIsGit,
+    isDeployable: projectIsDeployable,
+  };
 });
 ipcMain.handle("nex:open-project", async function () { await openDialog(); return null; });
+ipcMain.handle("nex:open-project-path", async function (_e, dirPath) {
+  if (!dirPath || !fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+    send("nex:server-error", { message: "Recent project path is not available." });
+    return null;
+  }
+  openProject(dirPath);
+  return null;
+});
 ipcMain.on("nex:command", function (_e, cmd) { sendToServer({ type: "chat", id: "c-" + Date.now(), text: cmd.trim() }); });
 ipcMain.on("nex:confirm-answer", function (_e, d) { sendToServer({ type: "confirm", id: d.id, answer: d.answer }); });
 ipcMain.on("nex:cancel", function () { sendToServer({ type: "cancel" }); });

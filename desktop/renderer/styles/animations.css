@@ -1,192 +1,24 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   animations.css — Cyber-Obsidian Motion Design (Refined)
-   Cinematic volumetric glow · Chip border sweep · Swiss-watch gauge fill
+   animations.css — nex-code Dashboard Animations
+   Minimal, functional — no decorative glow effects
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ─── Keyframe Animations ─────────────────────────────────────────────────── */
-
-/* Heartbeat line pulse — refined timing */
-@keyframes heartbeat-pulse {
-  0%, 100% { opacity: 0.7; }
-  8%  { opacity: 1; }
-  16% { opacity: 0.7; }
-  24% { opacity: 1; filter: drop-shadow(0 0 8px rgba(57, 255, 20, 0.7)); }
-  32% { opacity: 0.7; }
-  50% { opacity: 0.7; }
-  58% { opacity: 1; filter: drop-shadow(0 0 8px rgba(57, 255, 20, 0.7)); }
-  66% { opacity: 0.7; }
-  100% { opacity: 0.7; }
-}
-
-/* Badge pulse for active tasks */
-@keyframes badge-pulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-
-/* Welcome logo — cinematic pulse */
-@keyframes logo-pulse {
-  0%, 100% { filter: drop-shadow(0 0 20px rgba(57, 255, 20, 0.25)); }
-  50% { filter: drop-shadow(0 0 44px rgba(57, 255, 20, 0.45)); }
-}
-
-/* Timeline node entry */
-@keyframes node-enter {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Success banner entry — cinematic reveal */
-@keyframes banner-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.94);
-    filter: blur(6px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-    filter: blur(0);
-  }
-}
-
-/* Fade in */
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Slide in from right */
-@keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
 
-/* Glow pulse for active elements */
-@keyframes glow-pulse {
-  0%, 100% {
-    box-shadow: 0 0 6px rgba(57, 255, 20, 0.06);
-  }
-  50% {
-    box-shadow: 0 0 18px rgba(57, 255, 20, 0.25), 0 0 36px rgba(57, 255, 20, 0.08);
-  }
-}
-
-/* Border glow sweep — cyan-emerald cycle */
-@keyframes border-sweep {
-  0% { border-color: rgba(57, 255, 20, 0.08); }
-  25% { border-color: rgba(0, 255, 255, 0.18); }
-  50% { border-color: rgba(57, 255, 20, 0.25); }
-  75% { border-color: rgba(0, 255, 255, 0.18); }
-  100% { border-color: rgba(57, 255, 20, 0.08); }
-}
-
-/* Chip neon glow sweep — emerald pulse on hover */
-@keyframes chip-glow-sweep {
-  0% {
-    border-color: rgba(57, 255, 20, 0.20);
-    box-shadow: 0 0 8px rgba(57, 255, 20, 0.06);
-  }
-  50% {
-    border-color: rgba(57, 255, 20, 0.50);
-    box-shadow: 0 0 18px rgba(57, 255, 20, 0.18);
-  }
-  100% {
-    border-color: rgba(57, 255, 20, 0.20);
-    box-shadow: 0 0 8px rgba(57, 255, 20, 0.06);
-  }
-}
-
-/* Typing cursor blink */
-@keyframes cursor-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* Progress bar shimmer — refined gradient */
 @keyframes shimmer {
-  0% { background-position: -240px 0; }
-  100% { background-position: calc(240px + 100%) 0; }
+  0%   { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
 }
 
-/* Gauge fill animation — Swiss-watch precision */
-@keyframes gauge-fill {
-  from {
-    stroke-dashoffset: 326.7;
-  }
-  to {
-    stroke-dashoffset: var(--gauge-target);
-  }
-}
-
-/* Subtle breathing glow for timeline nodes */
-@keyframes node-glow-breathe {
-  0%, 100% { box-shadow: 0 0 10px rgba(57, 255, 20, 0.08); }
-  50% { box-shadow: 0 0 22px rgba(57, 255, 20, 0.20); }
-}
-
-/* ─── Animation Utility Classes ───────────────────────────────────────────── */
-
-.animate-fade-in {
-  animation: fade-in 0.35s ease-out;
-}
-
-.animate-slide-in {
-  animation: slide-in-right 0.35s ease-out;
-}
-
-.animate-glow-pulse {
-  animation: glow-pulse 2.5s ease-in-out infinite;
-}
-
-.animate-border-sweep {
-  animation: border-sweep 3.5s ease-in-out infinite;
-}
-
-.animate-chip-glow {
-  animation: chip-glow-sweep 2s ease-in-out infinite;
-}
-
-.animate-node-enter {
-  animation: node-enter 0.5s ease-out both;
-}
-
-/* Stagger delays for multiple nodes */
-.animate-node-enter:nth-child(1) { animation-delay: 0s; }
-.animate-node-enter:nth-child(2) { animation-delay: 0.15s; }
-.animate-node-enter:nth-child(3) { animation-delay: 0.3s; }
-.animate-node-enter:nth-child(4) { animation-delay: 0.45s; }
-.animate-node-enter:nth-child(5) { animation-delay: 0.6s; }
-
-/* ─── Shimmer effect for progress bars ────────────────────────────────────── */
-
-.shimmer-bar {
-  background: linear-gradient(
-    90deg,
-    var(--accent-emerald) 0%,
-    rgba(57, 255, 20, 0.55) 40%,
-    var(--accent-emerald) 60%,
-    rgba(57, 255, 20, 0.55) 80%,
-    var(--accent-emerald) 100%
-  );
-  background-size: 240px 100%;
-  animation: shimmer 2s linear infinite;
-}
-
-/* ─── Page Transition ─────────────────────────────────────────────────────── */
-
+/* App shell entry */
 .app-shell {
-  animation: fade-in 0.45s ease-out;
+  animation: fade-in 0.3s ease-out;
 }

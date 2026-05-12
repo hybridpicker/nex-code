@@ -1,5 +1,7 @@
 /**
- * desktop/renderer/js/components/topbar.js — Top Navigation Bar (Restored)
+ * desktop/renderer/js/components/topbar.js — Top Navigation Bar
+ *
+ * Displays: nex-code brand → Active Project context → Model Router → Session indicator
  */
 
 "use strict";
@@ -7,60 +9,130 @@
 function initTopBarComponents(data) {
   if (!data) return;
 
+  // Project name
   const projectEl = document.getElementById("tb-project");
-  if (projectEl && data.project) projectEl.textContent = data.project;
+  if (projectEl) projectEl.textContent = data.project || "No project open";
 
+  // Branch
   const branchEl = document.getElementById("tb-branch");
-  if (branchEl && data.branch) branchEl.textContent = data.branch;
+  if (branchEl) branchEl.textContent = data.branch || "—";
 
-  const modelValueEl = document.getElementById("model-val");
-  if (modelValueEl && data.model) modelValueEl.textContent = data.model;
+  // Keep project context visible so the no-project state is explicit.
+  const contextEl = document.getElementById("topbar-context");
+  if (contextEl) contextEl.style.visibility = "visible";
 
-  const healthTextEl = document.getElementById("health-text");
-  if (healthTextEl && data.sessionHealth) healthTextEl.textContent = `Session Health: ${data.sessionHealth}`;
+  // Model value
+  const modelVal = document.getElementById("model-val");
+  if (modelVal && data.model) modelVal.textContent = data.model;
 
-  const budgetValueEl = document.getElementById("budget-val");
-  const budgetBarFillEl = document.getElementById("budget-fill");
-  if (budgetValueEl && data.budget) {
-    budgetValueEl.textContent = `$${data.budget.used.toFixed(2)} / $${data.budget.limit.toFixed(2)}`;
-    const pct = (data.budget.used / data.budget.limit) * 100;
-    if (budgetBarFillEl) budgetBarFillEl.style.width = `${Math.min(pct, 100)}%`;
+  // Session dot
+  const dot = document.getElementById("session-dot");
+  const label = document.getElementById("session-label");
+  if (dot && label) {
+    dot.className = "session-dot";
+    switch (data.sessionState) {
+      case "running":
+        dot.classList.add("active");
+        label.textContent = "Active";
+        break;
+      case "complete":
+        label.textContent = "Complete";
+        break;
+      case "error":
+        dot.classList.add("error");
+        label.textContent = "Error";
+        break;
+      default:
+        dot.classList.add("idle");
+        label.textContent = "Idle";
+    }
   }
 
-  const modelRouter = document.getElementById("model-rtr");
+  // Model router click handler
+  const modelRouter = document.getElementById("model-router");
   if (modelRouter && !modelRouter.dataset.init) {
     modelRouter.dataset.init = "true";
-    modelRouter.addEventListener("click", () => toggleModelMenu(data.model));
+    modelRouter.addEventListener("click", () => toggleModelMenu(window.AppState ? window.AppState.data : data));
   }
 }
 
-function toggleModelMenu(currentModel) {
+function toggleModelMenu(data) {
   const existing = document.getElementById("model-menu");
   if (existing) { existing.remove(); return; }
-  
-  const models = ['Qwen3 Coder 480B','Devstral-2 123B','Kimi K2.5','DeepSeek V4','Gemini 3.1 Pro','GPT-4o','Claude 3.5 Sonnet'];
-  const menu = document.createElement('div');
-  menu.id = 'model-menu';
-  menu.style.cssText = 'position:fixed;min-width:280px;background:var(--bg-elevated);border:1px solid var(--border-active);border-radius:var(--radius-md);box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:1000;overflow:hidden';
-  const rtr = document.getElementById('model-rtr');
-  const rect = rtr.getBoundingClientRect();
-  menu.style.top = (rect.bottom + 4) + 'px';
-  menu.style.left = rect.left + 'px';
-  menu.innerHTML = '<div style="padding:10px 14px;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;border-bottom:1px solid var(--border)">Select Model</div>' +
-    models.map(m => `<div style="display:flex;justify-content:space-between;padding:9px 14px;cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--text-primary)${m===currentModel?';background:rgba(57,255,20,.06);border-left:2px solid var(--accent-emerald)':''}" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='${m===currentModel?'rgba(57,255,20,.06)':'transparent'}'" onclick="selectModel('${m}')">${m}</div>`).join('');
+
+  const currentModel = data.model || "—";
+  const models = data.availableModels && data.availableModels.length ? data.availableModels : [currentModel];
+  const history = data.modelHistory || [];
+  const totalRequests = history.length;
+  const totalTokens = history.reduce((sum, h) => sum + (h.tokens || 0), 0);
+
+  const menu = document.createElement("div");
+  menu.id = "model-menu";
+  menu.className = "model-menu";
+
+  const router = document.getElementById("model-router");
+  const rect = router.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + "px";
+  menu.style.left = rect.left + "px";
+
+  menu.innerHTML = `
+    <div class="model-menu-section">
+      <div class="model-menu-header">Current Active Model</div>
+      <div class="model-menu-detail primary">${escapeModelHtml(currentModel)}</div>
+      <div class="model-menu-detail">Status: ${getModelMenuStatus(data.sessionState)}</div>
+    </div>
+    <div class="model-menu-section">
+      <div class="model-menu-header">Router Mode</div>
+      <div class="model-menu-detail">${escapeModelHtml(data.routerMode || "Default routing")}</div>
+    </div>
+    <div class="model-menu-section">
+      <div class="model-menu-header">Available Models</div>
+      ${models.map((m) => `
+        <div class="model-menu-item${m === currentModel ? " selected" : ""}">
+          <span>${escapeModelHtml(m)}</span>
+          ${m === currentModel ? "<small>active</small>" : ""}
+        </div>
+      `).join("")}
+    </div>
+    <div class="model-menu-section">
+      <div class="model-menu-header">Session Model History</div>
+      ${history.length
+        ? history.slice(0, 5).map((h) => `<div class="model-menu-detail">${escapeModelHtml(h.phase)} · ${escapeModelHtml(h.model)} · ${escapeModelHtml(h.status)}</div>`).join("")
+        : `<div class="model-menu-empty">No model calls in this session yet.</div>`}
+    </div>
+    <div class="model-menu-section">
+      <div class="model-menu-header">Model Usage Details</div>
+      <div class="model-menu-detail">${totalRequests} request${totalRequests === 1 ? "" : "s"} · ${formatModelMenuTokens(totalTokens)} tokens</div>
+    </div>
+  `;
+
   document.body.appendChild(menu);
-  
+
   setTimeout(() => {
-    document.addEventListener('click', function close(e) {
-      if (!menu.contains(e.target) && e.target !== rtr) { menu.remove(); document.removeEventListener('click', close); }
+    document.addEventListener("click", function close(e) {
+      if (!menu.contains(e.target) && e.target !== router) {
+        menu.remove();
+        document.removeEventListener("click", close);
+      }
     });
   }, 0);
 }
 
-function selectModel(m) {
-  const val = document.getElementById('model-val');
-  if (val) val.textContent = m;
-  AppState.data.model = m;
-  const menu = document.getElementById('model-menu');
-  if (menu) menu.remove();
+function getModelMenuStatus(state) {
+  if (state === "running") return "Active";
+  if (state === "error") return "Error";
+  return "Ready";
+}
+
+function formatModelMenuTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(0) + "k";
+  return String(n || 0);
+}
+
+function escapeModelHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
