@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("nexAPI", {
   getState: () => ipcRenderer.invoke("nex:get-state"),
+  getModelState: () => ipcRenderer.invoke("nex:get-model-state"),
+  setActiveModel: (spec) => ipcRenderer.invoke("nex:set-active-model", spec),
+  getGitState: () => ipcRenderer.invoke("nex:get-git-state"),
+  checkoutBranch: (branchName) => ipcRenderer.invoke("nex:checkout-branch", branchName),
+  createBranch: (branchName) => ipcRenderer.invoke("nex:create-branch", branchName),
   sendCommand: (cmd) => ipcRenderer.send("nex:command", cmd),
   sendConfirm: (id, answer) => ipcRenderer.send("nex:confirm-answer", { id: id, answer: answer }),
   sendCancel: () => ipcRenderer.send("nex:cancel"),
@@ -24,7 +29,10 @@ contextBridge.exposeInMainWorld("nexAPI", {
   onServerLog: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-log", h); return function () { ipcRenderer.removeListener("nex:server-log", h); }; },
   onServerClosed: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-closed", h); return function () { ipcRenderer.removeListener("nex:server-closed", h); }; },
   onProjectOpened: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:project-opened", h); return function () { ipcRenderer.removeListener("nex:project-opened", h); }; },
+  onModelState: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:model-state", h); return function () { ipcRenderer.removeListener("nex:model-state", h); }; },
+  onGitState: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:git-state", h); return function () { ipcRenderer.removeListener("nex:git-state", h); }; },
   onFocusCommand: function (cb) { var h = function () { cb(); }; ipcRenderer.on("nex:focus-command", h); return function () { ipcRenderer.removeListener("nex:focus-command", h); }; },
+  onPlatform: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:platform", h); return function () { ipcRenderer.removeListener("nex:platform", h); }; },
   
   // High-level events for app.js
   onStateUpdated: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:state-updated", h); return function () { ipcRenderer.removeListener("nex:state-updated", h); }; },

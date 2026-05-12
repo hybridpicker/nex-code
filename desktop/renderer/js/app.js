@@ -25,7 +25,9 @@ const AppState = {
     model: "qwen3-coder:480b",
     routerMode: "Phase routing",
     availableModels: ["qwen3-coder:480b"],
+    modelState: null,
     modelHistory: [],           // [{model, phase, purpose, requests, tokens, status, startTime, endTime}]
+    gitState: null,
 
     // Agentic nodes (timeline)
     agenticNodes: [],
@@ -69,13 +71,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         AppState.data.workspace = liveState.path || null;
         AppState.data.isGitRepository = !!liveState.isGitRepository;
         AppState.data.isDeployable = !!liveState.isDeployable;
+        if (liveState.gitState) applyGitState(liveState.gitState);
         rememberRecentProject(liveState.path, liveState.project);
         showProjectView();
       }
+      if (liveState.modelState) applyModelState(liveState.modelState);
     }
   } catch (err) {
     console.warn("Failed to load initial state:", err.message);
   }
+
+  refreshModelState();
 
   // Initialize all components
   refreshAllComponents();
@@ -103,6 +109,14 @@ function refreshAllComponents() {
 function subscribeToEvents() {
   if (!window.nexAPI) return;
 
+  if (window.nexAPI.onPlatform) {
+    window.nexAPI.onPlatform((d) => {
+      document.body.classList.toggle("platform-macos", d.platform === "darwin");
+      document.body.classList.toggle("platform-windows", d.platform === "win32");
+      document.body.classList.toggle("platform-linux", d.platform === "linux");
+    });
+  }
+
   // Server ready
   window.nexAPI.onServerReady(() => {
     addServerLog("nex-code ready");
@@ -115,6 +129,7 @@ function subscribeToEvents() {
     AppState.data.workspace = d.path || null;
     AppState.data.isGitRepository = !!d.isGitRepository;
     AppState.data.isDeployable = !!d.isDeployable;
+    if (d.gitState) applyGitState(d.gitState);
     AppState.data.sessionState = "idle";
     AppState.data.lastAction = "Project opened";
     rememberRecentProject(d.path, d.project);
@@ -123,6 +138,20 @@ function subscribeToEvents() {
     refreshAllComponents();
     addServerLog(`Project opened: ${d.project} (branch: ${d.branch || "unknown"})`);
   });
+
+  if (window.nexAPI.onModelState) {
+    window.nexAPI.onModelState((d) => {
+      applyModelState(d);
+      refreshAllComponents();
+    });
+  }
+
+  if (window.nexAPI.onGitState) {
+    window.nexAPI.onGitState((d) => {
+      applyGitState(d);
+      refreshAllComponents();
+    });
+  }
 
   // Token streaming
   window.nexAPI.onServerToken((d) => {
@@ -232,8 +261,52 @@ function subscribeToEvents() {
   window.nexAPI.onStateUpdated((d) => {
     if (d.sessionState) AppState.data.sessionState = d.sessionState;
     if (d.model) AppState.data.model = d.model;
+    if (d.modelState) applyModelState(d.modelState);
+    if (d.branch) AppState.data.branch = d.branch;
+    if (d.isGitRepository !== undefined) AppState.data.isGitRepository = !!d.isGitRepository;
     refreshAllComponents();
   });
+}
+
+function applyModelState(modelState) {
+  if (!modelState) return;
+  AppState.data.modelState = modelState;
+  AppState.data.routerMode = modelState.routerMode || "Phase routing";
+  AppState.data.availableModels = (modelState.readyModels || []).map((model) => model.spec);
+  if (modelState.activeModel) {
+    AppState.data.model = modelState.activeModel.id || modelState.activeModel.spec;
+  } else if (!modelState.hasConfiguredModel) {
+    AppState.data.model = "No model configured";
+  }
+}
+
+function applyGitState(gitState) {
+  if (!gitState) return;
+  AppState.data.gitState = gitState;
+  AppState.data.isGitRepository = !!gitState.isGitRepository;
+  AppState.data.branch = gitState.branch || AppState.data.branch;
+}
+
+async function refreshModelState() {
+  if (!window.nexAPI || !window.nexAPI.getModelState) return;
+  try {
+    const modelState = await window.nexAPI.getModelState();
+    applyModelState(modelState);
+    refreshAllComponents();
+  } catch (err) {
+    console.warn("Failed to load model state:", err.message);
+  }
+}
+
+async function refreshGitState() {
+  if (!window.nexAPI || !window.nexAPI.getGitState) return;
+  try {
+    const gitState = await window.nexAPI.getGitState();
+    applyGitState(gitState);
+    refreshAllComponents();
+  } catch (err) {
+    console.warn("Failed to load Git state:", err.message);
+  }
 }
 
 function getPhasePurpose(phase) {
@@ -512,4 +585,75 @@ window.App = {
     AppState.data.sessionState = "complete";
     refreshAllComponents();
   },
+
+  selectModel: async function (spec) {
+    if (!window.nexAPI || !window.nexAPI.setActiveModel) return;
+    try {
+      const result = await window.nexAPI.setActiveModel(spec);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Model switch failed.");
+        return;
+      }
+      applyModelState(result.modelState);
+      addServerLog(`Active model: ${spec}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Model switch failed: ${err.message}`);
+    }
+  },
+
+  refreshModelState: refreshModelState,
+
+  runModelSetup: function (provider) {
+    const providerLabel = provider ? ` for ${provider}` : "";
+    if (!AppState.data.project) {
+      focusCommandInput("/setup ");
+      logUiMessage(`Open a project to run provider setup${providerLabel}.`);
+      return;
+    }
+    addServerLog(`Starting provider setup${providerLabel}...`);
+    if (window.nexAPI) window.nexAPI.sendCommand("/setup");
+  },
+
+  openLocalModelInstall: function () {
+    if (window.nexAPI && window.nexAPI.openExternal) {
+      window.nexAPI.openExternal("https://ollama.com/download");
+    }
+  },
+
+  checkoutBranch: async function (branchName) {
+    if (!window.nexAPI || !window.nexAPI.checkoutBranch) return;
+    try {
+      const result = await window.nexAPI.checkoutBranch(branchName);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Branch checkout failed.");
+        return;
+      }
+      applyGitState(result.gitState);
+      addServerLog(`Checked out branch: ${branchName}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Branch checkout failed: ${err.message}`);
+    }
+  },
+
+  createBranch: async function (branchName) {
+    if (!window.nexAPI || !window.nexAPI.createBranch) return;
+    const cleanName = String(branchName || "").trim();
+    if (!cleanName) return;
+    try {
+      const result = await window.nexAPI.createBranch(cleanName);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Branch creation failed.");
+        return;
+      }
+      applyGitState(result.gitState);
+      addServerLog(`Created branch: ${cleanName}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Branch creation failed: ${err.message}`);
+    }
+  },
+
+  refreshGitState: refreshGitState,
 };

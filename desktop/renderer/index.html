@@ -10,37 +10,11 @@
 </head>
 <body>
 
-<!-- ═══════════════ INLINE SVG ICON (nex-code brand mark) ═══════════════ -->
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
-  <symbol id="nex-icon-svg" viewBox="0 0 24 24" fill="none">
-    <!-- Stylized bracket/chevron mark: CLI-inspired, cyan -->
-    <rect x="2" y="2" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.8" fill="none"/>
-    <path d="M8 8l-1.5 1.5L8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    <path d="M16 8l1.5 1.5L16 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    <line x1="10" y1="15" x2="15" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <!-- Prompt cursor -->
-    <rect x="10" y="13" width="2" height="2" rx="0.5" fill="currentColor" opacity="0.7"/>
-  </symbol>
-</svg>
-<!-- ═══════════════ INLINE SVG ICON (small, for prompt) ═══════════════ -->
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
-  <symbol id="nex-icon-sm-svg" viewBox="0 0 16 16" fill="none">
-    <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
-    <path d="M5 5l-1.5 1.5L5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    <line x1="7" y1="10" x2="11" y2="10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-  </symbol>
-</svg>
-
 <div class="app-shell">
 
   <!-- ═══════════════ TOP NAVIGATION BAR ═══════════════ -->
   <header class="topbar glass-panel">
-    <!-- Brand identity -->
-    <div class="topbar-brand">
-      <span class="nex-icon"><svg><use href="#nex-icon-svg"/></svg></span>
-      <span class="topbar-brand-name">nex-code</span>
-      <span class="topbar-brand-sub">CLI workspace</span>
-    </div>
+    <div class="topbar-platform-spacer" aria-hidden="true"></div>
 
     <!-- Active project context -->
     <div class="topbar-context" id="topbar-context">
@@ -76,7 +50,7 @@
     <aside class="sidebar-left glass-panel" id="sidebar-left">
       <!-- Identity block -->
       <div class="sidebar-identity">
-        <span class="nex-icon"><svg><use href="#nex-icon-svg"/></svg></span>
+        <span class="nex-icon"><img src="assets/app-icon.svg" alt="" aria-hidden="true"></span>
         <div class="sidebar-identity-text">
           <span class="sidebar-identity-name">nex-code</span>
           <span class="sidebar-identity-tagline">CLI-powered development workspace</span>
@@ -94,9 +68,6 @@
 
       <!-- Welcome Screen -->
       <div class="welcome" id="welcome">
-        <div class="welcome-icon">
-          <span class="nex-icon" style="width:48px;height:48px"><svg><use href="#nex-icon-svg"/></svg></span>
-        </div>
         <div class="welcome-title">nex-code</div>
         <div class="welcome-subtitle">CLI-powered AI development workspace</div>
         <div class="welcome-message">
@@ -244,7 +215,7 @@
   <footer class="command-center glass-heavy">
     <div class="command-input-wrap">
       <span class="command-prompt-icon">
-        <span class="nex-icon" style="width:16px;height:16px"><svg><use href="#nex-icon-sm-svg"/></svg></span>
+        <span class="command-prompt-symbol">›</span>
       </span>
       <input type="text" class="command-input" id="cmd-input"
         placeholder="Ask nex-code or enter a command…" autofocus>
