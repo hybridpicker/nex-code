@@ -61,14 +61,21 @@ function initTopBarComponents(data) {
     branchRouter.setAttribute("role", "button");
     branchRouter.setAttribute("tabindex", "0");
     branchRouter.setAttribute("title", "Manage Git branches");
-    branchRouter.addEventListener("click", () => toggleBranchMenu(window.AppState ? window.AppState.data : data));
+    branchRouter.addEventListener("click", openBranchMenu);
     branchRouter.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        toggleBranchMenu(window.AppState ? window.AppState.data : data);
+        openBranchMenu();
       }
     });
   }
+}
+
+async function openBranchMenu() {
+  if (window.App && window.App.refreshGitState) {
+    await window.App.refreshGitState();
+  }
+  toggleBranchMenu(window.AppState ? window.AppState.data : {});
 }
 
 function toggleModelMenu(data) {
@@ -235,7 +242,7 @@ function toggleBranchMenu(data) {
       <div class="model-menu-header">Develop On Branch</div>
       ${canUseGit && branches.length
         ? branches.map((branch) => `
-          <button class="model-menu-item${branch === current ? " selected" : ""}" data-branch-name="${escapeAttr(branch)}" ${gitState.dirty || branch === current ? "disabled" : ""} title="${gitState.dirty ? "Commit or stash changes before switching branches." : `Checkout ${escapeAttr(branch)}`}">
+          <button class="model-menu-item${branch === current ? " selected" : ""}" data-branch-name="${escapeAttr(branch)}" ${branch === current ? "disabled" : ""} title="${gitState.dirty ? "Commit or stash changes before switching branches." : `Checkout ${escapeAttr(branch)}`}">
             <span><strong>${escapeModelHtml(branch)}</strong></span>
             ${branch === current ? "<small>current</small>" : "<small>checkout</small>"}
           </button>
@@ -245,8 +252,8 @@ function toggleBranchMenu(data) {
     <div class="model-menu-section">
       <div class="model-menu-header">New Branch</div>
       <div class="branch-create-row">
-        <input id="branch-create-input" type="text" placeholder="feature/name" ${canUseGit && !gitState.dirty ? "" : "disabled"}>
-        <button class="model-menu-mini-btn" data-branch-action="create" ${canUseGit && !gitState.dirty ? "" : "disabled"}>Create</button>
+        <input id="branch-create-input" type="text" placeholder="feature/name" ${canUseGit ? "" : "disabled"}>
+        <button class="model-menu-mini-btn" data-branch-action="create" ${canUseGit ? "" : "disabled"}>Create</button>
       </div>
       <div class="model-menu-empty">${canUseGit && !gitState.dirty ? "Creates and checks out a new local branch." : escapeModelHtml(disabledReason || "Commit or stash local changes before creating a branch.")}</div>
     </div>
@@ -256,7 +263,6 @@ function toggleBranchMenu(data) {
   menu.querySelectorAll("[data-branch-name]").forEach((item) => {
     item.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (item.disabled) return;
       const branchName = item.getAttribute("data-branch-name");
       if (window.App && window.App.checkoutBranch) window.App.checkoutBranch(branchName);
       menu.remove();

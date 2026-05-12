@@ -299,8 +299,16 @@ function createWindow() {
 }
 
 async function openDialog() {
-  var r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"], title: "Open Project" });
-  if (!r.canceled && r.filePaths.length > 0) await openProject(r.filePaths[0]);
+  try {
+    var r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"], title: "Open Project" });
+    if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true };
+    await openProject(r.filePaths[0]);
+    return { ok: true, path: r.filePaths[0] };
+  } catch (e) {
+    const message = e && e.message ? e.message : "Open Project failed.";
+    send("nex:server-error", { message: message });
+    return { ok: false, message: message };
+  }
 }
 
 async function readGitState(dirPath) {
@@ -390,14 +398,24 @@ ipcMain.handle("nex:get-state", async function () {
     gitState: await readGitState(projectPath),
   };
 });
-ipcMain.handle("nex:open-project", async function () { await openDialog(); return null; });
+ipcMain.handle("nex:open-project", async function () { return await openDialog(); });
 ipcMain.handle("nex:open-project-path", async function (_e, dirPath) {
   if (!dirPath || !fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-    send("nex:server-error", { message: "Recent project path is not available." });
-    return null;
+    const message = "Recent project path is not available.";
+    send("nex:server-error", { message: message });
+    return { ok: false, message: message };
   }
   await openProject(dirPath);
-  return null;
+  return { ok: true, path: dirPath };
+});
+ipcMain.handle("nex:open-project-folder", async function () {
+  if (!projectPath) return { ok: false, message: "No project is open." };
+  if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
+    return { ok: false, message: "Project path is not available." };
+  }
+  const error = await shell.openPath(projectPath);
+  if (error) return { ok: false, message: error };
+  return { ok: true, path: projectPath };
 });
 ipcMain.handle("nex:get-model-state", async function () {
   return await buildModelState();

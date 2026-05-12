@@ -33,12 +33,19 @@ function initSidebarComponents(data) {
   nav.innerHTML = `
     <div class="sidebar-section">
       <div class="sidebar-section-header">Active Project</div>
-      <div class="sidebar-item active ${hasProject ? "" : "is-disabled"}" ${hasProject ? "" : `title="No project is open. Use Open Project to choose a repository."`}>
+      ${hasProject ? `
+      <button type="button" class="sidebar-item active" data-sidebar-action="open-project-folder" title="Open the active project folder.">
         <span class="item-icon">📁</span>
-        <span class="item-label">${hasProject ? project : "No project open"}</span>
-        ${hasProject ? `<span class="item-badge active-badge">open</span>` : ""}
-        ${hasProject ? "" : `<span class="item-reason">Open a repository to start.</span>`}
+        <span class="item-label">${project}</span>
+        <span class="item-badge active-badge">open</span>
+      </button>
+      ` : `
+      <div class="sidebar-item active is-disabled" title="No project is open. Use Open Project to choose a repository.">
+        <span class="item-icon">📁</span>
+        <span class="item-label">No project open</span>
+        <span class="item-reason">Open a repository to start.</span>
       </div>
+      `}
       ${hasProject ? `
       <div class="sidebar-item">
         <span class="item-icon">⎇</span>
@@ -53,16 +60,16 @@ function initSidebarComponents(data) {
 
     <div class="sidebar-section">
       <div class="sidebar-section-header">Project Actions</div>
-      <div class="sidebar-item" onclick="window.nexAPI.openProject()" title="Choose a repository and start a nex-code server session.">
+      <button type="button" class="sidebar-item" data-sidebar-action="open-project" title="Choose a repository and start a nex-code server session.">
         <span class="item-icon">📂</span>
         <span class="item-label">Open Project</span>
-      </div>
+      </button>
       ${hasProject ? `
       ${hasGit ? `
-      <div class="sidebar-item" onclick="window.nexAPI.sendCommand('/git')">
+      <button type="button" class="sidebar-item" data-sidebar-action="git-status">
         <span class="item-icon">⎇</span>
         <span class="item-label">Git Status</span>
-      </div>
+      </button>
       ` : `
       <div class="sidebar-item is-disabled" title="Git Status is disabled because the open project is not a Git repository.">
         <span class="item-icon">⎇</span>
@@ -70,10 +77,10 @@ function initSidebarComponents(data) {
         <span class="item-reason">Not a Git repo.</span>
       </div>
       `}
-      <div class="sidebar-item" onclick="document.getElementById('cmd-input').focus()">
+      <button type="button" class="sidebar-item" data-sidebar-action="new-command">
         <span class="item-icon">⚡</span>
         <span class="item-label">New Command</span>
-      </div>
+      </button>
       ` : `
       <div class="sidebar-item is-disabled" title="Git Status is disabled because no project is open.">
         <span class="item-icon">⎇</span>
@@ -94,7 +101,25 @@ function initSidebarComponents(data) {
     </div>
   `;
 
+  bindSidebarActions(nav);
   initRecentProjects(data);
+}
+
+function bindSidebarActions(nav) {
+  nav.querySelectorAll("[data-sidebar-action]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const action = item.getAttribute("data-sidebar-action");
+      if (action === "open-project" && window.App && window.App.openProject) {
+        window.App.openProject();
+      } else if (action === "open-project-folder" && window.App && window.App.openProjectFolder) {
+        window.App.openProjectFolder();
+      } else if (action === "git-status" && window.App && window.App.sendCommand) {
+        window.App.sendCommand("/git");
+      } else if (action === "new-command" && window.App && window.App.focusCommandInput) {
+        window.App.focusCommandInput();
+      }
+    });
+  });
 }
 
 function initRecentProjects(data) {
@@ -119,14 +144,27 @@ function initRecentProjects(data) {
     <div class="recent-title">Recent Projects</div>
     <div class="recent-list">
       ${projects.map((p) => `
-        <button class="recent-item" title="${escapeHtml(p.path)}" onclick="window.nexAPI.openProjectPath('${escapeAttr(p.path)}')">
+        <button class="recent-item" title="${escapeHtml(p.path)}" data-recent-project-path="${escapeAttr(p.path)}">
           <span>${escapeHtml(p.name)}</span>
           <small>${escapeHtml(p.path)}</small>
         </button>
       `).join("")}
-      <button class="recent-item recent-open" onclick="window.nexAPI.openProject()">Open from path...</button>
+      <button class="recent-item recent-open" data-recent-project-open>Open from path...</button>
     </div>
   `;
+
+  container.querySelectorAll("[data-recent-project-path]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const projectPath = item.getAttribute("data-recent-project-path");
+      if (window.App && window.App.openProjectPath) window.App.openProjectPath(projectPath);
+    });
+  });
+  const openButton = container.querySelector("[data-recent-project-open]");
+  if (openButton) {
+    openButton.addEventListener("click", () => {
+      if (window.App && window.App.openProject) window.App.openProject();
+    });
+  }
 }
 
 function escapeHtml(value) {
@@ -138,8 +176,7 @@ function escapeHtml(value) {
 }
 
 function escapeAttr(value) {
-  return String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
+  return escapeHtml(value)
+    .replace(/"/g, "&quot;")
     .replace(/\n/g, "");
 }

@@ -566,6 +566,58 @@ function getCommandDisabledReason(cmd) {
 // ─── Public API (called from HTML onclick handlers) ─────────────────────────
 
 window.App = {
+  openProject: async function () {
+    if (!window.nexAPI || !window.nexAPI.openProject) {
+      logUiMessage("Project picker is not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProject();
+      if (result && result.ok === false) {
+        logUiMessage(result.message || "Project picker failed.");
+      }
+    } catch (err) {
+      logUiMessage(`Project picker failed: ${err.message}`);
+    }
+  },
+
+  openProjectPath: async function (projectPath) {
+    if (!window.nexAPI || !window.nexAPI.openProjectPath) {
+      logUiMessage("Recent projects are not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProjectPath(projectPath);
+      if (result && result.ok === false) {
+        logUiMessage(result.message || "Project could not be opened.");
+      }
+    } catch (err) {
+      logUiMessage(`Project could not be opened: ${err.message}`);
+    }
+  },
+
+  openProjectFolder: async function () {
+    if (!window.nexAPI || !window.nexAPI.openProjectFolder) {
+      logUiMessage("Project folder opening is not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProjectFolder();
+      if (!result || result.ok === false) {
+        logUiMessage(result && result.message ? result.message : "Project folder could not be opened.");
+      }
+    } catch (err) {
+      logUiMessage(`Project folder could not be opened: ${err.message}`);
+    }
+  },
+
+  sendCommand: function (cmd) {
+    if (!cmd) return;
+    const input = document.getElementById("cmd-input");
+    if (input) input.value = cmd;
+    executeCommand();
+  },
+
   focusCommandInput: function () {
     focusCommandInput();
   },

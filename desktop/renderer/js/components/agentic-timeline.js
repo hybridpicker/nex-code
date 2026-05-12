@@ -99,10 +99,17 @@ function renderNodeContent(nodeEl, node) {
   }</div>
       ${extraHTML}
       ${node.status === "active"
-        ? `<div class="timeline-node-cancel" onclick="window.nexAPI.sendCancel()" title="Cancel">✕</div>`
+        ? `<button type="button" class="timeline-node-cancel" data-timeline-action="cancel" title="Cancel" aria-label="Cancel active request">✕</button>`
         : ""}
     </div>
   `;
+
+  const cancelButton = nodeEl.querySelector("[data-timeline-action='cancel']");
+  if (cancelButton) {
+    cancelButton.addEventListener("click", () => {
+      if (window.nexAPI && window.nexAPI.sendCancel) window.nexAPI.sendCancel();
+    });
+  }
 }
 
 function buildPlanExtras(e) {

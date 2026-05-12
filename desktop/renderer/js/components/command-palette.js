@@ -14,7 +14,7 @@ function initCommandPaletteComponents(data) {
     .map((cmd) => {
       const disabledReason = getDisabledReason(cmd, data);
       return `
-    <button class="chip${disabledReason ? " chip-disabled" : ""}" onclick="handleChipClick('${cmd}')" title="${disabledReason || getChipDescription(cmd)}" data-disabled="${disabledReason ? "true" : "false"}">
+    <button class="chip${disabledReason ? " chip-disabled" : ""}" title="${disabledReason || getChipDescription(cmd)}" data-disabled="${disabledReason ? "true" : "false"}" data-command-chip="${cmd}">
       <span class="chip-icon">${getChipIcon(cmd)}</span>
       ${cmd}
       ${disabledReason ? `<span class="chip-reason">locked</span>` : ""}
@@ -22,6 +22,10 @@ function initCommandPaletteComponents(data) {
   `;
     })
     .join("");
+
+  chips.querySelectorAll("[data-command-chip]").forEach((chip) => {
+    chip.addEventListener("click", () => handleChipClick(chip.getAttribute("data-command-chip")));
+  });
 }
 
 function handleChipClick(cmd) {
