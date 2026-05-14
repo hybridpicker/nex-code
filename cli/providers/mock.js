@@ -957,6 +957,15 @@ class MockProvider extends BaseProvider {
 
   async chat(messages, _tools, _options = {}) {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
+    if (process.env.NEX_MOCK_EXIT_ZERO_NO_TERMINAL === "1") process.exit(0);
+    if (process.env.NEX_MOCK_THINKING_NO_CONTENT === "1") return null;
+    if (process.env.NEX_MOCK_INCOMPLETE_VERIFY_RESPONSE === "1") {
+      return {
+        content:
+          "Verification incomplete.\n\nThe task explicitly required npm run lint, but that successful verification evidence was not collected before finalization. Stopping without reporting success.",
+        tool_calls: [],
+      };
+    }
     if (process.env.NEX_MOCK_WRITE_THEN_NULL === "1") {
       if (hasToolResult(messages, "write-null-1")) return null;
       return {
@@ -975,8 +984,80 @@ class MockProvider extends BaseProvider {
 
   async stream(messages, _tools, options = {}) {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
+    if (process.env.NEX_MOCK_EXIT_ZERO_NO_TERMINAL === "1") process.exit(0);
+    if (process.env.NEX_MOCK_INCOMPLETE_VERIFY_RESPONSE === "1") {
+      const onToken =
+        typeof options.onToken === "function" ? options.onToken : () => {};
+      const content =
+        "Verification incomplete.\n\nThe task explicitly required npm run lint, but that successful verification evidence was not collected before finalization. Stopping without reporting success.";
+      onToken(content);
+      return { content, tool_calls: [] };
+    }
+    if (process.env.NEX_MOCK_THINKING_NO_CONTENT === "1") {
+      const onThinkingToken =
+        typeof options.onThinkingToken === "function"
+          ? options.onThinkingToken
+          : () => {};
+      const signal = options.signal;
+
+      // Simulate thinking tokens flowing without any text content.
+      // The stream stays open until aborted or a safety timeout fires.
+      const thinkInterval = setInterval(() => {
+        onThinkingToken();
+      }, 50);
+
+      try {
+        await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            clearInterval(thinkInterval);
+          };
+
+          const makeAbortError = () => {
+            const err = new Error("The operation was aborted");
+            err.name = "AbortError";
+            return err;
+          };
+
+          if (signal?.aborted) {
+            cleanup();
+            reject(makeAbortError());
+            return;
+          }
+
+          const onAbort = () => {
+            cleanup();
+            signal?.removeEventListener?.("abort", onAbort);
+            reject(makeAbortError());
+          };
+
+          if (signal?.addEventListener) {
+            signal.addEventListener("abort", onAbort);
+          }
+
+          // Safety timeout: 30 seconds
+          setTimeout(() => {
+            cleanup();
+            if (signal?.removeEventListener) {
+              try {
+                signal.removeEventListener("abort", onAbort);
+              } catch {
+                /* ignore */
+              }
+            }
+            resolve(null);
+          }, 30000);
+        });
+      } finally {
+        clearInterval(thinkInterval);
+      }
+      return null;
+    }
     const onToken =
       typeof options.onToken === "function" ? options.onToken : () => {};
+    const onThinkingToken =
+      typeof options.onThinkingToken === "function"
+        ? options.onThinkingToken
+        : () => {};
     const res = process.env.NEX_MOCK_WRITE_THEN_NULL === "1"
       ? hasToolResult(messages, "write-null-1")
         ? null
@@ -999,6 +1080,10 @@ class MockProvider extends BaseProvider {
       content.length,
       Math.max(1, Math.floor(content.length / 2)),
     );
+    if (process.env.NEX_MOCK_THINKING_BEFORE_CONTENT === "1") {
+      onThinkingToken("thinking...");
+      onThinkingToken("still thinking...");
+    }
     if (content) {
       onToken(content.slice(0, mid));
       onToken(content.slice(mid));

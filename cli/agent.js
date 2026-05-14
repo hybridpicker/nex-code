@@ -1247,6 +1247,179 @@ async function prepareToolCall(tc) {
       },
     };
   }
+  if (
+    process.env.NEX_SCOPE &&
+    _verificationFocusPaths.size > 0 &&
+    (fnName === "read_file" || fnName === "edit_file" || fnName === "patch_file")
+  ) {
+    const targetPath = String(finalArgs.path || "");
+    if (
+      targetPath &&
+      !_pathMatchesScope(targetPath) === false &&
+      ![..._verificationFocusPaths].some(
+        (focusPath) =>
+          targetPath === focusPath || targetPath.endsWith(`/${focusPath}`) || focusPath.endsWith(`/${targetPath}`),
+      )
+    ) {
+      return {
+        callId,
+        fnName,
+        args: finalArgs,
+        canExecute: false,
+        errorResult: {
+          role: "tool",
+          content:
+            `BLOCKED: verification already identified remaining failing scoped files: ${[..._verificationFocusPaths].join(", ")}. ` +
+            `Target one of those files now instead of exploring elsewhere.`,
+          tool_call_id: callId,
+        },
+      };
+    }
+  }
+  // ─── Verification retry streak block ────────────────────────────────
+  // When a required verification command has failed multiple times without
+  // an intervening successful edit, block further verification attempts.
+  // This prevents the agent from looping on lint/test without making fixes.
+  if (
+    process.env.NEX_SCOPE &&
+    fnName === "bash" &&
+    _verificationRetryStreak >= 2 &&
+    _isVerificationCommandCall({ fnName, args: finalArgs })
+  ) {
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `BLOCKED: The same verification command has already failed ${_verificationRetryStreak} times. ` +
+          `Edit the failing file(s) first to fix the reported errors, then rerun verification. ` +
+          `Do not run another verification command until an edit has been applied.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+
+  if (process.env.NEX_SCOPE && _verificationFollowUpPath) {
+    if (
+      fnName === "read_file" ||
+      fnName === "edit_file" ||
+      fnName === "patch_file" ||
+      fnName === "write_file"
+    ) {
+      const targetPath = String(finalArgs.path || "");
+      if (targetPath && !_pathsReferToSameFile(targetPath, _verificationFollowUpPath)) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: ${_verificationFollowUpCommand || "The failed verification command"} identified ` +
+              `${_verificationFollowUpPath} as the exact scoped file that still needs a no-unused-vars fix` +
+              `${_verificationFollowUpBindings.length > 0 ? ` (remove: ${_verificationFollowUpBindings.join(", ")})` : ""}. ` +
+              `Edit that file now, then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+      // ── Block unrelated import/declaration removal ──────────────────
+      // When the follow-up guard has specific bindings (e.g. currentPlayer),
+      // reject edits that also remove imports or declarations NOT named in
+      // the guard bindings. This prevents the model from stripping `import
+      // React` when lint only asked to remove `currentPlayer`.
+      if (
+        targetPath &&
+        _verificationFollowUpBindings.length > 0 &&
+        (fnName === "edit_file" || fnName === "patch_file" || fnName === "write_file")
+      ) {
+        let removedImports = [];
+        if (fnName === "edit_file") {
+          removedImports = _extractRemovedImportSymbols(
+            finalArgs.old_text || finalArgs.old_str || "",
+            finalArgs.new_text || finalArgs.new_str || "",
+          );
+        } else if (fnName === "patch_file") {
+          const patches = finalArgs.patches || finalArgs.replacements || [];
+          for (const p of patches) {
+            removedImports.push(
+              ..._extractRemovedImportSymbols(
+                p.old_text || p.old_str || "",
+                p.new_text || p.new_str || "",
+              ),
+            );
+          }
+        } else if (fnName === "write_file") {
+          // For write_file we can't compare against old content inline,
+          // but we check that the new content doesn't drop any known
+          // imports that were present when the follow-up guard was set.
+          // The post-edit handler (below) will catch write_file removals
+          // by reading back the file.
+        }
+        const unrelatedRemovals = removedImports.filter(
+          (r) => !_verificationFollowUpBindings.includes(r.symbol),
+        );
+        if (unrelatedRemovals.length > 0) {
+          const names = unrelatedRemovals.map((r) => r.symbol).join(", ");
+          return {
+            callId,
+            fnName,
+            args: finalArgs,
+            canExecute: false,
+            errorResult: {
+              role: "tool",
+              content:
+                `BLOCKED: Your edit removes import(s) ${names} which were not listed in the no-unused-vars errors. ` +
+                `Only remove: ${_verificationFollowUpBindings.join(", ")}. ` +
+                `Restore the unrelated import(s), then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+              tool_call_id: callId,
+            },
+          };
+        }
+      }
+      // ── End unrelated import guard ──────────────────────────────────
+    }
+    if (fnName === "bash") {
+      const normalizedCommand = _normalizeVerificationCommand(finalArgs.command || "");
+      const requiredCommand = _normalizeVerificationCommand(_verificationFollowUpCommand);
+      if (_verificationFollowUpNeedsEdit) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: ${_verificationFollowUpCommand || "The failed verification command"} already pinpointed ` +
+              `${_verificationFollowUpPath} and ${_verificationFollowUpBindings.join(", ") || "an unused binding"} ` +
+              `as the remaining no-unused-vars issue. Edit that exact scoped file first, then rerun ` +
+              `${_verificationFollowUpCommand || "the same verification command"}.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+      if (requiredCommand && normalizedCommand !== requiredCommand) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: rerun ${_verificationFollowUpCommand} now. ` +
+              `Do not switch to a different verification or shell command until that exact command has been rerun.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+    }
+  }
 
   // Permission check
   const perm = checkPermission(fnName);
@@ -1363,6 +1536,46 @@ function _masksCommandFailure(command) {
   );
 }
 
+function _detectVerificationSetupFailure(command, output) {
+  const cmd = String(command || "").trim();
+  const text = String(output || "");
+  if (!cmd || !text) return "";
+  const looksMissingTool =
+    /\b(?:eslint|vite|vitest|jest|tsc|typescript|webpack|babel)\b.*\b(?:command not found|not found)\b/i.test(
+      text,
+    ) || /\bsh:\s*(?:eslint|vite|vitest|jest|tsc)\b.*\bnot found\b/i.test(text);
+  const looksMissingDependency =
+    /\bnode_modules\b/i.test(text) ||
+    /\bMODULE_NOT_FOUND\b/.test(text) ||
+    /\bCannot find package\b/i.test(text) ||
+    /\bCannot find module\b/i.test(text) ||
+    /\bError:\s+Cannot find module\b/i.test(text);
+  if (!looksMissingTool && !looksMissingDependency) return "";
+  if (
+    /Cannot find module/i.test(text) &&
+    !/\bnode_modules\b/i.test(text) &&
+    !/\b(?:eslint|vite|vitest|jest|tsc|typescript|webpack|babel)\b/i.test(text)
+  ) {
+    return "";
+  }
+  const summaryLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line &&
+        (/\bnode_modules\b/i.test(line) ||
+          /\bMODULE_NOT_FOUND\b/.test(line) ||
+          /\bCannot find package\b/i.test(line) ||
+          /\bCannot find module\b/i.test(line) ||
+          /\bcommand not found\b/i.test(line)),
+    );
+  return (
+    `The verification command ${cmd} could not run because project dependencies are missing or broken in this workspace.` +
+    `${summaryLine ? ` ${summaryLine}` : ""}`
+  );
+}
+
 function _scopeAllowsDependencyMutation(scopeValue = process.env.NEX_SCOPE || "") {
   return [
     "package.json",
@@ -1447,7 +1660,153 @@ function _detectAddedCommentedOutCode(diffText, fallbackPath = "") {
   return findings;
 }
 
-function _getAddedCommentedOutCodeFindings(filePath) {
+function _detectAddedCommentedOutCodeFromContents(beforeText, afterText, filePath = "") {
+  const beforeLines = String(beforeText || "").split("\n");
+  const afterLines = String(afterText || "").split("\n");
+  const findings = [];
+  let beforeIdx = 0;
+
+  for (let afterIdx = 0; afterIdx < afterLines.length; afterIdx++) {
+    const afterLine = afterLines[afterIdx];
+    if (beforeIdx < beforeLines.length && beforeLines[beforeIdx] === afterLine) {
+      beforeIdx++;
+      continue;
+    }
+    if (_looksLikeCommentedOutCode(afterLine)) {
+      findings.push({
+        path: filePath,
+        line: afterIdx + 1,
+        text: afterLine.trim(),
+      });
+    }
+  }
+
+  return findings;
+}
+
+function _extractBareImports(text) {
+  const source = String(text || "");
+  const found = new Set();
+  const patterns = [
+    /\bimport\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+    /\bexport\s+[^'"]+?\s+from\s+['"]([^'"]+)['"]/g,
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source))) {
+      const spec = String(match[1] || "").trim();
+      if (!spec || spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("node:")) {
+        continue;
+      }
+      found.add(spec);
+    }
+  }
+  return [...found];
+}
+
+// ─── Import symbol extraction ──────────────────────────────────────────
+// Extracts the import symbols (default + named) from old_text that are
+// not present in new_text. Used by the no-unused-vars follow-up guard to
+// block unrelated import removals (e.g. removing `import React` when lint
+// only flagged `currentPlayer`).
+function _extractRemovedImportSymbols(oldText, newText) {
+  const oldSrc = String(oldText || "");
+  const newSrc = String(newText || "");
+  const oldImports = new Map(); // symbol → import line
+  const newImports = new Set();
+  const importLineRe = /^\s*import\s+(.+?)\s+from\s+/gm;
+  let match;
+  while ((match = importLineRe.exec(oldSrc))) {
+    const spec = match[1].trim();
+    const defaultMatch = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+    if (defaultMatch) oldImports.set(defaultMatch[1], match[0].trim());
+    const namedMatch = spec.match(/\{([^}]+)\}/);
+    if (namedMatch) {
+      namedMatch[1].split(",").forEach((name) => {
+        const clean = name.trim().split(/\s+as\s+/)[0].trim();
+        if (clean) oldImports.set(clean, match[0].trim());
+      });
+    }
+  }
+  while ((match = importLineRe.exec(newSrc))) {
+    const spec = match[1].trim();
+    const defaultMatch = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+    if (defaultMatch) newImports.add(defaultMatch[1]);
+    const namedMatch = spec.match(/\{([^}]+)\}/);
+    if (namedMatch) {
+      namedMatch[1].split(",").forEach((name) => {
+        const clean = name.trim().split(/\s+as\s+/)[0].trim();
+        if (clean) newImports.add(clean);
+      });
+    }
+  }
+  const removed = [];
+  for (const [sym, line] of oldImports) {
+    if (!newImports.has(sym)) removed.push({ symbol: sym, line });
+  }
+  return removed;
+}
+
+function _packageNameFromSpecifier(specifier) {
+  const spec = String(specifier || "").trim();
+  if (!spec) return "";
+  if (spec.startsWith("@")) {
+    const parts = spec.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : spec;
+  }
+  return spec.split("/")[0];
+}
+
+function _isDeclaredDependency(pkgName) {
+  if (!pkgName) return false;
+  try {
+    const pkgJson = JSON.parse(
+      fsSync.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    );
+    return [
+      "dependencies",
+      "devDependencies",
+      "peerDependencies",
+      "optionalDependencies",
+    ].some((field) => !!pkgJson?.[field]?.[pkgName]);
+  } catch {
+    return false;
+  }
+}
+
+function _isResolvableDependency(specifier) {
+  if (!specifier) return false;
+  try {
+    require.resolve(specifier, { paths: [process.cwd()] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function _detectNewUnresolvedImportsFromContents(beforeText, afterText, filePath = "") {
+  const beforeImports = new Set(_extractBareImports(beforeText));
+  const afterImports = _extractBareImports(afterText);
+  const findings = [];
+  for (const specifier of afterImports) {
+    if (beforeImports.has(specifier)) continue;
+    const packageName = _packageNameFromSpecifier(specifier);
+    if (!packageName) continue;
+    if (_isDeclaredDependency(packageName) || _isResolvableDependency(specifier)) {
+      continue;
+    }
+    findings.push({
+      path: filePath,
+      specifier,
+      packageName,
+    });
+  }
+  return findings;
+}
+
+function _getAddedCommentedOutCodeFindings(filePath, fallbackBeforeContent) {
   if (!_isSourceLikePath(filePath)) return [];
   try {
     const { execFileSync } = require("child_process");
@@ -1469,7 +1828,17 @@ function _getAddedCommentedOutCodeFindings(filePath) {
     });
     return _detectAddedCommentedOutCode(diff, filePath);
   } catch {
-    return [];
+    try {
+      if (typeof fallbackBeforeContent !== "string") return [];
+      const afterContent = fsSync.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
+      return _detectAddedCommentedOutCodeFromContents(
+        fallbackBeforeContent,
+        afterContent,
+        filePath,
+      );
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -1483,6 +1852,55 @@ function _buildCommentedOutCodeNudge(findings) {
     `${shown}\n` +
     "Remove dead/commented-out code instead of silencing lint or type errors. Make a targeted edit now, then rerun the relevant verification command before finalizing."
   );
+}
+
+function _buildUndeclaredImportNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path} -> ${f.specifier}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit introduced imports from packages that are not declared or resolvable in this workspace.\n" +
+    `${shown}\n` +
+    "Package manifests are outside scope, so do not add new package imports. Remove the import or solve the task within the already declared dependencies before finalizing."
+  );
+}
+
+function _getOutstandingCommentedOutCodeFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    findings.push(
+      ..._getAddedCommentedOutCodeFindings(
+        filePath,
+        _commentedOutCodeSessionBaselines.get(filePath),
+      ),
+    );
+  }
+  return findings;
+}
+
+function _getOutstandingUndeclaredImportFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    try {
+      const currentContent = fsSync.readFileSync(
+        path.resolve(process.cwd(), filePath),
+        "utf8",
+      );
+      findings.push(
+        ..._detectNewUnresolvedImportsFromContents(
+          _commentedOutCodeSessionBaselines.get(filePath),
+          currentContent,
+          filePath,
+        ),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+  return findings;
 }
 
 /**
@@ -1559,10 +1977,48 @@ async function executeSingleTool(prep, quiet = false) {
     _serverHooks.onToolStart(prep.fnName, prep.args);
   }
 
-  const toolResult = await executeToolRouted(prep.fnName, prep.args, {
-    silent: true,
-    autoConfirm: prep.confirmedByUser === true,
-  });
+  if (
+    ["write_file", "edit_file", "patch_file"].includes(prep.fnName) &&
+    prep.args?.path &&
+    !_commentedOutCodeSessionBaselines.has(prep.args.path)
+  ) {
+    try {
+      const baselinePath = path.resolve(process.cwd(), prep.args.path);
+      const baselineContent = fsSync.existsSync(baselinePath)
+        ? fsSync.readFileSync(baselinePath, "utf8")
+        : "";
+      _commentedOutCodeSessionBaselines.set(prep.args.path, baselineContent);
+    } catch {
+      _commentedOutCodeSessionBaselines.set(prep.args.path, "");
+    }
+  }
+
+  if (process.env.NEX_MOCK_EXIT_AFTER_TOOL_START === "1") {
+    process.exit(0);
+  }
+  if (process.env.NEX_MOCK_HANG_AFTER_TOOL_START === "1") {
+    await new Promise(() => {});
+  }
+
+  let toolResult;
+  try {
+    toolResult = await executeToolRouted(prep.fnName, prep.args, {
+      silent: true,
+      autoConfirm: prep.confirmedByUser === true,
+    });
+  } catch (err) {
+    const errorText = `ERROR: ${err?.message || String(err)}`;
+    const errorSummary = formatToolSummary(
+      prep.fnName,
+      prep.args,
+      errorText,
+      true,
+    );
+    if (_serverHooks?.onToolEnd) {
+      _serverHooks.onToolEnd(prep.fnName, errorSummary, false);
+    }
+    throw err;
+  }
 
   // Vision tools (visual_review, clipboard_image) return { text, images }
   let _visionImages = null;
@@ -1887,6 +2343,16 @@ let _gitPushRaw = ""; // last seen git push output (for summary honesty)
 let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
 let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --branch"
 const _commentedOutCodeNudges = new Set(); // path:line:text keys already nudged this session
+const _commentedOutCodeSessionBaselines = new Map(); // path -> file content before the first successful session edit
+let _commentedOutCodeFinalNudges = 0; // prevent infinite re-nudging on stalled finalization
+const _undeclaredImportNudges = new Set(); // path:specifier keys already nudged this session
+let _undeclaredImportFinalNudges = 0;
+const _verificationFocusPaths = new Set(); // failing scoped files from recent verification
+let _verificationFollowUpPath = "";
+let _verificationFollowUpCommand = "";
+let _verificationFollowUpBindings = [];
+let _verificationFollowUpNeedsEdit = false;
+let _verificationFollowUpJustSet = false; // guard against immediate self-clear
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1906,6 +2372,8 @@ let _consecutiveNoToolCalls = 0; // auto-escalate to stronger model if model pro
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
+let _consecutiveFailedVerifications = 0; // headless auto: abort after 3+ failed verifications with no edit progress
+let _verificationRetryStreak = 0; // block re-running failed required verifications until an edit is made
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
@@ -2999,6 +3467,147 @@ function _isVerificationCommandCall(prep) {
   );
 }
 
+function _extractRequiredVerificationCommands(taskText) {
+  const text = String(taskText || "");
+  if (!text) return [];
+  const commands = [];
+  const explicitPatterns = [
+    /\b(npm\s+run\s+lint)\b/i,
+    /\b(npm\s+run\s+build)\b/i,
+    /\b(npm\s+test)\b/i,
+    /\b(npx\s+jest\b[^\n.]*)/i,
+    /\b(vitest(?:\s+run)?\b[^\n.]*)/i,
+    /\b(pytest\b[^\n.]*)/i,
+    /\b(tsc\b[^\n.]*)/i,
+  ];
+  for (const pattern of explicitPatterns) {
+    const match = text.match(pattern);
+    if (match) commands.push(match[1].trim().replace(/\s+/g, " "));
+  }
+  return [...new Set(commands)];
+}
+
+function _normalizeVerificationCommand(command) {
+  return String(command || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function _formatSuccessfulVerificationEvidence(commands) {
+  const seen = new Set();
+  return commands
+    .map((cmd) => String(cmd || "").trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .filter((cmd) => {
+      const key = _normalizeVerificationCommand(cmd);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((cmd) => `${cmd} (passed)`)
+    .join(" | ");
+}
+
+function _summaryReportsRequiredVerification(text, requiredCommands) {
+  if (!requiredCommands || requiredCommands.length === 0) return true;
+  const summary = _normalizeVerificationCommand(text);
+  if (!summary) return false;
+  const speculativePass =
+    /\b(?:should|would|could|may|might)\b.{0,80}\bpass(?:ed|es)?\b/i.test(
+      text || "",
+    );
+  if (speculativePass) return false;
+  const reportsPassingResult =
+    /\b(pass(?:ed|es)?|success(?:ful(?:ly)?)?|succeed(?:ed)?|exit code 0|0 errors?|no errors?)\b/i.test(
+      text || "",
+    );
+  if (!reportsPassingResult) return false;
+  return requiredCommands.every((cmd) =>
+    summary.includes(_normalizeVerificationCommand(cmd)),
+  );
+}
+
+function _extractVerificationFailurePaths(output) {
+  const text = String(output || "");
+  const matches = text.match(/(?:^|\n)(\/[^\n]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp)|[A-Za-z0-9_./-]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp))(?=\n|:\d|\s*$)/gm) || [];
+  const seen = new Set();
+  const paths = [];
+  for (const raw of matches) {
+    const candidate = raw.trim();
+    if (!candidate) continue;
+    let normalized = candidate;
+    if (path.isAbsolute(candidate)) {
+      const rel = path.relative(process.cwd(), candidate);
+      normalized = rel && !rel.startsWith("..") ? rel : candidate;
+    }
+    normalized = normalized.replace(/\\/g, "/");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+  return paths;
+}
+
+function _extractUnusedBindingHints(output) {
+  const text = String(output || "");
+  const hints = [];
+  const patterns = [
+    /'([^']+)'\s+is defined but never used/gi,
+    /'([^']+)'\s+is assigned a value but never used/gi,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text))) {
+      const name = String(match[1] || "").trim();
+      if (!name) continue;
+      if (!hints.includes(name)) hints.push(name);
+    }
+  }
+  return hints;
+}
+
+// Extract { file, binding } pairs from lint output so per-file follow-up
+// guards target the right binding in the right scoped file.
+function _extractUnusedBindingsPerFile(output) {
+  const text = String(output || "");
+  const pairs = [];
+  // Match: path/to/file.ext:line:col  error/warn  'binding' is defined/assigned but never used
+  const pattern =
+    /([^\s:]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp))(?::\d+)?(?::\d+)?\s+\w+\s+'([^']+)'\s+(?:is defined but never used|is assigned a value but never used)/gi;
+  let match;
+  while ((match = pattern.exec(text))) {
+    pairs.push({ file: String(match[1] || "").trim(), binding: String(match[2] || "").trim() });
+  }
+  return pairs;
+}
+
+function _pathsReferToSameFile(left, right) {
+  const a = _normalizePromptPath(left).replace(/\\/g, "/");
+  const b = _normalizePromptPath(right).replace(/\\/g, "/");
+  if (!a || !b) return false;
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+function _clearVerificationFollowUpGuard() {
+  _verificationFollowUpPath = "";
+  _verificationFollowUpCommand = "";
+  _verificationFollowUpBindings = [];
+  _verificationFollowUpNeedsEdit = false;
+  _verificationFollowUpJustSet = false;
+  // Reset edit sequence tracking so old verification evidence
+  // doesn't carry over after the guard clears.
+  if (typeof _scopedEditCounter === "number") _scopedEditCounter = 0;
+  if (typeof _verificationAtEditSeq === "number") _verificationAtEditSeq = -1;
+}
+
+function _setVerificationFollowUpGuard({ path, command, bindings = [] }) {
+  _verificationFollowUpPath = _normalizePromptPath(path).replace(/\\/g, "/");
+  _verificationFollowUpCommand = String(command || "").trim();
+  _verificationFollowUpBindings = bindings
+    .map((binding) => String(binding || "").trim())
+    .filter(Boolean);
+  _verificationFollowUpNeedsEdit = true;
+  _verificationFollowUpJustSet = true;
+}
+
 async function _inferSymbolTargets(taskText) {
   const keywords = _extractTaskKeywords(taskText);
   if (keywords.length === 0) return [];
@@ -3221,6 +3830,12 @@ async function _transitionPhase(
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
   _commentedOutCodeNudges.clear();
+  _commentedOutCodeSessionBaselines.clear();
+  _commentedOutCodeFinalNudges = 0;
+  _undeclaredImportNudges.clear();
+  _undeclaredImportFinalNudges = 0;
+  _verificationFocusPaths.clear();
+  _clearVerificationFollowUpGuard();
 
   // Extract structured TODOs from plan findings + files already read.
   if (targetPhase === "implement") {
@@ -4735,6 +5350,9 @@ function _resetSessionTracking() {
   _consecutiveNoToolCalls = 0;
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
+  _consecutiveFailedVerifications = 0;
+  _verificationRetryStreak = 0;
+  _verificationFollowUpJustSet = false;
   _planPhaseBlockedCount = 0;
   _lastPlanBlockedTool = null;
   _detectedCategoryId = null;
@@ -5854,6 +6472,57 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const filesRead = new Set();
   const verificationCommandsRun = [];
   const verificationReadsRun = [];
+  const requiredVerificationCommands = _extractRequiredVerificationCommands(
+    userInput,
+  );
+  // ─── Pre-edit lint enforcement ───────────────────────────────────────
+  // When the task explicitly names a lint command (npm run lint, eslint),
+  // inject a system instruction to run it FIRST before editing any files.
+  // This ensures the verification follow-up guard (which extracts exact
+  // unused binding names from lint output) is armed before the agent
+  // attempts file edits, preventing wrong-line edits like removing an
+  // import statement instead of a destructured prop binding.
+  if (
+    requiredVerificationCommands.length > 0 &&
+    requiredVerificationCommands.some((cmd) =>
+      /\b(?:npm\s+run\s+lint|lint|eslint)\b/i.test(cmd),
+    )
+  ) {
+    const preLintMsg = {
+      role: "user",
+      content:
+        `[SYSTEM] Before editing any files, run ${requiredVerificationCommands.join(" or ")} first ` +
+        `to see the current errors. Fix each error by removing only the unused variable, ` +
+        `not any import statements or other code. After fixing, rerun ${requiredVerificationCommands.join(" or ")} ` +
+        `to verify.`,
+    };
+    conversationMessages.push(preLintMsg);
+    apiMessages.push(preLintMsg);
+  }
+
+  // ─── Pre-edit test enforcement ───────────────────────────────────────
+  // When the task asks to "add a test" or "run npm test", inject a system
+  // instruction to read the target files and then add the test. This
+  // prevents investigation stalls where the model reads extensively but
+  // never produces the requested code change.
+  if (
+    requiredVerificationCommands.length > 0 &&
+    requiredVerificationCommands.some((cmd) =>
+      /\b(?:npm\s+test|vitest|jest|pytest)\b/i.test(cmd),
+    )
+  ) {
+    const preTestMsg = {
+      role: "user",
+      content:
+        `[SYSTEM] Read the target source file and its existing test file, then ` +
+        `add the requested test code. Do not read unrelated files — focus on the ` +
+        `scoped files and their direct imports. After adding the test, run ` +
+        `${requiredVerificationCommands.join(" or ")} ` +
+        `to verify it passes.`,
+    };
+    conversationMessages.push(preTestMsg);
+    apiMessages.push(preTestMsg);
+  }
   const _editedFilesNotReread = new Set(); // files edited but not re-read — block second edit until re-read
   let _readOnlyToolStreak = 0; // consecutive read-only tool iterations (no file writes)
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
@@ -5861,8 +6530,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
-  const _hasPostEditVerificationEvidence = () =>
-    verificationCommandsRun.length > 0 || verificationReadsRun.length > 0;
+  // ─── Post-edit verification freshness tracking ─────────────────────
+  // When an edit happens after verification was already run, the old
+  // verification evidence is stale. Track an edit sequence counter so
+  // that `_hasPostEditVerificationEvidence` returns false when the last
+  // verification was run before the most recent scoped edit.
+  let _scopedEditCounter = 0;
+  let _verificationAtEditSeq = -1;
+  const _hasPostEditVerificationEvidence = () => {
+    if (verificationCommandsRun.length === 0 && verificationReadsRun.length === 0)
+      return false;
+    // If edits happened after the last verification, evidence is stale.
+    if (_scopedEditCounter > _verificationAtEditSeq) return false;
+    return verificationCommandsRun.length > 0 || verificationReadsRun.length > 0;
+  };
+  const _hasRequiredVerificationEvidence = () => {
+    if (requiredVerificationCommands.length === 0) return true;
+    const ran = new Set(
+      verificationCommandsRun.map((cmd) => _normalizeVerificationCommand(cmd)),
+    );
+    return requiredVerificationCommands.every((required) =>
+      ran.has(_normalizeVerificationCommand(required)),
+    );
+  };
   // Loop detection: use session-level Maps so counters persist across REPL turns.
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
@@ -5888,8 +6578,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = (_phaseEnabled ? 6 : 4) * _sk;
   const LOOP_ABORT_READS = (_phaseEnabled ? 10 : 8) * _sk;
-  const TARGETED_READ_HARD_CAP = (_phaseEnabled ? 12 : 10) * _sk;
+  const TARGETED_READ_HARD_CAP =
+    (_phaseEnabled
+      ? _profile.phaseTargetedReadHardCap
+      : _profile.targetedReadHardCap) * _sk;
   const NARROW_READ_PASS_THROUGH = 25;
+  const SCROLL_WARN_SECTIONS = _profile.scrollWarnSections;
+  const SCROLL_BLOCK_SECTIONS = _profile.scrollBlockSections;
+  const INVESTIGATION_GRACE = _profile.investigationGrace;
   let consecutiveErrors = 0;
   const LOOP_WARN_ERRORS = 10 * _sk;
   const LOOP_ABORT_ERRORS = 15 * _sk;
@@ -5910,6 +6606,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let forceFinalBudgetNudges = 0;
   let forceFinalAfterBatch = false;
   let boundedBacklogEmptyResponseNudges = 0;
+  let requiredVerificationSummaryNudges = 0;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -6125,20 +6822,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // Stale-stream detection: warn and auto-switch to fast model instead of aborting.
       // Trust the model-switch fallback (STALE_AUTO_SWITCH) — hard abort kills progress.
       let lastTokenTime = Date.now();
+      let lastContentTime = Date.now(); // only reset by onToken (text), NOT onThinkingToken
       let staleWarned = false;
       let staleSwitched = false;
       const staleAbort = new AbortController();
+      const staleTimerInterval = Math.max(
+        100,
+        Math.min(5000, Math.floor(STALE_ABORT_MS / 2) || 100),
+      );
       const staleTimer = setInterval(async () => {
         const elapsed = Date.now() - lastTokenTime;
-        if (elapsed >= STALE_ABORT_MS && !staleSwitched) {
+        const contentElapsed = Date.now() - lastContentTime;
+        // Abort when: (a) no tokens at all for STALE_ABORT_MS, OR
+        // (b) thinking tokens are arriving but no actual content for STALE_ABORT_MS.
+        if ((elapsed >= STALE_ABORT_MS || contentElapsed >= STALE_ABORT_MS) && !staleSwitched) {
           staleSwitched = true;
           stream._clearCursorLine();
           const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+          const staleSeconds = Math.round(Math.max(elapsed, contentElapsed) / 1000);
           // Auto-switch to fast model instead of aborting.
           // The model-switch preserves progress and is more resilient.
           if (fastModel && fastModel !== getActiveModelId() && STALE_AUTO_SWITCH) {
             debugLog(
-              `${C.green}  🔄 Stream stale for ${Math.round(elapsed / 1000)}s — auto-switching to ${fastModel}${C.reset}`,
+              `${C.green}  🔄 Stream stale for ${staleSeconds}s — auto-switching to ${fastModel}${C.reset}`,
             );
             try {
               const { setActiveModel } = require("./ollama");
@@ -6151,7 +6857,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           } else {
             debugLog(
-              `${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`,
+              `${C.yellow}  ⚠ Stream stale for ${staleSeconds}s — aborting and retrying${C.reset}`,
             );
             staleAbort.abort();
           }
@@ -6173,7 +6879,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           }
         }
-      }, 5000);
+      }, staleTimerInterval);
       staleTimer.unref?.();
 
       // Token batching for streaming optimization
@@ -6259,6 +6965,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           },
           onToken: (text) => {
             lastTokenTime = Date.now();
+            lastContentTime = Date.now();
             staleWarned = false;
 
             // In server mode: forward token to hook, skip all TTY handling
@@ -6344,6 +7051,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
         // Stale abort → progressive retry: 1st=resend, 2nd=compress+resend, exhausted=last-resort compress
         if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
+          if (_serverHooks && getAutoConfirm()) {
+            throw new Error(
+              `Headless stream stale: no final content arrived within ${Math.round(STALE_ABORT_MS / 1000)}s.`,
+            );
+          }
           staleRetries++;
           if (staleRetries > MAX_STALE_RETRIES) {
             // Last-resort: force-compress once, then reset for fresh attempts
@@ -7208,7 +7920,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _isUnmodifiedBoundedBacklogImplementation(
                 filesModified,
                 _bashModifiedFiles,
-              )
+              ) ||
+              (getAutoConfirm() &&
+                filesModified.size === 0 &&
+                _bashModifiedFiles === 0 &&
+                conversationMessages.some(
+                  (m) =>
+                    m.role === "assistant" &&
+                    typeof m.content === "string" &&
+                    _looksLikeBoundedBacklogDecision(m.content),
+                ))
             ) {
               const stalledMsg =
                 "Implementation stalled before edits.\n\n" +
@@ -7280,6 +8001,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       const assistantMsg = { role: "assistant", content: content || "" };
+      if (result.reasoning_content) {
+        assistantMsg.reasoning_content = result.reasoning_content;
+      }
       if (tool_calls && tool_calls.length > 0) {
         assistantMsg.tool_calls = tool_calls;
         _consecutiveNoToolCalls = 0; // reset auto-escalation counter
@@ -7393,6 +8117,102 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        const outstandingCommentedOutCode = hasText
+          ? _getOutstandingCommentedOutCodeFindings(filesModified)
+          : [];
+        const outstandingUndeclaredImports =
+          hasText &&
+          process.env.NEX_SCOPE &&
+          !_scopeAllowsDependencyMutation()
+            ? _getOutstandingUndeclaredImportFindings(filesModified)
+            : [];
+        if (outstandingCommentedOutCode.length > 0) {
+          if (_commentedOutCodeFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _commentedOutCodeFinalNudges++;
+            const qualityMsg = {
+              role: "user",
+              content:
+                _buildCommentedOutCodeNudge(outstandingCommentedOutCode) +
+                "\nDo not finish with PASS/verified language while this dead code remains.",
+            };
+            conversationMessages.push(qualityMsg);
+            apiMessages.push(qualityMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: commented-out dead code remains in edited files${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited files still contain newly added commented-out dead code. Stopping without reporting success so the workflow does not falsely pass a lint-fix task.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (outstandingUndeclaredImports.length > 0) {
+          if (_undeclaredImportFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _undeclaredImportFinalNudges++;
+            const importMsg = {
+              role: "user",
+              content:
+                _buildUndeclaredImportNudge(outstandingUndeclaredImports) +
+                "\nDo not report success while these undeclared imports remain.",
+            };
+            conversationMessages.push(importMsg);
+            apiMessages.push(importMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: undeclared package imports remain in edited files${C.reset}`,
+            );
+            continue;
+          }
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited files introduced package imports that are not declared or resolvable, and package manifests are outside scope. Stopping without reporting success so the workflow does not falsely pass.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (
+          hasText &&
+          !_hasRequiredVerificationEvidence() &&
+          requiredVerificationCommands.length > 0
+        ) {
+          if (_postEditVerifyNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _postEditVerifyNudges++;
+            const verifyMsg = {
+              role: "user",
+              content:
+                `[SYSTEM] The task explicitly requires these verification commands before finishing: ${requiredVerificationCommands.join(" | ")}.\n` +
+                `Successful verification evidence so far: ${verificationCommandsRun.length > 0 ? verificationCommandsRun.join(" | ") : "none"}.\n` +
+                "Do not report success yet. Run the required verification command(s) and only then summarize PASS or FAIL.",
+            };
+            conversationMessages.push(verifyMsg);
+            apiMessages.push(verifyMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: required verification command not yet passed${C.reset}`,
+            );
+            continue;
+          }
+          const stalledMsg =
+            "Verification incomplete.\n\n" +
+            `The task explicitly required ${requiredVerificationCommands.join(" | ")}, but that successful verification evidence was not collected before finalization. Stopping without reporting success.`;
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         if (
           !hasText &&
           _boundedBacklogPlanActive &&
@@ -7545,6 +8365,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _bashModifiedFiles === 0
         ) {
           const implementationText = content || streamedText || "";
+          if (
+            /^Implementation stalled before edits\./i.test(
+              implementationText.trim(),
+            )
+          ) {
+            console.log(`\n${implementationText.trim()}`);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
           if (
             _claimsVerificationOrCompletion(implementationText) &&
             !_statesVerificationGap(implementationText) &&
@@ -7753,7 +8590,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !_phaseEnabled &&
           (filesModified.size > 0 || _bashModifiedFiles > 0) &&
           _postEditVerifyPending &&
-          !_hasPostEditVerificationEvidence() &&
+          (!_hasPostEditVerificationEvidence() ||
+            !_hasRequiredVerificationEvidence()) &&
           _postEditVerifyNudges < 2
         ) {
           _postEditVerifyNudges++;
@@ -7768,12 +8606,52 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 suggestedChecks,
                 relatedTests,
               ) +
+              (requiredVerificationCommands.length > 0
+                ? `\nRequired by the task before finishing: ${requiredVerificationCommands.join(" | ")}.`
+                : "") +
               "\nDo not write a final completion summary until this verification evidence exists.",
           };
           conversationMessages.push(verifyMsg);
           apiMessages.push(verifyMsg);
           debugLog(
             `${C.yellow}  ⚠ Headless completion blocked — verification required (${_postEditVerifyNudges}/2)${C.reset}`,
+          );
+          continue;
+        }
+
+        const _assistantFinalText = content || streamedText || "";
+        const _needsRequiredVerificationSummary =
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          !_phaseEnabled &&
+          hasText &&
+          requiredVerificationCommands.length > 0 &&
+          _hasRequiredVerificationEvidence() &&
+          !_summaryReportsRequiredVerification(
+            _assistantFinalText,
+            requiredVerificationCommands,
+          );
+        if (
+          _needsRequiredVerificationSummary &&
+          requiredVerificationSummaryNudges < 2 &&
+          i < MAX_ITERATIONS - 1
+        ) {
+          requiredVerificationSummaryNudges++;
+          const verificationEvidence =
+            _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+            requiredVerificationCommands.map((cmd) => `${cmd} (passed)`).join(" | ");
+          const summaryMsg = {
+            role: "user",
+            content:
+              "[SYSTEM] Verification is complete, but the final summary must report the exact verification command and result.\n" +
+              `Changed files: ${[...filesModified].slice(0, 8).join(", ") || "files changed by shell commands"}.\n` +
+              `Verification: ${verificationEvidence}.\n` +
+              "Write the final summary now. Do not say a command should pass; state the command that ran and that it passed.",
+          };
+          conversationMessages.push(summaryMsg);
+          apiMessages.push(summaryMsg);
+          debugLog(
+            `${C.yellow}  ⚠ Headless final summary blocked — exact verification result required${C.reset}`,
           );
           continue;
         }
@@ -7792,6 +8670,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !isTooShort(content || streamedText || "") &&
           totalSteps >= 1 &&
           (!_postEditVerifyPending || _hasPostEditVerificationEvidence()) &&
+          _hasRequiredVerificationEvidence() &&
+          (requiredVerificationCommands.length === 0 ||
+            _summaryReportsRequiredVerification(
+              content || streamedText || "",
+              requiredVerificationCommands,
+            )) &&
           !_phaseEnabled;
         if (_canHeadlessEarlyExit) {
           debugLog(
@@ -8603,7 +9487,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             const _verificationEvidence =
               verificationCommandsRun.length > 0
-                ? verificationCommandsRun.join(" | ")
+                ? _formatSuccessfulVerificationEvidence(verificationCommandsRun)
                 : verificationReadsRun.length > 0
                   ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
                   : "not run; state this explicitly and do not claim tests/build/checks passed";
@@ -9227,8 +10111,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
               const sectionCount = prevRanges.length; // sections already committed
-              const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
-              const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
               if (
                 sectionCount >= SCROLL_BLOCK_SECTIONS &&
                 !prep._boundedBacklogPostGrepRead
@@ -10111,20 +10993,152 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (
           !isOk &&
           prep.fnName === "bash" &&
-          _sessionFileEditCounts.size > 0
+          _isVerificationCommandCall(prep) &&
+          getAutoConfirm()
         ) {
+          const setupFailure = _detectVerificationSetupFailure(
+            prep.args?.command || "",
+            res,
+          );
+          if (setupFailure) {
+            const stalledMsg =
+              "Verification incomplete.\n\n" +
+              `${setupFailure} In headless auto mode, stop here instead of asking to run npm install or other setup commands during the scoped task. Prepare the sandbox with dependencies installed, then rerun the same gate.`;
+            const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
+        if (
+          !isOk &&
+          prep.fnName === "bash"
+        ) {
+          // Headless auto: abort after consecutive failed verification
+          // commands with no edit progress between them.
+          const _isVerifyCmd =
+            /\b(test|jest|vitest|pytest|mocha|tsc|build|lint|eslint|check)\b/.test(
+              (prep.args?.command || "").toLowerCase(),
+            );
+          if (_isVerifyCmd && getAutoConfirm()) {
+            _consecutiveFailedVerifications++;
+            _verificationRetryStreak++;
+            if (_consecutiveFailedVerifications >= 3) {
+              const stalledMsg =
+                "Verification incomplete.\n\n" +
+                "Three consecutive verification commands failed without edit progress. " +
+                "Stopping here instead of looping further.";
+              const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              setOnChange(null);
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+              );
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
+          }
           const cmd = (prep.args?.command || "").toLowerCase();
+          // Only clear a previously-set follow-up guard when the model
+          // reruns the required command — not when the guard was just set
+          // in this same iteration (which would nullify it immediately).
+          const _guardJustSetThisIteration =
+            _verificationFollowUpJustSet &&
+            _normalizeVerificationCommand(prep.args?.command || "") ===
+              _normalizeVerificationCommand(_verificationFollowUpCommand);
+          if (_guardJustSetThisIteration) {
+            _verificationFollowUpJustSet = false;
+          } else if (
+            _verificationFollowUpCommand &&
+            _normalizeVerificationCommand(prep.args?.command || "") ===
+              _normalizeVerificationCommand(_verificationFollowUpCommand)
+          ) {
+            _clearVerificationFollowUpGuard();
+          }
           const isTestLike =
             /\b(test|jest|vitest|pytest|mocha|tsc|build|lint|eslint|check)\b/.test(
               cmd,
             );
           if (isTestLike) {
+            // Clear focus paths and re-read edited files
+            _verificationFocusPaths.clear();
             for (const [editedPath] of _sessionFileEditCounts) {
               if (!_sessionLastEditFailed.has(editedPath)) {
                 _sessionLastEditFailed.set(editedPath, 1);
                 debugLog(
                   `${C.cyan}  ↩ Test failure — queuing recovery re-read: "${editedPath.split("/").pop()}"${C.reset}`,
                 );
+              }
+            }
+            if (process.env.NEX_SCOPE) {
+              const remainingPaths = _extractVerificationFailurePaths(res).filter(
+                (candidate) => _pathMatchesScope(candidate),
+              );
+              if (remainingPaths.length > 0) {
+                for (const remainingPath of remainingPaths) {
+                  _verificationFocusPaths.add(remainingPath);
+                }
+                const unusedNames = _extractUnusedBindingHints(res);
+                const focusMsg = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] Verification failed in these remaining scoped files: ${remainingPaths.join(", ")}.\n` +
+                    `${unusedNames.length > 0 ? `Remove the unused binding(s) directly: ${unusedNames.join(", ")}. ` : ""}` +
+                    "Do not add imports, comments, or disable rules. Fix those file(s) now before running more broad verification. Prefer a targeted read_file range on the failing file, then edit it directly.",
+                };
+                conversationMessages.push(focusMsg);
+                apiMessages.push(focusMsg);
+                const isLintCommand = /\b(?:npm\s+run\s+lint|eslint)\b/i.test(
+                  prep.args?.command || "",
+                );
+                if (
+                  isLintCommand &&
+                  remainingPaths.length >= 1 &&
+                  unusedNames.length > 0
+                ) {
+                  // Scope bindings to the file being targeted so the
+                  // model is told to remove e.g. currentPlayer from
+                  // GameControls.jsx, not now from sound.js.
+                  const perFilePairs = _extractUnusedBindingsPerFile(res);
+                  const targetFile = remainingPaths[0];
+                  const targetBindings = perFilePairs
+                    .filter((p) =>
+                      remainingPaths.some((rp) =>
+                        _pathsReferToSameFile(p.file, rp),
+                      ),
+                    )
+                    .filter((p) => _pathsReferToSameFile(p.file, targetFile))
+                    .map((p) => p.binding);
+                  const guardBindings =
+                    targetBindings.length > 0 ? targetBindings : unusedNames;
+                  _setVerificationFollowUpGuard({
+                    path: targetFile,
+                    command: prep.args?.command || "",
+                    bindings: guardBindings,
+                  });
+                  const exactFileMsg = {
+                    role: "user",
+                    content:
+                      `[SYSTEM] ${String(prep.args?.command || "").trim()} failed in scoped file ${targetFile} with no-unused-vars on ${guardBindings.join(", ")}.\n` +
+                      `Do not finalize. Your next action must target that exact file: remove the unused binding(s) ${guardBindings.join(", ")}, then rerun ${String(prep.args?.command || "").trim()}.`,
+                  };
+                  conversationMessages.push(exactFileMsg);
+                  apiMessages.push(exactFileMsg);
+                }
               }
             }
           }
@@ -10187,7 +11201,91 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ["write_file", "edit_file", "patch_file"].includes(prep.fnName)
         ) {
           if (prep.args && prep.args.path) {
+            _verificationFocusPaths.delete(prep.args.path);
+            if (_pathsReferToSameFile(prep.args.path, _verificationFollowUpPath)) {
+              // ── Post-edit import removal check (write_file fallback) ──
+              // The pre-edit guard catches import removals in edit_file/
+              // patch_file args, but write_file provides the full new content
+              // without the old. After the write succeeds, read the file back
+              // and verify no unrelated imports were silently dropped.
+              if (
+                _verificationFollowUpBindings.length > 0 &&
+                prep.fnName === "write_file"
+              ) {
+                try {
+                  const writtenContent = require("fs").readFileSync(
+                    prep.args.path,
+                    "utf8",
+                  );
+                  const importSymbols = [];
+                  const importRe =
+                    /^\s*import\s+(.+?)\s+from\s+/gm;
+                  let im;
+                  while ((im = importRe.exec(writtenContent))) {
+                    const spec = im[1].trim();
+                    const dm = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+                    if (dm) importSymbols.push(dm[1]);
+                    const nm = spec.match(/\{([^}]+)\}/);
+                    if (nm) {
+                      nm[1].split(",").forEach((n) => {
+                        const clean = n.trim().split(/\s+as\s+/)[0].trim();
+                        if (clean) importSymbols.push(clean);
+                      });
+                    }
+                  }
+                  // Check if the file lost an import symbol not in the
+                  // follow-up bindings compared to the tool result content.
+                  const writtenImports = new Set(importSymbols);
+                  const guardBindings = new Set(_verificationFollowUpBindings);
+                  // We need a baseline — use the content arg as the source
+                  const contentArg =
+                    prep.args.content || prep.args.text || "";
+                  const baselineImports = [];
+                  while ((im = importRe.exec(String(contentArg || "")))) {
+                    const spec = im[1].trim();
+                    const dm = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+                    if (dm) baselineImports.push(dm[1]);
+                    const nm = spec.match(/\{([^}]+)\}/);
+                    if (nm) {
+                      nm[1].split(",").forEach((n) => {
+                        const clean = n.trim().split(/\s+as\s+/)[0].trim();
+                        if (clean) baselineImports.push(clean);
+                      });
+                    }
+                  }
+                  const removedNotInBindings = baselineImports.filter(
+                    (sym) =>
+                      !writtenImports.has(sym) && !guardBindings.has(sym),
+                  );
+                  if (removedNotInBindings.length > 0) {
+                    const names = removedNotInBindings.join(", ");
+                    const restoreMsg = {
+                      role: "user",
+                      content:
+                        `[SYSTEM] Your write_file removed import(s) ${names} which were not listed in the no-unused-vars errors. ` +
+                        `Only remove: ${_verificationFollowUpBindings.join(", ")}. ` +
+                        `Restore those import(s) now, then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+                    };
+                    conversationMessages.push(restoreMsg);
+                    apiMessages.push(restoreMsg);
+                    // Do NOT clear _verificationFollowUpNeedsEdit — the edit
+                    // introduced an unrelated change and must be corrected.
+                  } else {
+                    _verificationFollowUpNeedsEdit = false;
+                  }
+                } catch {
+                  // If read-back fails, allow the edit to clear the guard —
+                  // the pre-edit guard is the primary defense.
+                  _verificationFollowUpNeedsEdit = false;
+                }
+              } else {
+                _verificationFollowUpNeedsEdit = false;
+              }
+              // ── End post-edit import check ────────────────────────
+            }
             _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
+            _consecutiveFailedVerifications = 0; // reset verification stall counter
+            _verificationRetryStreak = 0; // allow verification retries after a successful edit
             filesModified.add(prep.args.path);
             // TODO observer: mark plan items as done when their file gets edited
             for (const todo of _planTodos) {
@@ -10235,9 +11333,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _postEditVerifyPending = true;
               _postEditVerifyNudges = 0;
               _needsPostEditVerifyPrompt = true;
+              _scopedEditCounter++;
             }
             const commentedOutFindings = _getAddedCommentedOutCodeFindings(
               prep.args.path,
+              _commentedOutCodeSessionBaselines.get(prep.args.path),
             ).filter((finding) => {
               const key = `${finding.path}:${finding.line || ""}:${finding.text}`;
               if (_commentedOutCodeNudges.has(key)) return false;
@@ -10254,6 +11354,40 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               debugLog(
                 `${C.yellow}  ⚠ Diff quality guard: commented-out code detected in ${prep.args.path}${C.reset}`,
               );
+            }
+            if (process.env.NEX_SCOPE && !_scopeAllowsDependencyMutation()) {
+              const undeclaredImportFindings = _detectNewUnresolvedImportsFromContents(
+                _commentedOutCodeSessionBaselines.get(prep.args.path),
+                (() => {
+                  try {
+                    return fsSync.readFileSync(
+                      path.resolve(process.cwd(), prep.args.path),
+                      "utf8",
+                    );
+                  } catch {
+                    return "";
+                  }
+                })(),
+                prep.args.path,
+              ).filter((finding) => {
+                const key = `${finding.path}:${finding.specifier}`;
+                if (_undeclaredImportNudges.has(key)) return false;
+                _undeclaredImportNudges.add(key);
+                return true;
+              });
+              if (undeclaredImportFindings.length > 0) {
+                const importMsg = {
+                  role: "user",
+                  content: _buildUndeclaredImportNudge(
+                    undeclaredImportFindings,
+                  ),
+                };
+                conversationMessages.push(importMsg);
+                apiMessages.push(importMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Quality guard: undeclared import detected in ${prep.args.path}${C.reset}`,
+                );
+              }
             }
           }
         }
@@ -10393,9 +11527,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           if (isOk && _isVerificationCommandCall(prep)) {
             const cmd = String(prep.args?.command || "").trim();
-            if (cmd) verificationCommandsRun.push(cmd.slice(0, 160));
+            if (cmd) {
+              verificationCommandsRun.push(cmd.slice(0, 160));
+              _verificationAtEditSeq = _scopedEditCounter;
+            }
             _postEditVerifyPending = false;
             _postEditVerifyNudges = 0;
+            _verificationFocusPaths.clear();
+            if (
+              _verificationFollowUpCommand &&
+              _normalizeVerificationCommand(cmd) ===
+                _normalizeVerificationCommand(_verificationFollowUpCommand)
+            ) {
+              _clearVerificationFollowUpGuard();
+            }
             if (
               _stickyGitPreflightRequired &&
               (filesModified.size > 0 || _bashModifiedFiles > 0) &&
@@ -10445,7 +11590,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // 2. Creation task with edits already made — agent should be building, not reading
           // 3. Grace period exhausted (6 reads after cap) — prevents infinite investigation spirals
           //    where the model ignores the soft cap warning and reads until context/timeout
-          const INVESTIGATION_GRACE = 6; // reads allowed after cap fires before hard-block
           const _hardBlockActive =
             !_phaseEnabled &&
             _investigationCapFired &&
@@ -10490,8 +11634,38 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : _readsSinceCapFired >= INVESTIGATION_GRACE
                 ? `${_readOnlyCallsSinceEdit} consecutive reads without an edit`
                 : `${_editsMadeThisSession} file edit(s) already made`;
-            // Soft-warn: inject advisory nudge but let the tool execute.
-            // The model decides when investigation is enough — no hard block.
+            // In headless/auto mode, hard-block further read-only tools.
+            // The model has exhausted its investigation budget — it must
+            // now edit or verify, not read more. Without this block,
+            // investigation stalls can continue indefinitely because the
+            // soft-warn resets the cap counter, creating a read-nudge-read loop.
+            if (getAutoConfirm()) {
+              debugLog(
+                `${C.yellow}  ⚠ Investigation cap HARD-BLOCK: ${_blockReason} — blocking ${prep.fnName}${C.reset}`,
+              );
+              const _blockMsg = _rootCauseDetected
+                ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Edit the file now with edit_file or patch_file — reading is blocked.`
+                : `BLOCKED: ${_readOnlyCallsSinceEdit} consecutive reads without an edit. You MUST make an edit now with edit_file, patch_file, or write_file. Reading more files is blocked until you make an edit.`;
+              conversationMessages.push({
+                role: "user",
+                content: `[SYSTEM] ${_blockMsg}`,
+              });
+              apiMessages.push({
+                role: "user",
+                content: `[SYSTEM] ${_blockMsg}`,
+              });
+              // Do NOT reset cap state — the block must stay active.
+              // Return a blocked result so the model sees the rejection.
+              return {
+                msg: {
+                  role: "tool",
+                  content: _blockMsg,
+                  tool_call_id: prep.callId,
+                },
+                summary: `BLOCKED: ${_blockMsg}`,
+              };
+            }
+            // Interactive mode: soft-warn only — the user can override.
             debugLog(
               `${C.yellow}  ⚠ Investigation cap soft-warn: ${_blockReason} — allowing but nudging${C.reset}`,
             );
@@ -11452,7 +12626,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _isUnmodifiedBoundedBacklogImplementation(
             filesModified,
             _bashModifiedFiles,
-          )
+          ) ||
+          (getAutoConfirm() &&
+            filesModified.size === 0 &&
+            _bashModifiedFiles === 0 &&
+            conversationMessages.some(
+              (m) =>
+                m.role === "assistant" &&
+                typeof m.content === "string" &&
+                _looksLikeBoundedBacklogDecision(m.content),
+            ))
         ) {
           const stalledMsg =
             "Implementation stalled before edits.\n\n" +
@@ -12019,6 +13202,7 @@ module.exports = {
   _looksLikeCommentedOutCode,
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
+  _extractRemovedImportSymbols,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

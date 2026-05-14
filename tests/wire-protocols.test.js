@@ -420,6 +420,20 @@ describe("wire-protocols.js", () => {
 
       parser.feed('{"message":{"thinking":"reasoning step..."}}\n');
       expect(thinking).toEqual(["reasoning step..."]);
+      expect(parser.getResult().reasoning_content).toBe("reasoning step...");
+    });
+
+    it("treats reasoning_content deltas as thinking activity too", () => {
+      const thinking = [];
+      const parser = new OllamaStreamParser(() => {}, {
+        onThinkingToken: (t) => thinking.push(t),
+      });
+
+      parser.feed('{"message":{"reasoning_content":"step 1"}}\n');
+      parser.feed('{"message":{"reasoning":"step 2"}}\n');
+
+      expect(thinking).toEqual(["step 1", "step 2"]);
+      expect(parser.getResult().reasoning_content).toBe("step 1step 2");
     });
 
     it("handles empty lines", () => {

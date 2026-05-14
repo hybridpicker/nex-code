@@ -123,6 +123,7 @@ class OpenAIStreamParser extends StreamParser {
     super(onToken, callbacks);
     this.toolCallsMap = {}; // index -> { id, name, arguments }
     this.onReasoningToken = callbacks.onReasoningToken || (() => {});
+    this.reasoningContent = "";
   }
 
   parseLine(line) {
@@ -143,9 +144,11 @@ class OpenAIStreamParser extends StreamParser {
     const delta = parsed.choices?.[0]?.delta;
     if (!delta) return { done: false };
 
-    // DeepSeek reasoning_content (thinking tokens) — forwarded to callback
-    if (delta.reasoning_content) {
-      this.onReasoningToken(delta.reasoning_content);
+    // OpenAI-compatible reasoning deltas, used by DeepSeek and some proxies.
+    const reasoningDelta = delta.reasoning_content || delta.reasoning;
+    if (reasoningDelta) {
+      this.onReasoningToken(reasoningDelta);
+      this.reasoningContent += reasoningDelta;
     }
 
     if (delta.content) {
@@ -183,7 +186,7 @@ class OpenAIStreamParser extends StreamParser {
   }
 
   getResult() {
-    return {
+    const result = {
       content: this.content,
       tool_calls: Object.values(this.toolCallsMap)
         .filter((tc) => tc.name)
@@ -192,6 +195,10 @@ class OpenAIStreamParser extends StreamParser {
           function: { name: tc.name, arguments: tc.arguments },
         })),
     };
+    if (this.reasoningContent) {
+      result.reasoning_content = this.reasoningContent;
+    }
+    return result;
   }
 }
 
@@ -218,7 +225,10 @@ class OpenAICompatibleProtocol extends WireProtocol {
       id: tc.id,
       function: { name: tc.function.name, arguments: tc.function.arguments },
     }));
-    return { content: choice.content || "", tool_calls: toolCalls };
+    const result = { content: choice.content || "", tool_calls: toolCalls };
+    const reasoningContent = choice.reasoning_content || choice.reasoning;
+    if (reasoningContent) result.reasoning_content = reasoningContent;
+    return result;
   }
 
   createStreamParser(onToken, callbacks = {}) {
@@ -438,6 +448,7 @@ class OllamaStreamParser extends StreamParser {
     super(onToken, callbacks);
     this.toolCalls = [];
     this.onThinkingToken = callbacks.onThinkingToken || (() => {});
+    this.reasoningContent = "";
   }
 
   parseLine(line) {
@@ -450,9 +461,18 @@ class OllamaStreamParser extends StreamParser {
       return { done: false };
     }
 
-    // Thinking-model reasoning tokens (e.g. qwen3-coder, kimi-k2-thinking)
-    if (parsed.message?.thinking) {
-      this.onThinkingToken(parsed.message.thinking);
+    // Thinking-model reasoning tokens may arrive as `thinking`, `reasoning`,
+    // or `reasoning_content`, depending on the Ollama model wrapper.
+    const thinkingDelta =
+      parsed.message?.thinking ||
+      parsed.message?.reasoning ||
+      parsed.message?.reasoning_content ||
+      parsed.thinking ||
+      parsed.reasoning ||
+      parsed.reasoning_content;
+    if (thinkingDelta) {
+      this.onThinkingToken(thinkingDelta);
+      this.reasoningContent += thinkingDelta;
     }
 
     if (parsed.message?.content) {
@@ -472,7 +492,7 @@ class OllamaStreamParser extends StreamParser {
   }
 
   getResult() {
-    return {
+    const result = {
       content: this.content,
       tool_calls: this.toolCalls.map((tc, i) => ({
         id: tc.id || `ollama-${Date.now()}-${i}`,
@@ -482,6 +502,10 @@ class OllamaStreamParser extends StreamParser {
         },
       })),
     };
+    if (this.reasoningContent) {
+      result.reasoning_content = this.reasoningContent;
+    }
+    return result;
   }
 }
 
@@ -515,7 +539,7 @@ class OllamaChatProtocol extends WireProtocol {
 
   normalizeResponse(data) {
     const msg = data.message || {};
-    return {
+    const result = {
       content: msg.content || "",
       tool_calls: (msg.tool_calls || []).map((tc, i) => ({
         id: tc.id || `ollama-${Date.now()}-${i}`,
@@ -525,6 +549,10 @@ class OllamaChatProtocol extends WireProtocol {
         },
       })),
     };
+    const reasoningContent =
+      msg.reasoning_content || msg.reasoning || msg.thinking;
+    if (reasoningContent) result.reasoning_content = reasoningContent;
+    return result;
   }
 
   createStreamParser(onToken, callbacks = {}) {

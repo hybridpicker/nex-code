@@ -31,6 +31,7 @@ const AppState = {
 
     // Agentic nodes (timeline)
     agenticNodes: [],
+    conversationItems: [],
 
     // Verification
     testsRun: false,
@@ -55,6 +56,8 @@ const AppState = {
 };
 
 window.AppState = AppState;
+
+let pendingServerConfirm = null;
 
 // ─── Initialization ──────────────────────────────────────────────────────────
 
@@ -132,6 +135,7 @@ function subscribeToEvents() {
     if (d.gitState) applyGitState(d.gitState);
     AppState.data.sessionState = "idle";
     AppState.data.lastAction = "Project opened";
+    resetSessionActivity();
     rememberRecentProject(d.path, d.project);
 
     showProjectView();
@@ -192,6 +196,33 @@ function subscribeToEvents() {
     refreshAllComponents();
   });
 
+  window.nexAPI.onServerConfirm((d) => {
+    if (d.tool === "ask_user") {
+      pendingServerConfirm = d;
+      attachAskUserPrompt(d);
+      refreshCommandInputState();
+      refreshAllComponents();
+      return;
+    }
+
+    const confirmBox = document.getElementById("server-confirm");
+    const question = document.getElementById("confirm-question");
+    const allow = document.getElementById("confirm-allow");
+    const deny = document.getElementById("confirm-deny");
+    if (!confirmBox || !question || !allow || !deny) return;
+
+    question.textContent = d.question || "Allow this action?";
+    confirmBox.classList.remove("hidden");
+    allow.onclick = () => {
+      confirmBox.classList.add("hidden");
+      window.nexAPI.sendConfirm(d.id, true);
+    };
+    deny.onclick = () => {
+      confirmBox.classList.add("hidden");
+      window.nexAPI.sendConfirm(d.id, false);
+    };
+  });
+
   // Server done
   window.nexAPI.onServerDone((d) => {
     completeActiveNode();
@@ -201,6 +232,9 @@ function subscribeToEvents() {
 
     // Show task complete banner
     showTaskComplete();
+    completeActiveConversation();
+    pendingServerConfirm = null;
+    refreshCommandInputState();
 
     refreshAllComponents();
     addServerLog("Task complete");
@@ -218,6 +252,9 @@ function subscribeToEvents() {
       }
       AppState.activeNodeId = null;
     }
+    markActiveConversationError(d.message);
+    pendingServerConfirm = null;
+    refreshCommandInputState();
     refreshAllComponents();
     addServerLog(`Error: ${d.message}`);
   });
@@ -235,6 +272,7 @@ function subscribeToEvents() {
       extras: d.extras || {}
     };
     AppState.data.agenticNodes.push(node);
+    attachNodeToActiveConversation(node);
     AppState.activeNodeId = id;
     AppState.data.sessionState = "running";
     AppState.data.lastAction = `${node.phase} phase started`;
@@ -346,6 +384,21 @@ function logUiMessage(text) {
   stream.scrollTop = stream.scrollHeight;
 }
 
+function resetSessionActivity() {
+  AppState.data.agenticNodes = [];
+  AppState.data.conversationItems = [];
+  AppState.data.toolActions = [];
+  AppState.data.modelHistory = [];
+  AppState.data.testsRun = false;
+  AppState.data.testPassed = 0;
+  AppState.data.testFailed = 0;
+  AppState.data.fileChanges = 0;
+  AppState.activeNodeId = null;
+  AppState.activeConversationId = null;
+  pendingServerConfirm = null;
+  refreshCommandInputState();
+}
+
 function showTaskComplete() {
   const banner = document.getElementById("task-complete");
   const body = document.getElementById("complete-body");
@@ -387,7 +440,7 @@ function formatTokens(n) {
 
 function parseMarkdown(text) {
   if (!text) return "";
-  let html = text
+  let html = escapeHtml(text)
     .replace(/^### (.*$)/gim, "<h3>$1</h3>")
     .replace(/^\* (.*$)/gim, "<li>$1</li>")
     .replace(/\*\*(.*)\*\*/gim, "<b>$1</b>")
@@ -398,6 +451,125 @@ function parseMarkdown(text) {
   html = html.replace(/<\/ul>\s*<ul>/gim, "");
 
   return `<div class="md"><p>${html}</p></div>`;
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function createConversationItem(kind, text, extra) {
+  return Object.assign({
+    id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: kind,
+    text: text || "",
+    status: "running",
+    timestamp: new Date().toLocaleTimeString(),
+    phases: [],
+    query: null,
+    error: null,
+  }, extra || {});
+}
+
+function appendConversationItem(item) {
+  AppState.data.conversationItems.push(item);
+  AppState.activeConversationId = item.id;
+  showProjectView();
+  refreshAllComponents();
+  return item;
+}
+
+function getActiveConversation() {
+  return AppState.data.conversationItems.find((item) => item.id === AppState.activeConversationId) || null;
+}
+
+function createUserConversationTurn(text, extra) {
+  return appendConversationItem(createConversationItem("user", text, extra));
+}
+
+function attachNodeToActiveConversation(node) {
+  const activeConversation = getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.phases.push(node);
+  activeConversation.status = "running";
+}
+
+function attachAskUserPrompt(confirmRequest) {
+  const activeConversation = getActiveConversation();
+  if (!activeConversation) {
+    appendConversationItem(createConversationItem("assistant", confirmRequest.question, {
+      query: {
+        id: confirmRequest.id,
+        question: confirmRequest.question,
+        options: confirmRequest.options || [],
+        status: "pending",
+      },
+    }));
+    return;
+  }
+
+  activeConversation.query = {
+    id: confirmRequest.id,
+    question: confirmRequest.question,
+    options: confirmRequest.options || [],
+    status: "pending",
+  };
+}
+
+function markActiveConversationError(message) {
+  const activeConversation = getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "error";
+  activeConversation.error = message;
+}
+
+function completeActiveConversation() {
+  const activeConversation = getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "complete";
+  if (activeConversation.query && activeConversation.query.status === "pending") {
+    activeConversation.query.status = "dismissed";
+  }
+}
+
+function refreshCommandInputState() {
+  const input = document.getElementById("cmd-input");
+  const submit = document.getElementById("cmd-submit");
+  const submitLabel = submit ? submit.querySelector(".command-submit-label") : null;
+  if (!input) return;
+
+  if (pendingServerConfirm && pendingServerConfirm.tool === "ask_user") {
+    input.placeholder = "Reply to nex-code…";
+    if (submitLabel) submitLabel.textContent = "Reply";
+  } else {
+    input.placeholder = "Ask nex-code or enter a command…";
+    if (submitLabel) submitLabel.textContent = "Run";
+  }
+}
+
+function submitAskUserAnswer(answer) {
+  if (!pendingServerConfirm || !window.nexAPI) return;
+
+  const trimmed = String(answer || "").trim();
+  if (!trimmed) return;
+
+  const activeConversation = getActiveConversation();
+  if (activeConversation && activeConversation.query) {
+    activeConversation.query.status = "answered";
+    activeConversation.query.answer = trimmed;
+  }
+
+  createUserConversationTurn(trimmed, { replyTo: pendingServerConfirm.id });
+  window.nexAPI.sendConfirm(pendingServerConfirm.id, trimmed);
+  pendingServerConfirm = null;
+  AppState.data.sessionState = "running";
+  AppState.data.lastAction = "Clarification answered";
+  refreshCommandInputState();
+  refreshAllComponents();
 }
 
 // ─── Agentic Phase Management ───────────────────────────────────────────────
@@ -414,6 +586,7 @@ function startAgenticPhase(phase, detail, color) {
     extras: {}
   };
   AppState.data.agenticNodes.push(node);
+  attachNodeToActiveConversation(node);
   AppState.activeNodeId = id;
   AppState.data.sessionState = "running";
   AppState.data.lastAction = `${phase} phase started`;
@@ -510,12 +683,20 @@ function executeCommand() {
   const cmd = input.value.trim();
   if (!cmd) return;
 
+  if (pendingServerConfirm && pendingServerConfirm.tool === "ask_user") {
+    submitAskUserAnswer(cmd);
+    input.value = "";
+    return;
+  }
+
   const disabledReason = getCommandDisabledReason(cmd);
   if (disabledReason) {
     logUiMessage(`${cmd.split(/\s+/)[0]} is ${disabledReason}`);
     input.focus();
     return;
   }
+
+  createUserConversationTurn(cmd);
 
   // Log command
   const output = document.getElementById("server-output");
@@ -540,6 +721,7 @@ function executeCommand() {
 
   if (window.nexAPI) window.nexAPI.sendCommand(cmd);
   input.value = "";
+  refreshCommandInputState();
 }
 
 function commandRequiresProject(cmd) {
@@ -620,6 +802,10 @@ window.App = {
 
   focusCommandInput: function () {
     focusCommandInput();
+  },
+
+  answerInlinePrompt: function (answer) {
+    submitAskUserAnswer(answer);
   },
 
   continueIteration: function () {

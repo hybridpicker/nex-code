@@ -20,6 +20,7 @@ describe("providers/deepseek.js", () => {
   afterEach(() => {
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
+    delete process.env.DEEPSEEK_REASONING_EFFORT;
   });
 
   describe("configuration", () => {
@@ -28,7 +29,7 @@ describe("providers/deepseek.js", () => {
     });
 
     it("uses the DeepSeek API base URL", () => {
-      expect(provider.baseUrl).toBe("https://api.deepseek.com");
+      expect(provider.baseUrl).toBe("https://api.deepseek.com/beta");
     });
 
     it("supports overriding the base URL", () => {
@@ -89,7 +90,7 @@ describe("providers/deepseek.js", () => {
 
       expect(result.content).toBe("OK");
       expect(axios.post).toHaveBeenCalledWith(
-        "https://api.deepseek.com/chat/completions",
+        "https://api.deepseek.com/beta/chat/completions",
         expect.objectContaining({
           model: "deepseek-v4-flash",
           thinking: { type: "disabled" },
@@ -117,7 +118,54 @@ describe("providers/deepseek.js", () => {
       await provider.chat([], [], { thinking: "enabled" });
 
       expect(axios.post.mock.calls[0][1]).toEqual(
-        expect.objectContaining({ thinking: { type: "enabled" } }),
+        expect.objectContaining({
+          thinking: { type: "enabled" },
+          reasoning_effort: "high",
+        }),
+      );
+    });
+
+    it("normalizes max reasoning effort", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { choices: [{ message: { content: "OK", tool_calls: [] } }] },
+      });
+
+      await provider.chat([], [], {
+        thinking: "enabled",
+        reasoningEffort: "max",
+      });
+
+      expect(axios.post.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ reasoning_effort: "max" }),
+      );
+    });
+
+    it("adds reasoning placeholders for thinking-mode tool calls", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { choices: [{ message: { content: "OK", tool_calls: [] } }] },
+      });
+
+      await provider.chat(
+        [
+          {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                id: "call_1",
+                function: { name: "read_file", arguments: "{}" },
+              },
+            ],
+          },
+        ],
+        [],
+        { model: "deepseek-v4-pro" },
+      );
+
+      expect(axios.post.mock.calls[0][1].messages[0]).toEqual(
+        expect.objectContaining({
+          reasoning_content: "(reasoning omitted)",
+        }),
       );
     });
   });
@@ -149,6 +197,33 @@ describe("providers/deepseek.js", () => {
 
       expect(result.content).toBe("OK");
       expect(tokens).toEqual(["O", "K"]);
+    });
+
+    it("captures reasoning content and requests stream usage", async () => {
+      const emitter = new EventEmitter();
+      process.nextTick(() => {
+        emitter.emit(
+          "data",
+          Buffer.from(
+            `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "think" } }] })}\n\n`,
+          ),
+        );
+        emitter.emit("data", Buffer.from("data: [DONE]\n\n"));
+      });
+      axios.post.mockResolvedValueOnce({ data: emitter });
+
+      const reasoningTokens = [];
+      const result = await provider.stream([], [], {
+        onReasoningToken: (token) => reasoningTokens.push(token),
+      });
+
+      expect(result.reasoning_content).toBe("think");
+      expect(reasoningTokens).toEqual(["think"]);
+      expect(axios.post.mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          stream_options: { include_usage: true },
+        }),
+      );
     });
   });
 });

@@ -318,6 +318,11 @@ function emitJsonLine(obj, write = process.stdout.write.bind(process.stdout)) {
   write(JSON.stringify(obj) + "\n");
 }
 
+function emitJsonLineSync(obj) {
+  const fs = require("fs");
+  fs.writeSync(1, JSON.stringify(obj) + "\n");
+}
+
 function stripAnsi(text) {
   const { stripAnsiControlSequences } = require("../cli/format");
   return stripAnsiControlSequences(text);
@@ -344,6 +349,16 @@ function hasAssistantToolCalls(message) {
   }
   return Array.isArray(message.content) &&
     message.content.some((block) => block && block.type === "tool_use");
+}
+
+function looksLikeFailedHeadlessConclusion(text) {
+  const sample = String(text || "").trim();
+  if (!sample) return false;
+  return (
+    /stopping without reporting success/i.test(sample) ||
+    /^verification incomplete\./i.test(sample) ||
+    /^implementation incomplete\./i.test(sample)
+  );
 }
 
 function cleanToolSummary(summary) {
@@ -396,7 +411,14 @@ function countWriteToolCalls(messages) {
 function createJsonModeHooks() {
   process.env.NEX_SERVER = "1";
   let streamedText = "";
+  // Track pending tool calls with per-call sequence numbers so
+  // onToolEnd can remove the exact entry, not the last match.
+  let _toolSeq = 0;
+  const _toolIds = new Map(); // callId → pendingTools index
   const pendingTools = [];
+  let terminalEventEmitted = false;
+  let lastJsonEventType = "";
+  let restored = false;
 
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalConsole = {
@@ -405,6 +427,7 @@ function createJsonModeHooks() {
     info: console.info,
     error: console.error,
   };
+  const originalExit = process.exit.bind(process);
   const passthroughStdout = process.stdout.write;
   const passthroughStderr = process.stderr.write;
 
@@ -417,34 +440,265 @@ function createJsonModeHooks() {
 
   process.stdout.write = swallowWrite;
   process.stderr.write = swallowWrite;
+  process.exit = (code = 0) => {
+    // Intercept ALL exit codes. If no terminal event has been emitted,
+    // tools are still pending, OR the last event was a dangling tool_start,
+    // force a fail-closed error so JSON consumers never see an incomplete
+    // stream without a terminal done/error event.
+    if (
+      !isTerminalJsonEvent() ||
+      pendingTools.length > 0 ||
+      lastJsonEventType === "tool_start"
+    ) {
+      emitFailClosedLifecycleError(
+        lastJsonEventType === "tool_start" && pendingTools.length === 0
+          ? `Last event was a dangling tool_start with no matching tool_end.`
+          : "",
+      );
+      return originalExit(process.exitCode || 1);
+    }
+    return originalExit(code);
+  };
 
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};
   console.error = () => {};
 
+  function restore() {
+    if (restored) return;
+    restored = true;
+    process.stdout.write = passthroughStdout;
+    process.stderr.write = passthroughStderr;
+    console.log = originalConsole.log;
+    console.warn = originalConsole.warn;
+    console.info = originalConsole.info;
+    console.error = originalConsole.error;
+    // Keep the process.exit override active — it is the
+    // authoritative gate for terminal JSON events. Without it,
+    // process.exit(0) from finishSuccess/finishError can bypass
+    // the pending-tool check and leave a dangling tool_start.
+    process.removeListener("beforeExit", failClosedBeforeExit);
+    process.removeListener("uncaughtException", failClosedOnFatal);
+    process.removeListener("unhandledRejection", failClosedOnFatal);
+  }
+
+  function buildFailClosedError(detail = "") {
+    const names = pendingTools.map((entry) => entry.tool).join(", ");
+    if (names) {
+      return (
+        `Headless run ended with unfinished tool call(s): ${names}. ` +
+        "Stopping to avoid a false success." +
+        (detail ? ` ${detail}` : "")
+      );
+    }
+    return (
+      "Headless JSON run ended before emitting a final done/error event. " +
+      "Stopping to avoid a false success." +
+      (detail ? ` ${detail}` : "")
+    );
+  }
+
+  function isTerminalJsonEvent() {
+    return lastJsonEventType === "done" || lastJsonEventType === "error";
+  }
+
+  function emitTerminalJsonEventSync(event) {
+    if (terminalEventEmitted) return;
+    terminalEventEmitted = true;
+    lastJsonEventType = event?.type || "";
+    process.exitCode =
+      event?.type === "done" && event.success !== false ? 0 : 1;
+    emitJsonLineSync(event);
+  }
+
+  // ─── Pending-tools watchdog ────────────────────────────────────
+  // If the agent loop exits or stalls while tools are still pending,
+  // this timer forces a fail-closed terminal error so JSON consumers
+  // never see a dangling tool_start without a matching done/error.
+  // Default 60s — generous enough for slow npm install/lint runs in
+  // sandboxes, but still catches genuinely stalled tool executions.
+  const PENDING_TOOLS_WATCHDOG_MS = Math.max(
+    5000,
+    parseInt(process.env.NEX_PENDING_TOOLS_WATCHDOG_MS, 10) || 60000,
+  );
+  let _pendingWatchdogTimer = null;
+  const _pendingToolStartTimes = new Map(); // callId → Date.now()
+
+  function _startPendingWatchdog() {
+    if (_pendingWatchdogTimer) return;
+    _pendingWatchdogTimer = setInterval(() => {
+      if (terminalEventEmitted || restored) {
+        _stopPendingWatchdog();
+        return;
+      }
+      if (pendingTools.length === 0) {
+        // No pending tools — nothing to watchdog.
+        return;
+      }
+      // Only fire when at least one pending tool has been stuck for
+      // the full watchdog duration. Tools that were just started
+      // (e.g. a slow npm command) get their full timeout before we
+      // sound the alarm.
+      const now = Date.now();
+      let oldestStuckMs = 0;
+      for (const entry of pendingTools) {
+        const started = _pendingToolStartTimes.get(entry.callId);
+        if (started != null) {
+          const stuck = now - started;
+          if (stuck > oldestStuckMs) oldestStuckMs = stuck;
+        }
+      }
+      if (oldestStuckMs < PENDING_TOOLS_WATCHDOG_MS) return;
+      // Force-stop: emit terminal error and kill the process.
+      // After this the agent loop must not continue.
+      emitFailClosedLifecycleError(
+        `Pending tool call(s) unresolved for >${PENDING_TOOLS_WATCHDOG_MS / 1000}s: ` +
+          pendingTools.map((e) => e.tool).join(", "),
+      );
+      // emitFailClosedLifecycleError restores process.exit to
+      // the real exit. Call it now so the process stops.
+      originalExit(process.exitCode || 1);
+    }, 2000);
+  }
+
+  function _stopPendingWatchdog() {
+    if (_pendingWatchdogTimer) {
+      clearInterval(_pendingWatchdogTimer);
+      _pendingWatchdogTimer = null;
+    }
+  }
+
+  function emitFailClosedLifecycleError(detail = "") {
+    if (terminalEventEmitted) return;
+    const error = buildFailClosedError(detail);
+    restore();
+    emitTerminalJsonEventSync({
+      type: "error",
+      success: false,
+      error,
+    });
+  }
+
+  function failClosedBeforeExit() {
+    // beforeExit fires when the event loop empties — which can happen
+    // between API calls in the agent loop. Do NOT force-fail here;
+    // the exit listener, process.exit override, and watchdog timer
+    // are the authoritative fail-closed paths. Only clean up timer
+    // resources.
+    _stopPendingWatchdog();
+  }
+
+  function failClosedOnExit(code) {
+    if (isTerminalJsonEvent()) return;
+    // Emit terminal error synchronously — the exit handler runs in a
+    // sync-only context, so use the sync emit path.
+    emitTerminalJsonEventSync({
+      type: "error",
+      success: false,
+      error: buildFailClosedError(
+        code ? `Process exited with code ${code}.` : "",
+      ),
+      pendingTools: pendingTools.length > 0 ? pendingTools.map((e) => e.tool) : undefined,
+    });
+  }
+
+  function failClosedOnFatal(err) {
+    const message = err?.message || String(err || "");
+    _stopPendingWatchdog();
+    emitFailClosedLifecycleError(message ? `Fatal error: ${message}` : "");
+    originalExit(1);
+  }
+
+  process.once("beforeExit", failClosedBeforeExit);
+  process.prependListener("exit", failClosedOnExit);
+  process.once("uncaughtException", failClosedOnFatal);
+  process.once("unhandledRejection", failClosedOnFatal);
+
+  // ─── Last-resort JSON health gate ───────────────────────────
+  // Registered with process.on (not prependListener) so it fires AFTER
+  // all other exit handlers. This is the authoritative check: if any
+  // earlier handler failed to enforce the correct exit code, this one
+  // inspects the JSON stream health directly and overrides.
+  process.on("exit", () => {
+    // If a terminal event was already emitted, trust its exit code
+    // (emitTerminalJsonEventSync sets process.exitCode accordingly).
+    if (terminalEventEmitted) return;
+
+    // No terminal event emitted — JSON stream is incomplete.
+    const danglingCount = pendingTools.length;
+
+    if (danglingCount > 0 || lastJsonEventType === "tool_start" || _toolSeq === 0) {
+      process.exitCode = 1;
+      // Write the terminal error event using originalStdoutWrite (bound
+      // reference to real stdout.write, captured before swallowing).
+      // passthroughStdout is unbound — would fail with wrong 'this'.
+      try {
+        originalStdoutWrite(
+          JSON.stringify({
+            type: "error",
+            success: false,
+            error: buildFailClosedError(
+              danglingCount > 0
+                ? `Stream ended with ${danglingCount} unfinished tool call(s)` +
+                  (lastJsonEventType === "tool_start"
+                    ? " and a dangling tool_start with no matching tool_end."
+                    : ".")
+                : "Stream ended without a terminal done/error event — JSON is unhealthy.",
+            ),
+            pendingTools:
+              danglingCount > 0
+                ? pendingTools.map((e) => e.tool)
+                : undefined,
+          }) + "\n",
+        );
+      } catch {
+        /* best effort — exit code is the authoritative signal */
+      }
+    }
+  });
+
   return {
+    _startPendingWatchdog: () => _startPendingWatchdog(),
     hooks: {
       onToken(text) {
         streamedText += text || "";
+        lastJsonEventType = "token";
         emitJsonLine({ type: "token", text }, originalStdoutWrite);
       },
       onThinkingToken() {
+        lastJsonEventType = "thinking";
         emitJsonLine({ type: "thinking" }, originalStdoutWrite);
       },
       onToolStart(toolName, args) {
-        pendingTools.push({ tool: toolName, args: args || {} });
+        process.exitCode = 1;
+        const callId = ++_toolSeq;
+        const entry = { tool: toolName, args: args || {}, callId };
+        pendingTools.push(entry);
+        _toolIds.set(callId, pendingTools.length - 1);
+        _pendingToolStartTimes.set(callId, Date.now());
+        _startPendingWatchdog();
+        lastJsonEventType = "tool_start";
         emitJsonLine({
           type: "tool_start",
           tool: toolName,
           args: args || {},
+          callId,
         }, originalStdoutWrite);
       },
       onToolEnd(toolName, summary, ok) {
+        // Remove the FIRST matching tool entry (FIFO — tools complete in order).
         const idx = pendingTools
           .map((entry) => entry.tool)
           .lastIndexOf(toolName);
-        if (idx !== -1) pendingTools.splice(idx, 1);
+        if (idx !== -1) {
+          const removed = pendingTools.splice(idx, 1)[0];
+          if (removed && removed.callId != null) {
+            _pendingToolStartTimes.delete(removed.callId);
+          }
+        }
+        if (pendingTools.length === 0) _stopPendingWatchdog();
+        lastJsonEventType = "tool_end";
         emitJsonLine({
           type: "tool_end",
           tool: toolName,
@@ -459,13 +713,15 @@ function createJsonModeHooks() {
     getPendingTools() {
       return pendingTools.slice();
     },
+    hasTerminalEvent() {
+      return terminalEventEmitted || isTerminalJsonEvent();
+    },
+    emitTerminal(event) {
+      emitTerminalJsonEventSync(event);
+    },
     restore() {
-      process.stdout.write = passthroughStdout;
-      process.stderr.write = passthroughStderr;
-      console.log = originalConsole.log;
-      console.warn = originalConsole.warn;
-      console.info = originalConsole.info;
-      console.error = originalConsole.error;
+      restore();
+      _stopPendingWatchdog();
     },
   };
 }
@@ -578,6 +834,31 @@ async function runHeadlessTask(task) {
   let plainModeState = null;
   let agentHooks = jsonModeState ? jsonModeState.hooks : null;
 
+  // ─── Outer exit safety net ────────────────────────────────────
+  // The inner createJsonModeHooks registers its own exit listener,
+  // but to guard against edge cases (listener removal, premature
+  // beforeExit, silent crashes) we add one more last-resort exit
+  // handler here. It fires only if no terminal event was emitted
+  // by any other path.
+  if (jsonModeState) {
+    const outerExitHandler = (code) => {
+      const pending = jsonModeState.getPendingTools();
+      if (!jsonModeState.hasTerminalEvent() || pending.length > 0) {
+        const names = pending.map((e) => e.tool).join(", ");
+        jsonModeState.emitTerminal({
+          type: "error",
+          success: false,
+          error: pending.length > 0
+            ? `Headless run ended with unfinished tool call(s): ${names}. Stopping to avoid a false success.`
+            : "Headless JSON run ended before emitting a final done/error event. Stopping to avoid a false success.",
+          exitCode: code,
+        });
+        process.exitCode = 1;
+      }
+    };
+    process.prependListener("exit", outerExitHandler);
+  }
+
   function finishSuccess(getMessages) {
     const { sanitizeFinalAnswer } = require("../cli/format");
     const msgs = getMessages();
@@ -598,7 +879,7 @@ async function runHeadlessTask(task) {
       const { getSessionCosts } = require("../cli/costs");
       const costs = getSessionCosts();
       jsonModeState.restore();
-      emitJsonLine({
+      jsonModeState.emitTerminal({
         type: "error",
         success: false,
         error: errorMessage,
@@ -659,7 +940,7 @@ async function runHeadlessTask(task) {
       const { getSessionCosts } = require("../cli/costs");
       const costs = getSessionCosts();
       jsonModeState.restore();
-      emitJsonLine({
+      jsonModeState.emitTerminal({
         type: "error",
         success: false,
         error: errorMessage,
@@ -679,14 +960,29 @@ async function runHeadlessTask(task) {
         plainModeState.restore();
         if (finalResponse) process.stdout.write(finalResponse + "\n");
       }
-      process.exit(0);
+      process.exit(looksLikeFailedHeadlessConclusion(finalResponse) ? 1 : 0);
       return;
     }
 
     const { getSessionCosts } = require("../cli/costs");
     const costs = getSessionCosts();
     jsonModeState.restore();
-    emitJsonLine({
+    if (looksLikeFailedHeadlessConclusion(finalResponse)) {
+      jsonModeState.emitTerminal({
+        type: "error",
+        success: false,
+        error: finalResponse,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(1);
+      return;
+    }
+    jsonModeState.emitTerminal({
       type: "done",
       success: true,
       response: finalResponse,
@@ -709,7 +1005,7 @@ async function runHeadlessTask(task) {
     }
 
     jsonModeState.restore();
-    emitJsonLine({
+    jsonModeState.emitTerminal({
       type: "error",
       success: false,
       error: err?.message || String(err),
@@ -739,7 +1035,7 @@ async function runHeadlessTask(task) {
       .then(() => {
         if (jsonModeState) {
           jsonModeState.restore();
-          emitJsonLine({ type: "done", success: true, response: "" });
+          jsonModeState.emitTerminal({ type: "done", success: true, response: "" });
         }
         process.exit(0);
       })

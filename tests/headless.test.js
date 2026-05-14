@@ -120,5 +120,318 @@ describe("headless mode (bin/nex-code.js)", () => {
       expect(last.success).toBe(false);
       expect(last.error).toContain("modified files");
     });
+
+    it("emits a terminal error event when the process exits after tool_start", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-exit-"));
+      const r = runCli(
+        ["--auto", "--json", "--task", "Refactor app.js to async / await."],
+        {
+          expectError: true,
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_EXIT_AFTER_TOOL_START: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(events.some((event) => event.type === "tool_start")).toBe(true);
+      expect(events.some((event) => event.type === "tool_end")).toBe(false);
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      const last = events[events.length - 1];
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toMatch(/unfinished tool call|Headless JSON run ended/);
+    });
+
+    it("emits a terminal error when the process exits 0 without a terminal event", () => {
+      const r = runCli(
+        ["--auto", "--json", "--task", "Exit before finishing."],
+        {
+          expectError: true,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_EXIT_ZERO_NO_TERMINAL: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toContain(
+        "Headless JSON run ended before emitting a final done/error event",
+      );
+    });
+
+    it("emits an error instead of done when the final response explicitly refuses success", () => {
+      const r = runCli(
+        ["--auto", "--json", "--task", "Run npm run lint before finishing."],
+        {
+          expectError: true,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_INCOMPLETE_VERIFY_RESPONSE: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toContain("Verification incomplete");
+    });
+
+    it(
+      "emits a terminal error when thinking tokens flow but no content arrives for the abort threshold",
+      () => {
+        const r = runCli(
+          [
+            "--auto",
+            "--json",
+            "--task",
+            "Fix the ESLint failures. Run npm run lint before finishing.",
+          ],
+          {
+            expectError: true,
+            timeout: 120000,
+            env: {
+              NEX_NO_DOTENV: "1",
+              NEX_MOCK_PROVIDER: "1",
+              NEX_MOCK_THINKING_NO_CONTENT: "1",
+              NEX_STALE_ABORT_MS: "1000",
+              HEADLESS_MODEL: "mock:mock-model",
+              NEX_NO_FLATRATE: "1",
+              OLLAMA_API_KEY: "",
+              NEX_PHASE_ROUTING: "0",
+            },
+          },
+        );
+        expect(r.exitCode).toBe(1);
+        const lines = r.stdoutStripped
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        expect(lines.length).toBeGreaterThan(0);
+        const last = JSON.parse(lines[lines.length - 1]);
+        expect(last.type).toBe("error");
+        expect(last.success).toBe(false);
+      },
+      125000,
+    );
+
+    it("does not fail when thinking tokens arrive before visible content", () => {
+      const r = runCli(
+        ["--auto", "--json", "--task", "Fix the ESLint failures."],
+        {
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_THINKING_BEFORE_CONTENT: "1",
+            NEX_STALE_ABORT_MS: "1000",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(0);
+      const lines = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      expect(lines.length).toBeGreaterThan(0);
+      const last = JSON.parse(lines[lines.length - 1]);
+      expect(last.type).toBe("done");
+      expect(last.success).toBe(true);
+    }, 30000);
+
+    it(
+      "watchdog emits terminal error when tools remain pending past threshold",
+      () => {
+        const r = runCli(
+          [
+            "--auto",
+            "--json",
+            "--task",
+            "Refactor app.js to async / await.",
+          ],
+          {
+            expectError: true,
+            timeout: 30000,
+            env: {
+              NEX_NO_DOTENV: "1",
+              NEX_MOCK_PROVIDER: "1",
+              // The mock returns a tool call normally, and the agent loop
+              // proceeds. The watchdog fires only if the process stalls
+              // mid-tool-execution. To test the watchdog itself, use
+              // NEX_MOCK_EXIT_AFTER_TOOL_START to simulate an exit during
+              // tool execution, which historically caused a dangling
+              // tool_start before the watchdog was added.
+              NEX_MOCK_EXIT_AFTER_TOOL_START: "1",
+              HEADLESS_MODEL: "mock:mock-model",
+              NEX_NO_FLATRATE: "1",
+              OLLAMA_API_KEY: "",
+              NEX_PHASE_ROUTING: "0",
+              // Fast watchdog for testing — fire at 2 seconds instead of 15
+              NEX_PENDING_TOOLS_WATCHDOG_MS: "2000",
+            },
+          },
+        );
+        // The NEX_MOCK_EXIT_AFTER_TOOL_START trigger fires before the
+        // watchdog has a chance (process.exit(0) runs immediately after
+        // onToolStart). Both paths should produce a terminal error.
+        expect(r.exitCode).toBe(1);
+        const events = r.stdoutStripped
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+        expect(events.some((event) => event.type === "tool_start")).toBe(true);
+        // No tool_end because the process exited during execution
+        expect(events.some((event) => event.type === "tool_end")).toBe(false);
+        const last = events[events.length - 1];
+        expect(last.type).toBe("error");
+        expect(last.success).toBe(false);
+        // Error message should mention the unfinished tool or the lifecycle failure
+        expect(last.error).toMatch(
+          /unfinished tool call|Headless JSON run ended/,
+        );
+      },
+      35000,
+    );
+
+    it(
+      "watchdog keeps the process alive and fails closed for unresolved tool promises",
+      () => {
+        const r = runCli(
+          [
+            "--auto",
+            "--json",
+            "--task",
+            "Refactor app.js to async / await.",
+          ],
+          {
+            expectError: true,
+            timeout: 30000,
+            env: {
+              NEX_NO_DOTENV: "1",
+              NEX_MOCK_PROVIDER: "1",
+              NEX_MOCK_HANG_AFTER_TOOL_START: "1",
+              HEADLESS_MODEL: "mock:mock-model",
+              NEX_NO_FLATRATE: "1",
+              OLLAMA_API_KEY: "",
+              NEX_PHASE_ROUTING: "0",
+              NEX_PENDING_TOOLS_WATCHDOG_MS: "2000",
+            },
+          },
+        );
+        expect(r.exitCode).toBe(1);
+        const events = r.stdoutStripped
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+        expect(events.some((event) => event.type === "tool_start")).toBe(true);
+        expect(events.some((event) => event.type === "tool_end")).toBe(false);
+        const last = events[events.length - 1];
+        expect(last.type).toBe("error");
+        expect(last.success).toBe(false);
+        expect(last.error).toContain("Pending tool call");
+      },
+      35000,
+    );
+
+    // ─── Patch 3 regression: exit 0 blocked after dangling tool_start ──
+    it(
+      "emits terminal error (exit 1) when last event is a dangling tool_start with empty pending tools",
+      () => {
+        const r = runCli(
+          [
+            "--auto",
+            "--json",
+            "--task",
+            "Refactor app.js to async / await.",
+          ],
+          {
+            expectError: true,
+            timeout: 30000,
+            env: {
+              NEX_NO_DOTENV: "1",
+              NEX_MOCK_PROVIDER: "1",
+              // Exit immediately after tool_start — this simulates a
+              // lifecycle bug where the process exits 0 before the
+              // pending-tools watchdog fires and mismatched tool_end
+              // cleanup left pendingTools empty but lastJsonEventType
+              // stuck at "tool_start".
+              NEX_MOCK_EXIT_AFTER_TOOL_START: "1",
+              HEADLESS_MODEL: "mock:mock-model",
+              NEX_NO_FLATRATE: "1",
+              OLLAMA_API_KEY: "",
+              NEX_PHASE_ROUTING: "0",
+              // Fast watchdog (won't fire because process exits first)
+              NEX_PENDING_TOOLS_WATCHDOG_MS: "2000",
+            },
+          },
+        );
+        // The process.exit override must prevent exit 0 when the last
+        // JSON event is a dangling tool_start, even if pendingTools is
+        // empty (e.g. due to a race or bug).
+        expect(r.exitCode).toBe(1);
+        const events = r.stdoutStripped
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+        const last = events[events.length - 1];
+        expect(last.type).toBe("error");
+        expect(last.success).toBe(false);
+        // The error must mention either the unfinished tool or the
+        // dangling tool_start / missing terminal event.
+        expect(last.error).toMatch(
+          /unfinished tool call|dangling tool_start|Headless JSON run ended/,
+        );
+      },
+      35000,
+    );
   });
 });

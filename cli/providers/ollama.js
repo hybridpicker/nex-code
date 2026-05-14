@@ -389,6 +389,90 @@ class OllamaProvider extends BaseProvider {
     this.timeout = config.timeout || 180000;
     this.temperature = config.temperature ?? 0.2;
     this._discovered = false;
+    this._showCache = new Map();
+  }
+
+  _parseModelId(name) {
+    return (name || "").replace(/:latest$/, "");
+  }
+
+  _parseContextFromModelfile(modelfile) {
+    if (!modelfile) return null;
+    const match = String(modelfile).match(/PARAMETER\s+num_ctx\s+(\d+)/i);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  _extractContextWindow(meta) {
+    if (!meta || typeof meta !== "object") return null;
+    const directKeys = [
+      "contextWindow",
+      "context_window",
+      "num_ctx",
+      "numCtx",
+      "context_length",
+      "general.context_length",
+      "llama.context_length",
+    ];
+    for (const key of directKeys) {
+      const value = meta[key];
+      if (Number.isFinite(value) && value > 0) return value;
+      if (typeof value === "string" && /^\d+$/.test(value)) {
+        return parseInt(value, 10);
+      }
+    }
+    const nestedKeys = [
+      meta.details,
+      meta.model_info,
+      meta.metadata,
+      meta.parameters,
+      meta.options,
+      meta.info,
+    ];
+    for (const nested of nestedKeys) {
+      const nestedValue = this._extractContextWindow(nested);
+      if (nestedValue) return nestedValue;
+    }
+    return this._parseContextFromModelfile(meta.modelfile);
+  }
+
+  async _fetchModelContextWindow(name) {
+    if (!name) return null;
+    if (this._showCache.has(name)) return this._showCache.get(name);
+    const promise = axios
+      .post(
+        `${this.baseUrl}/api/show`,
+        { name },
+        {
+          timeout: 5000,
+          headers: this._getHeaders(),
+          httpAgent: _keepAliveHttp,
+          httpsAgent: _keepAliveHttps,
+        },
+      )
+      .then((resp) => this._extractContextWindow(resp.data))
+      .catch(() => null);
+    this._showCache.set(name, promise);
+    return promise;
+  }
+
+  async _mergeDiscoveredModel(rawModel) {
+    const name = rawModel?.name || rawModel?.model || "";
+    const id = this._parseModelId(name);
+    if (!id) return;
+    const existing = this.models[id] || {};
+    let contextWindow = this._extractContextWindow(rawModel);
+    if (!contextWindow) {
+      contextWindow = await this._fetchModelContextWindow(name);
+    }
+    const fallbackContext =
+      contextWindow || existing.contextWindow || 131072;
+    this.models[id] = {
+      ...existing,
+      id,
+      name: existing.name || rawModel?.name || id,
+      maxTokens: existing.maxTokens || 16384,
+      contextWindow: fallbackContext,
+    };
   }
 
   /**
@@ -399,27 +483,20 @@ class OllamaProvider extends BaseProvider {
   async discoverModels() {
     if (this._discovered) return;
     this._discovered = true;
-    // In headless/non-TTY mode: fire-and-forget — don't block the first API call
-    if (!process.stdout.isTTY) {
-      axios
-        .get(`${this.baseUrl}/api/tags`, {
-          timeout: 5000,
-          headers: this._getHeaders(),
-          httpAgent: _keepAliveHttp,
-          httpsAgent: _keepAliveHttps,
-        })
+    // In headless/non-TTY mode: fire-and-forget in production, but keep tests
+    // awaitable so discovery assertions are deterministic.
+    if (!process.stdout.isTTY && !process.env.JEST_WORKER_ID) {
+      const request = axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000,
+        headers: this._getHeaders(),
+        httpAgent: _keepAliveHttp,
+        httpsAgent: _keepAliveHttps,
+      });
+      if (!request || typeof request.then !== "function") return;
+      request
         .then((resp) => {
           const tags = resp.data?.models || [];
-          for (const m of tags) {
-            const id = (m.name || m.model || "").replace(/:latest$/, "");
-            if (!id || this.models[id]) continue;
-            this.models[id] = {
-              id,
-              name: m.name || id,
-              maxTokens: 16384,
-              contextWindow: 131072,
-            };
-          }
+          return Promise.all(tags.map((m) => this._mergeDiscoveredModel(m)));
         })
         .catch(() => {
           /* API unavailable — use hardcoded list */
@@ -435,14 +512,7 @@ class OllamaProvider extends BaseProvider {
       });
       const tags = resp.data?.models || [];
       for (const m of tags) {
-        const id = (m.name || m.model || "").replace(/:latest$/, "");
-        if (!id || this.models[id]) continue;
-        this.models[id] = {
-          id,
-          name: m.name || id,
-          maxTokens: 16384,
-          contextWindow: 131072,
-        };
+        await this._mergeDiscoveredModel(m);
       }
     } catch {
       /* API unavailable — use hardcoded list */

@@ -213,6 +213,30 @@ describe("providers/registry.js", () => {
       expect(registry.setActiveModel("anthropic:claude-sonnet")).toBe(true);
       expect(registry.getActiveProviderName()).toBe("anthropic");
     });
+
+    it("invalidates token and context caches when the active model changes", () => {
+      jest.resetModules();
+      jest.doMock("../../cli/agent", () => ({
+        invalidateSystemPromptCache: jest.fn(),
+        clearToolFilterCache: jest.fn(),
+      }));
+      jest.doMock("../../cli/context-engine", () => ({
+        invalidateTokenRatioCache: jest.fn(),
+        invalidateFitToContextCache: jest.fn(),
+      }));
+
+      const isolatedRegistry = require("../../cli/providers/registry");
+      const mockedContextEngine = require("../../cli/context-engine");
+      process.env.OLLAMA_API_KEY = "test-key";
+      isolatedRegistry._reset();
+
+      expect(isolatedRegistry.setActiveModel("ollama:kimi-k2.5")).toBe(true);
+      expect(mockedContextEngine.invalidateTokenRatioCache).toHaveBeenCalled();
+      expect(mockedContextEngine.invalidateFitToContextCache).toHaveBeenCalled();
+
+      jest.dontMock("../../cli/agent");
+      jest.dontMock("../../cli/context-engine");
+    });
   });
 
   // ─── getModelNames ──────────────────────────────────────────

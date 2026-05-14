@@ -50,6 +50,14 @@ async function build() {
     minify: !isDev,
   });
 
+  // Desktop launcher bundle
+  await esbuild.build({
+    ...commonOpts,
+    entryPoints: ["bin/nex-code-app.js"],
+    outfile: "dist/nex-code-app.js",
+    minify: !isDev,
+  });
+
   // Benchmark bundle
   await esbuild.build({
     ...commonOpts,

@@ -349,6 +349,7 @@ const {
   _looksLikeCommentedOutCode,
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
+  _extractRemovedImportSymbols,
 } = require("../cli/agent");
 const {
   callStream,
@@ -1309,6 +1310,98 @@ describe("agent.js", () => {
         ]),
       );
     });
+
+    it("blocks final success until the task-required verification command has passed", async () => {
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running build", [
+        {
+          function: { name: "bash", arguments: { command: "npm run build" } },
+          id: "build-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("build ok");
+      mockStream(
+        "PASS: The fix is complete and verification passed.",
+      );
+      mockStream("Running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+      mockStream(
+        "PASS: Updated /fix.js and ran npm run lint successfully before finishing.",
+      );
+
+      await processInput(
+        "Fix the bug in fix.js. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("explicitly requires these verification commands") &&
+            m.content.includes("npm run lint"),
+        ),
+      ).toBe(true);
+    });
+
+    it("requires final summaries to report the exact verification command result", async () => {
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+      mockStream("The ESLint failures are fixed and npm run lint should now pass.");
+      mockStream(
+        "Changed files: /fix.js. Verification: npm run lint (passed). Remaining risk: none.",
+      );
+
+      await processInput(
+        "Fix the bug in fix.js. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("npm run lint (passed)") &&
+            (m.content.includes("final summary must report the exact verification command and result") ||
+              m.content.includes("Write a closing summary")),
+        ),
+      ).toBe(true);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification: npm run lint (passed)"),
+        ),
+      ).toBe(true);
+    });
   });
 
   // ─── file tracking + resume ───────────────────────────────
@@ -1608,6 +1701,731 @@ describe("agent.js", () => {
       expect(message).toContain("SYSTEM QUALITY GUARD");
       expect(message).toContain("src/utils/sound.js:42");
       expect(message).toContain("Remove dead/commented-out code");
+    });
+
+    it("blocks final success when no-git lint-fix edits leave commented-out dead code", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-comment-"));
+      const sourceDir = path.join(fixtureDir, "src", "utils");
+      const sourcePath = path.join(sourceDir, "sound.js");
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.writeFileSync(
+        sourcePath,
+        [
+          "export function playWin() {",
+          "  const now = 0;",
+          "  return now + 1;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "write_file") {
+          fs.writeFileSync(path.join(fixtureDir, args.path), args.content);
+          return "ok";
+        }
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Applying the lint fix.",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: {
+                  path: "src/utils/sound.js",
+                  content: [
+                    "export function playWin() {",
+                    "  // const now = 0; // removed unused variable",
+                    "  return 1;",
+                    "}",
+                    "",
+                  ].join("\n"),
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nAll ESLint failures have been fixed without changing behavior.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Removing the dead commented-out line.",
+          tool_calls: [
+            {
+              id: "c2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/utils/sound.js",
+                  old_text: "  // const now = 0; // removed unused variable\n",
+                  new_text: "",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nAll ESLint failures have been fixed without changing behavior.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior in src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(callStream.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Do not finish with PASS/verified language") &&
+            m.content.includes("src/utils/sound.js"),
+        ),
+      ).toBe(true);
+    });
+
+    it("blocks undeclared package imports when manifests are out of scope", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-import-"));
+      const sourceDir = path.join(fixtureDir, "src", "components");
+      const sourcePath = path.join(sourceDir, "GameControls.jsx");
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(fixtureDir, "package.json"),
+        JSON.stringify({ name: "fixture", version: "1.0.0" }, null, 2),
+      );
+      fs.writeFileSync(
+        sourcePath,
+        [
+          "import React from 'react';",
+          "export default function GameControls() {",
+          "  return null;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      const originalScope = process.env.NEX_SCOPE;
+      process.chdir(fixtureDir);
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "write_file") {
+          fs.writeFileSync(path.join(fixtureDir, args.path), args.content);
+          return "ok";
+        }
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Trying a lint fix.",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: {
+                  path: "src/components/GameControls.jsx",
+                  content: [
+                    "import React from 'react';",
+                    "import PropTypes from 'prop-types';",
+                    "export default function GameControls() {",
+                    "  return null;",
+                    "}",
+                    "",
+                  ].join("\n"),
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "PASS: lint fix complete.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Removing the undeclared import.",
+          tool_calls: [
+            {
+              id: "c2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/GameControls.jsx",
+                  old_text: "import PropTypes from 'prop-types';\n",
+                  new_text: "",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "PASS: fix complete without undeclared imports.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("imports from packages that are not declared or resolvable") &&
+            m.content.includes("prop-types"),
+        ),
+      ).toBe(true);
+    });
+
+    it("nudges toward the remaining scoped file after lint verification fails", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      mockStream("fixing first file", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 1",
+          "src/utils/sound.js",
+          "  46:15  error  'now' is assigned a value but never used  no-unused-vars",
+          "",
+          "✖ 1 problem (1 error, 0 warnings)",
+        ].join("\n"),
+      );
+      mockStream("Fixing the remaining scoped file.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification failed in these remaining scoped files") &&
+            m.content.includes("src/utils/sound.js"),
+        ),
+      ).toBe(true);
+    });
+
+    it("forces exact scoped no-unused-vars follow-up before finalizing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      mockStream("fixing sound first", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/utils/sound.js" } },
+          id: "edit-sound",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 1",
+          "src/components/GameControls.jsx",
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+          "",
+          "✖ 1 problem (1 error, 0 warnings)",
+        ].join("\n"),
+      );
+
+      mockStream("PASS: lint fix complete.", []);
+      mockStream("Removing currentPlayer from the scoped file.", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-controls",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("rerunning lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+
+      mockStream("PASS: lint fix complete.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      const userMessages = getConversationMessages().filter(
+        (m) => m.role === "user" && typeof m.content === "string",
+      );
+      expect(
+        userMessages.some(
+          (m) =>
+            m.content.includes("npm run lint failed in scoped file src/components/GameControls.jsx") &&
+            m.content.includes("currentPlayer") &&
+            m.content.includes("Do not finalize") &&
+            m.content.includes("rerun npm run lint"),
+        ),
+      ).toBe(true);
+
+      expect(
+        executeTool.mock.calls.some(
+          ([name, args]) =>
+            name === "edit_file" && args?.path === "src/components/GameControls.jsx",
+        ),
+      ).toBe(true);
+      expect(
+        executeTool.mock.calls.filter(
+          ([name, args]) =>
+            name === "bash" && args?.command === "npm run lint",
+        ),
+      ).toHaveLength(2);
+    });
+
+    it("fails cleanly in headless auto mode when verification dependencies are missing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Applying the scoped fix.", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Running lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 2",
+          "Error: Cannot find module '/tmp/sandbox/node_modules/eslint/lib/api.js'",
+          "Require stack:",
+          "- /tmp/sandbox/node_modules/vite/dist/node/chunks/dep.js",
+        ].join("\n"),
+      );
+
+      mockStream("SHOULD NOT ASK", [
+        {
+          function: {
+            name: "ask_user",
+            arguments: {
+              question: "May I run npm install?",
+              options: ["Yes", "No"],
+            },
+          },
+          id: "ask-1",
+        },
+      ]);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete.") &&
+            m.content.includes("npm run lint") &&
+            m.content.includes("dependencies are missing or broken"),
+        ),
+      ).toBe(true);
+      expect(
+        executeTool.mock.calls.some(([name]) => name === "ask_user"),
+      ).toBe(false);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("SHOULD NOT ASK"),
+        ),
+      ).toBe(false);
+    });
+
+    it("fails closed after repeated verification stalls without edit progress", async () => {
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Running lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\nerror  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      mockStream("Retrying lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint --silent" } },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\nerror  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      mockStream("Trying build.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run build" } },
+          id: "build-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nbuild failed",
+      );
+
+      mockStream("SHOULD NOT CONTINUE", []);
+
+      await processInput(
+        "Fix the ESLint failures without changing behavior. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete.") &&
+            m.content.includes("Three consecutive verification commands failed without edit progress"),
+        ),
+      ).toBe(true);
+      expect(callStream).toHaveBeenCalledTimes(3);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("SHOULD NOT CONTINUE"),
+        ),
+      ).toBe(false);
+    });
+
+    // ─── Patch 1 regression: blocks unrelated import removal ──────────
+    it("blocks edits that remove unrelated imports during scoped no-unused-vars follow-up", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE =
+        "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      // Step 1: lint fails, pinpointing currentPlayer in GameControls.jsx
+      mockStream("Running lint first.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\n" +
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      // Step 2: model attempts a patch_file that removes BOTH currentPlayer
+      // and import React (unrelated). The guard should block this.
+      mockStream("Removing both currentPlayer and the React import.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              patches: [
+                {
+                  old_text: "import React from 'react';\n    currentPlayer,",
+                  new_text: "    // removed",
+                },
+              ],
+            },
+          },
+          id: "patch-bad",
+        },
+      ]);
+
+      // Step 3: if the guard blocks, the model gets a BLOCKED message back
+      // and must retry with only currentPlayer removed
+      mockStream("OK, removing only currentPlayer.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              old_text: "    currentPlayer,",
+              new_text: "",
+            },
+          },
+          id: "edit-good",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Rerunning lint.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+
+      mockStream("PASS: lint fix complete.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      // The first patch_file should have been blocked with a BLOCKED message
+      const toolMessages = getConversationMessages().filter(
+        (m) => m.role === "tool",
+      );
+      const blockedMsg = toolMessages.find(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("BLOCKED") &&
+          m.content.includes("import") &&
+          m.content.includes("React"),
+      );
+      // Either the tool was blocked (BLOCKED in tool result) OR it was
+      // blocked pre-execution (the mock never called executeTool for it).
+      // In both cases the model receives a blocking message.
+      const hadBlockedMessage =
+        !!blockedMsg ||
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("BLOCKED") &&
+            m.content.includes("import") &&
+            m.content.includes("React"),
+        );
+      expect(hadBlockedMessage).toBe(true);
+
+      // The model should NOT have executed both the bad patch and the good edit
+      // for the same file without an intervening lint rerun.
+      const gameControlsEdits = executeTool.mock.calls.filter(
+        ([name, args]) =>
+          name === "edit_file" && args?.path === "src/components/GameControls.jsx",
+      );
+      // Expect at most 1 successful edit on GameControls.jsx (the good one)
+      expect(gameControlsEdits.length).toBeLessThanOrEqual(1);
+    });
+
+    // ─── Patch 2 regression: verification freshness ──────────────────
+    it("requires fresh verification after a post-verification edit", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE =
+        "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      // Step 1: edit sound.js
+      mockStream("Fixing sound.js.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/utils/sound.js",
+              old_text: "const now = 0;",
+              new_text: "",
+            },
+          },
+          id: "edit-sound",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      // Step 2: run lint — passes for sound.js but fails for GameControls.jsx
+      mockStream("Running lint.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\n" +
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      // Step 3: edit GameControls.jsx (AFTER lint was run — makes lint stale)
+      mockStream("Removing currentPlayer.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              old_text: "    currentPlayer,",
+              new_text: "",
+            },
+          },
+          id: "edit-controls",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      // Step 4: model tries to finalize without rerunning lint.
+      // The verification freshness guard should require a rerun.
+      mockStream("PASS: all lint errors fixed.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      // After editing GameControls.jsx post-lint, the model should be nudged
+      // to rerun lint before finalizing. Check for the nudge message.
+      const lastMessages = getConversationMessages().slice(-10);
+      const hasVerificationNudge = lastMessages.some(
+        (m) =>
+          typeof m.content === "string" &&
+          (m.content.includes("verification required") ||
+            m.content.includes("Run npm run lint") ||
+            m.content.includes("rerun") ||
+            m.content.includes("verification is stale")),
+      );
+      // The exact nudge wording varies, but some post-edit verification
+      // prompt should have been injected.
+      expect(hasVerificationNudge).toBe(true);
+    });
+
+    // ─── Unit test: _extractRemovedImportSymbols ─────────────────────
+    it("_extractRemovedImportSymbols detects unrelated import removals", () => {
+      const oldText = [
+        "import React from 'react';",
+        "import { useState } from 'react';",
+        "import './GameControls.css';",
+        "",
+        "export default function GameControls({ currentPlayer }) {",
+        "  const { currentPlayer } = props;",
+        "  return null;",
+        "}",
+      ].join("\n");
+
+      const newText = [
+        "import { useState } from 'react';",
+        "import './GameControls.css';",
+        "",
+        "export default function GameControls({ currentPlayer }) {",
+        "  return null;",
+        "}",
+      ].join("\n");
+
+      const removed = _extractRemovedImportSymbols(oldText, newText);
+      expect(removed).toHaveLength(1);
+      expect(removed[0].symbol).toBe("React");
     });
 
     it("ERROR result detected in summary", async () => {
@@ -2970,6 +3788,29 @@ describe("agent.js", () => {
       await processInput("test", { onToolStart, onToolEnd });
       expect(onToolStart).toHaveBeenCalledWith("bash", expect.any(Object));
       expect(onToolEnd).toHaveBeenCalledWith("bash", expect.any(String), true);
+    });
+
+    it("emits a failed tool_end event when tool execution throws", async () => {
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+      mockStream("", [
+        {
+          function: { name: "bash", arguments: { command: "echo x" } },
+          id: "c1",
+        },
+      ]);
+      executeTool.mockRejectedValueOnce(new Error("tool crashed"));
+
+      await expect(
+        processInput("test", { onToolStart, onToolEnd }),
+      ).rejects.toThrow("tool crashed");
+
+      expect(onToolStart).toHaveBeenCalledWith("bash", expect.any(Object));
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("tool crashed"),
+        false,
+      );
     });
 
     it("calls onThinkingToken hook", async () => {
