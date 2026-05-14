@@ -18,6 +18,14 @@ function initTimelineComponents(data) {
     ? items.map(renderConversationItem).join("")
     : renderEmptyConversation();
 
+  track.querySelectorAll("[data-inline-answer]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (window.App && typeof window.App.answerInlinePrompt === "function") {
+        window.App.answerInlinePrompt(decodeURIComponent(button.dataset.inlineAnswer || ""));
+      }
+    });
+  });
+
   const banner = document.getElementById("task-complete");
   if (banner) {
     const allDone =
@@ -88,7 +96,7 @@ function renderAskUserCard(query) {
       <button
         type="button"
         class="conversation-option-btn"
-        onclick="App.answerInlinePrompt(${JSON.stringify(option)})"
+        data-inline-answer="${encodeURIComponent(option)}"
       >${escapeConversationHtml(option)}</button>
     `).join("")
     : "";
