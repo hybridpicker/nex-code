@@ -29,6 +29,7 @@ function initTimelineComponents(data) {
   const banner = document.getElementById("task-complete");
   if (banner) {
     const allDone =
+      data.sessionState === "complete" &&
       data.agenticNodes &&
       data.agenticNodes.length > 0 &&
       data.agenticNodes.every((n) => n.status === "complete");
@@ -49,6 +50,9 @@ function initTimelineComponents(data) {
     } else if (data.sessionState === "complete" && items.length > 0) {
       pill.style.display = "flex";
       pillText.textContent = "Conversation complete";
+    } else if (data.sessionState === "stalled" && items.length > 0) {
+      pill.style.display = "flex";
+      pillText.textContent = "Conversation stopped";
     } else {
       pill.style.display = "none";
     }
@@ -194,6 +198,7 @@ function formatConversationState(status) {
   const map = {
     running: "active",
     complete: "complete",
+    stopped: "stopped",
     error: "error",
   };
   return map[status] || "active";

@@ -28,6 +28,7 @@ function initSidebarComponents(data) {
   let agentStateClass = "idle";
   if (isActive) { agentStateLabel = "Processing"; agentStateClass = "running"; }
   else if (data.sessionState === "complete") { agentStateLabel = "Complete"; agentStateClass = "complete"; }
+  else if (data.sessionState === "stalled") { agentStateLabel = "Stopped"; agentStateClass = "stalled"; }
   else if (data.sessionState === "error") { agentStateLabel = "Error"; agentStateClass = "error"; }
 
   nav.innerHTML = `
@@ -98,6 +99,7 @@ function initSidebarComponents(data) {
       </div>
       ${isActive ? `<div class="sidebar-item"><span class="item-icon">↻</span><span class="item-label">Phase ${activeNodeCount} of workflow</span></div>` : ""}
       ${data.sessionState === "complete" ? `<div class="sidebar-item" style="color:var(--accent-emerald)"><span class="item-icon">✓</span><span class="item-label">All tasks complete</span></div>` : ""}
+      ${data.sessionState === "stalled" ? `<div class="sidebar-item" style="color:var(--accent-gold)"><span class="item-icon">!</span><span class="item-label">Run stopped before completion</span></div>` : ""}
     </div>
   `;
 

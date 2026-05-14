@@ -13,6 +13,7 @@ jest.mock("../cli/safety", () => ({
 jest.mock("../cli/agent", () => ({
   processInput: jest.fn().mockResolvedValue(undefined),
   clearConversation: jest.fn(),
+  getConversationMessages: jest.fn().mockReturnValue([]),
 }));
 
 let mockLineHandler;
@@ -32,7 +33,11 @@ jest.mock("readline", () => ({
 }));
 
 const { setConfirmHook } = require("../cli/safety");
-const { processInput, clearConversation } = require("../cli/agent");
+const {
+  processInput,
+  clearConversation,
+  getConversationMessages,
+} = require("../cli/agent");
 
 let stdoutWrites;
 let stderrWrites;
@@ -57,6 +62,7 @@ beforeEach(() => {
   mockLineHandler = null;
   processInput.mockReset().mockResolvedValue(undefined);
   clearConversation.mockReset();
+  getConversationMessages.mockReset().mockReturnValue([]);
   setConfirmHook.mockReset();
 });
 
@@ -98,6 +104,11 @@ describe("startServerMode", () => {
 
   test("handles chat message and calls processInput", async () => {
     startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { role: "assistant", content: "Implemented the requested change and verified it." },
+      ]);
 
     await mockLineHandler('{"type":"chat","id":"msg-1","text":"hello"}');
 
@@ -105,7 +116,48 @@ describe("startServerMode", () => {
     // Should emit done
     const doneMsg = stdoutWrites.find((w) => w.includes('"done"'));
     expect(doneMsg).toBeDefined();
-    expect(JSON.parse(doneMsg).id).toBe("msg-1");
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-1",
+      status: "complete",
+      success: true,
+    });
+  });
+
+  test("marks stalled runs as non-success when the assistant reports no work completed", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe implementation phase exhausted its turn budget without changing files.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-2","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-2"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-2",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("marks missing final assistant output as stalled", async () => {
+    startFresh();
+    getConversationMessages.mockReturnValueOnce([]).mockReturnValueOnce([]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-3","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-3"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-3",
+      status: "stalled",
+      success: false,
+      summary: "The run stopped without a final assistant response.",
+    });
   });
 
   test("handles confirm message and resolves pending confirm", async () => {

@@ -28,6 +28,51 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
+function summarizeAssistantText(text) {
+  const normalized = String(text || "").trim().replace(/\s+/g, " ");
+  if (!normalized) return "";
+  const firstParagraph = normalized.split(/\n\s*\n/)[0].trim();
+  return firstParagraph.slice(0, 240);
+}
+
+function classifyTurnOutcome(turnMessages) {
+  const assistantMessages = Array.isArray(turnMessages)
+    ? turnMessages
+        .filter(
+          (msg) => msg && msg.role === "assistant" && typeof msg.content === "string",
+        )
+        .map((msg) => String(msg.content).trim())
+        .filter(Boolean)
+    : [];
+
+  const lastAssistant = assistantMessages[assistantMessages.length - 1] || "";
+  if (!lastAssistant) {
+    return {
+      status: "stalled",
+      success: false,
+      summary: "The run stopped without a final assistant response.",
+    };
+  }
+
+  if (
+    /\b(implementation stalled before edits|stopping without|no safe task found|not verified|could not find the target|no actionable items|nothing actionable found)\b/i.test(
+      lastAssistant,
+    )
+  ) {
+    return {
+      status: "stalled",
+      success: false,
+      summary: summarizeAssistantText(lastAssistant),
+    };
+  }
+
+  return {
+    status: "complete",
+    success: true,
+    summary: summarizeAssistantText(lastAssistant),
+  };
+}
+
 /**
  * Start the JSON-lines server loop.
  * Does not return — keeps the process alive via readline.
@@ -159,10 +204,23 @@ function startServerMode() {
         const msgId = msg.id || "msg-" + Date.now();
         activeMsgId = msgId;
 
-        const { processInput } = require("./agent");
+        const {
+          processInput,
+          getConversationMessages,
+        } = require("./agent");
         try {
+          const beforeSnapshot = getConversationMessages?.();
+          const beforeMessages = Array.isArray(beforeSnapshot)
+            ? beforeSnapshot
+            : [];
+          const beforeCount = beforeMessages.length;
           await processInput(msg.text, serverHooks);
-          emit({ type: "done", id: msgId });
+          const afterSnapshot = getConversationMessages?.();
+          const afterMessages = Array.isArray(afterSnapshot)
+            ? afterSnapshot
+            : [];
+          const outcome = classifyTurnOutcome(afterMessages.slice(beforeCount));
+          emit({ type: "done", id: msgId, ...outcome });
         } catch (err) {
           emit({
             type: "error",
@@ -214,4 +272,4 @@ function startServerMode() {
   });
 }
 
-module.exports = { startServerMode };
+module.exports = { startServerMode, classifyTurnOutcome, summarizeAssistantText };

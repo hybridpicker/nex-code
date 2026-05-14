@@ -38,6 +38,10 @@ function initTopBarComponents(data) {
       case "complete":
         label.textContent = "Complete";
         break;
+      case "stalled":
+        dot.classList.add("warn");
+        label.textContent = "Stopped";
+        break;
       case "error":
         dot.classList.add("error");
         label.textContent = "Error";
@@ -294,6 +298,8 @@ function toggleBranchMenu(data) {
 
 function getModelMenuStatus(state) {
   if (state === "running") return "Active";
+  if (state === "complete") return "Complete";
+  if (state === "stalled") return "Stopped";
   if (state === "error") return "Error";
   return "Ready";
 }

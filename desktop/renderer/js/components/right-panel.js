@@ -42,6 +42,10 @@ function initSessionStatus(data) {
         badge.textContent = "Complete";
         badge.classList.add("ok");
         break;
+      case "stalled":
+        badge.textContent = "Stopped";
+        badge.classList.add("warn");
+        break;
       case "error":
         badge.textContent = "Error";
         badge.classList.add("err");
@@ -50,7 +54,13 @@ function initSessionStatus(data) {
   }
 
   if (state) {
-    const labels = { idle: "Idle", running: "Running", complete: "Complete", error: "Error" };
+    const labels = {
+      idle: "Idle",
+      running: "Running",
+      complete: "Complete",
+      stalled: "Stopped",
+      error: "Error",
+    };
     state.textContent = labels[data.sessionState] || "Idle";
   }
 
@@ -124,6 +134,7 @@ function initModelActivity(data) {
 function getModelPurpose(state) {
   if (state === "running") return "Active processing";
   if (state === "complete") return "Session complete";
+  if (state === "stalled") return "Session stopped";
   return "Ready";
 }
 

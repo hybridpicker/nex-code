@@ -130,6 +130,7 @@
 }
 .session-dot.idle { background: var(--text-tertiary); }
 .session-dot.active { background: var(--accent-emerald); animation: pulse-dot 2s ease-in-out infinite; }
+.session-dot.warn { background: var(--accent-gold); }
 .session-dot.error { background: var(--accent-coral); }
 
 @keyframes pulse-dot {
@@ -253,6 +254,7 @@
 .agent-state-dot.idle { background: var(--text-tertiary); }
 .agent-state-dot.running { background: var(--accent-emerald); }
 .agent-state-dot.complete { background: var(--accent-cyan); }
+.agent-state-dot.stalled { background: var(--accent-gold); }
 .agent-state-dot.error { background: var(--accent-coral); }
 
 /* Sidebar divider */
@@ -485,6 +487,9 @@
 }
 .conversation-turn.complete .conversation-turn-state {
   color: var(--accent-emerald);
+}
+.conversation-turn.stopped .conversation-turn-state {
+  color: var(--accent-gold);
 }
 .conversation-turn.error .conversation-turn-state {
   color: var(--accent-coral);

@@ -17,7 +17,7 @@ const AppState = {
     isDeployable: false,
 
     // Session
-    sessionState: "idle",       // idle | running | complete | error
+    sessionState: "idle",       // idle | running | complete | stalled | error
     sessionConfidence: null,    // High | Medium | Low
     lastAction: null,
 
@@ -226,18 +226,25 @@ function subscribeToEvents() {
   // Server done
   window.nexAPI.onServerDone((d) => {
     completeActiveNode();
-    AppState.data.sessionState = "complete";
-    AppState.data.sessionConfidence = "High";
-    AppState.data.lastAction = "Task complete";
+    const success = d && d.success !== false && d.status !== "stalled";
+    AppState.data.sessionState = success ? "complete" : "stalled";
+    AppState.data.sessionConfidence = success ? "High" : "Low";
+    AppState.data.lastAction = success
+      ? "Task complete"
+      : (d.summary || "Stopped without completing the task");
 
-    // Show task complete banner
-    showTaskComplete();
-    completeActiveConversation();
+    if (success) {
+      showTaskComplete();
+      completeActiveConversation();
+    } else {
+      hideTaskComplete();
+      markActiveConversationStopped(d.summary);
+    }
     pendingServerConfirm = null;
     refreshCommandInputState();
 
     refreshAllComponents();
-    addServerLog("Task complete");
+    addServerLog(success ? "Task complete" : (d.summary || "Run stopped"));
   });
 
   // Server error
@@ -430,6 +437,11 @@ function showTaskComplete() {
   `;
 }
 
+function hideTaskComplete() {
+  const banner = document.getElementById("task-complete");
+  if (banner) banner.classList.add("hidden");
+}
+
 function formatTokens(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(0) + "k";
@@ -536,6 +548,16 @@ function completeActiveConversation() {
   }
 }
 
+function markActiveConversationStopped(message) {
+  const activeConversation = getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "stopped";
+  if (message) activeConversation.error = message;
+  if (activeConversation.query && activeConversation.query.status === "pending") {
+    activeConversation.query.status = "dismissed";
+  }
+}
+
 function refreshCommandInputState() {
   const input = document.getElementById("cmd-input");
   const submit = document.getElementById("cmd-submit");
@@ -575,6 +597,7 @@ function submitAskUserAnswer(answer) {
 // ─── Agentic Phase Management ───────────────────────────────────────────────
 
 function startAgenticPhase(phase, detail, color) {
+  hideTaskComplete();
   const id = "node-" + Date.now();
   const node = {
     id: id,
