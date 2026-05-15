@@ -2855,17 +2855,21 @@ describe("tools.js", () => {
 
   // ─── k8s_pods local ──────────────────────────────────────────
   describe("k8s_pods variations", () => {
-    it("runs without namespace (all namespaces)", async () => {
+    // Skipped in CI: hosted runners may have kubectl installed but no reachable
+    // cluster, causing kubectl discovery to exceed Jest's per-test timeout.
+    const itLocal = process.env.CI ? it.skip : it;
+
+    itLocal("runs without namespace (all namespaces)", async () => {
       const result = await executeTool("k8s_pods", {});
       expect(typeof result).toBe("string");
     });
 
-    it("runs with namespace", async () => {
+    itLocal("runs with namespace", async () => {
       const result = await executeTool("k8s_pods", { namespace: "default" });
       expect(typeof result).toBe("string");
     });
 
-    it("runs with label", async () => {
+    itLocal("runs with label", async () => {
       const result = await executeTool("k8s_pods", { label: "app=web" });
       expect(typeof result).toBe("string");
     });

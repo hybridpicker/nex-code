@@ -1383,7 +1383,8 @@ describe("index.js (REPL commands)", () => {
     it("handles /plan approve with no plan", async () => {
       await lineHandler("/plan approve");
       const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
-      expect(output).toContain("No plan");
+      expect(output).toContain("No plan is ready");
+      expect(output).toContain("Plan ready");
     });
 
     it("handles /plans command", async () => {
@@ -1527,6 +1528,27 @@ describe("index.js (REPL commands)", () => {
       await lineHandler("/plan approve");
       expect(planner.startExecution).toHaveBeenCalled();
       expect(planner.setPlanMode).toHaveBeenCalledWith(false);
+    });
+
+    it("handles /plan approve with saved prose plan content", async () => {
+      const planner = require("../cli/planner");
+      const agent = require("../cli/agent");
+      planner.approvePlan.mockReturnValueOnce(false).mockReturnValueOnce(true);
+      planner.getPlanContent.mockReturnValueOnce("Prose-only implementation plan");
+
+      await lineHandler("/plan approve");
+
+      expect(planner.createPlan).toHaveBeenCalledWith(
+        "Approved prose plan",
+        expect.arrayContaining([
+          expect.objectContaining({ description: "Execute the approved plan" }),
+        ]),
+      );
+      expect(planner.startExecution).toHaveBeenCalled();
+      expect(planner.setPlanMode).toHaveBeenCalledWith(false);
+      expect(agent.processInput).toHaveBeenCalledWith(
+        expect.stringContaining("Prose-only implementation plan"),
+      );
     });
 
     it("handles /plans with saved plans", async () => {
@@ -3025,9 +3047,24 @@ describe("index.js (REPL commands)", () => {
 
     // ─── /k8s ─────────────────────────────────────────────
     it("/k8s shows kubernetes overview header", async () => {
-      await handleSlashCommand("/k8s");
-      const output = logSpy2.mock.calls.map((c) => c[0]).join("\n");
-      expect(output).toContain("Kubernetes Overview");
+      const childProcess = require("child_process");
+      const { promisify } = require("util");
+      const execSpy = jest.spyOn(childProcess, "exec");
+      execSpy[promisify.custom] = async (cmd) => {
+        if (cmd.includes("get namespaces")) {
+          return { stdout: "default\nkube-system\n", stderr: "" };
+        }
+        return { stdout: "default api true Running 0\n", stderr: "" };
+      };
+
+      try {
+        await handleSlashCommand("/k8s");
+        const output = logSpy2.mock.calls.map((c) => c[0]).join("\n");
+        expect(output).toContain("Kubernetes Overview");
+      } finally {
+        delete execSpy[promisify.custom];
+        execSpy.mockRestore();
+      }
     });
 
     // ─── slash command that returns true ───────────────────

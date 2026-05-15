@@ -434,6 +434,8 @@ describe("agent.js", () => {
     restoreTimeout();
     delete process.env.NEX_MAX_TOOL_CALLS;
     delete process.env.NEX_DISABLE_TOOL_BUDGET;
+    isPlanMode.mockReturnValue(false);
+    getPlanModePrompt.mockReturnValue("");
     logSpy.mockRestore();
   });
 
@@ -3302,7 +3304,7 @@ describe("agent.js", () => {
       mockStream("Blocked");
       await processInput("execute plan");
       expect(executeTool).not.toHaveBeenCalled();
-      expect(logOutput()).toContain("blocked");
+      expect(logOutput()).toContain("deferred");
       isPlanMode.mockReturnValue(false);
       getPlanModePrompt.mockReturnValue("");
     });

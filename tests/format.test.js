@@ -458,6 +458,18 @@ describe("formatToolSummary()", () => {
     expect(out).toContain("File not found");
   });
 
+  it("formats plan-mode deferred writes as approval guidance", () => {
+    const out = formatToolSummary(
+      "edit_file",
+      { path: "web/templates/fitness/index.html" },
+      "PLAN MODE: 'edit_file' is deferred. Planning is read-only; present the plan as text and wait for approval before editing.",
+      true,
+    );
+    expect(out).toContain("Edit deferred");
+    expect(out).toContain("approve the plan before editing");
+    expect(out).not.toContain("PLAN MODE:");
+  });
+
   it("formats read_file summary with line count", () => {
     const result = "1: const x = 1;\n2: const y = 2;\n3: const z = 3;";
     const out = formatToolSummary("read_file", {}, result, false);

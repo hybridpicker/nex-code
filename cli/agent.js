@@ -1088,7 +1088,9 @@ async function prepareToolCall(tc) {
 
   // Plan mode hard enforcement — block all non-read-only tools
   if (isPlanMode() && !PLAN_MODE_ALLOWED_TOOLS.has(fnName)) {
-    console.log(`${C.yellow}  ✗ ${fnName}: blocked in plan mode${C.reset}`);
+    console.log(
+      `${C.dim}  ↳ ${fnName} deferred — planning is read-only until approval${C.reset}`,
+    );
     return {
       callId,
       fnName,
@@ -1096,7 +1098,7 @@ async function prepareToolCall(tc) {
       canExecute: false,
       errorResult: {
         role: "tool",
-        content: `PLAN MODE: '${fnName}' is blocked. Only read-only tools are allowed. Present your plan as text output instead of making changes.`,
+        content: `PLAN MODE: '${fnName}' is deferred. Planning is read-only; present the plan as text and wait for approval before editing.`,
         tool_call_id: callId,
       },
     };
@@ -9455,7 +9457,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 setPlanMode,
               } = require("./planner");
               process.stdout.write(
-                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord}). Review it, then choose:${C.reset}\n` +
+                  `  ${C.green}[Enter/A] approve and run${C.reset}  ${C.yellow}[E] edit plan${C.reset}  ${C.red}[R] reject${C.reset}\n` +
+                  `${C.dim}Choice:${C.reset} `,
               );
               const wasRaw = process.stdin.isRaw;
               const choice = await new Promise((resolve) => {
@@ -9483,7 +9487,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 );
               } else if (choice === "e") {
                 console.log(
-                  `${C.yellow}Type /plan edit to open in editor, or give feedback.${C.reset}`,
+                  `${C.yellow}Plan kept as draft.${C.reset} Type ${C.cyan}/plan edit${C.reset}${C.yellow} to open it in your editor, or reply with what to change.${C.reset}`,
                 );
               } else {
                 // 'a', Enter (\r), space, or anything else → approve
@@ -9505,7 +9509,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
             } else {
               console.log(
-                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`,
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset}\n` +
+                  `${C.dim}Next:${C.reset} type ${C.cyan}/plan approve${C.reset}${C.dim} to run it, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review first.${C.reset}`,
               );
             }
             if (_autoApproved) {
@@ -9531,7 +9536,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 setPlanMode,
               } = require("./planner");
               process.stdout.write(
-                `\n${C.cyan}${C.bold}Plan ready.${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Review it, then choose:${C.reset}\n` +
+                  `  ${C.green}[Enter/A] approve and run${C.reset}  ${C.red}[R] reject${C.reset}\n` +
+                  `${C.dim}Choice:${C.reset} `,
               );
               const wasRaw2 = process.stdin.isRaw;
               const choice2 = await new Promise((resolve) => {
@@ -9575,7 +9582,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
             } else {
               console.log(
-                `\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`,
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset}\n` +
+                  `${C.dim}Next:${C.reset} type ${C.cyan}/plan approve${C.reset}${C.dim} to run it, or ask for changes to refine it.${C.reset}`,
               );
             }
             if (_prosePlanApproved) {

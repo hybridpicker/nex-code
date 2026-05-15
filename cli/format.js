@@ -715,6 +715,10 @@ function formatToolSummary(name, args, result, isError) {
 
   if (isError) {
     const firstLine = r.split("\n")[0];
+    if (firstLine.startsWith("PLAN MODE:")) {
+      const toolLabel = TOOL_LABELS[name] || name.replace(/_/g, " ");
+      return `${cardPrefix}${T.muted}${toolLabel} deferred — approve the plan before editing${T.reset}`;
+    }
     // BLOCKED messages: show compact one-liner, skip the verbose guidance text
     if (firstLine.startsWith("BLOCKED:")) {
       const reason = firstLine
