@@ -1017,7 +1017,7 @@ function ensureActivePhaseForTool(toolName, detail) {
   );
 }
 
-function executeCommand() {
+async function executeCommand() {
   const input = document.getElementById("cmd-input");
   const cmd = input.value.trim();
   if (!cmd) return;
@@ -1025,6 +1025,13 @@ function executeCommand() {
   if (pendingServerConfirm && pendingServerConfirm.tool === "ask_user") {
     submitAskUserAnswer(cmd);
     input.value = "";
+    return;
+  }
+
+  if (!AppState.data.project && !cmd.startsWith("/setup")) {
+    logUiMessage("Open a project before starting work.");
+    await window.App.openProject();
+    input.focus();
     return;
   }
 

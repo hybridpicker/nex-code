@@ -45,11 +45,11 @@ function initSidebarComponents(data) {
         <span class="item-badge active-badge">open</span>
       </button>
       ` : `
-      <div class="sidebar-item active is-disabled" title="No project is open. Use Open Project to choose a repository.">
+      <button type="button" class="sidebar-item active" data-sidebar-action="open-project" title="Choose a repository and start a nex-code server session.">
         <span class="item-icon">📁</span>
         <span class="item-label">No project open</span>
         <span class="item-reason">Open a repository to start.</span>
-      </div>
+      </button>
       `}
       ${hasProject ? `
       <div class="sidebar-item">
@@ -65,10 +65,12 @@ function initSidebarComponents(data) {
 
     <div class="sidebar-section">
       <div class="sidebar-section-header">Project Actions</div>
+      ${hasProject ? `
       <button type="button" class="sidebar-item" data-sidebar-action="open-project" title="Choose a repository and start a nex-code server session.">
         <span class="item-icon">📂</span>
         <span class="item-label">Open Project</span>
       </button>
+      ` : ""}
       ${hasProject ? `
       ${hasGit ? `
       <button type="button" class="sidebar-item" data-sidebar-action="git-status">
