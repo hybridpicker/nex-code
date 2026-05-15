@@ -1,0 +1,385 @@
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+function loadRendererScript(relativePath, documentMock) {
+  const filePath = path.join(__dirname, "..", relativePath);
+  const context = {
+    console,
+    window: {},
+    document: documentMock,
+    setTimeout,
+    clearTimeout,
+    Date,
+    Math,
+    encodeURIComponent,
+    decodeURIComponent,
+    HTMLElement: function HTMLElement() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(filePath, "utf8"), context, {
+    filename: filePath,
+  });
+  return context;
+}
+
+function createElementStub() {
+  return {
+    innerHTML: "",
+    textContent: "",
+    style: {},
+    className: "",
+    classList: {
+      add: jest.fn(),
+      remove: jest.fn(),
+      toggle: jest.fn(),
+    },
+    querySelector: jest.fn(),
+    querySelectorAll: jest.fn(() => []),
+    appendChild: jest.fn(),
+    addEventListener: jest.fn(),
+  };
+}
+
+describe("desktop renderer HTML escaping", () => {
+  test("escapes completion banner project and phase text", () => {
+    const elements = {
+      "task-complete": createElementStub(),
+      "complete-body": createElementStub(),
+      "complete-actions": createElementStub(),
+    };
+    const context = loadRendererScript("desktop/renderer/js/app.js", {
+      addEventListener: jest.fn(),
+      getElementById: jest.fn((id) => elements[id] || null),
+    });
+
+    context.window.AppState.data.project = '<img src=x onerror="alert(1)">';
+    context.window.AppState.data.branch = '<script>alert(2)</script>';
+    context.window.AppState.data.agenticNodes = [
+      {
+        phase: '<svg onload="alert(3)">',
+        detail: '<iframe srcdoc="<script>alert(4)</script>"></iframe>',
+      },
+    ];
+
+    context.showTaskComplete();
+
+    expect(elements["complete-body"].innerHTML).toContain("&lt;img");
+    expect(elements["complete-body"].innerHTML).toContain("&lt;script&gt;");
+    expect(elements["complete-body"].innerHTML).toContain("&lt;svg");
+    expect(elements["complete-body"].innerHTML).toContain("&lt;iframe");
+    expect(elements["complete-body"].innerHTML).not.toContain("<img");
+    expect(elements["complete-body"].innerHTML).not.toContain("<script>");
+    expect(elements["complete-body"].innerHTML).not.toContain("<svg");
+    expect(elements["complete-body"].innerHTML).not.toContain("<iframe");
+  });
+
+  test("escapes model and tool sidebar values before assigning innerHTML", () => {
+    const elements = {
+      "session-state-badge": createElementStub(),
+      "ss-state": createElementStub(),
+      "ss-confidence": createElementStub(),
+      "ss-last-action": createElementStub(),
+      "model-activity-container": createElementStub(),
+      "verify-badge": createElementStub(),
+      "vr-tests-run": createElementStub(),
+      "vr-passed": createElementStub(),
+      "vr-failed": createElementStub(),
+      "vr-changes": createElementStub(),
+      "vr-status": createElementStub(),
+      "tool-actions-container": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/right-panel.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initRightPanelComponents({
+      project: "unsafe-project",
+      sessionState: "running",
+      model: '<img src=x onerror="alert(1)">',
+      modelHistory: [
+        {
+          phase: '<script>alert(2)</script>',
+          model: '<iframe src="x"></iframe>',
+          tokens: 1,
+          status: '<svg onload="alert(3)">',
+        },
+      ],
+      toolActions: [
+        {
+          tool: '<img src=x onerror="alert(4)">',
+          detail: '<script>alert(5)</script>',
+          time: '<svg onload="alert(6)">',
+          status: "running",
+        },
+      ],
+    });
+
+    const combinedHtml =
+      elements["model-activity-container"].innerHTML +
+      elements["tool-actions-container"].innerHTML;
+
+    expect(combinedHtml).toContain("&lt;img");
+    expect(combinedHtml).toContain("&lt;script&gt;");
+    expect(combinedHtml).toContain("&lt;iframe");
+    expect(combinedHtml).toContain("&lt;svg");
+    expect(combinedHtml).not.toContain("<img");
+    expect(combinedHtml).not.toContain("<script>");
+    expect(combinedHtml).not.toContain("<iframe");
+    expect(combinedHtml).not.toContain("<svg");
+  });
+
+  test("strips ANSI and redacts secrets in sidebar HTML", () => {
+    const elements = {
+      "session-state-badge": createElementStub(),
+      "ss-state": createElementStub(),
+      "ss-confidence": createElementStub(),
+      "ss-last-action": createElementStub(),
+      "model-activity-container": createElementStub(),
+      "verify-badge": createElementStub(),
+      "vr-tests-run": createElementStub(),
+      "vr-passed": createElementStub(),
+      "vr-failed": createElementStub(),
+      "vr-changes": createElementStub(),
+      "vr-status": createElementStub(),
+      "tool-actions-container": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/right-panel.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initRightPanelComponents({
+      project: "safe-project",
+      sessionState: "running",
+      model: "\u001b[31mollama\u001b[0m",
+      modelHistory: [],
+      testsRun: true,
+      testPassed: 1,
+      testFailed: 0,
+      verificationCommand: "npm test",
+      verificationStatus: "passed",
+      toolActions: [
+        {
+          tool: "bash",
+          detail: "\u001b[32mAPI_TOKEN=supersecretvalue\u001b[0m",
+          time: "12:00",
+          status: "complete",
+        },
+      ],
+    });
+
+    const combinedHtml =
+      elements["model-activity-container"].innerHTML +
+      elements["tool-actions-container"].innerHTML;
+
+    expect(combinedHtml).not.toContain("\u001b");
+    expect(combinedHtml).not.toContain("supersecretvalue");
+    expect(combinedHtml).toContain("API_TOKEN=[REDACTED]");
+    expect(elements["vr-status"].textContent).toBe("npm test passed");
+  });
+
+  test("escapes active project sidebar values before assigning innerHTML", () => {
+    const elements = {
+      "sidebar-nav": createElementStub(),
+      "recent-projects": createElementStub(),
+    };
+    elements["sidebar-nav"].querySelectorAll = jest.fn(() => []);
+
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/sidebar.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initSidebarComponents({
+      project: '<img src=x onerror="alert(1)">',
+      branch: '<script>alert(2)</script>',
+      workspace: '<iframe srcdoc="<script>alert(3)</script>"></iframe>',
+      isGitRepository: true,
+      sessionState: "idle",
+      agenticNodes: [],
+      recentProjects: [],
+    });
+
+    const html = elements["sidebar-nav"].innerHTML;
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&lt;iframe");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<iframe");
+  });
+});
+
+describe("desktop renderer conversation state", () => {
+  function loadAppController() {
+    const elements = {
+      welcome: createElementStub(),
+      timeline: createElementStub(),
+    };
+
+    const context = loadRendererScript("desktop/renderer/js/app.js", {
+      addEventListener: jest.fn(),
+      getElementById: jest.fn((id) => elements[id] || createElementStub()),
+    });
+
+    return context;
+  }
+
+  test("marks running user turns complete when an assistant turn completes", () => {
+    const context = loadAppController();
+
+    context.createUserConversationTurn("List project files");
+    context.appendConversationItem(
+      context.createConversationItem("assistant", "Done", {
+        status: "running",
+      }),
+    );
+
+    context.completeActiveConversation();
+    context.settleRunningUserConversations("complete");
+
+    expect(context.window.AppState.data.conversationItems).toEqual([
+      expect.objectContaining({ kind: "user", status: "complete" }),
+      expect.objectContaining({ kind: "assistant", status: "complete" }),
+    ]);
+  });
+
+  test("marks running user turns stopped when a run stalls", () => {
+    const context = loadAppController();
+
+    context.createUserConversationTurn("Inspect package scripts");
+    context.appendConversationItem(
+      context.createConversationItem("assistant", "", {
+        status: "running",
+      }),
+    );
+
+    context.markActiveConversationStopped("No final answer.");
+    context.settleRunningUserConversations("stopped", "No final answer.");
+
+    expect(context.window.AppState.data.conversationItems[0]).toEqual(
+      expect.objectContaining({
+        kind: "user",
+        status: "stopped",
+        error: "No final answer.",
+      }),
+    );
+    expect(context.window.AppState.data.conversationItems[1]).toEqual(
+      expect.objectContaining({
+        kind: "assistant",
+        status: "stopped",
+        error: "No final answer.",
+      }),
+    );
+  });
+
+  test("marks running user turns failed when a server error occurs", () => {
+    const context = loadAppController();
+
+    context.createUserConversationTurn("Run verification");
+    context.appendConversationItem(
+      context.createConversationItem("assistant", "", {
+        status: "running",
+      }),
+    );
+
+    context.markActiveConversationError("Provider unavailable.");
+    context.settleRunningUserConversations("error", "Provider unavailable.");
+
+    expect(context.window.AppState.data.conversationItems[0]).toEqual(
+      expect.objectContaining({
+        kind: "user",
+        status: "error",
+        error: "Provider unavailable.",
+      }),
+    );
+    expect(context.window.AppState.data.conversationItems[1]).toEqual(
+      expect.objectContaining({
+        kind: "assistant",
+        status: "error",
+        error: "Provider unavailable.",
+      }),
+    );
+  });
+
+  test("updates one tool action row across start and end events", () => {
+    const context = loadAppController();
+
+    const started = context.upsertToolActionStart({
+      id: "msg-1",
+      tool: "bash",
+      args: { command: "npm test" },
+    });
+    context.applyVerificationFromToolStart({
+      id: "msg-1",
+      tool: "bash",
+      args: { command: "npm test" },
+    }, started);
+
+    const completed = context.completeToolAction({
+      id: "msg-1",
+      tool: "bash",
+      summary: "\u001b[32mTests: 2 passed, 0 failed\u001b[0m",
+      ok: true,
+    });
+    context.applyVerificationFromToolEnd({
+      id: "msg-1",
+      tool: "bash",
+      summary: "\u001b[32mTests: 2 passed, 0 failed\u001b[0m",
+      ok: true,
+    }, completed);
+
+    expect(context.window.AppState.data.toolActions).toHaveLength(1);
+    expect(context.window.AppState.data.toolActions[0]).toEqual(
+      expect.objectContaining({
+        tool: "bash",
+        status: "complete",
+        detail: "Tests: 2 passed, 0 failed",
+      }),
+    );
+    expect(context.window.AppState.data.testsRun).toBe(true);
+    expect(context.window.AppState.data.testPassed).toBe(2);
+    expect(context.window.AppState.data.testFailed).toBe(0);
+    expect(context.window.AppState.data.verificationStatus).toBe("passed");
+  });
+
+  test("marks running tool actions interrupted on terminal failures", () => {
+    const context = loadAppController();
+
+    context.upsertToolActionStart({
+      id: "msg-2",
+      tool: "grep",
+      args: { pattern: "\u001b[31mTODO\u001b[0m" },
+    });
+    context.markRunningToolsInterrupted("error", "Server exited");
+
+    expect(context.window.AppState.data.toolActions).toEqual([
+      expect.objectContaining({
+        status: "error",
+        ok: false,
+        detail: "Server exited",
+      }),
+    ]);
+  });
+
+  test("maps cancelled done payloads to cancelled session state", () => {
+    const context = loadAppController();
+
+    expect(
+      context.getTerminalSessionState({
+        status: "cancelled",
+        success: false,
+      }, false),
+    ).toBe("cancelled");
+  });
+});

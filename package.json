@@ -92,7 +92,11 @@
   "jest": {
     "testPathIgnorePatterns": [
       "/desktop/",
+      "/vscode/",
       "/node_modules/"
+    ],
+    "modulePathIgnorePatterns": [
+      "/vscode/"
     ],
     "coverageThreshold": {
       "global": {

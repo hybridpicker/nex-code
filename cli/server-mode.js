@@ -96,6 +96,7 @@ function startServerMode() {
   // Map of pending confirmations: confirm-id → resolve function
   const pendingConfirms = new Map();
   let confirmSeq = 0;
+  let activeRun = null;
 
   setConfirmHook((question, opts) => {
     const id = "cfm-" + ++confirmSeq;
@@ -119,6 +120,10 @@ function startServerMode() {
 
   // ─── ask_user handler for server mode ──────────────────────────────────────
   const { setAskUserHandler } = require("./tools");
+  const { setAbortSignalGetter } = require("./agent");
+  if (typeof setAbortSignalGetter === "function") {
+    setAbortSignalGetter(() => activeRun?.controller?.signal || null);
+  }
   setAskUserHandler(async (question, options) => {
     const id = "ask-" + ++confirmSeq;
     emit({
@@ -201,8 +206,21 @@ function startServerMode() {
 
     switch (msg.type) {
       case "chat": {
+        if (activeRun) {
+          emit({
+            type: "error",
+            id: msg.id || "msg-" + Date.now(),
+            message: "A run is already active.",
+          });
+          break;
+        }
         const msgId = msg.id || "msg-" + Date.now();
         activeMsgId = msgId;
+        activeRun = {
+          id: msgId,
+          controller: new AbortController(),
+          cancelEmitted: false,
+        };
 
         const {
           processInput,
@@ -220,15 +238,20 @@ function startServerMode() {
             ? afterSnapshot
             : [];
           const outcome = classifyTurnOutcome(afterMessages.slice(beforeCount));
-          emit({ type: "done", id: msgId, ...outcome });
+          if (!activeRun?.cancelEmitted) {
+            emit({ type: "done", id: msgId, ...outcome });
+          }
         } catch (err) {
-          emit({
-            type: "error",
-            id: msgId,
-            message: err?.message || String(err),
-          });
+          if (!activeRun?.cancelEmitted) {
+            emit({
+              type: "error",
+              id: msgId,
+              message: err?.message || String(err),
+            });
+          }
         } finally {
           activeMsgId = null;
+          activeRun = null;
         }
         break;
       }
@@ -237,7 +260,7 @@ function startServerMode() {
         const resolve = pendingConfirms.get(msg.id);
         if (resolve) {
           pendingConfirms.delete(msg.id);
-          resolve(!!msg.answer);
+          resolve(msg.answer);
         }
         break;
       }
@@ -247,6 +270,17 @@ function startServerMode() {
         for (const [id, resolve] of pendingConfirms) {
           pendingConfirms.delete(id);
           resolve(false);
+        }
+        if (activeRun && !activeRun.cancelEmitted) {
+          activeRun.cancelEmitted = true;
+          activeRun.controller.abort();
+          emit({
+            type: "done",
+            id: activeRun.id,
+            status: "cancelled",
+            success: false,
+            summary: "Run cancelled by user.",
+          });
         }
         break;
       }

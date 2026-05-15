@@ -36,6 +36,8 @@ const {
   scorePathMatch,
   refreshIndex,
   isIndexValid,
+  IGNORED_PROJECT_DIRS,
+  isIgnoredProjectDir,
 } = require("../index-engine");
 const { resolveProfile, sshExec, scpUpload, scpDownload } = require("../ssh");
 const { resolveDeployConfig, loadDeployConfigs } = require("../deploy-config");
@@ -79,6 +81,7 @@ const NODE_BUILTIN_MODULES = new Set([
   "vm",
   "zlib",
 ]);
+const GREP_EXCLUDE_DIR_ARGS = IGNORED_PROJECT_DIRS.map((dir) => `--exclude-dir=${dir}`);
 
 function getNodeBuiltinInstallAttempt(command) {
   const cmd = String(command || "");
@@ -2976,7 +2979,7 @@ async function _executeToolInner(name, args, options = {}) {
           return;
         }
         entries = entries.filter(
-          (e) => !e.name.startsWith(".") && e.name !== "node_modules",
+          (e) => !e.name.startsWith(".") && !isIgnoredProjectDir(e.name),
         );
         for (const entry of entries) {
           if (pattern && !entry.isDirectory() && !pattern.test(entry.name))
@@ -2998,6 +3001,7 @@ async function _executeToolInner(name, args, options = {}) {
         return `ERROR: Access denied — path outside project: ${args.path}`;
       const grepArgs = ["-rn", "-H"];
       if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
+      grepArgs.push(...GREP_EXCLUDE_DIR_ARGS);
       grepArgs.push(args.pattern, dp);
       try {
         const { stdout } = await execFile("grep", grepArgs, {
@@ -3136,11 +3140,7 @@ async function _executeToolInner(name, args, options = {}) {
         }
         if (args.output_mode === "files_with_matches") grepArgs2.push("-l");
         else if (args.output_mode === "count") grepArgs2.push("-c");
-        grepArgs2.push(
-          "--exclude-dir=node_modules",
-          "--exclude-dir=.git",
-          "--exclude-dir=coverage",
-        );
+        grepArgs2.push(...GREP_EXCLUDE_DIR_ARGS);
 
         const { ToolProgress } = require("../spinner");
         const grepProgress = new ToolProgress(
@@ -3216,11 +3216,7 @@ async function _executeToolInner(name, args, options = {}) {
       // Output mode
       if (args.output_mode === "files_with_matches") grepArgs2.push("-l");
       else if (args.output_mode === "count") grepArgs2.push("-c");
-      grepArgs2.push(
-        "--exclude-dir=node_modules",
-        "--exclude-dir=.git",
-        "--exclude-dir=coverage",
-      );
+      grepArgs2.push(...GREP_EXCLUDE_DIR_ARGS);
       grepArgs2.push(args.pattern, searchPath);
       const { ToolProgress } = require("../spinner");
       const grepProgress = new ToolProgress("grep", "Searching...");

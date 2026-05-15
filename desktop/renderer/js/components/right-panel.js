@@ -46,6 +46,10 @@ function initSessionStatus(data) {
         badge.textContent = "Stopped";
         badge.classList.add("warn");
         break;
+      case "cancelled":
+        badge.textContent = "Cancelled";
+        badge.classList.add("warn");
+        break;
       case "error":
         badge.textContent = "Error";
         badge.classList.add("err");
@@ -59,6 +63,7 @@ function initSessionStatus(data) {
       running: "Running",
       complete: "Complete",
       stalled: "Stopped",
+      cancelled: "Cancelled",
       error: "Error",
     };
     state.textContent = labels[data.sessionState] || "Idle";
@@ -91,7 +96,7 @@ function initModelActivity(data) {
     <div class="model-section-label">Active Model</div>
     <div class="model-activity-current">
       <span class="ma-dot"></span>
-      <span class="ma-name">${currentModel}</span>
+      <span class="ma-name">${escapePanelHtml(currentModel)}</span>
       <span class="ma-purpose">Status: ${getModelPurpose(data.sessionState)}</span>
     </div>
   `;
@@ -104,10 +109,10 @@ function initModelActivity(data) {
       const statusClass = h.status === "active" ? "active" : h.status === "error" ? "error" : "complete";
       html += `
         <div class="model-history-item">
-          <span class="mh-phase" style="color:var(--accent-cyan)">${h.phase}</span>
-          <span class="mh-model">${h.model}</span>
+          <span class="mh-phase" style="color:var(--accent-cyan)">${escapePanelHtml(h.phase)}</span>
+          <span class="mh-model">${escapePanelHtml(h.model)}</span>
           <span class="mh-tokens">${formatTokenCount(h.tokens || 0)}</span>
-          <span class="mh-status ${statusClass}">${h.status}</span>
+          <span class="mh-status ${statusClass}">${escapePanelHtml(h.status)}</span>
         </div>
       `;
     });
@@ -135,6 +140,7 @@ function getModelPurpose(state) {
   if (state === "running") return "Active processing";
   if (state === "complete") return "Session complete";
   if (state === "stalled") return "Session stopped";
+  if (state === "cancelled") return "Session cancelled";
   return "Ready";
 }
 
@@ -167,9 +173,12 @@ function initVerification(data) {
 
   if (badge) {
     badge.className = "widget-badge";
-    if (data.testsRun) {
-      badge.textContent = data.testFailed > 0 ? "Failed" : "Passed";
-      badge.classList.add(data.testFailed > 0 ? "err" : "ok");
+    if (data.verificationStatus === "running") {
+      badge.textContent = "Running";
+      badge.classList.add("info");
+    } else if (data.testsRun) {
+      badge.textContent = data.testFailed > 0 || data.verificationStatus === "failed" ? "Failed" : "Passed";
+      badge.classList.add(data.testFailed > 0 || data.verificationStatus === "failed" ? "err" : "ok");
     } else {
       badge.textContent = "Not Run";
       badge.classList.add("warn");
@@ -185,12 +194,21 @@ function initVerification(data) {
     if (!data.testsRun) {
       status.textContent = "Not verified";
       status.className = "vr-value not-run";
-    } else if (data.testFailed > 0) {
+      status.style.color = "";
+    } else if (data.verificationStatus === "running") {
+      status.textContent = data.verificationCommand
+        ? `Running ${sanitizePanelText(data.verificationCommand)}`
+        : "Verification running";
+      status.className = "vr-value";
+      status.style.color = "var(--accent-cyan)";
+    } else if (data.testFailed > 0 || data.verificationStatus === "failed") {
       status.textContent = `${data.testFailed} test(s) failed`;
       status.className = "vr-value";
       status.style.color = "var(--accent-coral)";
     } else {
-      status.textContent = "All tests passed";
+      status.textContent = data.verificationCommand
+        ? `${sanitizePanelText(data.verificationCommand)} passed`
+        : "All tests passed";
       status.className = "vr-value";
       status.style.color = "var(--accent-emerald)";
     }
@@ -215,9 +233,9 @@ function initToolActions(data) {
     .map(
       (a) => `
     <div class="tool-action-entry">
-      <span class="ta-tool">${a.tool}</span>
-      <span class="ta-detail">${a.detail}</span>
-      <span class="ta-time">${a.time || "—"}</span>
+      <span class="ta-tool">${escapePanelHtml(a.tool)}</span>
+      <span class="ta-detail">${escapeToolActionDetail(a)}</span>
+      <span class="ta-time">${escapePanelHtml(a.time || "—")}</span>
     </div>
   `
     )
@@ -230,4 +248,40 @@ function formatTokenCount(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(0) + "k";
   return String(n);
+}
+
+function escapeToolActionDetail(action) {
+  const detail = action && action.detail ? String(action.detail) : "";
+  const prefix = action && action.status === "error"
+    ? "failed"
+    : (action && action.status === "complete" ? "done" : "running");
+  const compact = detail.replace(/\s+/g, " ").trim();
+  return escapeToolActionHtml(compact ? `${prefix}: ${compact}` : prefix);
+}
+
+function escapePanelHtml(text) {
+  return sanitizePanelText(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeToolActionHtml(text) {
+  return escapePanelHtml(text);
+}
+
+function sanitizePanelText(text) {
+  return redactPanelSecrets(stripPanelAnsi(text));
+}
+
+function stripPanelAnsi(text) {
+  return String(text || "").replace(/[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g, "");
+}
+
+function redactPanelSecrets(text) {
+  return String(text || "")
+    .replace(/\b([A-Z][A-Z0-9_]{2,}(?:TOKEN|SECRET|KEY|PASSWORD|PASS|AUTH|CREDENTIAL)[A-Z0-9_]*)\s*=\s*([^\s'"`]{8,})/g, "$1=[REDACTED]")
+    .replace(/\b(Bearer|token|api[_-]?key)\s+([A-Za-z0-9._~+/=-]{16,})/gi, "$1 [REDACTED]");
 }

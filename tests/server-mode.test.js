@@ -14,6 +14,11 @@ jest.mock("../cli/agent", () => ({
   processInput: jest.fn().mockResolvedValue(undefined),
   clearConversation: jest.fn(),
   getConversationMessages: jest.fn().mockReturnValue([]),
+  setAbortSignalGetter: jest.fn(),
+}));
+
+jest.mock("../cli/tools", () => ({
+  setAskUserHandler: jest.fn(),
 }));
 
 let mockLineHandler;
@@ -37,7 +42,9 @@ const {
   processInput,
   clearConversation,
   getConversationMessages,
+  setAbortSignalGetter,
 } = require("../cli/agent");
+const { setAskUserHandler } = require("../cli/tools");
 
 let stdoutWrites;
 let stderrWrites;
@@ -63,7 +70,9 @@ beforeEach(() => {
   processInput.mockReset().mockResolvedValue(undefined);
   clearConversation.mockReset();
   getConversationMessages.mockReset().mockReturnValue([]);
+  setAbortSignalGetter.mockReset();
   setConfirmHook.mockReset();
+  setAskUserHandler.mockReset();
 });
 
 afterEach(() => {
@@ -183,6 +192,27 @@ describe("startServerMode", () => {
     expect(result).toBe(true);
   });
 
+  test("preserves ask_user text answers from the desktop renderer", async () => {
+    startFresh();
+
+    const askHandler = setAskUserHandler.mock.calls[0][0];
+    const askPromise = askHandler("Which file should I edit?", []);
+
+    const reqMsg = stdoutWrites.find((w) => w.includes('"ask_user"'));
+    expect(reqMsg).toBeDefined();
+    const req = JSON.parse(reqMsg);
+
+    await mockLineHandler(
+      JSON.stringify({
+        type: "confirm",
+        id: req.id,
+        answer: "desktop/renderer/js/app.js",
+      }),
+    );
+
+    await expect(askPromise).resolves.toBe("desktop/renderer/js/app.js");
+  });
+
   test("cancel message resolves all pending confirms with false", async () => {
     startFresh();
     const hookFn = setConfirmHook.mock.calls[0][0];
@@ -194,6 +224,48 @@ describe("startServerMode", () => {
 
     expect(await p1).toBe(false);
     expect(await p2).toBe(false);
+  });
+
+  test("cancel message aborts an active chat and emits cancelled done once", async () => {
+    startFresh();
+    let resolveRun;
+    processInput.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRun = resolve; }),
+    );
+
+    const chatPromise = mockLineHandler(
+      '{"type":"chat","id":"msg-cancel","text":"slow"}',
+    );
+    await Promise.resolve();
+
+    const abortSignal = setAbortSignalGetter.mock.calls[0][0]();
+    expect(abortSignal.aborted).toBe(false);
+
+    await mockLineHandler('{"type":"cancel"}');
+
+    expect(abortSignal.aborted).toBe(true);
+    const cancelDone = stdoutWrites
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter((msg) => msg && msg.id === "msg-cancel" && msg.type === "done");
+    expect(cancelDone).toEqual([
+      expect.objectContaining({
+        status: "cancelled",
+        success: false,
+        summary: "Run cancelled by user.",
+      }),
+    ]);
+
+    resolveRun();
+    await chatPromise;
+
+    const allDone = stdoutWrites
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter((msg) => msg && msg.id === "msg-cancel" && msg.type === "done");
+    expect(allDone).toHaveLength(1);
   });
 
   test("clear message calls clearConversation", async () => {

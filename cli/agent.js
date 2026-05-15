@@ -6643,7 +6643,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const _rawUserText = typeof userInput === "string" ? userInput.trim() : "";
   const _isAnalysisOnlyPrompt =
     _rawUserText.length > 0 &&
-    /^\s*(analyze|analyse|explain|describe|review|audit|summari[sz]e|list|understand|document|documentation|docs|what is|what does|how does|show me|show the|show all|tell me about)/i.test(
+    /^\s*(analyze|analyse|explain|describe|review|audit|summari[sz]e|list|understand|document|documentation|docs|inspect|read|find|identify|what is|what does|how does|show me|show the|show all|tell me(?:\s+(?:about|the|which|what|whether|if|me))?)/i.test(
       _rawUserText,
     ) &&
     !/\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|edit|write|delete|remove|install|setup|deploy|run)\b/i.test(
@@ -8036,6 +8036,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // re-reads. This is a hard backstop for read-only deliverables.
       if (
         _isAnalysisOnlyPrompt &&
+        (!tool_calls || tool_calls.length === 0) &&
         !isTooShort(content || streamedText || "") &&
         filesModified.size === 0 &&
         _bashModifiedFiles === 0

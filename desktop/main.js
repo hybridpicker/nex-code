@@ -15,6 +15,7 @@ const readline = require("readline");
 const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
+const SAFE_EXTERNAL_PROTOCOLS = new Set(["https:", "http:"]);
 
 let mainWindow = null;
 let serverProcess = null;
@@ -39,6 +40,37 @@ function getInitialProjectPath() {
   const idx = process.argv.indexOf("--open-project");
   if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
   return process.env.NEX_DESKTOP_OPEN_PROJECT || null;
+}
+
+function isValidProjectPathInput(dirPath) {
+  return typeof dirPath === "string" && dirPath.trim() !== "" && !dirPath.includes("\0");
+}
+
+function normalizeProjectPath(dirPath) {
+  if (!isValidProjectPathInput(dirPath)) return null;
+  let resolved;
+  try {
+    resolved = path.resolve(dirPath);
+  } catch (e) {
+    return null;
+  }
+  try {
+    const realPath = fs.realpathSync(resolved);
+    if (!fs.statSync(realPath).isDirectory()) return null;
+    return realPath;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isSafeExternalUrl(url) {
+  if (typeof url !== "string" || url.trim() === "") return false;
+  try {
+    const parsed = new URL(url);
+    return SAFE_EXTERNAL_PROTOCOLS.has(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
 }
 
 function applyAppIcon() {
@@ -302,8 +334,14 @@ async function openDialog() {
   try {
     var r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"], title: "Open Project" });
     if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true };
-    await openProject(r.filePaths[0]);
-    return { ok: true, path: r.filePaths[0] };
+    const normalizedPath = normalizeProjectPath(r.filePaths[0]);
+    if (!normalizedPath) {
+      const message = "Selected project path is not available.";
+      send("nex:server-error", { message: message });
+      return { ok: false, message: message };
+    }
+    await openProject(normalizedPath);
+    return { ok: true, path: normalizedPath };
   } catch (e) {
     const message = e && e.message ? e.message : "Open Project failed.";
     send("nex:server-error", { message: message });
@@ -364,116 +402,145 @@ async function refreshProjectGitState() {
 }
 
 async function openProject(dirPath) {
-  projectPath = dirPath;
-  projectName = path.basename(dirPath);
+  const normalizedPath = normalizeProjectPath(dirPath);
+  if (!normalizedPath) throw new Error("Project path is not available.");
+  projectPath = normalizedPath;
+  projectName = path.basename(normalizedPath);
   projectBranch = null;
   projectIsGit = false;
   projectIsDeployable = false;
-  const gitState = await readGitState(dirPath);
+  const gitState = await readGitState(normalizedPath);
   projectIsGit = gitState.isGitRepository;
   projectBranch = gitState.branch;
   try {
-    projectIsDeployable = fs.existsSync(path.join(dirPath, ".nex", "deploy.json"));
+    projectIsDeployable = fs.existsSync(path.join(normalizedPath, ".nex", "deploy.json"));
   } catch (e) {}
-  spawnServer(dirPath);
+  spawnServer(normalizedPath);
   send("nex:project-opened", {
     project: projectName,
     branch: projectBranch || "unknown",
-    path: dirPath,
+    path: normalizedPath,
     isGitRepository: projectIsGit,
     isDeployable: projectIsDeployable,
     gitState: gitState,
   });
 }
 
-ipcMain.handle("nex:get-state", async function () {
-  return {
-    project: projectName,
-    branch: projectBranch,
-    path: projectPath,
-    serverReady: serverReady,
-    isGitRepository: projectIsGit,
-    isDeployable: projectIsDeployable,
-    modelState: await buildModelState(),
-    gitState: await readGitState(projectPath),
-  };
-});
-ipcMain.handle("nex:open-project", async function () { return await openDialog(); });
-ipcMain.handle("nex:open-project-path", async function (_e, dirPath) {
-  if (!dirPath || !fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-    const message = "Recent project path is not available.";
-    send("nex:server-error", { message: message });
-    return { ok: false, message: message };
-  }
-  await openProject(dirPath);
-  return { ok: true, path: dirPath };
-});
-ipcMain.handle("nex:open-project-folder", async function () {
-  if (!projectPath) return { ok: false, message: "No project is open." };
-  if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
-    return { ok: false, message: "Project path is not available." };
-  }
-  const error = await shell.openPath(projectPath);
-  if (error) return { ok: false, message: error };
-  return { ok: true, path: projectPath };
-});
-ipcMain.handle("nex:get-model-state", async function () {
-  return await buildModelState();
-});
-ipcMain.handle("nex:set-active-model", async function (_e, spec) {
-  const registry = getProviderRegistry();
-  if (!registry || !spec) return { ok: false, message: "Provider registry is not available." };
-  const ok = registry.setActiveModel(spec);
-  if (!ok) return { ok: false, message: "Model is not available." };
-  activeModelSpecOverride = spec;
-  const parsed = registry.parseModelSpec(spec);
-  if (parsed && parsed.model) {
-    process.env.DEFAULT_MODEL = parsed.model;
-    if (parsed.provider) process.env.DEFAULT_PROVIDER = parsed.provider;
-  }
-  if (serverProcess) {
-    sendToServer({ type: "chat", id: "model-" + Date.now(), text: `/model ${spec}` });
-  }
-  const modelState = await buildModelState();
-  send("nex:model-state", modelState);
-  send("nex:state-updated", { model: modelState.activeModel ? modelState.activeModel.id : null, modelState: modelState });
-  return { ok: true, modelState: modelState };
-});
-ipcMain.handle("nex:get-git-state", async function () {
-  return await readGitState(projectPath);
-});
-ipcMain.handle("nex:checkout-branch", async function (_e, branchName) {
-  if (!projectPath) return { ok: false, message: "No project is open." };
-  if (!projectIsGit) return { ok: false, message: "The open project is not a Git repository." };
-  if (!/^[A-Za-z0-9._/-]+$/.test(branchName || "")) return { ok: false, message: "Invalid branch name." };
-  const state = await readGitState(projectPath);
-  if (state.dirty) return { ok: false, message: "Commit or stash local changes before switching branches." };
-  await execFileAsync("git", ["checkout", branchName], { cwd: projectPath });
-  const next = await refreshProjectGitState();
-  return { ok: true, gitState: next };
-});
-ipcMain.handle("nex:create-branch", async function (_e, branchName) {
-  if (!projectPath) return { ok: false, message: "No project is open." };
-  if (!projectIsGit) return { ok: false, message: "The open project is not a Git repository." };
-  if (!/^[A-Za-z0-9._/-]+$/.test(branchName || "")) return { ok: false, message: "Use letters, numbers, dots, slashes, underscores, or hyphens." };
-  const state = await readGitState(projectPath);
-  if (state.dirty) return { ok: false, message: "Commit or stash local changes before creating a branch." };
-  await execFileAsync("git", ["checkout", "-b", branchName], { cwd: projectPath });
-  const next = await refreshProjectGitState();
-  return { ok: true, gitState: next };
-});
-ipcMain.on("nex:command", function (_e, cmd) { sendToServer({ type: "chat", id: "c-" + Date.now(), text: cmd.trim() }); });
-ipcMain.on("nex:confirm-answer", function (_e, d) { sendToServer({ type: "confirm", id: d.id, answer: d.answer }); });
-ipcMain.on("nex:cancel", function () { sendToServer({ type: "cancel" }); });
-ipcMain.on("nex:clear", function () { sendToServer({ type: "clear" }); });
-ipcMain.on("nex:open-external", function (_e, url) { shell.openExternal(url); });
+function registerIpcHandlers() {
+  ipcMain.handle("nex:get-state", async function () {
+    return {
+      project: projectName,
+      branch: projectBranch,
+      path: projectPath,
+      serverReady: serverReady,
+      isGitRepository: projectIsGit,
+      isDeployable: projectIsDeployable,
+      modelState: await buildModelState(),
+      gitState: await readGitState(projectPath),
+    };
+  });
+  ipcMain.handle("nex:open-project", async function () { return await openDialog(); });
+  ipcMain.handle("nex:open-project-path", async function (_e, dirPath) {
+    const normalizedPath = normalizeProjectPath(dirPath);
+    if (!normalizedPath) {
+      const message = "Recent project path is not available.";
+      send("nex:server-error", { message: message });
+      return { ok: false, message: message };
+    }
+    await openProject(normalizedPath);
+    return { ok: true, path: normalizedPath };
+  });
+  ipcMain.handle("nex:open-project-folder", async function () {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
+      return { ok: false, message: "Project path is not available." };
+    }
+    const error = await shell.openPath(projectPath);
+    if (error) return { ok: false, message: error };
+    return { ok: true, path: projectPath };
+  });
+  ipcMain.handle("nex:get-model-state", async function () {
+    return await buildModelState();
+  });
+  ipcMain.handle("nex:set-active-model", async function (_e, spec) {
+    const registry = getProviderRegistry();
+    if (!registry || !spec) return { ok: false, message: "Provider registry is not available." };
+    const ok = registry.setActiveModel(spec);
+    if (!ok) return { ok: false, message: "Model is not available." };
+    activeModelSpecOverride = spec;
+    const parsed = registry.parseModelSpec(spec);
+    if (parsed && parsed.model) {
+      process.env.DEFAULT_MODEL = parsed.model;
+      if (parsed.provider) process.env.DEFAULT_PROVIDER = parsed.provider;
+    }
+    if (serverProcess) {
+      sendToServer({ type: "chat", id: "model-" + Date.now(), text: `/model ${spec}` });
+    }
+    const modelState = await buildModelState();
+    send("nex:model-state", modelState);
+    send("nex:state-updated", { model: modelState.activeModel ? modelState.activeModel.id : null, modelState: modelState });
+    return { ok: true, modelState: modelState };
+  });
+  ipcMain.handle("nex:get-git-state", async function () {
+    return await readGitState(projectPath);
+  });
+  ipcMain.handle("nex:checkout-branch", async function (_e, branchName) {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    if (!projectIsGit) return { ok: false, message: "The open project is not a Git repository." };
+    if (!/^[A-Za-z0-9._/-]+$/.test(branchName || "")) return { ok: false, message: "Invalid branch name." };
+    const state = await readGitState(projectPath);
+    if (state.dirty) return { ok: false, message: "Commit or stash local changes before switching branches." };
+    await execFileAsync("git", ["checkout", branchName], { cwd: projectPath });
+    const next = await refreshProjectGitState();
+    return { ok: true, gitState: next };
+  });
+  ipcMain.handle("nex:create-branch", async function (_e, branchName) {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    if (!projectIsGit) return { ok: false, message: "The open project is not a Git repository." };
+    if (!/^[A-Za-z0-9._/-]+$/.test(branchName || "")) return { ok: false, message: "Use letters, numbers, dots, slashes, underscores, or hyphens." };
+    const state = await readGitState(projectPath);
+    if (state.dirty) return { ok: false, message: "Commit or stash local changes before creating a branch." };
+    await execFileAsync("git", ["checkout", "-b", branchName], { cwd: projectPath });
+    const next = await refreshProjectGitState();
+    return { ok: true, gitState: next };
+  });
+  ipcMain.on("nex:command", function (_e, cmd) { sendToServer({ type: "chat", id: "c-" + Date.now(), text: cmd.trim() }); });
+  ipcMain.on("nex:confirm-answer", function (_e, d) { sendToServer({ type: "confirm", id: d.id, answer: d.answer }); });
+  ipcMain.on("nex:cancel", function () { sendToServer({ type: "cancel" }); });
+  ipcMain.on("nex:clear", async function () {
+    sendToServer({ type: "clear" });
+    const gitState = await refreshProjectGitState();
+    send("nex:state-updated", {
+      sessionState: "idle",
+      gitState: gitState,
+    });
+  });
+  ipcMain.on("nex:open-external", function (_e, url) {
+    if (!isSafeExternalUrl(url)) {
+      send("nex:server-error", { message: "Blocked unsafe external URL." });
+      return;
+    }
+    shell.openExternal(url);
+  });
+}
 
-app.whenReady().then(function () {
-  createWindow();
-  const initialProject = getInitialProjectPath();
-  if (initialProject && fs.existsSync(initialProject) && fs.statSync(initialProject).isDirectory()) {
-    openProject(initialProject);
-  }
-});
-app.on("window-all-closed", function () { killServer(); if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", killServer);
+if (process.versions && process.versions.electron) {
+  app.whenReady().then(function () {
+    registerIpcHandlers();
+    createWindow();
+    const initialProject = getInitialProjectPath();
+    const normalizedProject = normalizeProjectPath(initialProject);
+    if (normalizedProject) {
+      openProject(normalizedProject);
+    }
+  });
+  app.on("window-all-closed", function () { killServer(); if (process.platform !== "darwin") app.quit(); });
+  app.on("before-quit", killServer);
+}
+
+module.exports = {
+  isSafeExternalUrl,
+  isValidProjectPathInput,
+  normalizeProjectPath,
+  registerIpcHandlers,
+};

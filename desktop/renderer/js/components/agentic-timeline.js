@@ -53,6 +53,9 @@ function initTimelineComponents(data) {
     } else if (data.sessionState === "stalled" && items.length > 0) {
       pill.style.display = "flex";
       pillText.textContent = "Conversation stopped";
+    } else if (data.sessionState === "cancelled" && items.length > 0) {
+      pill.style.display = "flex";
+      pillText.textContent = "Conversation cancelled";
     } else {
       pill.style.display = "none";
     }

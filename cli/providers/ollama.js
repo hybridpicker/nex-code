@@ -509,12 +509,12 @@ class OllamaProvider extends BaseProvider {
         headers: this._getHeaders(),
         httpAgent: _keepAliveHttp,
         httpsAgent: _keepAliveHttps,
-      });
-      const tags = resp.data?.models || [];
-      for (const m of tags) {
-        await this._mergeDiscoveredModel(m);
-      }
-    } catch {
+    });
+    const tags = resp.data?.models || [];
+    for (const m of tags) {
+      await this._mergeDiscoveredModel(m);
+    }
+  } catch {
       /* API unavailable — use hardcoded list */
     }
   }

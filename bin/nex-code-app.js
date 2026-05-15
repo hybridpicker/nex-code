@@ -77,6 +77,90 @@ function exists(filePath) {
   return fs.existsSync(filePath);
 }
 
+function isProjectDirectory(dirPath) {
+  if (!dirPath) return false;
+  if (!exists(dirPath)) return false;
+  try {
+    if (!fs.statSync(dirPath).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+
+  const markers = [
+    ".git",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+    ".nex",
+  ];
+
+  return markers.some((marker) => exists(path.join(dirPath, marker)));
+}
+
+function hasStrongProjectMarker(dirPath) {
+  const markers = [
+    ".git",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+  ];
+  return markers.some((marker) => exists(path.join(dirPath, marker)));
+}
+
+function isWorkspaceContainerDirectory(dirPath) {
+  const base = path.basename(path.resolve(dirPath)).toLowerCase();
+  return [
+    "code",
+    "coding",
+    "dev",
+    "development",
+    "projects",
+    "repos",
+    "repositories",
+    "src",
+    "workspace",
+    "workspaces",
+  ].includes(base);
+}
+
+function findProjectRoot(startDir, boundaryDir) {
+  if (!startDir) return null;
+
+  let currentDir;
+  try {
+    currentDir = path.resolve(startDir);
+  } catch {
+    return null;
+  }
+  try {
+    if (!fs.statSync(currentDir).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const resolvedBoundary = boundaryDir ? path.resolve(boundaryDir) : null;
+  let fallbackProject = null;
+  const startProject = currentDir;
+
+  while (true) {
+    if (resolvedBoundary && currentDir === resolvedBoundary) return null;
+    if (exists(path.join(currentDir, ".git"))) return currentDir;
+    if (
+      !fallbackProject &&
+      (hasStrongProjectMarker(currentDir) ||
+        (currentDir === startProject && isProjectDirectory(currentDir))) &&
+      !isWorkspaceContainerDirectory(currentDir)
+    ) {
+      fallbackProject = currentDir;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return fallbackProject || startProject;
+    currentDir = parentDir;
+  }
+}
+
 function getManagedStatePath(rootDir) {
   const scope = crypto
     .createHash("sha1")
@@ -273,9 +357,22 @@ function ensureBuild(rootDir, state) {
   state.builtHead = head;
 }
 
+function buildLaunchArgs(rootDir) {
+  const forwardArgs = process.argv.slice(2);
+  if (forwardArgs.includes("--open-project")) return forwardArgs;
+
+  const resolvedRoot = path.resolve(rootDir);
+  const launchProject = findProjectRoot(process.cwd(), resolvedRoot);
+  if (launchProject && launchProject !== resolvedRoot) {
+    return forwardArgs.concat(["--open-project", launchProject]);
+  }
+
+  return forwardArgs;
+}
+
 function launchDesktop(rootDir) {
   const npm = commandName("npm");
-  const args = ["run", "start", "--", ...process.argv.slice(2)];
+  const args = ["run", "start", "--", ...buildLaunchArgs(rootDir)];
   const desktopDir = path.join(rootDir, "desktop");
 
   log("Starting Electron app");
@@ -330,6 +427,11 @@ module.exports = {
   getManagedStatePath,
   getBlockingWorktreeChanges,
   isIgnorableManagedPath,
+  isProjectDirectory,
+  isWorkspaceContainerDirectory,
+  findProjectRoot,
+  hasStrongProjectMarker,
   parseGitStatusEntries,
   selectManagedCheckoutUpdate,
+  buildLaunchArgs,
 };

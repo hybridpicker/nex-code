@@ -6,8 +6,12 @@ const {
   getManagedStatePath,
   getBlockingWorktreeChanges,
   isIgnorableManagedPath,
+  isProjectDirectory,
+  isWorkspaceContainerDirectory,
+  findProjectRoot,
   parseGitStatusEntries,
   selectManagedCheckoutUpdate,
+  buildLaunchArgs,
 } = require("../bin/nex-code-app.js");
 
 describe("nex-code-app launcher helpers", () => {
@@ -61,5 +65,74 @@ describe("nex-code-app launcher helpers", () => {
 
   test("uses hard reset when local branch diverged from managed remote", () => {
     expect(selectManagedCheckoutUpdate("abc123", "def456", "999999")).toBe("reset-hard");
+  });
+
+  test("detects real project directories from common repo markers", () => {
+    expect(isProjectDirectory("/Users/lukasschonsgibl/Coding/nex-code")).toBe(true);
+    expect(isProjectDirectory("/Users/lukasschonsgibl/Coding/cookbook")).toBe(true);
+  });
+
+  test("recognizes common workspace containers separately from project roots", () => {
+    expect(isWorkspaceContainerDirectory("/Users/lukasschonsgibl/Coding")).toBe(true);
+    expect(isWorkspaceContainerDirectory("/Users/lukasschonsgibl/Coding/nex-code")).toBe(false);
+  });
+
+  test("finds the nearest project root from a nested working directory", () => {
+    const nestedDir = "/Users/lukasschonsgibl/Coding/nex-code/desktop/renderer/js";
+    expect(findProjectRoot(nestedDir, "/Users/lukasschonsgibl/.nex-code/app-devel")).toBe(
+      "/Users/lukasschonsgibl/Coding/nex-code",
+    );
+  });
+
+  test("does not walk into the managed desktop checkout boundary", () => {
+    const boundary = "/Users/lukasschonsgibl/.nex-code/app-devel";
+    const nestedManagedDir = `${boundary}/desktop/renderer`;
+    expect(findProjectRoot(nestedManagedDir, boundary)).toBe(null);
+  });
+
+  test("falls back to the launch directory for unmarked projects", () => {
+    const dir = "/Users/lukasschonsgibl/Coding/Python/guitar_tools";
+    expect(findProjectRoot(dir, "/Users/lukasschonsgibl/.nex-code/app-devel")).toBe(dir);
+  });
+
+  test("auto-adds --open-project for a nested repo cwd", () => {
+    const originalArgv = process.argv;
+    const originalCwd = process.cwd;
+
+    process.argv = ["node", "nex-code-app"];
+    process.cwd = () => "/Users/lukasschonsgibl/Coding/nex-code/desktop/renderer/js";
+
+    try {
+      expect(buildLaunchArgs("/Users/lukasschonsgibl/.nex-code/app-devel")).toEqual([
+        "--open-project",
+        "/Users/lukasschonsgibl/Coding/nex-code",
+      ]);
+    } finally {
+      process.argv = originalArgv;
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("preserves explicit --open-project arguments", () => {
+    const originalArgv = process.argv;
+    const originalCwd = process.cwd;
+
+    process.argv = [
+      "node",
+      "nex-code-app",
+      "--open-project",
+      "/tmp/custom-project",
+    ];
+    process.cwd = () => "/Users/lukasschonsgibl/Coding/nex-code/desktop";
+
+    try {
+      expect(buildLaunchArgs("/Users/lukasschonsgibl/.nex-code/app-devel")).toEqual([
+        "--open-project",
+        "/tmp/custom-project",
+      ]);
+    } finally {
+      process.argv = originalArgv;
+      process.cwd = originalCwd;
+    }
   });
 });

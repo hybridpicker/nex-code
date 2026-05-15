@@ -1,0 +1,115 @@
+"use strict";
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+jest.mock("electron", () => ({
+  app: {
+    isPackaged: false,
+    whenReady: jest.fn(() => Promise.resolve()),
+    on: jest.fn(),
+    quit: jest.fn(),
+  },
+  BrowserWindow: jest.fn(),
+  ipcMain: {
+    handle: jest.fn(),
+    on: jest.fn(),
+  },
+  dialog: {},
+  Menu: {
+    buildFromTemplate: jest.fn(),
+    setApplicationMenu: jest.fn(),
+  },
+  shell: {
+    openExternal: jest.fn(),
+    openPath: jest.fn(),
+  },
+  nativeImage: {
+    createFromPath: jest.fn(() => ({ isEmpty: () => true })),
+  },
+}), { virtual: true });
+
+const {
+  isSafeExternalUrl,
+  isValidProjectPathInput,
+  normalizeProjectPath,
+  registerIpcHandlers,
+} = require("../desktop/main");
+const { ipcMain } = require("electron");
+
+describe("desktop main process IPC hardening", () => {
+  let tmpRoot;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nex-desktop-main-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    ipcMain.handle.mockClear();
+    ipcMain.on.mockClear();
+  });
+
+  test("does not register IPC handlers as a module-load side effect", () => {
+    expect(ipcMain.handle).not.toHaveBeenCalled();
+    expect(ipcMain.on).not.toHaveBeenCalled();
+  });
+
+  test("registers only explicit desktop IPC channels during app startup", () => {
+    registerIpcHandlers();
+
+    expect(ipcMain.handle.mock.calls.map((call) => call[0])).toEqual([
+      "nex:get-state",
+      "nex:open-project",
+      "nex:open-project-path",
+      "nex:open-project-folder",
+      "nex:get-model-state",
+      "nex:set-active-model",
+      "nex:get-git-state",
+      "nex:checkout-branch",
+      "nex:create-branch",
+    ]);
+    expect(ipcMain.on.mock.calls.map((call) => call[0])).toEqual([
+      "nex:command",
+      "nex:confirm-answer",
+      "nex:cancel",
+      "nex:clear",
+      "nex:open-external",
+    ]);
+  });
+
+  test("allows only browser-safe external URL schemes", () => {
+    expect(isSafeExternalUrl("https://ollama.com/download")).toBe(true);
+    expect(isSafeExternalUrl("http://localhost:3000")).toBe(true);
+
+    expect(isSafeExternalUrl("file:///Users/example/.ssh/id_rsa")).toBe(false);
+    expect(isSafeExternalUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeExternalUrl("data:text/html,<script>alert(1)</script>")).toBe(false);
+    expect(isSafeExternalUrl("/Applications/Calculator.app")).toBe(false);
+    expect(isSafeExternalUrl("")).toBe(false);
+  });
+
+  test("rejects invalid project path IPC inputs before filesystem access", () => {
+    expect(isValidProjectPathInput("")).toBe(false);
+    expect(isValidProjectPathInput("   ")).toBe(false);
+    expect(isValidProjectPathInput("project\0name")).toBe(false);
+    expect(isValidProjectPathInput(null)).toBe(false);
+  });
+
+  test("normalizes project paths to canonical existing directories", () => {
+    const projectDir = path.join(tmpRoot, "real-project");
+    const nestedDir = path.join(projectDir, "src");
+    fs.mkdirSync(nestedDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, "package.json"), "{}\n");
+
+    const linkDir = path.join(tmpRoot, "project-link");
+    fs.symlinkSync(projectDir, linkDir);
+    const canonicalProjectDir = fs.realpathSync(projectDir);
+
+    expect(normalizeProjectPath(path.join(nestedDir, ".."))).toBe(canonicalProjectDir);
+    expect(normalizeProjectPath(linkDir)).toBe(canonicalProjectDir);
+    expect(normalizeProjectPath(path.join(tmpRoot, "missing"))).toBe(null);
+    expect(normalizeProjectPath(path.join(projectDir, "package.json"))).toBe(null);
+  });
+});

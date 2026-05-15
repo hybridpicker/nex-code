@@ -42,6 +42,10 @@ function initTopBarComponents(data) {
         dot.classList.add("warn");
         label.textContent = "Stopped";
         break;
+      case "cancelled":
+        dot.classList.add("warn");
+        label.textContent = "Cancelled";
+        break;
       case "error":
         dot.classList.add("error");
         label.textContent = "Error";
@@ -300,6 +304,7 @@ function getModelMenuStatus(state) {
   if (state === "running") return "Active";
   if (state === "complete") return "Complete";
   if (state === "stalled") return "Stopped";
+  if (state === "cancelled") return "Cancelled";
   if (state === "error") return "Error";
   return "Ready";
 }

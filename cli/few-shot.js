@@ -123,9 +123,9 @@ function getFewShotForInput(userInput) {
   // that clearly don't need code changes.
   if (category.id === "coding") {
     const looksLikeAnalysis =
-      /\b(analy[sz]e|explain|describe|list|summari[sz]e|what is|how does|tell me about|review|audit)\b/i.test(
-        userInput,
-      );
+      /\b(analy[sz]e|explain|describe|list|summari[sz]e|what is|how does|tell me(?:\s+(?:about|the|which|what|whether|if|me))?|review|audit|inspect|read|find|identify|show)\b/i.test(userInput) ||
+      /\b(do not|don't|without)\s+(?:edit|modify|change|write|fix)\b/i.test(userInput) ||
+      /\b(?:no|without)\s+(?:edits?|changes?|modifications?)\b/i.test(userInput);
     if (looksLikeAnalysis) return null;
   }
 

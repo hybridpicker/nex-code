@@ -71,6 +71,17 @@ if (args.includes("-v") || args.includes("--version")) {
   process.exit(0);
 }
 
+// ─── --server (Desktop / VS Code extension IPC mode) ─────────
+// Must run before any interactive/headless startup side effects. Desktop
+// expects stdout to contain only JSON-lines protocol messages.
+if (args.includes("--server")) {
+  process.env.NEX_SERVER = "1";
+  const { setAutoConfirm } = require("../cli/safety");
+  setAutoConfirm(true); // non-critical tools auto-confirm in server mode
+  require("../cli/server-mode").startServerMode();
+  return; // event loop keeps process alive — no further code should run
+}
+
 // ─── --yolo / -yolo ──────────────────────────────────────────
 const yoloMode = args.includes("--yolo") || args.includes("-yolo");
 if (yoloMode) {
@@ -1058,14 +1069,6 @@ async function runHeadlessTask(task) {
       finishSuccess(getConversationMessages);
     })
     .catch((err) => finishError(err));
-}
-
-// ─── --server (VS Code extension IPC mode) ───────────────────
-if (args.includes("--server")) {
-  const { setAutoConfirm } = require("../cli/safety");
-  setAutoConfirm(true); // non-critical tools auto-confirm in server mode
-  require("../cli/server-mode").startServerMode();
-  return; // event loop keeps process alive — no further code should run
 }
 
 // ─── --daemon / --watch (background watcher mode) ────────────

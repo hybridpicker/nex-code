@@ -18,6 +18,9 @@ function initSidebarComponents(data) {
   const project = data.project || null;
   const branch = data.branch || "unknown";
   const workspace = data.workspace || "/root";
+  const safeProject = escapeHtml(project || "");
+  const safeBranch = escapeHtml(branch);
+  const safeWorkspace = escapeHtml(workspace);
 
   const hasProject = !!project;
   const hasGit = !!data.isGitRepository;
@@ -29,6 +32,7 @@ function initSidebarComponents(data) {
   if (isActive) { agentStateLabel = "Processing"; agentStateClass = "running"; }
   else if (data.sessionState === "complete") { agentStateLabel = "Complete"; agentStateClass = "complete"; }
   else if (data.sessionState === "stalled") { agentStateLabel = "Stopped"; agentStateClass = "stalled"; }
+  else if (data.sessionState === "cancelled") { agentStateLabel = "Cancelled"; agentStateClass = "stalled"; }
   else if (data.sessionState === "error") { agentStateLabel = "Error"; agentStateClass = "error"; }
 
   nav.innerHTML = `
@@ -37,7 +41,7 @@ function initSidebarComponents(data) {
       ${hasProject ? `
       <button type="button" class="sidebar-item active" data-sidebar-action="open-project-folder" title="Open the active project folder.">
         <span class="item-icon">📁</span>
-        <span class="item-label">${project}</span>
+        <span class="item-label">${safeProject}</span>
         <span class="item-badge active-badge">open</span>
       </button>
       ` : `
@@ -50,11 +54,11 @@ function initSidebarComponents(data) {
       ${hasProject ? `
       <div class="sidebar-item">
         <span class="item-icon">⎇</span>
-        <span class="item-label">Branch: ${branch}</span>
+        <span class="item-label">Branch: ${safeBranch}</span>
       </div>
       <div class="sidebar-item">
         <span class="item-icon">📂</span>
-        <span class="item-label">Workspace: ${workspace}</span>
+        <span class="item-label">Workspace: ${safeWorkspace}</span>
       </div>
       ` : ""}
     </div>
@@ -100,6 +104,7 @@ function initSidebarComponents(data) {
       ${isActive ? `<div class="sidebar-item"><span class="item-icon">↻</span><span class="item-label">Phase ${activeNodeCount} of workflow</span></div>` : ""}
       ${data.sessionState === "complete" ? `<div class="sidebar-item" style="color:var(--accent-emerald)"><span class="item-icon">✓</span><span class="item-label">All tasks complete</span></div>` : ""}
       ${data.sessionState === "stalled" ? `<div class="sidebar-item" style="color:var(--accent-gold)"><span class="item-icon">!</span><span class="item-label">Run stopped before completion</span></div>` : ""}
+      ${data.sessionState === "cancelled" ? `<div class="sidebar-item" style="color:var(--accent-gold)"><span class="item-icon">!</span><span class="item-label">Run cancelled by user</span></div>` : ""}
     </div>
   `;
 
