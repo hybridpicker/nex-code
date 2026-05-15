@@ -3467,6 +3467,60 @@ function _isVerificationCommandCall(prep) {
   );
 }
 
+function _extractExactVerificationOnlyCommand(taskText) {
+  const text = String(taskText || "").trim();
+  if (!text) return "";
+  const verificationOnly =
+    /\bverification\s+only\b/i.test(text) ||
+    (/\brun\s+exactly\b/i.test(text) &&
+      /\bdo\s+not\s+(?:edit|modify|change)\b/i.test(text) &&
+      /\bdo\s+not\s+run\s+other\s+commands?\s+first\b/i.test(text));
+  if (!verificationOnly) return "";
+
+  const match =
+    text.match(/\brun\s+exactly\s*`([^`\n]+)`/i) ||
+    text.match(/\brun\s+exactly\s*:\s*([\s\S]*?)(?:\.\s+Do\s+not|\n|$)/i);
+  const command = match ? String(match[1]).trim().replace(/\s+/g, " ") : "";
+  if (!command) return "";
+  return _isVerificationCommandCall({ fnName: "bash", args: { command } })
+    ? command
+    : "";
+}
+
+async function _runExactVerificationOnlyCommand(command) {
+  const args = { command };
+  if (_serverHooks?.onToolStart) {
+    _serverHooks.onToolStart("bash", args);
+  }
+
+  let result = "";
+  let isError = false;
+  try {
+    result = await executeTool("bash", args, {
+      silent: true,
+      autoConfirm: true,
+    });
+    isError = _isToolResultError("bash", result);
+  } catch (err) {
+    result = `ERROR: ${err?.message || String(err)}`;
+    isError = true;
+  }
+
+  const summary = formatToolSummary("bash", args, result, isError);
+  if (_serverHooks?.onToolEnd) {
+    _serverHooks.onToolEnd("bash", summary, !isError);
+  }
+
+  const assistantText = isError
+    ? `Verification failed: ${command}`
+    : `Verification passed: ${command}`;
+  conversationMessages.push({ role: "assistant", content: assistantText });
+  saveNow(conversationMessages);
+  _scoreAndPrint(conversationMessages);
+  console.log(assistantText);
+  return { success: !isError, command, content: assistantText };
+}
+
 function _extractRequiredVerificationCommands(taskText) {
   const text = String(taskText || "");
   if (!text) return [];
@@ -5951,6 +6005,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   }
   conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
+
+  const exactVerificationCommand =
+    typeof userContent === "string"
+      ? _extractExactVerificationOnlyCommand(userContent)
+      : "";
+  if (exactVerificationCommand) {
+    return await _runExactVerificationOnlyCommand(exactVerificationCommand);
+  }
 
   if (directAnswerMode) {
     const deterministic = _getDeterministicDirectAnswer(userInput);
@@ -13181,6 +13243,7 @@ module.exports = {
   _inferVerificationCommands,
   _inferRelevantTests,
   _inferSymbolTargets,
+  _extractExactVerificationOnlyCommand,
   _buildSymbolHintBlock,
   _detectResponseLanguage,
   _isSimpleDirectAnswerPrompt,

@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const {
@@ -15,6 +17,24 @@ const {
 } = require("../bin/nex-code-app.js");
 
 describe("nex-code-app launcher helpers", () => {
+  let tempRoot = null;
+
+  function makeTempDir(...parts) {
+    if (!tempRoot) {
+      tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nex-code-app-test-"));
+    }
+    const dirPath = path.join(tempRoot, ...parts);
+    fs.mkdirSync(dirPath, { recursive: true });
+    return dirPath;
+  }
+
+  afterEach(() => {
+    if (tempRoot) {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+      tempRoot = null;
+    }
+  });
+
   test("writes managed state outside the tracked checkout", () => {
     const rootDir = "/Users/example/.nex-code/app-devel";
     const statePath = getManagedStatePath(rootDir);
@@ -68,44 +88,62 @@ describe("nex-code-app launcher helpers", () => {
   });
 
   test("detects real project directories from common repo markers", () => {
-    expect(isProjectDirectory("/Users/lukasschonsgibl/Coding/nex-code")).toBe(true);
-    expect(isProjectDirectory("/Users/lukasschonsgibl/Coding/cookbook")).toBe(true);
+    const gitProject = makeTempDir("nex-code");
+    fs.mkdirSync(path.join(gitProject, ".git"));
+
+    const packageProject = makeTempDir("cookbook");
+    fs.writeFileSync(path.join(packageProject, "package.json"), "{}\n", "utf8");
+
+    expect(isProjectDirectory(gitProject)).toBe(true);
+    expect(isProjectDirectory(packageProject)).toBe(true);
   });
 
   test("recognizes common workspace containers separately from project roots", () => {
-    expect(isWorkspaceContainerDirectory("/Users/lukasschonsgibl/Coding")).toBe(true);
-    expect(isWorkspaceContainerDirectory("/Users/lukasschonsgibl/Coding/nex-code")).toBe(false);
+    const codingDir = makeTempDir("Coding");
+    const projectDir = makeTempDir("Coding", "nex-code");
+
+    expect(isWorkspaceContainerDirectory(codingDir)).toBe(true);
+    expect(isWorkspaceContainerDirectory(projectDir)).toBe(false);
   });
 
   test("finds the nearest project root from a nested working directory", () => {
-    const nestedDir = "/Users/lukasschonsgibl/Coding/nex-code/desktop/renderer/js";
-    expect(findProjectRoot(nestedDir, "/Users/lukasschonsgibl/.nex-code/app-devel")).toBe(
-      "/Users/lukasschonsgibl/Coding/nex-code",
-    );
+    const projectDir = makeTempDir("nex-code");
+    fs.writeFileSync(path.join(projectDir, "package.json"), "{}\n", "utf8");
+    const nestedDir = makeTempDir("nex-code", "desktop", "renderer", "js");
+    const boundary = makeTempDir("app-devel");
+
+    expect(findProjectRoot(nestedDir, boundary)).toBe(projectDir);
   });
 
   test("does not walk into the managed desktop checkout boundary", () => {
-    const boundary = "/Users/lukasschonsgibl/.nex-code/app-devel";
-    const nestedManagedDir = `${boundary}/desktop/renderer`;
+    const boundary = makeTempDir("app-devel");
+    const nestedManagedDir = makeTempDir("app-devel", "desktop", "renderer");
+
     expect(findProjectRoot(nestedManagedDir, boundary)).toBe(null);
   });
 
   test("falls back to the launch directory for unmarked projects", () => {
-    const dir = "/Users/lukasschonsgibl/Coding/Python/guitar_tools";
-    expect(findProjectRoot(dir, "/Users/lukasschonsgibl/.nex-code/app-devel")).toBe(dir);
+    const dir = makeTempDir("guitar_tools");
+    const boundary = makeTempDir("app-devel");
+
+    expect(findProjectRoot(dir, boundary)).toBe(dir);
   });
 
   test("auto-adds --open-project for a nested repo cwd", () => {
     const originalArgv = process.argv;
     const originalCwd = process.cwd;
+    const projectDir = makeTempDir("nex-code");
+    fs.writeFileSync(path.join(projectDir, "package.json"), "{}\n", "utf8");
+    const nestedDir = makeTempDir("nex-code", "desktop", "renderer", "js");
+    const boundary = makeTempDir("app-devel");
 
     process.argv = ["node", "nex-code-app"];
-    process.cwd = () => "/Users/lukasschonsgibl/Coding/nex-code/desktop/renderer/js";
+    process.cwd = () => nestedDir;
 
     try {
-      expect(buildLaunchArgs("/Users/lukasschonsgibl/.nex-code/app-devel")).toEqual([
+      expect(buildLaunchArgs(boundary)).toEqual([
         "--open-project",
-        "/Users/lukasschonsgibl/Coding/nex-code",
+        projectDir,
       ]);
     } finally {
       process.argv = originalArgv;
@@ -123,10 +161,11 @@ describe("nex-code-app launcher helpers", () => {
       "--open-project",
       "/tmp/custom-project",
     ];
-    process.cwd = () => "/Users/lukasschonsgibl/Coding/nex-code/desktop";
+    process.cwd = () => makeTempDir("nex-code", "desktop");
+    const boundary = makeTempDir("app-devel");
 
     try {
-      expect(buildLaunchArgs("/Users/lukasschonsgibl/.nex-code/app-devel")).toEqual([
+      expect(buildLaunchArgs(boundary)).toEqual([
         "--open-project",
         "/tmp/custom-project",
       ]);

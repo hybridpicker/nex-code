@@ -331,6 +331,7 @@ const {
   _inferVerificationCommands,
   _inferRelevantTests,
   _inferSymbolTargets,
+  _extractExactVerificationOnlyCommand,
   _buildSymbolHintBlock,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
@@ -1098,6 +1099,74 @@ describe("agent.js", () => {
       setAbortSignalGetter(() => ({ aborted: true }));
       await processInput("test");
       expect(callStream).not.toHaveBeenCalled();
+    });
+
+    it("runs exact verification-only commands without model drift", async () => {
+      executeTool.mockResolvedValueOnce("verification ok");
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+
+      const result = await processInput(
+        "Verification only: run exactly `node src/main.js` and report whether that command passed or failed. Do not edit files and do not run other commands first.",
+        { onToolStart, onToolEnd },
+      );
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        { command: "node src/main.js" },
+        expect.objectContaining({ autoConfirm: true, silent: true }),
+      );
+      expect(onToolStart).toHaveBeenCalledWith("bash", {
+        command: "node src/main.js",
+      });
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("verification ok"),
+        true,
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          command: "node src/main.js",
+        }),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            m.content === "Verification passed: node src/main.js",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("exact verification command extraction", () => {
+    it("extracts safe exact verification-only commands", () => {
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Verification only: run exactly `npm test` and report pass/fail.",
+        ),
+      ).toBe("npm test");
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Run exactly: node src/main.js. Do not edit files and do not run other commands first.",
+        ),
+      ).toBe("node src/main.js");
+    });
+
+    it("does not extract implementation or non-verification commands", () => {
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Create src/main.js, then verify by running exactly: node src/main.js.",
+        ),
+      ).toBe("");
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Verification only: run exactly `rm -rf /tmp/demo`.",
+        ),
+      ).toBe("");
     });
   });
 

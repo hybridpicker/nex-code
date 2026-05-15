@@ -4,7 +4,7 @@ Date: 2026-05-15
 
 ## Sandbox
 
-- Original project: `/Users/lukasschonsgibl/Coding/voicing-generator`
+- Original project: `~/Coding/voicing-generator`
 - Sandbox project: `/tmp/nex-desktop-sandbox/voicing-generator`
 - Copy exclusions: `node_modules`, `dist`, `build`, `.env*`, `.nex`,
   `NEX.md`, `CLAUDE.md`, virtualenvs, `__pycache__`, credentials, logs,
