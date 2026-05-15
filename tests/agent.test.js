@@ -332,6 +332,8 @@ const {
   _inferRelevantTests,
   _inferSymbolTargets,
   _extractExactVerificationOnlyCommand,
+  _extractRequiredVerificationCommands,
+  _extractExactRequiredVerificationCommands,
   _buildSymbolHintBlock,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
@@ -1140,6 +1142,66 @@ describe("agent.js", () => {
         ),
       ).toBe(true);
     });
+
+    it("runs missing exact verification once after implementation", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Creating the requested file.", [
+        {
+          function: {
+            name: "write_file",
+            arguments: {
+              path: "src/main.js",
+              content: 'console.log("desktop verification ok");\n',
+            },
+          },
+          id: "write-main",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("created");
+      mockStream("Created src/main.js.");
+      executeTool.mockResolvedValueOnce("desktop verification ok\n");
+      mockStream(
+        "Created src/main.js. Verification: node src/main.js (passed).",
+      );
+
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+
+      await processInput(
+        "Create a tiny `src/main.js` that prints `desktop verification ok`, then run exactly `node src/main.js` and report whether it passed or failed. Do not run other commands after verification.",
+        { onToolStart, onToolEnd },
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[1]).toEqual([
+        "bash",
+        { command: "node src/main.js" },
+        expect.objectContaining({ autoConfirm: true, silent: true }),
+      ]);
+      expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) =>
+            tool === "bash" && args.command === "node src/main.js",
+        ),
+      ).toHaveLength(1);
+      expect(onToolStart).toHaveBeenCalledWith("bash", {
+        command: "node src/main.js",
+      });
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("desktop verification ok"),
+        true,
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification: node src/main.js (passed)"),
+        ),
+      ).toBe(true);
+    });
   });
 
   describe("exact verification command extraction", () => {
@@ -1167,6 +1229,19 @@ describe("agent.js", () => {
           "Verification only: run exactly `rm -rf /tmp/demo`.",
         ),
       ).toBe("");
+    });
+
+    it("extracts exact required verification commands from implementation prompts", () => {
+      expect(
+        _extractRequiredVerificationCommands(
+          "Create src/main.js, then run exactly `node src/main.js` and report pass or fail.",
+        ),
+      ).toEqual(["node src/main.js"]);
+      expect(
+        _extractExactRequiredVerificationCommands(
+          "Create src/main.js, then run exactly: node src/main.js. Do not run other commands after verification.",
+        ),
+      ).toEqual(["node src/main.js"]);
     });
   });
 

@@ -722,7 +722,7 @@ function parseMarkdown(text) {
     .replace(/^### (.*$)/gim, "<h3>$1</h3>")
     .replace(/^\* (.*$)/gim, "<li>$1</li>")
     .replace(/\*\*(.*)\*\*/gim, "<b>$1</b>")
-    .replace(/`(.*)`/gim, "<code>$1</code>")
+    .replace(/`([^`\n]+)`/gim, "<code>$1</code>")
     .replace(/\n\n/gim, "</p><p>");
 
   html = html.replace(/(<li>.*<\/li>)/gim, "<ul>$1</ul>");

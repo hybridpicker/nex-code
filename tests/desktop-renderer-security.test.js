@@ -235,6 +235,18 @@ describe("desktop renderer conversation state", () => {
     return context;
   }
 
+  test("renders multiple inline code spans in prompts independently", () => {
+    const context = loadAppController();
+
+    const html = context.parseMarkdown(
+      "Create `src/main.js`, then run `node src/main.js`.",
+    );
+
+    expect(html).toContain("<code>src/main.js</code>");
+    expect(html).toContain("<code>node src/main.js</code>");
+    expect(html).not.toContain("src/main.js`, then run `node");
+  });
+
   test("marks running user turns complete when an assistant turn completes", () => {
     const context = loadAppController();
 

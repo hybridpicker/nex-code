@@ -3521,10 +3521,53 @@ async function _runExactVerificationOnlyCommand(command) {
   return { success: !isError, command, content: assistantText };
 }
 
+async function _runRequiredVerificationCommandOnce(command, verificationCommandsRun) {
+  const normalized = _normalizeVerificationCommand(command);
+  const alreadyRan = verificationCommandsRun.some(
+    (ran) => _normalizeVerificationCommand(ran) === normalized,
+  );
+  if (alreadyRan) return { skipped: true };
+
+  const args = { command };
+  if (_serverHooks?.onToolStart) {
+    _serverHooks.onToolStart("bash", args);
+  }
+
+  let result = "";
+  let isError = false;
+  try {
+    result = await executeTool("bash", args, {
+      silent: true,
+      autoConfirm: true,
+    });
+    isError = _isToolResultError("bash", result);
+  } catch (err) {
+    result = `ERROR: ${err?.message || String(err)}`;
+    isError = true;
+  }
+
+  const summary = formatToolSummary("bash", args, result, isError);
+  if (_serverHooks?.onToolEnd) {
+    _serverHooks.onToolEnd("bash", summary, !isError);
+  }
+
+  if (!isError) {
+    verificationCommandsRun.push(command.slice(0, 160));
+  }
+
+  return {
+    skipped: false,
+    success: !isError,
+    command,
+    summary,
+    content: String(result || ""),
+  };
+}
+
 function _extractRequiredVerificationCommands(taskText) {
   const text = String(taskText || "");
   if (!text) return [];
-  const commands = [];
+  const commands = _extractExactRequiredVerificationCommands(text);
   const explicitPatterns = [
     /\b(npm\s+run\s+lint)\b/i,
     /\b(npm\s+run\s+build)\b/i,
@@ -3538,6 +3581,31 @@ function _extractRequiredVerificationCommands(taskText) {
     const match = text.match(pattern);
     if (match) commands.push(match[1].trim().replace(/\s+/g, " "));
   }
+  return [...new Set(commands)];
+}
+
+function _extractExactRequiredVerificationCommands(taskText) {
+  const text = String(taskText || "");
+  if (!text) return [];
+  const commands = [];
+  const patterns = [
+    /\brun\s+exactly\s*`([^`\n]+)`/gi,
+    /\brun\s+exactly\s*:\s*([^\n.]+(?:\.[cm]?js|\.mjs)?[^\n.]*)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const command = String(match[1] || "").trim().replace(/\s+/g, " ");
+      if (
+        command &&
+        _isVerificationCommandCall({ fnName: "bash", args: { command } })
+      ) {
+        commands.push(command);
+      }
+    }
+  }
+
   return [...new Set(commands)];
 }
 
@@ -6534,6 +6602,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const filesRead = new Set();
   const verificationCommandsRun = [];
   const verificationReadsRun = [];
+  const exactRequiredVerificationCommands =
+    _extractExactRequiredVerificationCommands(userInput);
   const requiredVerificationCommands = _extractRequiredVerificationCommands(
     userInput,
   );
@@ -8249,6 +8319,59 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !_hasRequiredVerificationEvidence() &&
           requiredVerificationCommands.length > 0
         ) {
+          const missingRequiredCommand = exactRequiredVerificationCommands.find(
+            (required) =>
+              !verificationCommandsRun.some(
+                (ran) =>
+                  _normalizeVerificationCommand(ran) ===
+                  _normalizeVerificationCommand(required),
+              ),
+          );
+          if (
+            missingRequiredCommand &&
+            (filesModified.size > 0 || _bashModifiedFiles > 0)
+          ) {
+            const verificationResult =
+              await _runRequiredVerificationCommandOnce(
+                missingRequiredCommand,
+                verificationCommandsRun,
+              );
+            _verificationAtEditSeq = _scopedEditCounter;
+            _postEditVerifyPending = false;
+            _postEditVerifyNudges = 0;
+
+            if (!verificationResult.success) {
+              const failedAssistantMsg = {
+                role: "assistant",
+                content:
+                  `Verification failed: ${missingRequiredCommand}\n\n` +
+                  "The requested verification command ran once and failed. No further commands were run after verification.",
+              };
+              conversationMessages.push(failedAssistantMsg);
+              apiMessages.push(failedAssistantMsg);
+              console.log(`\n${failedAssistantMsg.content}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
+          }
+
+          if (_hasRequiredVerificationEvidence()) {
+            const verificationEvidence =
+              _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+              requiredVerificationCommands.map((cmd) => `${cmd} (passed)`).join(" | ");
+            const summaryMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] The exact verification command has now run successfully.\n" +
+                `Verification: ${verificationEvidence}.\n` +
+                "Write the final summary now. Do not run any more commands.",
+            };
+            conversationMessages.push(summaryMsg);
+            apiMessages.push(summaryMsg);
+            continue;
+          }
+
           if (_postEditVerifyNudges < 2 && i < MAX_ITERATIONS - 1) {
             _postEditVerifyNudges++;
             const verifyMsg = {
@@ -13241,6 +13364,8 @@ module.exports = {
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   getProjectContextHash,
   _inferVerificationCommands,
+  _extractRequiredVerificationCommands,
+  _extractExactRequiredVerificationCommands,
   _inferRelevantTests,
   _inferSymbolTargets,
   _extractExactVerificationOnlyCommand,

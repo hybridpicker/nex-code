@@ -252,6 +252,7 @@ function detectScenario(promptText) {
   if (/Scenario E|legacy callback processor|nested callback/i.test(text))
     return "e";
   if (/mocked server environment|nginx/i.test(text)) return "c";
+  if (/desktop verification ok/i.test(text)) return "desktop-verification";
   if (/discount|node\s+src\/main\.js/i.test(text)) return "b";
   if (/async\s*\/\s*await|Refactor\s+app\.js/i.test(text)) return "a";
   if (/tool budget|budget stop/i.test(text)) return "d";
@@ -292,6 +293,39 @@ function buildDeterministicResponse(messages) {
       content:
         "Final report: the CLI handled a malformed tool call without hanging. " +
         "The tool arguments were not valid JSON, so execution was blocked and the session concluded safely.",
+      tool_calls: [],
+    };
+  }
+
+  if (stableScenario === "desktop-verification") {
+    const stepFromMessages = hasToolResult(messages, "dv1") ? 1 : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+    if (/exact verification command has now run successfully/i.test(userHistory)) {
+      return {
+        content:
+          "Created src/main.js. Verification: node src/main.js (passed).",
+        tool_calls: [],
+      };
+    }
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content: "Creating the requested tiny verification file.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            {
+              path: "src/main.js",
+              content: 'console.log("desktop verification ok");\n',
+            },
+            "dv1",
+          ),
+        ],
+      };
+    }
+    return {
+      content:
+        "Created src/main.js and am ready to report the exact verification result.",
       tool_calls: [],
     };
   }

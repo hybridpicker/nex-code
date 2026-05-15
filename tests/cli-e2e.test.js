@@ -642,6 +642,67 @@ describe("CLI E2E (bin/nex-code.js) with deterministic mock provider", () => {
     expect(updated).toContain("/ 100");
   });
 
+  test("implementation prompt runs exact verification once", async () => {
+    const cwd = path.join(SANDBOX_ROOT, "projects", "desktop-verification");
+    fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+    const env = {
+      ...process.env,
+      NEX_NO_DOTENV: "1",
+      NEX_MOCK_PROVIDER: "1",
+      HEADLESS_MODEL: "mock:mock-model",
+      NEX_NO_FLATRATE: "1",
+      OLLAMA_API_KEY: "",
+      NEX_PHASE_ROUTING: "0",
+    };
+
+    const { code, stdout, stderr } = await runCli({
+      cwd,
+      env,
+      args: [
+        path.join(process.cwd(), "bin", "nex-code.js"),
+        "--auto",
+        "--json",
+        "--task",
+        "Create a tiny `src/main.js` that prints `desktop verification ok`, then run exactly `node src/main.js` and report whether it passed or failed. Do not run other commands after verification.",
+      ],
+      timeoutMs: 15000,
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.trim()).toBe("");
+
+    const events = stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const verificationStarts = events.filter(
+      (event) =>
+        event.type === "tool_start" &&
+        event.tool === "bash" &&
+        event.args &&
+        event.args.command === "node src/main.js",
+    );
+    const verificationEnds = events.filter(
+      (event) =>
+        event.type === "tool_end" &&
+        event.tool === "bash" &&
+        String(event.summary || "").includes("node src/main.js"),
+    );
+
+    expect(verificationStarts).toHaveLength(1);
+    expect(verificationEnds).toHaveLength(1);
+    expect(verificationEnds[0].ok).toBe(true);
+    const verificationEndIndex = events.indexOf(verificationEnds[0]);
+    expect(
+      events
+        .slice(verificationEndIndex + 1)
+        .some((event) => event.type === "tool_start"),
+    ).toBe(false);
+    expect(fs.readFileSync(path.join(cwd, "src/main.js"), "utf-8")).toContain(
+      "desktop verification ok",
+    );
+  });
+
   test("Scenario D: tool budget trims to 5 and exits 0", async () => {
     const cwd = path.join(SANDBOX_ROOT, "projects", "scenario-a");
     const env = {
