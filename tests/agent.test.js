@@ -220,6 +220,14 @@ jest.mock("../cli/context-engine", () => ({
   forceCompress: jest
     .fn()
     .mockImplementation((messages) => ({ messages, tokensRemoved: 0 })),
+  buildProgressSnapshot: jest.fn((_messages, opts = {}) => ({
+    role: "system",
+    content:
+      "## Progress State (preserved through compression)\n" +
+      JSON.stringify(opts.locatedTarget || {}, null, 2),
+    _pinned: true,
+    _progressSnapshot: true,
+  })),
 }));
 jest.mock("../cli/session", () => ({
   autoSave: jest.fn(),
@@ -365,7 +373,11 @@ const { routeSkillCall } = require("../cli/skills");
 const { routeMCPCall } = require("../cli/mcp");
 const { checkPermission } = require("../cli/permissions");
 const { confirm, getAutoConfirm } = require("../cli/safety");
-const { fitToContext, getUsage } = require("../cli/context-engine");
+const {
+  fitToContext,
+  getUsage,
+  forceCompress,
+} = require("../cli/context-engine");
 const { trackUsage } = require("../cli/costs");
 const { autoSave } = require("../cli/session");
 const { isPlanMode, getPlanModePrompt } = require("../cli/planner");
@@ -398,6 +410,17 @@ describe("agent.js", () => {
     callStream.mockReset();
     executeTool.mockReset();
     jest.clearAllMocks();
+    fitToContext.mockImplementation(async (messages) => ({
+      messages,
+      compressed: false,
+      compacted: false,
+      tokensRemoved: 0,
+    }));
+    getUsage.mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 });
+    forceCompress.mockImplementation((messages) => ({
+      messages,
+      tokensRemoved: 0,
+    }));
     getAutoConfirm.mockReturnValue(false);
     setAbortSignalGetter(() => null);
     restoreTimeout(); // ensure clean timer state
@@ -1335,6 +1358,55 @@ describe("agent.js", () => {
       expect(logOutput()).toContain("context compressed");
       expect(logOutput()).toContain("5000");
       delete process.env.NEX_DEBUG;
+    });
+
+    it("preserves located target state after auto-compress before edits", async () => {
+      getUsage.mockReturnValue({ used: 90000, limit: 100000, percentage: 90 });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit next.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 3 },
+      );
+
+      const resumeCall = callStream.mock.calls.find(([messages]) =>
+        JSON.stringify(messages).includes("RESUME AFTER COMPRESSION"),
+      );
+      expect(resumeCall).toBeDefined();
+      const resumeCallText = JSON.stringify(resumeCall[0]);
+      expect(resumeCallText).toContain("Progress State");
+      expect(resumeCallText).toContain("web/templates/fitness/index.html");
+      expect(resumeCallText).toContain("lineStart");
+      expect(resumeCallText).toContain("nextAction");
+      expect(resumeCallText).toContain("do not restart with broad search");
     });
 
     it("warns when context usage > 85%", async () => {

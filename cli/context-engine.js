@@ -650,7 +650,10 @@ function extractActiveFiles(messages, recentCount = 10) {
  * @param {{ filesModified?: Set<string>, currentPhase?: string }} opts
  * @returns {object|null}
  */
-function buildProgressSnapshot(messages, { filesModified = new Set(), currentPhase = null } = {}) {
+function buildProgressSnapshot(
+  messages,
+  { filesModified = new Set(), currentPhase = null, locatedTarget = null } = {},
+) {
   const parts = [];
 
   if (filesModified.size > 0) {
@@ -662,6 +665,23 @@ function buildProgressSnapshot(messages, { filesModified = new Set(), currentPha
 
   if (currentPhase) {
     parts.push(`Current phase: ${currentPhase}`);
+  }
+
+  if (locatedTarget?.targetFile || locatedTarget?.nextAction) {
+    const compactTarget = {};
+    if (locatedTarget.targetFile)
+      compactTarget.targetFile = locatedTarget.targetFile;
+    if (locatedTarget.targetRange)
+      compactTarget.targetRange = locatedTarget.targetRange;
+    if (locatedTarget.locatedEvidence)
+      compactTarget.locatedEvidence = locatedTarget.locatedEvidence;
+    if (locatedTarget.completedSteps)
+      compactTarget.completedSteps = locatedTarget.completedSteps;
+    if (locatedTarget.nextAction)
+      compactTarget.nextAction = locatedTarget.nextAction;
+    parts.push(
+      "Located target state:\n" + JSON.stringify(compactTarget, null, 2),
+    );
   }
 
   // Last 3 assistant texts with actual content (skip pure tool-call turns)
@@ -953,12 +973,25 @@ function forceCompress(messages, tools, nuclear = false) {
   const recentStart = Math.max(startIdx, messages.length - keepRecent);
   let oldMessages = messages.slice(startIdx, recentStart);
   let recentMessages = messages.slice(recentStart);
+  const pinnedMessages = [
+    ...oldMessages.filter((m) => m && m._pinned),
+    ...recentMessages.filter((m) => m && m._pinned),
+  ];
+  oldMessages = oldMessages.filter((m) => !(m && m._pinned));
+  recentMessages = recentMessages.filter((m) => !(m && m._pinned));
 
   // Prefer dropping old messages over mutating them. Mutating message content
   // breaks prefix caching on cache-aware providers — each mutation invalidates
   // the ~90% cost discount. Keep messages as-is and rely on the drop loop.
   // Only truncate individual messages if dropping alone is insufficient.
   let compressed = oldMessages; // no per-message mutation — preserve cache
+
+  const buildForceResult = () => {
+    const result = [];
+    if (system) result.push(system);
+    result.push(...pinnedMessages, ...compressed, ...recentMessages);
+    return result;
+  };
 
   // Nuclear: compress recent messages aggressively (last resort only)
   if (nuclear) {
@@ -968,7 +1001,7 @@ function forceCompress(messages, tools, nuclear = false) {
   }
 
   // Remove oldest messages until we fit
-  let result = buildResult(system, compressed, recentMessages);
+  let result = buildForceResult();
   let tokens = estimateMessagesTokens(result);
 
   while (compressed.length > 0 && tokens > targetMax) {
@@ -979,7 +1012,7 @@ function forceCompress(messages, tools, nuclear = false) {
   // If dropping wasn't enough and this is non-nuclear, compress remaining old messages
   if (!nuclear && tokens > targetMax && compressed.length > 0) {
     compressed = compressed.map((msg) => compressMessage(msg, "aggressive"));
-    result = buildResult(system, compressed, recentMessages);
+    result = buildForceResult();
     tokens = estimateMessagesTokens(result);
     while (compressed.length > 0 && tokens > targetMax) {
       const removed = compressed.shift();
@@ -991,11 +1024,12 @@ function forceCompress(messages, tools, nuclear = false) {
   if (nuclear && tokens > targetMax) {
     const lastUser = recentMessages.filter((m) => m.role === "user").slice(-1);
     recentMessages = lastUser;
-    result = buildResult(system, [], recentMessages);
+    compressed = [];
+    result = buildForceResult();
     tokens = estimateMessagesTokens(result);
   }
 
-  result = buildResult(system, compressed, recentMessages);
+  result = buildForceResult();
 
   // Preserve task context across nuclear compression.
   // The "last user message" is often a system-injected warning (BLOCKED:, SYSTEM WARNING:)

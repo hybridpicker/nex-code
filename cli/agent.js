@@ -3319,6 +3319,72 @@ function _drainCompletedBackgroundJobs(conversationMessages, apiMessages) {
   }
 }
 
+function _shortSessionPath(filePath) {
+  return String(filePath || "").split("/").slice(-2).join("/");
+}
+
+function _lastSetValue(values) {
+  const arr = [...values].filter(Boolean);
+  return arr.length > 0 ? arr[arr.length - 1] : "";
+}
+
+function _buildCompressionResumeTarget(filesRead, filesModified) {
+  const readFiles = [...filesRead].filter(Boolean);
+  const grepFiles = [..._sessionGrepFoundFiles].filter(Boolean);
+  const globFiles = [..._sessionGlobFoundFiles].filter(Boolean);
+  const targetFile =
+    _lastSetValue(readFiles) || _lastSetValue(grepFiles) || _lastSetValue(globFiles);
+  if (!targetFile) return null;
+
+  const ranges = _sessionFileReadRanges.get(targetFile) || [];
+  const lastRange = ranges.length > 0 ? ranges[ranges.length - 1] : null;
+  const targetRange = lastRange
+    ? { lineStart: lastRange[0], lineEnd: lastRange[1] }
+    : null;
+  const locatedEvidence = [];
+  if (readFiles.length > 0) {
+    locatedEvidence.push(
+      `Read file context: ${readFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+  if (grepFiles.length > 0) {
+    locatedEvidence.push(
+      `Grep located: ${grepFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+  if (globFiles.length > 0) {
+    locatedEvidence.push(
+      `Glob/search located: ${globFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+
+  const completedSteps = [];
+  if (readFiles.length > 0) completedSteps.push("Target file context was read");
+  if (grepFiles.length > 0 || globFiles.length > 0)
+    completedSteps.push("Candidate target path was located");
+  if (filesModified.size > 0)
+    completedSteps.push("At least one file has already been modified");
+
+  const rangeText = targetRange
+    ? ` lines ${targetRange.lineStart}-${targetRange.lineEnd}`
+    : "";
+  const targetWasRead = readFiles.includes(targetFile);
+  const nextAction =
+    filesModified.size > 0
+      ? `Continue from the existing edits. Verify or apply only the missing scoped follow-up; do not restart broad exploration.`
+      : targetWasRead
+        ? `Apply the requested scoped edit in ${_shortSessionPath(targetFile)}${rangeText} using edit_file or patch_file. If exact old_text is missing, do one targeted read around the located range; do not restart with broad search.`
+        : `Read only the located target in ${_shortSessionPath(targetFile)} with line_start/line_end, then make the scoped edit; do not restart broad search.`;
+
+  return {
+    targetFile,
+    ...(targetRange ? { targetRange } : {}),
+    locatedEvidence,
+    completedSteps,
+    nextAction,
+  };
+}
+
 /**
  * Extract structured TODO items from the plan text by matching file paths
  * that were read OR found via grep during the plan phase. Returns an array
@@ -6830,17 +6896,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _autoCtx = getUsage(apiMessages, _allTools);
         const _threshold = totalSteps === 0 ? 65 : 78;
         if (_autoCtx.percentage >= _threshold) {
+          const _resumeTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+          );
           // Inject a fresh progress snapshot before compression so the model
           // retains its place after old messages are dropped. The snapshot is
           // pinned (_pinned:true) and will survive Phase 4 relevance removal.
           // Always refresh the snapshot so it reflects the latest state.
           if (
             filesModified.size > 0 ||
-            (_phaseEnabled && _currentPhase !== "plan")
+            (_phaseEnabled && _currentPhase !== "plan") ||
+            _resumeTarget
           ) {
             const _snap = buildProgressSnapshot(conversationMessages, {
               filesModified,
               currentPhase: _phaseEnabled ? _currentPhase : null,
+              locatedTarget: _resumeTarget,
             });
             if (_snap) {
               // Replace any existing snapshot, then insert after system message
@@ -6867,6 +6939,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // After compression the model may lose track of what was already
             // built and restart from scratch. Inject a compact progress note so
             // it continues rather than re-investigating.
+            if (_resumeTarget) {
+              const _resumeAnchor = {
+                role: "user",
+                content:
+                  `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
+                  `Target: ${_shortSessionPath(_resumeTarget.targetFile)}. ` +
+                  `Next action: ${_resumeTarget.nextAction}`,
+              };
+              apiMessages.push(_resumeAnchor);
+            }
             if (_isCreationTask && filesModified.size >= 3) {
               const _doneFiles = [...filesModified]
                 .map((f) => f.split("/").pop())
