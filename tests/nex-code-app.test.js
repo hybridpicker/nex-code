@@ -174,4 +174,43 @@ describe("nex-code-app launcher helpers", () => {
       process.cwd = originalCwd;
     }
   });
+
+  test("passes desktop E2E flags through to Electron unchanged", () => {
+    const originalArgv = process.argv;
+    const originalCwd = process.cwd;
+    const promptFile = path.join(os.tmpdir(), "prompt.txt");
+    const projectDir = makeTempDir("neutral-project");
+    fs.writeFileSync(path.join(projectDir, "package.json"), "{}\n", "utf8");
+    const boundary = makeTempDir("app-devel");
+
+    process.argv = [
+      "node",
+      "nex-code-app",
+      "--e2e",
+      "--open-project",
+      projectDir,
+      "--prompt-file",
+      promptFile,
+      "--model",
+      "mock:fast",
+      "--timeout-ms",
+      "180000",
+      "--json",
+      "--auto-confirm",
+      "--expect-file",
+      "src/components/ProfileCard.jsx",
+      "--expect-contains",
+      "ProfileCard",
+      "--expect-not-contains",
+      "placeholder",
+    ];
+    process.cwd = () => makeTempDir("elsewhere");
+
+    try {
+      expect(buildLaunchArgs(boundary)).toEqual(process.argv.slice(2));
+    } finally {
+      process.argv = originalArgv;
+      process.cwd = originalCwd;
+    }
+  });
 });

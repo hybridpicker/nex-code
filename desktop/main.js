@@ -9,6 +9,8 @@
 
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeImage } = require("electron");
 const path = require("path");
+const os = require("os");
+const crypto = require("crypto");
 const { spawn, execFile } = require("child_process");
 const fs = require("fs");
 const readline = require("readline");
@@ -26,6 +28,99 @@ let projectPath = null;
 let projectIsGit = false;
 let projectIsDeployable = false;
 let activeModelSpecOverride = null;
+let e2eRunStarted = false;
+
+function getArgValue(argv, name) {
+  const idx = argv.indexOf(name);
+  if (idx === -1) return null;
+  const value = argv[idx + 1];
+  if (!value || value.startsWith("--")) return null;
+  return value;
+}
+
+function getArgValues(argv, name) {
+  const values = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === name && argv[i + 1] && !argv[i + 1].startsWith("--")) {
+      values.push(argv[i + 1]);
+      i += 1;
+    }
+  }
+  return values;
+}
+
+function parseTimeoutMs(value, fallback) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parseDesktopE2EConfirmMode(argv, env) {
+  const args = Array.isArray(argv) ? argv : [];
+  const sourceEnv = env || {};
+  if (args.includes("--auto-confirm") || sourceEnv.NEX_DESKTOP_E2E_AUTO_CONFIRM === "1") {
+    return "yes";
+  }
+  const value = getArgValue(args, "--confirm") || sourceEnv.NEX_DESKTOP_E2E_CONFIRM || "";
+  const normalized = String(value).trim().toLowerCase();
+  if (["yes", "y", "true", "allow", "approve"].includes(normalized)) return "yes";
+  if (["no", "n", "false", "deny", "reject"].includes(normalized)) return "no";
+  return "manual";
+}
+
+function parseDesktopE2EOptions(argv, env) {
+  const args = Array.isArray(argv) ? argv : [];
+  const sourceEnv = env || {};
+  const enabled = args.includes("--e2e") || sourceEnv.NEX_DESKTOP_E2E === "1";
+  if (!enabled) return { enabled: false };
+
+  const promptFile = getArgValue(args, "--prompt-file") || sourceEnv.NEX_DESKTOP_E2E_PROMPT_FILE || null;
+  const prompt = getArgValue(args, "--prompt") || sourceEnv.NEX_DESKTOP_E2E_PROMPT || null;
+  const openProject = getArgValue(args, "--open-project") || sourceEnv.NEX_DESKTOP_OPEN_PROJECT || null;
+  const model = getArgValue(args, "--model") || sourceEnv.NEX_DESKTOP_E2E_MODEL || null;
+  const confirmMode = parseDesktopE2EConfirmMode(args, sourceEnv);
+  const stateDir = sourceEnv.NEX_CODE_APP_STATE_DIR
+    || getArgValue(args, "--state-dir")
+    || fs.mkdtempSync(path.join(os.tmpdir(), "nex-code-app-e2e-"));
+
+  return {
+    enabled: true,
+    openProject: openProject,
+    promptFile: promptFile,
+    prompt: prompt,
+    model: model,
+    timeoutMs: parseTimeoutMs(getArgValue(args, "--timeout-ms") || sourceEnv.NEX_DESKTOP_E2E_TIMEOUT_MS, 180000),
+    json: args.includes("--json") || sourceEnv.NEX_DESKTOP_E2E_JSON === "1",
+    expectFiles: getArgValues(args, "--expect-file").concat(
+      sourceEnv.NEX_DESKTOP_E2E_EXPECT_FILE
+        ? sourceEnv.NEX_DESKTOP_E2E_EXPECT_FILE.split(path.delimiter).filter(Boolean)
+        : [],
+    ),
+    expectContains: getArgValues(args, "--expect-contains"),
+    expectNotContains: getArgValues(args, "--expect-not-contains"),
+    confirmMode: confirmMode,
+    autoConfirm: confirmMode !== "manual",
+    stateDir: stateDir,
+  };
+}
+
+const desktopE2EOptions = parseDesktopE2EOptions(process.argv.slice(2), process.env);
+const desktopE2EResult = {
+  logs: [],
+  errors: [],
+  toolActions: [],
+  confirmations: [],
+  assistantText: "",
+  finalSessionState: "idle",
+  lastAction: null,
+};
+
+if (desktopE2EOptions.enabled) {
+  if (desktopE2EOptions.model) activeModelSpecOverride = desktopE2EOptions.model;
+  app.setPath("userData", desktopE2EOptions.stateDir);
+  app.commandLine.appendSwitch("disable-gpu");
+}
 
 function getNexCliPath() {
   if (app.isPackaged) return path.join(process.resourcesPath, "nex-code-cli", "nex-code.js");
@@ -40,6 +135,91 @@ function getInitialProjectPath() {
   const idx = process.argv.indexOf("--open-project");
   if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
   return process.env.NEX_DESKTOP_OPEN_PROJECT || null;
+}
+
+function shortenPrompt(prompt) {
+  const normalized = String(prompt || "").trim().replace(/\s+/g, " ");
+  if (normalized.length <= 160) return normalized;
+  return `${normalized.slice(0, 157)}...`;
+}
+
+function hashPrompt(prompt) {
+  return crypto.createHash("sha256").update(String(prompt || "")).digest("hex");
+}
+
+function getAppBuildInfo() {
+  const rootDir = path.resolve(__dirname, "..");
+  const pkgPath = path.join(rootDir, "package.json");
+  let version = null;
+  try {
+    version = JSON.parse(fs.readFileSync(pkgPath, "utf8")).version || null;
+  } catch (e) {}
+
+  let commit = null;
+  try {
+    const result = execFileSyncSafe("git", ["rev-parse", "HEAD"], rootDir);
+    commit = result.ok ? result.stdout.trim() : null;
+  } catch (e) {}
+
+  return {
+    version: version,
+    commit: commit,
+  };
+}
+
+function execFileSyncSafe(command, args, cwd) {
+  try {
+    const result = require("child_process").execFileSync(command, args, {
+      cwd: cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { ok: true, stdout: result, stderr: "" };
+  } catch (error) {
+    return {
+      ok: false,
+      stdout: error.stdout ? String(error.stdout) : "",
+      stderr: error.stderr ? String(error.stderr) : (error.message || String(error)),
+    };
+  }
+}
+
+function readGitStatusSync(dirPath) {
+  if (!dirPath) return { isGitRepository: false, status: null, head: null, error: "No project path." };
+  const inside = execFileSyncSafe("git", ["rev-parse", "--is-inside-work-tree"], dirPath);
+  if (!inside.ok) return { isGitRepository: false, status: null, head: null, error: inside.stderr.trim() };
+  const status = execFileSyncSafe("git", ["status", "--short"], dirPath);
+  const head = execFileSyncSafe("git", ["rev-parse", "HEAD"], dirPath);
+  const branch = execFileSyncSafe("git", ["branch", "--show-current"], dirPath);
+  return {
+    isGitRepository: true,
+    branch: branch.ok ? branch.stdout.trim() : null,
+    head: head.ok ? head.stdout.trim() : null,
+    status: status.ok ? status.stdout.trim() : null,
+    dirty: status.ok ? status.stdout.trim().length > 0 : null,
+    error: status.ok ? null : status.stderr.trim(),
+  };
+}
+
+function readPromptForE2E(options) {
+  if (options.promptFile) return fs.readFileSync(options.promptFile, "utf8").trim();
+  if (options.prompt) return String(options.prompt).trim();
+  throw new Error("--e2e requires --prompt-file or --prompt.");
+}
+
+function classifyDesktopRunStatus(result) {
+  if (!result) return { state: "error", exitCode: 1, reason: "No E2E result." };
+  if (result.timedOut) return { state: "timeout", exitCode: 124, reason: "Timed out." };
+  if (result.error) return { state: "error", exitCode: 1, reason: result.error };
+  if (result.expectationsOk === false) {
+    return { state: "error", exitCode: 1, reason: "One or more Desktop E2E expectations failed." };
+  }
+  if (result.finalSessionState === "complete" && result.expectationsOk !== false) {
+    return { state: "complete", exitCode: 0, reason: "Desktop run completed." };
+  }
+  if (result.finalSessionState === "stalled") return { state: "stalled", exitCode: 2, reason: result.lastAction || "Run stalled." };
+  if (result.finalSessionState === "timeout") return { state: "timeout", exitCode: 124, reason: result.lastAction || "Timed out." };
+  return { state: result.finalSessionState || "error", exitCode: 1, reason: result.lastAction || "Desktop run failed." };
 }
 
 function isValidProjectPathInput(dirPath) {
@@ -252,7 +432,9 @@ function spawnServer(dirPath) {
     try { handleMsg(JSON.parse(line.trim())); } catch (e) {}
   });
   serverProcess.stderr.on("data", function (d) {
-    send("nex:server-log", { text: d.toString().trim() });
+    const text = d.toString().trim();
+    if (desktopE2EOptions.enabled && text) desktopE2EResult.logs.push(text);
+    send("nex:server-log", { text: text });
   });
   serverProcess.on("close", function (code) {
     serverProcess = null; serverReady = false;
@@ -272,6 +454,7 @@ function killServer() {
 }
 
 function handleMsg(msg) {
+  recordDesktopE2EServerEvent(msg);
   if (msg.type === "ready") { serverReady = true; send("nex:server-ready", {}); return; }
   if (msg.type === "token") { send("nex:server-token", msg); return; }
   if (msg.type === "tool_start") { send("nex:server-tool-start", msg); return; }
@@ -283,6 +466,108 @@ function handleMsg(msg) {
   // Fallback for other message types
   var ch = "nex:server-" + msg.type.replace(/_/g, "-");
   send(ch, msg);
+}
+
+function recordDesktopE2EServerEvent(msg) {
+  if (!desktopE2EOptions.enabled || !msg || !msg.type) return;
+  if (msg.type === "token") {
+    desktopE2EResult.assistantText += String(msg.text || "");
+    return;
+  }
+  if (msg.type === "tool_start") {
+    desktopE2EResult.toolActions.push({
+      tool: msg.tool || "",
+      args: msg.args || {},
+      status: "running",
+    });
+    return;
+  }
+  if (msg.type === "tool_end") {
+    const action = {
+      tool: msg.tool || "",
+      summary: msg.summary || "",
+      ok: msg.ok !== false,
+      status: msg.ok === false ? "error" : "complete",
+    };
+    desktopE2EResult.toolActions.push(action);
+    return;
+  }
+  if (msg.type === "confirm_request") {
+    recordDesktopE2EConfirmation(msg);
+    return;
+  }
+  if (msg.type === "done") {
+    desktopE2EResult.finalSessionState = msg.success === false
+      ? (msg.status || "stalled")
+      : "complete";
+    desktopE2EResult.lastAction = msg.summary || null;
+    if (!desktopE2EResult.assistantText && msg.response) {
+      desktopE2EResult.assistantText = String(msg.response);
+    }
+    if (!desktopE2EResult.assistantText && msg.summary) {
+      desktopE2EResult.assistantText = String(msg.summary);
+    }
+    return;
+  }
+  if (msg.type === "error") {
+    desktopE2EResult.finalSessionState = "error";
+    desktopE2EResult.lastAction = msg.message || "Server error.";
+    desktopE2EResult.errors.push(msg.message || String(msg));
+  }
+}
+
+function recordDesktopE2EConfirmation(msg) {
+  const entry = {
+    id: msg.id || null,
+    tool: msg.tool || "unknown tool",
+    critical: !!msg.critical,
+    mode: desktopE2EOptions.confirmMode || "manual",
+    answer: null,
+    method: null,
+    handled: false,
+  };
+  desktopE2EResult.confirmations.push(entry);
+  desktopE2EResult.logs.push(`Confirmation requested: ${entry.tool}`);
+
+  if (!desktopE2EOptions.autoConfirm || entry.tool === "ask_user") {
+    entry.method = entry.tool === "ask_user" ? "manual-ask-user" : "manual";
+    return;
+  }
+
+  entry.answer = desktopE2EOptions.confirmMode === "no" ? false : true;
+  setTimeout(() => {
+    clickDesktopE2EConfirmation(msg, entry);
+  }, 50);
+}
+
+function clickDesktopE2EConfirmation(msg, entry) {
+  if (!desktopE2EOptions.enabled || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+  if (msg && msg.tool === "ask_user") return;
+  const allow = entry && entry.answer === false ? "confirm-deny" : "confirm-allow";
+  mainWindow.webContents.executeJavaScript(`
+    (function () {
+      var button = document.getElementById(${JSON.stringify(allow)});
+      if (button) {
+        button.click();
+        return true;
+      }
+      return false;
+    })();
+  `).then((clicked) => {
+    if (entry) {
+      entry.method = clicked ? "renderer-click" : "main-process-fallback";
+      entry.handled = true;
+    }
+    if (!clicked && msg && msg.id) {
+      sendToServer({ type: "confirm", id: msg.id, answer: entry ? entry.answer : true });
+    }
+  }).catch(() => {
+    if (entry) {
+      entry.method = "main-process-fallback";
+      entry.handled = true;
+    }
+    if (msg && msg.id) sendToServer({ type: "confirm", id: msg.id, answer: entry ? entry.answer : true });
+  });
 }
 
 function send(ch, data) {
@@ -310,14 +595,19 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true, nodeIntegration: false, sandbox: false,
+      offscreen: desktopE2EOptions.enabled,
     },
     show: false,
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.webContents.on("did-finish-load", function () {
     mainWindow.webContents.send("nex:platform", { platform: process.platform });
+    if (desktopE2EOptions.enabled) {
+      runDesktopE2E();
+    }
   });
   mainWindow.once("ready-to-show", function () {
+    if (desktopE2EOptions.enabled) return;
     mainWindow.show();
     if (process.argv.includes("--dev")) mainWindow.webContents.openDevTools({ mode: "detach" });
   });
@@ -438,6 +728,240 @@ async function openProject(dirPath) {
   });
 }
 
+function waitForCondition(check, timeoutMs, label) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      if (check()) {
+        clearInterval(timer);
+        resolve();
+        return;
+      }
+      if (Date.now() - started > timeoutMs) {
+        clearInterval(timer);
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }
+    }, 100);
+  });
+}
+
+async function readRendererE2EState() {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) return {};
+  try {
+    return await mainWindow.webContents.executeJavaScript(`
+      (function () {
+        var data = window.AppState && window.AppState.data ? window.AppState.data : {};
+        var assistant = "";
+        if (Array.isArray(data.conversationItems)) {
+          for (var i = data.conversationItems.length - 1; i >= 0; i -= 1) {
+            var item = data.conversationItems[i];
+            if (item && item.kind === "assistant" && item.text) {
+              assistant = item.text;
+              break;
+            }
+          }
+        }
+        return {
+          finalSessionState: data.sessionState || "unknown",
+          finalAssistantText: assistant,
+          lastAction: data.lastAction || null,
+          model: data.model || null,
+          toolActions: data.toolActions || [],
+          gitState: data.gitState || null
+        };
+      })();
+    `);
+  } catch (error) {
+    desktopE2EResult.errors.push(`Renderer state read failed: ${error.message}`);
+    return {};
+  }
+}
+
+async function submitPromptThroughRenderer(prompt) {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) {
+    throw new Error("Desktop window is not available.");
+  }
+  const escapedPrompt = JSON.stringify(prompt);
+  const submitted = await mainWindow.webContents.executeJavaScript(`
+    (async function () {
+      var input = document.getElementById("cmd-input");
+      var submit = document.getElementById("cmd-submit");
+      if (!input || !submit) return { ok: false, message: "Command controls are missing." };
+      input.focus();
+      input.value = ${escapedPrompt};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      submit.click();
+      return { ok: true };
+    })();
+  `);
+  if (!submitted || submitted.ok === false) {
+    throw new Error(submitted && submitted.message ? submitted.message : "Prompt submission failed.");
+  }
+}
+
+function buildExpectationCorpus(options, assistantText) {
+  const parts = [String(assistantText || "")];
+  for (const filePath of options.expectFiles || []) {
+    const resolved = path.resolve(options.openProject, filePath);
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        parts.push(fs.readFileSync(resolved, "utf8"));
+      }
+    } catch (e) {}
+  }
+  const diff = execFileSyncSafe("git", ["diff", "--", "."], options.openProject);
+  if (diff.ok) parts.push(diff.stdout);
+  return parts.join("\n");
+}
+
+function evaluateExpectations(options, assistantText) {
+  const checks = [];
+  const corpus = buildExpectationCorpus(options, assistantText);
+  for (const filePath of options.expectFiles || []) {
+    const resolved = path.resolve(options.openProject, filePath);
+    checks.push({
+      type: "expect-file",
+      value: filePath,
+      ok: fs.existsSync(resolved),
+    });
+  }
+  for (const expected of options.expectContains || []) {
+    checks.push({
+      type: "expect-contains",
+      value: expected,
+      ok: corpus.includes(expected),
+    });
+  }
+  for (const forbidden of options.expectNotContains || []) {
+    checks.push({
+      type: "expect-not-contains",
+      value: forbidden,
+      ok: !corpus.includes(forbidden),
+    });
+  }
+  return {
+    checks: checks,
+    ok: checks.every((check) => check.ok),
+  };
+}
+
+function emitDesktopE2EResult(result) {
+  const classified = classifyDesktopRunStatus(result);
+  const output = buildDesktopE2EOutput(result);
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+  return classified.exitCode;
+}
+
+function buildDesktopE2EOutput(result) {
+  const classified = classifyDesktopRunStatus(result);
+  return Object.assign({}, result, {
+    finalSessionState: classified.state,
+    exitCode: classified.exitCode,
+    statusReason: classified.reason,
+  });
+}
+
+async function runDesktopE2E() {
+  if (!desktopE2EOptions.enabled || e2eRunStarted) return;
+  e2eRunStarted = true;
+
+  let prompt = "";
+  const startedAt = new Date().toISOString();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    desktopE2EResult.finalSessionState = "timeout";
+    desktopE2EResult.lastAction = `Timed out after ${desktopE2EOptions.timeoutMs}ms`;
+  }, desktopE2EOptions.timeoutMs);
+
+  try {
+    if (!desktopE2EOptions.openProject) {
+      throw new Error("--e2e requires --open-project or NEX_DESKTOP_OPEN_PROJECT.");
+    }
+    const normalizedProject = normalizeProjectPath(desktopE2EOptions.openProject);
+    if (!normalizedProject) throw new Error("E2E project path is not available.");
+    desktopE2EOptions.openProject = normalizedProject;
+    prompt = readPromptForE2E(desktopE2EOptions);
+
+    const gitBefore = readGitStatusSync(normalizedProject);
+    await waitForCondition(() => serverReady, Math.min(30000, desktopE2EOptions.timeoutMs), "Desktop server readiness");
+    await submitPromptThroughRenderer(prompt);
+    await waitForCondition(
+      () => timedOut || ["complete", "stalled", "error"].includes(desktopE2EResult.finalSessionState),
+      desktopE2EOptions.timeoutMs,
+      "Desktop run completion",
+    ).catch((error) => {
+      timedOut = true;
+      desktopE2EResult.finalSessionState = "timeout";
+      desktopE2EResult.lastAction = error.message;
+    });
+
+    const rendererState = await readRendererE2EState();
+    const finalAssistantText = rendererState.finalAssistantText
+      || desktopE2EResult.assistantText
+      || "";
+    const expectations = evaluateExpectations(desktopE2EOptions, finalAssistantText);
+    const gitAfter = readGitStatusSync(normalizedProject);
+    const result = {
+      appBuild: getAppBuildInfo(),
+      openedProjectPath: normalizedProject,
+      selectedModel: desktopE2EOptions.model || rendererState.model || null,
+      promptHash: hashPrompt(prompt),
+      prompt: shortenPrompt(prompt),
+      finalSessionState: timedOut ? "timeout" : (rendererState.finalSessionState || desktopE2EResult.finalSessionState),
+      finalAssistantText: finalAssistantText,
+      toolActions: rendererState.toolActions && rendererState.toolActions.length
+        ? rendererState.toolActions
+        : desktopE2EResult.toolActions,
+      confirmationMode: desktopE2EOptions.confirmMode,
+      confirmations: desktopE2EResult.confirmations,
+      errors: desktopE2EResult.errors,
+      logs: desktopE2EResult.logs.slice(-50),
+      gitStatusBefore: gitBefore,
+      gitStatusAfter: gitAfter,
+      expectations: expectations.checks,
+      expectationsOk: expectations.ok,
+      stateDir: desktopE2EOptions.stateDir,
+      startedAt: startedAt,
+      finishedAt: new Date().toISOString(),
+      lastAction: rendererState.lastAction || desktopE2EResult.lastAction,
+      timedOut: timedOut,
+    };
+    const exitCode = emitDesktopE2EResult(result);
+    clearTimeout(timeout);
+    app.exit(exitCode);
+  } catch (error) {
+    const normalizedProject = normalizeProjectPath(desktopE2EOptions.openProject);
+    const result = {
+      appBuild: getAppBuildInfo(),
+      openedProjectPath: normalizedProject || desktopE2EOptions.openProject || null,
+      selectedModel: desktopE2EOptions.model || null,
+      promptHash: prompt ? hashPrompt(prompt) : null,
+      prompt: prompt ? shortenPrompt(prompt) : "",
+      finalSessionState: timedOut ? "timeout" : "error",
+      finalAssistantText: desktopE2EResult.assistantText || "",
+      toolActions: desktopE2EResult.toolActions,
+      confirmationMode: desktopE2EOptions.confirmMode,
+      confirmations: desktopE2EResult.confirmations,
+      errors: desktopE2EResult.errors.concat(error.message),
+      logs: desktopE2EResult.logs.slice(-50),
+      gitStatusBefore: normalizedProject ? readGitStatusSync(normalizedProject) : null,
+      gitStatusAfter: normalizedProject ? readGitStatusSync(normalizedProject) : null,
+      expectations: [],
+      expectationsOk: false,
+      stateDir: desktopE2EOptions.stateDir,
+      startedAt: startedAt,
+      finishedAt: new Date().toISOString(),
+      lastAction: error.message,
+      timedOut: timedOut,
+      error: error.message,
+    };
+    const exitCode = emitDesktopE2EResult(result);
+    clearTimeout(timeout);
+    app.exit(exitCode);
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.handle("nex:get-state", async function () {
     return {
@@ -551,6 +1075,10 @@ if (process.versions && process.versions.electron) {
 }
 
 module.exports = {
+  buildDesktopE2EOutput,
+  classifyDesktopRunStatus,
+  parseDesktopE2EOptions,
+  parseDesktopE2EConfirmMode,
   isSafeExternalUrl,
   isValidProjectPathInput,
   normalizeProjectPath,

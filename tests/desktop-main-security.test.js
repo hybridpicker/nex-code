@@ -7,6 +7,8 @@ const path = require("path");
 jest.mock("electron", () => ({
   app: {
     isPackaged: false,
+    setPath: jest.fn(),
+    commandLine: { appendSwitch: jest.fn() },
     whenReady: jest.fn(() => Promise.resolve()),
     on: jest.fn(),
     quit: jest.fn(),
@@ -31,9 +33,13 @@ jest.mock("electron", () => ({
 }), { virtual: true });
 
 const {
+  buildDesktopE2EOutput,
+  classifyDesktopRunStatus,
   isSafeExternalUrl,
   isValidProjectPathInput,
   normalizeProjectPath,
+  parseDesktopE2EConfirmMode,
+  parseDesktopE2EOptions,
   registerIpcHandlers,
 } = require("../desktop/main");
 const { ipcMain } = require("electron");
@@ -111,5 +117,103 @@ describe("desktop main process IPC hardening", () => {
     expect(normalizeProjectPath(linkDir)).toBe(canonicalProjectDir);
     expect(normalizeProjectPath(path.join(tmpRoot, "missing"))).toBe(null);
     expect(normalizeProjectPath(path.join(projectDir, "package.json"))).toBe(null);
+  });
+
+  test("parses Desktop E2E options without normal app state", () => {
+    const opts = parseDesktopE2EOptions([
+      "--e2e",
+      "--open-project",
+      "/tmp/project",
+      "--prompt-file",
+      "/tmp/prompt.txt",
+      "--model",
+      "mock:fast",
+      "--timeout-ms",
+      "90000",
+      "--json",
+      "--auto-confirm",
+      "--expect-file",
+      "src/components/ProfileCard.jsx",
+      "--expect-contains",
+      "ProfileCard",
+      "--expect-not-contains",
+      "placeholder",
+    ], {
+      NEX_CODE_APP_STATE_DIR: "/tmp/nex-e2e-state",
+    });
+
+    expect(opts).toMatchObject({
+      enabled: true,
+      openProject: "/tmp/project",
+      promptFile: "/tmp/prompt.txt",
+      model: "mock:fast",
+      timeoutMs: 90000,
+      json: true,
+      confirmMode: "yes",
+      autoConfirm: true,
+      expectFiles: ["src/components/ProfileCard.jsx"],
+      expectContains: ["ProfileCard"],
+      expectNotContains: ["placeholder"],
+      stateDir: "/tmp/nex-e2e-state",
+    });
+  });
+
+  test("parses explicit Desktop E2E confirmation modes", () => {
+    expect(parseDesktopE2EConfirmMode(["--e2e"], {})).toBe("manual");
+    expect(parseDesktopE2EConfirmMode(["--e2e", "--auto-confirm"], {})).toBe("yes");
+    expect(parseDesktopE2EConfirmMode(["--e2e", "--confirm", "yes"], {})).toBe("yes");
+    expect(parseDesktopE2EConfirmMode(["--e2e", "--confirm", "no"], {})).toBe("no");
+    expect(parseDesktopE2EConfirmMode(["--e2e"], { NEX_DESKTOP_E2E_AUTO_CONFIRM: "1" })).toBe("yes");
+  });
+
+  test("classifies Desktop E2E status into exit code semantics", () => {
+    expect(classifyDesktopRunStatus({
+      finalSessionState: "complete",
+      expectationsOk: true,
+    })).toMatchObject({ state: "complete", exitCode: 0 });
+
+    expect(classifyDesktopRunStatus({
+      finalSessionState: "complete",
+      expectationsOk: false,
+      lastAction: "Expected file was not created.",
+    })).toMatchObject({ exitCode: 1 });
+
+    expect(classifyDesktopRunStatus({
+      finalSessionState: "stalled",
+    })).toMatchObject({ state: "stalled", exitCode: 2 });
+
+    expect(classifyDesktopRunStatus({
+      timedOut: true,
+    })).toMatchObject({ state: "timeout", exitCode: 124 });
+  });
+
+  test("records Desktop E2E confirmation handling in JSON output", () => {
+    const output = buildDesktopE2EOutput({
+      finalSessionState: "complete",
+      expectationsOk: true,
+      confirmationMode: "yes",
+      confirmations: [
+        {
+          id: "cfm-1",
+          tool: "write_file",
+          critical: false,
+          mode: "yes",
+          answer: true,
+          method: "renderer-click",
+          handled: true,
+        },
+      ],
+    });
+
+    expect(output.exitCode).toBe(0);
+    expect(output.confirmationMode).toBe("yes");
+    expect(output.confirmations).toEqual([
+      expect.objectContaining({
+        tool: "write_file",
+        answer: true,
+        method: "renderer-click",
+        handled: true,
+      }),
+    ]);
   });
 });

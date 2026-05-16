@@ -402,6 +402,19 @@ function main() {
 Updates a managed nex-code checkout to origin/${APP_BRANCH}, builds the CLI
 bundle, and starts the Electron app from desktop/.
 
+E2E:
+  --e2e                         Run a headless Desktop scenario and exit
+  --open-project <path>         Project to open in Desktop
+  --prompt-file <path>          Prompt file to submit through the renderer UI
+  --model <spec>                Model/provider spec to select before running
+  --timeout-ms <ms>             Desktop scenario timeout
+  --json                        Print the Desktop E2E report as JSON
+  --auto-confirm                Approve Desktop confirmation prompts in E2E
+  --confirm <yes|no>            Explicit E2E confirmation answer
+  --expect-file <path>          Require a project file to exist after the run
+  --expect-contains <text>      Require text in expected files, diff, or reply
+  --expect-not-contains <text>  Require text to be absent from those outputs
+
 Environment:
   NEX_CODE_APP_DIR       Managed checkout path (default: ${APP_DIR})
   NEX_CODE_APP_REPO_URL  Git repository URL (default: ${DEFAULT_REPO_URL})
