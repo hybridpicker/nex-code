@@ -2302,6 +2302,7 @@ const _sessionReReadBlockShown = new Map(); // track how many times block messag
 const _sessionToolArgErrorCounts = new Map(); // tool name → cumulative arg-validation error count this session
 const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
 const _sessionDupeToolCounts = new Map(); // "toolName|argsJSON" → { count, ts } — dedup identical tool calls
+const _postCompressionReadRecovery = new Map(); // path → Array<{start,end}> allowed once after context compression
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
 let _planRejectionCount = 0; // times plan-without-reads was rejected this session (cap: 2)
@@ -3323,6 +3324,37 @@ function _drainCompletedBackgroundJobs(conversationMessages, apiMessages) {
 
 function _shortSessionPath(filePath) {
   return String(filePath || "").split("/").slice(-2).join("/");
+}
+
+function _grantPostCompressionReadRecovery(resumeTarget) {
+  const targetFile = resumeTarget?.targetFile;
+  const targetRange = resumeTarget?.targetRange;
+  if (!targetFile || !targetRange) return;
+  const start = parseInt(targetRange.lineStart, 10);
+  const end = parseInt(targetRange.lineEnd, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+  _postCompressionReadRecovery.set(targetFile, [{ start, end }]);
+}
+
+function _consumePostCompressionReadRecovery(filePath, lineStart, lineEnd) {
+  const allowances = _postCompressionReadRecovery.get(filePath);
+  if (!allowances || allowances.length === 0) return false;
+  const start = parseInt(lineStart, 10);
+  const end = parseInt(lineEnd, 10) || start + 350;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+
+  const idx = allowances.findIndex((range) => {
+    const overlapStart = Math.max(start, range.start);
+    const overlapEnd = Math.min(end, range.end);
+    if (overlapEnd <= overlapStart) return false;
+    const requestedLen = Math.max(end - start, 1);
+    const savedLen = Math.max(range.end - range.start, 1);
+    return overlapEnd - overlapStart >= Math.min(requestedLen, savedLen) * 0.7;
+  });
+  if (idx === -1) return false;
+  allowances.splice(idx, 1);
+  if (allowances.length === 0) _postCompressionReadRecovery.delete(filePath);
+  return true;
 }
 
 function _lastSetValue(values) {
@@ -5502,6 +5534,7 @@ function _resetSessionTracking() {
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
   _sessionDupeToolCounts.clear();
+  _postCompressionReadRecovery.clear();
   _commentedOutCodeNudges.clear();
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
@@ -6937,6 +6970,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(
                 `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`,
               );
+            _grantPostCompressionReadRecovery(_resumeTarget);
             // ── Post-compress state anchor for creation tasks ─────────────────
             // After compression the model may lose track of what was already
             // built and restart from scratch. Inject a compact progress note so
@@ -10284,7 +10318,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Targeted re-read within cap — allow. Clear edit-failure flag when used.
           // Edit recovery: allow up to EDIT_RECOVERY_MAX unconditional re-reads per file after
           // a failed edit. Beyond that, the model must use existing context instead of re-reading.
-          if (lastEditFailed && editFailCount <= EDIT_RECOVERY_MAX) {
+          const compressionRecoveryRead = _consumePostCompressionReadRecovery(
+            path,
+            prep.args.line_start,
+            prep.args.line_end,
+          );
+          if (compressionRecoveryRead) {
+            const shortPath = path.split("/").slice(-2).join("/");
+            debugLog(
+              `${C.cyan}  ↩ Targeted re-read: "${shortPath}" lines ${prep.args.line_start}-${prep.args.line_end || "?"} — context was compressed${C.reset}`,
+            );
+          } else if (lastEditFailed && editFailCount <= EDIT_RECOVERY_MAX) {
             const shortPath = path.split("/").slice(-2).join("/");
             console.log(
               `${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery #${editFailCount}${C.reset}`,
@@ -13076,10 +13120,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _allToolsPost = getAllToolDefinitions();
         const _postCtx = getUsage(apiMessages, _allToolsPost);
         if (_postCtx.percentage >= 78) {
+          const _postResumeTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+          );
           const { messages: _compressed, tokensRemoved: _freed } =
             forceCompress(apiMessages, _allToolsPost);
           if (_freed > 0) {
             apiMessages = _compressed;
+            _grantPostCompressionReadRecovery(_postResumeTarget);
             console.log(
               `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`,
             );

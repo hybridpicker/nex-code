@@ -1411,6 +1411,57 @@ describe("agent.js", () => {
       expect(resumeCallText).toContain("do not restart with broad search");
     });
 
+    it("allows one targeted re-read of the located range after compression", async () => {
+      const targetRead = {
+        id: "read-target",
+        function: {
+          name: "read_file",
+          arguments: {
+            path: "web/templates/fitness/index.html",
+            line_start: 1860,
+            line_end: 1890,
+          },
+        },
+      };
+      getUsage.mockReturnValue({ used: 90000, limit: 100000, percentage: 90 });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [targetRead],
+        })
+        .mockResolvedValueOnce({
+          content: "Compression removed the exact snippet; re-reading target.",
+          tool_calls: [{ ...targetRead, id: "read-target-after-compression" }],
+        })
+        .mockResolvedValueOnce({
+          content: "Ready to edit the scoped kcal display.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValue(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 3 },
+      );
+
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain(
+        'BLOCKED: read_file("web/templates/fitness/index.html", lines 1860-1890) is a duplicate',
+      );
+    });
+
     it("warns when context usage > 85%", async () => {
       process.env.NEX_DEBUG = "true";
       getUsage.mockReturnValueOnce({
