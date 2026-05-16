@@ -3369,6 +3369,7 @@ const GENERIC_RESUME_TARGET_FILES = new Set([
   "yarn.lock",
   "tsconfig.json",
   "README.md",
+  "VERSION",
 ]);
 
 function _isGenericResumeTarget(filePath) {
@@ -3390,6 +3391,9 @@ function _taskSuggestsGenericResumeTarget(taskText, filePath) {
   }
   if (base === "README.md") {
     return /\b(readme|documentation|docs)\b/i.test(text);
+  }
+  if (base === "VERSION") {
+    return /\b(version|release|bump)\b/i.test(text);
   }
   return false;
 }

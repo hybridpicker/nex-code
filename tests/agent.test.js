@@ -471,6 +471,16 @@ describe("agent.js", () => {
       expect(target).toBeNull();
     });
 
+    it("does not resume a frontend task by targeting VERSION", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["VERSION"]),
+        new Set(),
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+      );
+
+      expect(target).toBeNull();
+    });
+
     it("allows package.json when the task is about package scripts", () => {
       const target = _buildCompressionResumeTarget(
         new Set(["package.json"]),
@@ -480,6 +490,18 @@ describe("agent.js", () => {
 
       expect(target).toEqual(
         expect.objectContaining({ targetFile: "package.json" }),
+      );
+    });
+
+    it("allows VERSION when the task is about a version bump", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["VERSION"]),
+        new Set(),
+        "Bump the version for the next release.",
+      );
+
+      expect(target).toEqual(
+        expect.objectContaining({ targetFile: "VERSION" }),
       );
     });
   });
