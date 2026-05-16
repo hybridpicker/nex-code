@@ -3494,6 +3494,7 @@ function _grantPostCompressionReadRecovery(resumeTarget) {
   const start = parseInt(targetRange.lineStart, 10);
   const end = parseInt(targetRange.lineEnd, 10);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+  if (start <= 1 && end >= 350) return;
   _postCompressionReadRecovery.set(targetFile, [{ start, end }]);
 }
 
