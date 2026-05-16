@@ -3739,7 +3739,7 @@ function _extractRequestedInsertionLineAnchor(taskText) {
 function _findContextLineContaining(contextText, phrase) {
   const needle = String(phrase || "").toLowerCase();
   if (!needle) return "";
-  return String(contextText || "")
+  return _stripReadLinePrefixes(contextText)
     .split(/\r?\n/)
     .find((line) => line.toLowerCase().includes(needle))
     ?.trim();
@@ -3861,12 +3861,21 @@ function _blockUnknownInsertionAnchor(
   const rangeText = locatedTarget.targetRange
     ? ` lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}`
     : "";
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  const contextAnchorLine = requestedAnchor
+    ? _findContextLineContaining(contextText, requestedAnchor)
+    : "";
+  const anchorHint = contextAnchorLine
+    ? ` The located anchor line is: ${JSON.stringify(contextAnchorLine)}. Use old_text containing that exact line; do not invent surrounding blocks.`
+    : "";
   prep.canExecute = false;
   prep.errorResult = {
     role: "tool",
     content:
       `BLOCKED: the proposed old_text for "${editPath}" was not found in the located target context${rangeText}. ` +
-      "For this small insertion, use only an exact anchor block that was already read from the target file. If compression removed the snippet, do one targeted read of the located range, then retry with old_text copied from that output.",
+      "For this small insertion, use only an exact anchor block that was already read from the target file." +
+      anchorHint +
+      " If compression removed the snippet, do one targeted read of the located range, then retry with old_text copied from that output.",
     tool_call_id: prep.callId,
   };
   return true;
