@@ -3787,6 +3787,53 @@ function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
   return true;
 }
 
+function _blockRepeatedLocatedTargetRead(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (prep.fnName !== "read_file") return false;
+  if (!_isActionableImplementationPrompt(taskText)) return false;
+  const readPath = prep.args?.path || "";
+  if (!readPath || !locatedTarget?.targetFile || !locatedTarget?.targetRange)
+    return false;
+  if (
+    _normalizePromptPath(readPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+  const start = parseInt(prep.args?.line_start, 10);
+  const end = parseInt(prep.args?.line_end, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const hasCompressionRecovery = [
+    ..._postCompressionReadRecovery.entries(),
+  ].some(([allowPath, ranges]) => {
+    if (_normalizePromptPath(allowPath) !== _normalizePromptPath(readPath))
+      return false;
+    return ranges.some((range) => {
+      const overlapStart = Math.max(start, range.start);
+      const overlapEnd = Math.min(end, range.end);
+      if (overlapEnd <= overlapStart) return false;
+      const requestedLen = Math.max(end - start, 1);
+      const savedLen = Math.max(range.end - range.start, 1);
+      return overlapEnd - overlapStart >= Math.min(requestedLen, savedLen) * 0.7;
+    });
+  });
+  if (hasCompressionRecovery) return false;
+  const previousRanges = _sessionFileReadRanges.get(readPath) || [];
+  const alreadyRead = previousRanges.some(
+    ([prevStart, prevEnd]) => prevStart === start && prevEnd === end,
+  );
+  if (!alreadyRead) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: ${readPath} lines ${start}-${end} were already read and the target is located. ` +
+      "Do not re-read the same target range. Make the scoped change now with edit_file or patch_file using exact old_text from the existing context.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
 /**
  * Extract structured TODO items from the plan text by matching file paths
  * that were read OR found via grep during the plan phase. Returns an array
@@ -10730,6 +10777,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             .join("\n");
           for (const prep of prepared) {
             if (!prep.canExecute) continue;
+            if (
+              _blockRepeatedLocatedTargetRead(
+                prep,
+                _locatedTarget,
+                userInput,
+              )
+            )
+              continue;
             if (
               prep.fnName === "ask_user" &&
               _isActionableImplementationPrompt(userInput)
