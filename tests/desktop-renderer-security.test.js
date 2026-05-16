@@ -394,4 +394,26 @@ describe("desktop renderer conversation state", () => {
       }, false),
     ).toBe("cancelled");
   });
+
+  test("marks command input ready only after controls are wired", () => {
+    const input = createElementStub();
+    input.value = "";
+    const submit = createElementStub();
+    const context = loadRendererScript("desktop/renderer/js/app.js", {
+      addEventListener: jest.fn(),
+      getElementById: jest.fn((id) => {
+        if (id === "cmd-input") return input;
+        if (id === "cmd-submit") return submit;
+        return createElementStub();
+      }),
+    });
+
+    expect(context.window.__nexCommandInputReady).toBeUndefined();
+
+    context.setupCommandInput();
+
+    expect(input.addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function));
+    expect(submit.addEventListener).toHaveBeenCalledWith("click", expect.any(Function));
+    expect(context.window.__nexCommandInputReady).toBe(true);
+  });
 });

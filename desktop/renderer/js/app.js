@@ -977,6 +977,7 @@ function setupCommandInput() {
   if (submit) {
     submit.addEventListener("click", executeCommand);
   }
+  window.__nexCommandInputReady = !!(input && submit);
 }
 
 function setupGlobalShortcuts() {

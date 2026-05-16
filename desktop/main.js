@@ -109,8 +109,10 @@ const desktopE2EOptions = parseDesktopE2EOptions(process.argv.slice(2), process.
 const desktopE2EResult = {
   logs: [],
   errors: [],
+  milestones: [],
   toolActions: [],
   confirmations: [],
+  serverCommands: [],
   assistantText: "",
   finalSessionState: "idle",
   lastAction: null,
@@ -209,7 +211,7 @@ function readPromptForE2E(options) {
 
 function classifyDesktopRunStatus(result) {
   if (!result) return { state: "error", exitCode: 1, reason: "No E2E result." };
-  if (result.timedOut) return { state: "timeout", exitCode: 124, reason: "Timed out." };
+  if (result.timedOut) return { state: "timeout", exitCode: 124, reason: result.lastAction || "Timed out." };
   if (result.error) return { state: "error", exitCode: 1, reason: result.error };
   if (result.expectationsOk === false) {
     return { state: "error", exitCode: 1, reason: "One or more Desktop E2E expectations failed." };
@@ -220,6 +222,41 @@ function classifyDesktopRunStatus(result) {
   if (result.finalSessionState === "stalled") return { state: "stalled", exitCode: 2, reason: result.lastAction || "Run stalled." };
   if (result.finalSessionState === "timeout") return { state: "timeout", exitCode: 124, reason: result.lastAction || "Timed out." };
   return { state: result.finalSessionState || "error", exitCode: 1, reason: result.lastAction || "Desktop run failed." };
+}
+
+function addDesktopE2EMilestone(name, details) {
+  if (!desktopE2EOptions.enabled) return null;
+  const entry = {
+    name: name,
+    at: new Date().toISOString(),
+  };
+  if (details !== undefined) entry.details = details;
+  desktopE2EResult.milestones.push(entry);
+  return entry;
+}
+
+function hasDesktopE2EMilestone(name) {
+  return desktopE2EResult.milestones.some((entry) => entry && entry.name === name);
+}
+
+function isDesktopE2ERendererReady(snapshot) {
+  if (!snapshot) return false;
+  return snapshot.inputPresent === true
+    && snapshot.submitPresent === true
+    && snapshot.inputDisabled !== true
+    && snapshot.submitDisabled !== true
+    && snapshot.commandInputReady === true
+    && snapshot.projectOpen === true
+    && snapshot.nexApiPresent === true;
+}
+
+function isDesktopE2EPromptAccepted(before, after) {
+  const prior = before || {};
+  const next = after || {};
+  if (next.serverCommandCount > prior.serverCommandCount) return true;
+  if (next.userConversationCount > prior.userConversationCount) return true;
+  if (prior.sessionState !== "running" && next.sessionState === "running") return true;
+  return false;
 }
 
 function isValidProjectPathInput(dirPath) {
@@ -455,7 +492,7 @@ function killServer() {
 
 function handleMsg(msg) {
   recordDesktopE2EServerEvent(msg);
-  if (msg.type === "ready") { serverReady = true; send("nex:server-ready", {}); return; }
+  if (msg.type === "ready") { serverReady = true; addDesktopE2EMilestone("server-ready"); send("nex:server-ready", {}); return; }
   if (msg.type === "token") { send("nex:server-token", msg); return; }
   if (msg.type === "tool_start") { send("nex:server-tool-start", msg); return; }
   if (msg.type === "tool_end") { send("nex:server-tool-end", msg); return; }
@@ -471,10 +508,12 @@ function handleMsg(msg) {
 function recordDesktopE2EServerEvent(msg) {
   if (!desktopE2EOptions.enabled || !msg || !msg.type) return;
   if (msg.type === "token") {
+    if (!hasDesktopE2EMilestone("first-token")) addDesktopE2EMilestone("first-token");
     desktopE2EResult.assistantText += String(msg.text || "");
     return;
   }
   if (msg.type === "tool_start") {
+    if (!hasDesktopE2EMilestone("tool-start")) addDesktopE2EMilestone("tool-start", { tool: msg.tool || "" });
     desktopE2EResult.toolActions.push({
       tool: msg.tool || "",
       args: msg.args || {},
@@ -497,6 +536,7 @@ function recordDesktopE2EServerEvent(msg) {
     return;
   }
   if (msg.type === "done") {
+    addDesktopE2EMilestone("done");
     desktopE2EResult.finalSessionState = msg.success === false
       ? (msg.status || "stalled")
       : "complete";
@@ -510,6 +550,7 @@ function recordDesktopE2EServerEvent(msg) {
     return;
   }
   if (msg.type === "error") {
+    addDesktopE2EMilestone("error", { message: msg.message || "Server error." });
     desktopE2EResult.finalSessionState = "error";
     desktopE2EResult.lastAction = msg.message || "Server error.";
     desktopE2EResult.errors.push(msg.message || String(msg));
@@ -706,6 +747,7 @@ async function refreshProjectGitState() {
 async function openProject(dirPath) {
   const normalizedPath = normalizeProjectPath(dirPath);
   if (!normalizedPath) throw new Error("Project path is not available.");
+  addDesktopE2EMilestone("project-open-requested", { path: normalizedPath });
   projectPath = normalizedPath;
   projectName = path.basename(normalizedPath);
   projectBranch = null;
@@ -726,20 +768,31 @@ async function openProject(dirPath) {
     isDeployable: projectIsDeployable,
     gitState: gitState,
   });
+  addDesktopE2EMilestone("project-opened", { path: normalizedPath });
 }
 
 function waitForCondition(check, timeoutMs, label) {
   const started = Date.now();
+  let checking = false;
   return new Promise((resolve, reject) => {
-    const timer = setInterval(() => {
-      if (check()) {
+    const timer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        if (await check()) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
+        if (Date.now() - started > timeoutMs) {
+          clearInterval(timer);
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }
+      } catch (error) {
         clearInterval(timer);
-        resolve();
-        return;
-      }
-      if (Date.now() - started > timeoutMs) {
-        clearInterval(timer);
-        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        reject(error);
+      } finally {
+        checking = false;
       }
     }, 100);
   });
@@ -777,11 +830,43 @@ async function readRendererE2EState() {
   }
 }
 
+async function readRendererE2EReadiness() {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) return {};
+  try {
+    return await mainWindow.webContents.executeJavaScript(`
+      (function () {
+        var input = document.getElementById("cmd-input");
+        var submit = document.getElementById("cmd-submit");
+        var data = window.AppState && window.AppState.data ? window.AppState.data : {};
+        return {
+          inputPresent: !!input,
+          submitPresent: !!submit,
+          inputDisabled: !!(input && input.disabled),
+          submitDisabled: !!(submit && submit.disabled),
+          commandInputReady: window.__nexCommandInputReady === true,
+          projectOpen: !!data.project,
+          sessionState: data.sessionState || "unknown",
+          userConversationCount: Array.isArray(data.conversationItems)
+            ? data.conversationItems.filter(function (item) { return item && item.kind === "user"; }).length
+            : 0,
+          nexApiPresent: !!(window.nexAPI && window.nexAPI.sendCommand),
+          serverCommandCount: ${desktopE2EResult.serverCommands.length}
+        };
+      })();
+    `);
+  } catch (error) {
+    desktopE2EResult.errors.push(`Renderer readiness read failed: ${error.message}`);
+    return {};
+  }
+}
+
 async function submitPromptThroughRenderer(prompt) {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     throw new Error("Desktop window is not available.");
   }
+  const before = await readRendererE2EReadiness();
   const escapedPrompt = JSON.stringify(prompt);
+  addDesktopE2EMilestone("prompt-submitted");
   const submitted = await mainWindow.webContents.executeJavaScript(`
     (async function () {
       var input = document.getElementById("cmd-input");
@@ -797,6 +882,26 @@ async function submitPromptThroughRenderer(prompt) {
   if (!submitted || submitted.ok === false) {
     throw new Error(submitted && submitted.message ? submitted.message : "Prompt submission failed.");
   }
+  try {
+    await waitForCondition(async () => {
+      const after = await readRendererE2EReadiness();
+      return isDesktopE2EPromptAccepted(before, after);
+    }, 5000, "Renderer prompt acceptance");
+  } catch (error) {
+    const after = await readRendererE2EReadiness();
+    addDesktopE2EMilestone("error", { stage: "prompt-submission", message: error.message });
+    const diagnostic = {
+      stage: "prompt-submission",
+      message: "Renderer submission did not produce a user turn, running state, or server chat command.",
+      before: before,
+      after: after,
+      serverReady: serverReady,
+      serverCommandCount: desktopE2EResult.serverCommands.length,
+    };
+    desktopE2EResult.rendererSubmissionDiagnostic = diagnostic;
+    throw new Error(`${diagnostic.message} ${error.message}`);
+  }
+  if (!hasDesktopE2EMilestone("command-accepted")) addDesktopE2EMilestone("command-accepted");
 }
 
 function buildExpectationCorpus(options, assistantText) {
@@ -872,9 +977,11 @@ async function runDesktopE2E() {
     timedOut = true;
     desktopE2EResult.finalSessionState = "timeout";
     desktopE2EResult.lastAction = `Timed out after ${desktopE2EOptions.timeoutMs}ms`;
+    addDesktopE2EMilestone("timeout", { message: desktopE2EResult.lastAction });
   }, desktopE2EOptions.timeoutMs);
 
   try {
+    addDesktopE2EMilestone("app-loaded");
     if (!desktopE2EOptions.openProject) {
       throw new Error("--e2e requires --open-project or NEX_DESKTOP_OPEN_PROJECT.");
     }
@@ -885,6 +992,14 @@ async function runDesktopE2E() {
 
     const gitBefore = readGitStatusSync(normalizedProject);
     await waitForCondition(() => serverReady, Math.min(30000, desktopE2EOptions.timeoutMs), "Desktop server readiness");
+    await waitForCondition(async () => {
+      const readiness = await readRendererE2EReadiness();
+      if (isDesktopE2ERendererReady(readiness)) {
+        if (!hasDesktopE2EMilestone("renderer-ready")) addDesktopE2EMilestone("renderer-ready", readiness);
+        return true;
+      }
+      return false;
+    }, Math.min(30000, desktopE2EOptions.timeoutMs), "Desktop renderer readiness");
     await submitPromptThroughRenderer(prompt);
     await waitForCondition(
       () => timedOut || ["complete", "stalled", "error"].includes(desktopE2EResult.finalSessionState),
@@ -917,6 +1032,9 @@ async function runDesktopE2E() {
       confirmations: desktopE2EResult.confirmations,
       errors: desktopE2EResult.errors,
       logs: desktopE2EResult.logs.slice(-50),
+      milestones: desktopE2EResult.milestones,
+      serverCommands: desktopE2EResult.serverCommands,
+      rendererSubmissionDiagnostic: desktopE2EResult.rendererSubmissionDiagnostic || null,
       gitStatusBefore: gitBefore,
       gitStatusAfter: gitAfter,
       expectations: expectations.checks,
@@ -945,6 +1063,9 @@ async function runDesktopE2E() {
       confirmations: desktopE2EResult.confirmations,
       errors: desktopE2EResult.errors.concat(error.message),
       logs: desktopE2EResult.logs.slice(-50),
+      milestones: desktopE2EResult.milestones,
+      serverCommands: desktopE2EResult.serverCommands,
+      rendererSubmissionDiagnostic: desktopE2EResult.rendererSubmissionDiagnostic || null,
       gitStatusBefore: normalizedProject ? readGitStatusSync(normalizedProject) : null,
       gitStatusAfter: normalizedProject ? readGitStatusSync(normalizedProject) : null,
       expectations: [],
@@ -1040,7 +1161,21 @@ function registerIpcHandlers() {
     const next = await refreshProjectGitState();
     return { ok: true, gitState: next };
   });
-  ipcMain.on("nex:command", function (_e, cmd) { sendToServer({ type: "chat", id: "c-" + Date.now(), text: cmd.trim() }); });
+  ipcMain.on("nex:command", function (_e, cmd) {
+    const text = String(cmd || "").trim();
+    if (desktopE2EOptions.enabled) {
+      desktopE2EResult.serverCommands.push({
+        type: "chat",
+        textHash: hashPrompt(text),
+        length: text.length,
+        at: new Date().toISOString(),
+      });
+      if (!hasDesktopE2EMilestone("command-accepted")) {
+        addDesktopE2EMilestone("command-accepted", { source: "server-chat-command" });
+      }
+    }
+    sendToServer({ type: "chat", id: "c-" + Date.now(), text: text });
+  });
   ipcMain.on("nex:confirm-answer", function (_e, d) { sendToServer({ type: "confirm", id: d.id, answer: d.answer }); });
   ipcMain.on("nex:cancel", function () { sendToServer({ type: "cancel" }); });
   ipcMain.on("nex:clear", async function () {
@@ -1077,6 +1212,8 @@ if (process.versions && process.versions.electron) {
 module.exports = {
   buildDesktopE2EOutput,
   classifyDesktopRunStatus,
+  isDesktopE2EPromptAccepted,
+  isDesktopE2ERendererReady,
   parseDesktopE2EOptions,
   parseDesktopE2EConfirmMode,
   isSafeExternalUrl,

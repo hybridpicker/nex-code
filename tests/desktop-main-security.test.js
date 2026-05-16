@@ -35,6 +35,8 @@ jest.mock("electron", () => ({
 const {
   buildDesktopE2EOutput,
   classifyDesktopRunStatus,
+  isDesktopE2EPromptAccepted,
+  isDesktopE2ERendererReady,
   isSafeExternalUrl,
   isValidProjectPathInput,
   normalizeProjectPath,
@@ -184,7 +186,129 @@ describe("desktop main process IPC hardening", () => {
 
     expect(classifyDesktopRunStatus({
       timedOut: true,
+      lastAction: "Desktop run completion timed out after 240000ms",
     })).toMatchObject({ state: "timeout", exitCode: 124 });
+  });
+
+  test("requires wired renderer command controls before Desktop E2E submission", () => {
+    expect(isDesktopE2ERendererReady({
+      inputPresent: true,
+      submitPresent: true,
+      inputDisabled: false,
+      submitDisabled: false,
+      commandInputReady: true,
+      projectOpen: true,
+      nexApiPresent: true,
+    })).toBe(true);
+
+    expect(isDesktopE2ERendererReady({
+      inputPresent: true,
+      submitPresent: true,
+      inputDisabled: false,
+      submitDisabled: false,
+      commandInputReady: false,
+      projectOpen: true,
+      nexApiPresent: true,
+    })).toBe(false);
+
+    expect(isDesktopE2ERendererReady({
+      inputPresent: true,
+      submitPresent: true,
+      inputDisabled: false,
+      submitDisabled: true,
+      commandInputReady: true,
+      projectOpen: true,
+      nexApiPresent: true,
+    })).toBe(false);
+  });
+
+  test("detects accepted and unaccepted Desktop E2E prompt submissions", () => {
+    const before = {
+      sessionState: "idle",
+      userConversationCount: 0,
+      serverCommandCount: 0,
+    };
+
+    expect(isDesktopE2EPromptAccepted(before, {
+      sessionState: "idle",
+      userConversationCount: 1,
+      serverCommandCount: 0,
+    })).toBe(true);
+
+    expect(isDesktopE2EPromptAccepted(before, {
+      sessionState: "running",
+      userConversationCount: 0,
+      serverCommandCount: 0,
+    })).toBe(true);
+
+    expect(isDesktopE2EPromptAccepted(before, {
+      sessionState: "idle",
+      userConversationCount: 0,
+      serverCommandCount: 1,
+    })).toBe(true);
+
+    expect(isDesktopE2EPromptAccepted(before, {
+      sessionState: "idle",
+      userConversationCount: 0,
+      serverCommandCount: 0,
+    })).toBe(false);
+  });
+
+  test("includes failing E2E milestone and renderer diagnostic in JSON output", () => {
+    const output = buildDesktopE2EOutput({
+      finalSessionState: "error",
+      expectationsOk: false,
+      milestones: [
+        { name: "app-loaded", at: "2026-05-16T00:00:00.000Z" },
+        {
+          name: "error",
+          at: "2026-05-16T00:00:01.000Z",
+          details: { stage: "prompt-submission" },
+        },
+      ],
+      rendererSubmissionDiagnostic: {
+        stage: "prompt-submission",
+        message: "Renderer submission did not change state.",
+      },
+      errors: ["Renderer submission did not change state."],
+    });
+
+    expect(output.exitCode).toBe(1);
+    expect(output.milestones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "error",
+          details: expect.objectContaining({ stage: "prompt-submission" }),
+        }),
+      ]),
+    );
+    expect(output.rendererSubmissionDiagnostic).toMatchObject({
+      stage: "prompt-submission",
+    });
+  });
+
+  test("preserves timeout diagnostics in JSON classification", () => {
+    const output = buildDesktopE2EOutput({
+      finalSessionState: "running",
+      timedOut: true,
+      lastAction: "Desktop run completion timed out after 240000ms",
+      expectationsOk: false,
+      milestones: [
+        { name: "app-loaded", at: "2026-05-16T00:00:00.000Z" },
+        {
+          name: "timeout",
+          at: "2026-05-16T00:04:00.000Z",
+          details: { message: "Timed out after 240000ms" },
+        },
+      ],
+    });
+
+    expect(output.finalSessionState).toBe("timeout");
+    expect(output.exitCode).toBe(124);
+    expect(output.statusReason).toBe("Desktop run completion timed out after 240000ms");
+    expect(output.milestones).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "timeout" })]),
+    );
   });
 
   test("records Desktop E2E confirmation handling in JSON output", () => {
