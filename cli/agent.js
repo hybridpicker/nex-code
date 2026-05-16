@@ -10461,15 +10461,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 // A narrow read that is 100% inside a known range re-reads content
                 // already in context and must be blocked regardless of its size.
                 const fullyContained = overlapLen >= newLen;
+                const shortPath = path.split("/").slice(-2).join("/");
+                const rangeKey = `${path}:${newStart}-${newEnd}`;
+                const rangeBlockCount =
+                  (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
+                const allowOneNarrowAutoReread =
+                  getAutoConfirm() &&
+                  isNarrowRead &&
+                  fullyContained &&
+                  rangeBlockCount === 1;
+                if (allowOneNarrowAutoReread) {
+                  debugLog(
+                    `${C.cyan}  ↩ Targeted re-read: "${shortPath}" lines ${newStart}-${newEnd} — allowing one narrow duplicate in auto mode${C.reset}`,
+                  );
+                  break;
+                }
                 if (
                   fullyContained ||
                   (!isNarrowRead &&
                     (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7))
                 ) {
-                  const shortPath = path.split("/").slice(-2).join("/");
-                  const rangeKey = `${path}:${newStart}-${newEnd}`;
-                  const rangeBlockCount =
-                    (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
                   _sessionRangeBlockCounts.set(rangeKey, rangeBlockCount);
                   if (superreads) {
                     debugLog(
