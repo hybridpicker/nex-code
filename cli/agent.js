@@ -10601,7 +10601,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const isTargetedReRead = prep.args?.line_start != null;
         const editFailCount = _sessionLastEditFailed.get(path) || 0;
         const lastEditFailed = editFailCount > 0;
-        const EDIT_RECOVERY_MAX = 2; // max times we allow unconditional edit-recovery reads per file
+        const EDIT_RECOVERY_MAX = 4; // max times we allow unconditional edit-recovery reads per file
 
         // Hard cap: block if total reads (unbounded + targeted) >= TARGETED_READ_HARD_CAP.
         // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
@@ -10670,7 +10670,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
-              content: `BLOCKED: read_file("${path}") denied — edit recovery budget exhausted (${EDIT_RECOVERY_MAX} recovery reads used). You already have the file content. Use grep_search to find the exact line numbers of the text you want to change, then retry edit_file with the exact text shown.`,
+              content: `BLOCKED: read_file("${path}") denied — edit recovery budget exhausted (${EDIT_RECOVERY_MAX} recovery reads used). You already have the file content. Use grep to find the exact line numbers of the text you want to change, then retry edit_file with the exact text shown.`,
               tool_call_id: prep.callId,
             };
           } else {
