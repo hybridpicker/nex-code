@@ -10724,7 +10724,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         );
         const _hasLocatedRange =
           _locatedTarget?.targetFile && _locatedTarget?.targetRange;
-        if (_hasLocatedRange && getAutoConfirm()) {
+        if (_hasLocatedRange) {
           const _targetContextText = apiMessages
             .map((m) => (typeof m.content === "string" ? m.content : ""))
             .join("\n");
