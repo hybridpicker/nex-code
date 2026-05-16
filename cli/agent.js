@@ -3682,7 +3682,16 @@ function _isSmallInsertionPrompt(taskText) {
 function _patchLooksLikeInsertionAroundAnchor(oldText, newText) {
   if (typeof oldText !== "string" || typeof newText !== "string") return false;
   if (!oldText.trim() || oldText === newText) return false;
-  return newText.includes(oldText);
+  if (newText.includes(oldText)) return true;
+  const oldLines = oldText.split(/\r?\n/);
+  const newLines = newText.split(/\r?\n/);
+  if (newLines.length <= oldLines.length) return false;
+  let oldIdx = 0;
+  for (const line of newLines) {
+    if (line === oldLines[oldIdx]) oldIdx++;
+    if (oldIdx === oldLines.length) return true;
+  }
+  return false;
 }
 
 function _buildInsertionGuardMessage(filePath, targetRange = null) {

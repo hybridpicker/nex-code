@@ -1796,6 +1796,64 @@ describe("agent.js", () => {
       expect(patchCalls[0][1].path).toBe("src/components/ProfileCard.jsx");
     });
 
+    it("allows insertion before a closing line inside a preserved block", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card block.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding a status line before the closing tag.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text:
+                        "      <article>\n        <p>{profile.role}</p>\n      </article>",
+                      new_text:
+                        "      <article>\n        <p>{profile.role}</p>\n        <p>Status: active</p>\n      </article>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "20:       <article>\n21:         <p>{profile.role}</p>\n22:       </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line below the role line in src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
     it("blocks neutral patches that rewrite an adjacent line instead of inserting", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream
