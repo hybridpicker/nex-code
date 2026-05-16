@@ -2539,6 +2539,7 @@ let _verificationRetryStreak = 0; // block re-running failed required verificati
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+const _editedFileExpectedSnippets = new Map(); // path -> snippets that should appear in readback
 let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
 let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
 let _boundedBacklogNamedEvidenceReads = 0; // reads/searches that touch prompt-named backlog files
@@ -3769,6 +3770,43 @@ function _commandForScript(scriptName) {
   if (pm === "yarn") return `yarn ${scriptName}`;
   if (pm === "pnpm") return `pnpm run ${scriptName}`;
   return `npm run ${scriptName}`;
+}
+
+function _normalizeSnippetText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function _extractExpectedReadbackSnippets(args = {}, fnName = "") {
+  const candidates = [];
+  if (fnName === "write_file") {
+    candidates.push(args.content || "");
+  } else {
+    candidates.push(args.new_text || args.newText || args.replacement || "");
+  }
+
+  return [
+    ...new Set(
+      candidates
+        .flatMap((text) => {
+          const normalized = _normalizeSnippetText(text);
+          if (!normalized) return [];
+          const lineSnippets = String(text)
+            .split("\n")
+            .map(_normalizeSnippetText)
+            .filter((line) => line.length >= 12 && !/^[{}()[\];,]+$/.test(line));
+          return [normalized, ...lineSnippets];
+        })
+        .filter((snippet) => snippet.length >= 12)
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 6),
+    ),
+  ];
+}
+
+function _readbackContainsExpectedSnippet(readback, expectedSnippets = []) {
+  if (!expectedSnippets || expectedSnippets.length === 0) return true;
+  const normalizedReadback = _normalizeSnippetText(readback);
+  return expectedSnippets.some((snippet) => normalizedReadback.includes(snippet));
 }
 
 // Verification principle: read back what you wrote.
@@ -5777,6 +5815,7 @@ function _resetSessionTracking() {
   _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
+  _editedFileExpectedSnippets.clear();
   _sessionDupeToolCounts.clear();
   _postCompressionReadRecovery.clear();
   _commentedOutCodeNudges.clear();
@@ -12089,6 +12128,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // the edit once without hitting the "already read" block.
             const _editedPath = prep.args?.path || prep.args?.file_path;
             if (_editedPath) {
+              const expectedSnippets = _extractExpectedReadbackSnippets(
+                prep.args || {},
+                prep.fnName,
+              );
+              if (expectedSnippets.length > 0) {
+                _editedFileExpectedSnippets.set(_editedPath, expectedSnippets);
+              }
               if (prep.fnName === "write_file") {
                 _freshlyWrittenFiles.add(_editedPath);
                 _sessionFileReadCounts.delete(_editedPath);
@@ -13028,12 +13074,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _freshlyWrittenFiles.has(prep.args.path) ||
               _editedFilesNotReread.has(prep.args.path)
             ) {
-              verificationReadsRun.push(prep.args.path);
-              _postEditVerifyPending = false;
-              _postEditVerifyNudges = 0;
+              const expectedSnippets =
+                _editedFileExpectedSnippets.get(prep.args.path) || [];
+              if (
+                _readbackContainsExpectedSnippet(
+                  toolMessages[j]?.content || "",
+                  expectedSnippets,
+                )
+              ) {
+                verificationReadsRun.push(prep.args.path);
+                _postEditVerifyPending = false;
+                _postEditVerifyNudges = 0;
+                _editedFileExpectedSnippets.delete(prep.args.path);
+                _freshlyWrittenFiles.delete(prep.args.path);
+                _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
+              } else {
+                _needsPostEditVerifyPrompt = true;
+                const readbackMsg = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] The readback of "${prep.args.path}" did not include text introduced by your last edit. ` +
+                    "Read the exact edited section or run a narrow verification command before doing any more exploration.",
+                };
+                conversationMessages.push(readbackMsg);
+                apiMessages.push(readbackMsg);
+              }
             }
-            _freshlyWrittenFiles.delete(prep.args.path);
-            _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record the read range so overlap detection can catch duplicate reads.
             // Unbounded reads (no line_start) are stored as [1, 350] — the tool

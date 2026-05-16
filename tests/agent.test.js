@@ -1681,7 +1681,9 @@ describe("agent.js", () => {
         });
       executeTool
         .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
-        .mockResolvedValueOnce("<div>Verbleibend</div>");
+        .mockResolvedValueOnce(
+          '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div><div x-text="Math.max(0, targets.kcal - totals.kcal)"></div>',
+        );
 
       await processInput(
         "Add a remaining kcal field to the fitness nutrition ring template.",
@@ -1693,6 +1695,69 @@ describe("agent.js", () => {
           .map((m) => m.content)
           .join("\n"),
       ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("keeps verification pending when a fitness template readback misses the edited markup", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update web/templates/fitness/index.html.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal field.",
+          tool_calls: [
+            {
+              id: "edit-fitness",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: '<div class="text-xs">kcal</div>',
+                  new_text:
+                    '<div class="text-xs">kcal</div><div class="text-[11px]" x-text="Math.max(0, targets.kcal - totals.kcal) + \' kcal remaining\'"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the same file, but at the style block.",
+          tool_calls: [
+            {
+              id: "read-css",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 680,
+                  line_end: 690,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the verification nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce(
+          ".nutrition-ring-content { z-index: 1; text-align: center; }",
+        );
+
+      await processInput("Add a remaining kcal field to the fitness nutrition ring.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("did not include text introduced by your last edit");
       delete process.env.NEX_PHASE_ROUTING;
     });
 
@@ -1750,6 +1815,66 @@ describe("agent.js", () => {
           .map((m) => m.content)
           .join("\n"),
       ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("keeps verification pending when a neutral component readback misses the edited text", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update src/components/ProfileCard.jsx.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status field.",
+          tool_calls: [
+            {
+              id: "edit-profile",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  old_text: "<span>{name}</span>",
+                  new_text: "<span>{name}</span><span>{status}</span>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading an unrelated section of the edited file.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the verification nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: src/components/ProfileCard.jsx")
+        .mockResolvedValueOnce("export function ProfileCard() { return null; }");
+
+      await processInput("Add a status field to the profile card component.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("did not include text introduced by your last edit");
       delete process.env.NEX_PHASE_ROUTING;
     });
 
