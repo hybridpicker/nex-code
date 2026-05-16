@@ -13210,11 +13210,43 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             filesModified,
             userInput,
           );
+          if (
+            filesModified.size > 0 ||
+            (_phaseEnabled && _currentPhase !== "plan") ||
+            _postResumeTarget
+          ) {
+            const _postSnap = buildProgressSnapshot(conversationMessages, {
+              filesModified,
+              currentPhase: _phaseEnabled ? _currentPhase : null,
+              locatedTarget: _postResumeTarget,
+            });
+            if (_postSnap) {
+              const _existingPostIdx = apiMessages.findIndex(
+                (m) => m._progressSnapshot,
+              );
+              if (_existingPostIdx !== -1) {
+                apiMessages.splice(_existingPostIdx, 1);
+              }
+              const _sysPostIdx = apiMessages.findIndex(
+                (m) => m.role === "system",
+              );
+              apiMessages.splice(_sysPostIdx + 1, 0, _postSnap);
+            }
+          }
           const { messages: _compressed, tokensRemoved: _freed } =
             forceCompress(apiMessages, _allToolsPost);
           if (_freed > 0) {
             apiMessages = _compressed;
             _grantPostCompressionReadRecovery(_postResumeTarget);
+            if (_postResumeTarget) {
+              apiMessages.push({
+                role: "user",
+                content:
+                  `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
+                  `Target: ${_shortSessionPath(_postResumeTarget.targetFile)}. ` +
+                  `Next action: ${_postResumeTarget.nextAction}`,
+              });
+            }
             console.log(
               `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`,
             );

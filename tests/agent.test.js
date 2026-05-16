@@ -1458,6 +1458,63 @@ describe("agent.js", () => {
       expect(resumeCallText).toContain("do not restart with broad search");
     });
 
+    it("preserves located target state after post-tool auto-compress", async () => {
+      getUsage.mockImplementation((messages = []) => {
+        const text = JSON.stringify(messages);
+        if (
+          text.includes("nutrition-ring-content") &&
+          !text.includes("RESUME AFTER COMPRESSION")
+        ) {
+          return { used: 90000, limit: 100000, percentage: 90 };
+        }
+        return { used: 50000, limit: 100000, percentage: 50 };
+      });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit next.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 2 },
+      );
+
+      const resumeCall = callStream.mock.calls.find(([messages]) =>
+        JSON.stringify(messages).includes("RESUME AFTER COMPRESSION"),
+      );
+      expect(resumeCall).toBeDefined();
+      const resumeCallText = JSON.stringify(resumeCall[0]);
+      expect(resumeCallText).toContain("Progress State");
+      expect(resumeCallText).toContain("web/templates/fitness/index.html");
+      expect(resumeCallText).toContain("lineStart");
+      expect(resumeCallText).toContain("do not restart with broad search");
+    });
+
     it("allows one targeted re-read of the located range after compression", async () => {
       const targetRead = {
         id: "read-target",
