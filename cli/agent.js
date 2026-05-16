@@ -3696,6 +3696,64 @@ function _buildInsertionGuardMessage(filePath, targetRange = null) {
   );
 }
 
+function _getEditReplacementPatches(prep) {
+  if (prep.fnName === "patch_file") {
+    return Array.isArray(prep.args?.patches) ? prep.args.patches : [];
+  }
+  if (prep.fnName === "edit_file") {
+    return [
+      {
+        old_text: prep.args?.old_text,
+        new_text: prep.args?.new_text,
+      },
+    ];
+  }
+  return [];
+}
+
+function _blockUnknownInsertionAnchor(
+  prep,
+  locatedTarget,
+  taskText,
+  contextText,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+
+  const missingAnchor = patches.some(({ old_text }) => {
+    if (typeof old_text !== "string") return false;
+    const anchor = old_text.trim();
+    if (!anchor) return false;
+    return !String(contextText || "").includes(old_text);
+  });
+  if (!missingAnchor) return false;
+
+  const rangeText = locatedTarget.targetRange
+    ? ` lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}`
+    : "";
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: the proposed old_text for "${editPath}" was not found in the located target context${rangeText}. ` +
+      "For this small insertion, use only an exact anchor block that was already read from the target file. If compression removed the snippet, do one targeted read of the located range, then retry with old_text copied from that output.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
 function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
   if (!prep?.canExecute) return false;
   if (!_isSmallInsertionPrompt(taskText)) return false;
@@ -3709,17 +3767,7 @@ function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
   )
     return false;
 
-  const patches =
-    prep.fnName === "patch_file"
-      ? Array.isArray(prep.args?.patches)
-        ? prep.args.patches
-        : []
-      : [
-          {
-            old_text: prep.args?.old_text,
-            new_text: prep.args?.new_text,
-          },
-        ];
+  const patches = _getEditReplacementPatches(prep);
   if (patches.length === 0) return false;
 
   const rewritesAnchor = patches.some(({ old_text, new_text }) => {
@@ -10642,6 +10690,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _hasLocatedRange =
           _locatedTarget?.targetFile && _locatedTarget?.targetRange;
         if (_hasLocatedRange && getAutoConfirm()) {
+          const _targetContextText = apiMessages
+            .map((m) => (typeof m.content === "string" ? m.content : ""))
+            .join("\n");
           for (const prep of prepared) {
             if (!prep.canExecute) continue;
             if (
@@ -10659,6 +10710,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               };
               continue;
             }
+            if (
+              _blockUnknownInsertionAnchor(
+                prep,
+                _locatedTarget,
+                userInput,
+                _targetContextText,
+              )
+            )
+              continue;
             _blockAdjacentRewriteForInsertion(
               prep,
               _locatedTarget,
