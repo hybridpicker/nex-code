@@ -24,6 +24,14 @@ describe("few-shot example injection", () => {
     ).toBeNull();
   });
 
+  test("does not inject generic coding examples for catch-all tasks", () => {
+    expect(
+      getFewShotForInput(
+        "bei /fitness bzw ernährung hätte ich gern ein kcal-restfeld",
+      ),
+    ).toBeNull();
+  });
+
   test("still injects coding examples for implementation tasks", () => {
     const fewShot = getFewShotForInput("Fix the request handler crash on empty input.");
 

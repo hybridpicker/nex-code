@@ -2071,7 +2071,7 @@ describe("agent.js", () => {
       });
 
       await processInput(
-        "bei /fitness bzw ernährung hätte ich gern ein kcal-restfeld",
+        "Add a rate limiter middleware to the Express server",
         null,
         { silent: true },
       );

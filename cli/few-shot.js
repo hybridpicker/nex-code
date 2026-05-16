@@ -116,17 +116,11 @@ function getFewShotForInput(userInput) {
   const category = detectCategory(userInput);
   if (!category) return null;
 
-  // The "coding" category is a catch-all fallback. Specific categories
-  // (bug-fix, feature-add, refactor) are now detected above it, so coding
-  // only fires for truly ambiguous prompts — safe to inject unconditionally.
-  // The guard is retained but relaxed: only suppress for pure-analysis prompts
-  // that clearly don't need code changes.
+  // The "coding" category is a catch-all fallback. It can match short or
+  // non-English implementation prompts where a generic example is more likely
+  // to distract than help, so only specific categories get few-shot examples.
   if (category.id === "coding") {
-    const looksLikeAnalysis =
-      /\b(analy[sz]e|explain|describe|list|summari[sz]e|what is|how does|tell me(?:\s+(?:about|the|which|what|whether|if|me))?|review|audit|inspect|read|find|identify|show)\b/i.test(userInput) ||
-      /\b(do not|don't|without)\s+(?:edit|modify|change|write|fix)\b/i.test(userInput) ||
-      /\b(?:no|without)\s+(?:edits?|changes?|modifications?)\b/i.test(userInput);
-    if (looksLikeAnalysis) return null;
+    return null;
   }
 
   return loadExampleForCategory(category.id);
