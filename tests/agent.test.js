@@ -1779,7 +1779,7 @@ describe("agent.js", () => {
         });
       executeTool
         .mockResolvedValueOnce(
-          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+          "File: src/components/ProfileCard.jsx (lines 20-42)\n20: <article>\n21:         <h2>{profile.name}</h2>\n22:         <p>{profile.role}</p>\n23:       </article>",
         )
         .mockResolvedValueOnce("Patched");
 

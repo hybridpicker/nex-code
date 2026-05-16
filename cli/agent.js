@@ -3736,6 +3736,39 @@ function _findContextLineContaining(contextText, phrase) {
     ?.trim();
 }
 
+function _stripReadLinePrefixes(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\d+:\s?/, ""))
+    .join("\n");
+}
+
+function _contextContainsAnchorBlock(contextText, oldText) {
+  if (typeof oldText !== "string") return false;
+  if (!oldText.trim()) return false;
+  const context = String(contextText || "");
+  if (context.includes(oldText)) return true;
+
+  const strippedContext = _stripReadLinePrefixes(context);
+  if (strippedContext.includes(oldText)) return true;
+
+  const anchorLines = oldText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (anchorLines.length === 0) return false;
+  const contextLines = strippedContext
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  for (let i = 0; i <= contextLines.length - anchorLines.length; i++) {
+    const matches = anchorLines.every(
+      (line, offset) => contextLines[i + offset] === line,
+    );
+    if (matches) return true;
+  }
+  return false;
+}
+
 function _blockPromptSpecifiedInsertionAnchor(
   prep,
   locatedTarget,
@@ -3812,7 +3845,7 @@ function _blockUnknownInsertionAnchor(
     if (typeof old_text !== "string") return false;
     const anchor = old_text.trim();
     if (!anchor) return false;
-    return !String(contextText || "").includes(old_text);
+    return !_contextContainsAnchorBlock(contextText, old_text);
   });
   if (!missingAnchor) return false;
 
