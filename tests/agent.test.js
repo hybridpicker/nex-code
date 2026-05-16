@@ -360,6 +360,9 @@ const {
   _looksLikeCommentedOutCode,
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
+  _looksLikeMalformedDuplicateOpeningTag,
+  _detectAddedMalformedMarkup,
+  _buildMalformedMarkupNudge,
   _extractRemovedImportSymbols,
   _buildCompressionResumeTarget,
 } = require("../cli/agent");
@@ -2281,6 +2284,59 @@ describe("agent.js", () => {
       expect(message).toContain("Remove dead/commented-out code");
     });
 
+    it("detects malformed duplicate opening tags in transcript-derived markup diffs", () => {
+      const diff = [
+        "diff --git a/web/templates/fitness/index.html b/web/templates/fitness/index.html",
+        "--- a/web/templates/fitness/index.html",
+        "+++ b/web/templates/fitness/index.html",
+        "@@ -1866,0 +1867,1 @@",
+        "+<div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + ' kcal'\"><div>",
+      ].join("\n");
+
+      expect(
+        _looksLikeMalformedDuplicateOpeningTag("<div class=\"text-xs\"><div>"),
+      ).toBe(true);
+      expect(_detectAddedMalformedMarkup(diff)).toEqual([
+        {
+          path: "web/templates/fitness/index.html",
+          line: 1867,
+          text: "<div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + ' kcal'\"><div>",
+        },
+      ]);
+    });
+
+    it("detects malformed duplicate opening tags in neutral template diffs", () => {
+      const diff = [
+        "diff --git a/web/templates/dashboard.html b/web/templates/dashboard.html",
+        "--- a/web/templates/dashboard.html",
+        "+++ b/web/templates/dashboard.html",
+        "@@ -22,0 +23,2 @@",
+        "+<section><div></div></section>",
+        "+<span class=\"metric\" data-value=\"remaining\"><span>",
+      ].join("\n");
+
+      expect(_detectAddedMalformedMarkup(diff)).toEqual([
+        {
+          path: "web/templates/dashboard.html",
+          line: 24,
+          text: "<span class=\"metric\" data-value=\"remaining\"><span>",
+        },
+      ]);
+    });
+
+    it("builds a guard nudge for malformed markup findings", () => {
+      const message = _buildMalformedMarkupNudge([
+        {
+          path: "web/templates/dashboard.html",
+          line: 24,
+          text: '<span class="metric"><span>',
+        },
+      ]);
+      expect(message).toContain("SYSTEM QUALITY GUARD");
+      expect(message).toContain("web/templates/dashboard.html:24");
+      expect(message).toContain("appears to leave an element unclosed");
+    });
+
     it("blocks final success when no-git lint-fix edits leave commented-out dead code", async () => {
       const fs = require("fs");
       const path = require("path");
@@ -2387,6 +2443,108 @@ describe("agent.js", () => {
             typeof m.content === "string" &&
             m.content.includes("Do not finish with PASS/verified language") &&
             m.content.includes("src/utils/sound.js"),
+        ),
+      ).toBe(true);
+    });
+
+    it("blocks final success when an edited template has malformed markup", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-markup-"));
+      const templateDir = path.join(fixtureDir, "web", "templates");
+      const templatePath = path.join(templateDir, "dashboard.html");
+      fs.mkdirSync(templateDir, { recursive: true });
+      fs.writeFileSync(
+        templatePath,
+        [
+          '<div class="nutrition-ring-content">',
+          '  <div class="text-xs">kcal</div>',
+          "</div>",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Adding the remaining calories label.",
+          tool_calls: [
+            {
+              id: "m1",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  old_text: '  <div class="text-xs">kcal</div>',
+                  new_text:
+                    '  <div class="text-xs">kcal</div>\n  <div class="text-[11px]" x-text="remaining"><div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "**PASS**\n\nThe dashboard template update is complete.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Fixing the malformed closing tag.",
+          tool_calls: [
+            {
+              id: "m2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  old_text: '  <div class="text-[11px]" x-text="remaining"><div>',
+                  new_text:
+                    '  <div class="text-[11px]" x-text="remaining"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nThe dashboard template update is complete after fixing the malformed markup.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput("Add a remaining value to the dashboard template.", null, {
+          autoConfirm: true,
+          silent: true,
+          maxIterations: 6,
+        });
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes(
+              "Do not report success while the edited markup appears malformed",
+            ) &&
+            m.content.includes("web/templates/dashboard.html"),
         ),
       ).toBe(true);
     });

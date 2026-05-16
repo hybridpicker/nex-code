@@ -1598,6 +1598,10 @@ function _isSourceLikePath(filePath) {
   );
 }
 
+function _isMarkupLikePath(filePath) {
+  return /\.(?:html|vue|svelte|jsx|tsx)$/i.test(String(filePath || ""));
+}
+
 function _looksLikeCommentedOutCode(line) {
   const raw = String(line || "").trim();
   if (!raw) return false;
@@ -1657,6 +1661,97 @@ function _detectAddedCommentedOutCode(diffText, fallbackPath = "") {
     }
 
     if (!line.startsWith("-") && nextLine !== null) nextLine++;
+  }
+
+  return findings;
+}
+
+function _looksLikeMalformedDuplicateOpeningTag(line) {
+  const raw = String(line || "").trim();
+  if (!raw || raw.startsWith("<!--")) return false;
+  const match = raw.match(/^<([A-Za-z][\w:-]*)\b[^>\n]*>\s*<\1>$/);
+  if (!match) return false;
+  const tag = match[1].toLowerCase();
+  return ![
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+  ].includes(tag);
+}
+
+function _detectAddedMalformedMarkup(diffText, fallbackPath = "") {
+  const findings = [];
+  let currentPath = fallbackPath || "";
+  let nextLine = null;
+
+  for (const line of String(diffText || "").split(/\r?\n/)) {
+    const fileMatch = line.match(/^\+\+\+\s+b\/(.+)$/);
+    if (fileMatch) {
+      currentPath = fileMatch[1];
+      nextLine = null;
+      continue;
+    }
+
+    const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunkMatch) {
+      nextLine = Number(hunkMatch[1]);
+      continue;
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      const added = line.slice(1);
+      if (
+        _isMarkupLikePath(currentPath) &&
+        _looksLikeMalformedDuplicateOpeningTag(added)
+      ) {
+        findings.push({
+          path: currentPath || fallbackPath,
+          line: Number.isFinite(nextLine) ? nextLine : null,
+          text: added.trim(),
+        });
+      }
+      if (nextLine !== null) nextLine++;
+      continue;
+    }
+
+    if (!line.startsWith("-") && nextLine !== null) nextLine++;
+  }
+
+  return findings;
+}
+
+function _detectAddedMalformedMarkupFromContents(beforeText, afterText, filePath = "") {
+  if (!_isMarkupLikePath(filePath)) return [];
+  const beforeLines = String(beforeText || "").split("\n");
+  const afterLines = String(afterText || "").split("\n");
+  const findings = [];
+  let beforeIdx = 0;
+
+  for (let afterIdx = 0; afterIdx < afterLines.length; afterIdx++) {
+    const afterLine = afterLines[afterIdx];
+    if (beforeIdx < beforeLines.length && beforeLines[beforeIdx] === afterLine) {
+      beforeIdx++;
+      continue;
+    }
+    if (_looksLikeMalformedDuplicateOpeningTag(afterLine)) {
+      findings.push({
+        path: filePath,
+        line: afterIdx + 1,
+        text: afterLine.trim(),
+      });
+    }
   }
 
   return findings;
@@ -1868,12 +1963,74 @@ function _buildUndeclaredImportNudge(findings) {
   );
 }
 
+function _buildMalformedMarkupNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path}${f.line ? `:${f.line}` : ""} -> ${f.text}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit added markup that appears to leave an element unclosed.\n" +
+    `${shown}\n` +
+    "Fix the malformed opening tag now, then re-read the edited section and run the narrowest relevant verification before finalizing."
+  );
+}
+
 function _getOutstandingCommentedOutCodeFindings(filePaths) {
   const findings = [];
   for (const filePath of filePaths || []) {
     if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
     findings.push(
       ..._getAddedCommentedOutCodeFindings(
+        filePath,
+        _commentedOutCodeSessionBaselines.get(filePath),
+      ),
+    );
+  }
+  return findings;
+}
+
+function _getAddedMalformedMarkupFindings(filePath, fallbackBeforeContent) {
+  if (!_isMarkupLikePath(filePath)) return [];
+  try {
+    const { execFileSync } = require("child_process");
+    const insideWorkTree = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 32,
+    }).trim();
+    if (insideWorkTree !== "true") return [];
+
+    const diff = execFileSync("git", ["diff", "--unified=0", "--", filePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 1024,
+    });
+    return _detectAddedMalformedMarkup(diff, filePath);
+  } catch {
+    try {
+      if (typeof fallbackBeforeContent !== "string") return [];
+      const afterContent = fsSync.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
+      return _detectAddedMalformedMarkupFromContents(
+        fallbackBeforeContent,
+        afterContent,
+        filePath,
+      );
+    } catch {
+      return [];
+    }
+  }
+}
+
+function _getOutstandingMalformedMarkupFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    findings.push(
+      ..._getAddedMalformedMarkupFindings(
         filePath,
         _commentedOutCodeSessionBaselines.get(filePath),
       ),
@@ -2348,6 +2505,8 @@ let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --bra
 const _commentedOutCodeNudges = new Set(); // path:line:text keys already nudged this session
 const _commentedOutCodeSessionBaselines = new Map(); // path -> file content before the first successful session edit
 let _commentedOutCodeFinalNudges = 0; // prevent infinite re-nudging on stalled finalization
+const _malformedMarkupNudges = new Set(); // path:line:text keys already nudged this session
+let _malformedMarkupFinalNudges = 0;
 const _undeclaredImportNudges = new Set(); // path:specifier keys already nudged this session
 let _undeclaredImportFinalNudges = 0;
 const _verificationFocusPaths = new Set(); // failing scoped files from recent verification
@@ -4137,6 +4296,8 @@ async function _transitionPhase(
   _commentedOutCodeNudges.clear();
   _commentedOutCodeSessionBaselines.clear();
   _commentedOutCodeFinalNudges = 0;
+  _malformedMarkupNudges.clear();
+  _malformedMarkupFinalNudges = 0;
   _undeclaredImportNudges.clear();
   _undeclaredImportFinalNudges = 0;
   _verificationFocusPaths.clear();
@@ -5619,6 +5780,8 @@ function _resetSessionTracking() {
   _sessionDupeToolCounts.clear();
   _postCompressionReadRecovery.clear();
   _commentedOutCodeNudges.clear();
+  _malformedMarkupNudges.clear();
+  _malformedMarkupFinalNudges = 0;
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _planRejectionCount = 0;
@@ -8455,6 +8618,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const outstandingCommentedOutCode = hasText
           ? _getOutstandingCommentedOutCodeFindings(filesModified)
           : [];
+        const outstandingMalformedMarkup = hasText
+          ? _getOutstandingMalformedMarkupFindings(filesModified)
+          : [];
         const outstandingUndeclaredImports =
           hasText &&
           process.env.NEX_SCOPE &&
@@ -8481,6 +8647,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const stalledMsg =
             "Implementation incomplete.\n\n" +
             "The edited files still contain newly added commented-out dead code. Stopping without reporting success so the workflow does not falsely pass a lint-fix task.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (outstandingMalformedMarkup.length > 0) {
+          if (_malformedMarkupFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _malformedMarkupFinalNudges++;
+            const markupMsg = {
+              role: "user",
+              content:
+                _buildMalformedMarkupNudge(outstandingMalformedMarkup) +
+                "\nDo not report success while the edited markup appears malformed.",
+            };
+            conversationMessages.push(markupMsg);
+            apiMessages.push(markupMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: malformed markup remains in edited files${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited markup still appears malformed. Stopping without reporting success so the workflow does not falsely pass.";
           const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
           conversationMessages.push(stalledAssistantMsg);
           apiMessages.push(stalledAssistantMsg);
@@ -11779,6 +11973,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 `${C.yellow}  ⚠ Diff quality guard: commented-out code detected in ${prep.args.path}${C.reset}`,
               );
             }
+            const malformedMarkupFindings = _getAddedMalformedMarkupFindings(
+              prep.args.path,
+              _commentedOutCodeSessionBaselines.get(prep.args.path),
+            ).filter((finding) => {
+              const key = `${finding.path}:${finding.line || ""}:${finding.text}`;
+              if (_malformedMarkupNudges.has(key)) return false;
+              _malformedMarkupNudges.add(key);
+              return true;
+            });
+            if (malformedMarkupFindings.length > 0) {
+              const markupMsg = {
+                role: "user",
+                content: _buildMalformedMarkupNudge(malformedMarkupFindings),
+              };
+              conversationMessages.push(markupMsg);
+              apiMessages.push(markupMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Diff quality guard: malformed markup detected in ${prep.args.path}${C.reset}`,
+              );
+            }
             if (process.env.NEX_SCOPE && !_scopeAllowsDependencyMutation()) {
               const undeclaredImportFindings = _detectNewUnresolvedImportsFromContents(
                 _commentedOutCodeSessionBaselines.get(prep.args.path),
@@ -13664,9 +13878,13 @@ module.exports = {
   _masksCommandFailure,
   _scopeAllowsDependencyMutation,
   _isSourceLikePath,
+  _isMarkupLikePath,
   _looksLikeCommentedOutCode,
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
+  _looksLikeMalformedDuplicateOpeningTag,
+  _detectAddedMalformedMarkup,
+  _buildMalformedMarkupNudge,
   _extractRemovedImportSymbols,
   _buildCompressionResumeTarget,
   // Export for testing
