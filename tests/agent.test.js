@@ -1569,6 +1569,138 @@ describe("agent.js", () => {
       );
     });
 
+    it("requires editing when read scrolling and grep are both exhausted", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the first relevant section.",
+          tool_calls: [
+            {
+              id: "read-1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the second relevant section.",
+          tool_calls: [
+            {
+              id: "read-2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 40,
+                  line_end: 60,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the third relevant section.",
+          tool_calls: [
+            {
+              id: "read-3",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 80,
+                  line_end: 100,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for target markup.",
+          tool_calls: [
+            {
+              id: "grep-1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "dashboard-ring-content",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for current value.",
+          tool_calls: [
+            {
+              id: "grep-2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "totals.value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for target value.",
+          tool_calls: [
+            {
+              id: "grep-3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "targets.value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying another search.",
+          tool_calls: [
+            {
+              id: "grep-4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "remaining value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the deadlock nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<section>one</section>")
+        .mockResolvedValueOnce("<section>two</section>")
+        .mockResolvedValueOnce("<section>three</section>")
+        .mockResolvedValueOnce("web/templates/dashboard.html:90:dashboard-ring-content")
+        .mockResolvedValueOnce("web/templates/dashboard.html:91:totals.value")
+        .mockResolvedValueOnce("web/templates/dashboard.html:92:targets.value");
+
+      await processInput("Add a remaining value to the dashboard template.");
+
+      expect(executeTool).toHaveBeenCalledTimes(6);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your next tool call must be edit_file or patch_file");
+    });
+
     it("allows one post-edit verification read of a previously read file", async () => {
       callStream
         .mockResolvedValueOnce({
