@@ -1633,6 +1633,123 @@ describe("agent.js", () => {
       );
     });
 
+    it("allows phase-mode readback of an edited fitness template instead of blocking verification", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update web/templates/fitness/index.html.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the kcal remaining field.",
+          tool_calls: [
+            {
+              id: "edit-target",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div>',
+                  new_text:
+                    '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div><div x-text="Math.max(0, targets.kcal - totals.kcal)"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited template section.",
+          tool_calls: [
+            {
+              id: "read-after-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "PASS: I re-read web/templates/fitness/index.html after the edit and confirmed the remaining kcal field is present.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce("<div>Verbleibend</div>");
+
+      await processInput(
+        "Add a remaining kcal field to the fitness nutrition ring template.",
+      );
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("allows phase-mode readback of a neutral edited component file", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update src/components/ProfileCard.jsx.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped component edit.",
+          tool_calls: [
+            {
+              id: "edit-profile",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  old_text: "<span>{name}</span>",
+                  new_text: "<span>{name}</span><span>{status}</span>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited component.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "PASS: I re-read src/components/ProfileCard.jsx after the edit and confirmed the status field is present.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: src/components/ProfileCard.jsx")
+        .mockResolvedValueOnce("<span>{name}</span><span>{status}</span>");
+
+      await processInput("Add a status field to the profile card component.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
     it("warns when context usage > 85%", async () => {
       process.env.NEX_DEBUG = "true";
       getUsage.mockReturnValueOnce({

@@ -10072,6 +10072,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (!prep.canExecute) continue;
           if (_isVerificationCommandCall(prep)) continue;
           if (!blockedPostEditTools.has(prep.fnName)) continue;
+          const postEditReadPath = prep.args?.path || prep.args?.file_path || "";
+          const isEditedFileReadback =
+            prep.fnName === "read_file" &&
+            postEditReadPath &&
+            (filesModified.has(postEditReadPath) ||
+              _freshlyWrittenFiles.has(postEditReadPath) ||
+              _editedFilesNotReread.has(postEditReadPath));
+          if (isEditedFileReadback) continue;
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
