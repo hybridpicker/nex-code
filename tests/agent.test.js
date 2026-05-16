@@ -1846,6 +1846,73 @@ describe("agent.js", () => {
       ).toContain("was not found in the located target context");
     });
 
+    it("nudges prose-only responses to edit after locating a scoped target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "The target is located and I should add the status line below the role.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the insertion.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not continue in prose");
+    });
+
     it("blocks ask_user after the prompt and target range are sufficient", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream

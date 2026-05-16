@@ -7172,6 +7172,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
+  let _scopedNoEditNudges = 0; // headless located-target prose without edits
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
   // ─── Post-edit verification freshness tracking ─────────────────────
@@ -9323,6 +9324,40 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           saveNow(conversationMessages);
           _scoreAndPrint(conversationMessages);
           break outer;
+        }
+
+        if (
+          getAutoConfirm() &&
+          hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          _isActionableImplementationPrompt(userInput)
+        ) {
+          const _locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (_locatedTarget?.targetFile && _locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 2) {
+              _scopedNoEditNudges++;
+              const noEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] The target is already located: ${_locatedTarget.targetFile} ` +
+                  `lines ${_locatedTarget.targetRange.lineStart}-${_locatedTarget.targetRange.lineEnd}. ` +
+                  "Do not continue in prose and do not ask the user. Make the scoped change now with edit_file or patch_file using an exact old_text anchor from the located range.",
+              };
+              conversationMessages.push(noEditNudge);
+              apiMessages.push(noEditNudge);
+              debugLog(
+                `${C.yellow}  ⚠ Located target but no edit — nudging for scoped edit (${_scopedNoEditNudges}/2)${C.reset}`,
+              );
+              continue;
+            }
+          }
         }
 
         if (
