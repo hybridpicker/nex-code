@@ -2448,6 +2448,7 @@ const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
 const _sessionGrepFoundFiles = new Set(); // files that appeared in grep results (not just searched)
+const _sessionLastGrepResultByPath = new Map();
 const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
 const _sessionGlobCoreTerms = new Map(); // coreToken → Set<pattern> — detect varied patterns targeting the same term
 const _sessionGlobFoundFiles = new Set(); // files that appeared in glob results
@@ -5806,6 +5807,7 @@ function _resetSessionTracking() {
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
   _sessionGrepFoundFiles.clear();
+  _sessionLastGrepResultByPath.clear();
   _sessionGlobSearchCounts.clear();
   _sessionGlobCoreTerms.clear();
   _sessionGlobFoundFiles.clear();
@@ -10785,11 +10787,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 const grepAlsoExhausted =
                   _getLoopCount(grepFileCounts, path) >= LOOP_ABORT_GREP_FILE;
                 if (grepAlsoExhausted) {
+                  const lastGrepEvidence =
+                    _sessionLastGrepResultByPath.get(path) || "";
                   const deadlockMsg = {
                     role: "user",
                     content:
                       `[SYSTEM] Both read_file and grep are now blocked for "${path}". ` +
                       `You have already read ${sectionCount} sections and exhausted grep on this file. ` +
+                      (lastGrepEvidence
+                        ? `Recent grep evidence to edit from:\n${lastGrepEvidence}\n`
+                        : "") +
                       "Your next tool call must be edit_file or patch_file using the exact lines already shown in the conversation. " +
                       "If you cannot edit from that evidence, stop and state the blocker plainly.",
                   };
@@ -11045,11 +11052,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             readSectionsForFile >= SCROLL_BLOCK_SECTIONS ||
             fileAlreadyReadForGrep;
           if (readsAlsoBlocked) {
+            const lastGrepEvidence =
+              _sessionLastGrepResultByPath.get(grepPath) || "";
             const deadlockMsg = {
               role: "user",
               content:
                 `[SYSTEM] Both read_file and grep are now blocked for "${grepPath}". ` +
                 `You have already read ${readSectionsForFile || readsForFile} sections and tried ${alreadyGrepped} grep patterns. ` +
+                (lastGrepEvidence
+                  ? `Recent grep evidence to edit from:\n${lastGrepEvidence}\n`
+                  : "") +
                 "Do NOT attempt to read or grep this file again. Your next tool call must be edit_file or patch_file using the exact lines already shown in the conversation. " +
                 "If you cannot edit from that evidence, stop and state the blocker plainly.",
             };
@@ -12721,6 +12733,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !res.startsWith("(no matches)")
         ) {
           const searchedPath = _normalizePromptPath(prep.args?.path || "");
+          if (searchedPath) {
+            _sessionLastGrepResultByPath.set(searchedPath, res.slice(0, 4000));
+          }
           if (
             _boundedBacklogPlanActive &&
             _phaseEnabled &&
