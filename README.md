@@ -102,6 +102,30 @@ refactor this module to async/await and verify the endpoint behavior
 review the recent changes and look for regressions before I push
 ```
 
+## Desktop App E2E Verification
+
+The global Desktop launcher can run reproducible headless Desktop scenarios:
+
+```bash
+nex-code-app --e2e \
+  --open-project /path/to/project \
+  --prompt-file /tmp/prompt.txt \
+  --model ollama:devstral-small-2:24b-cloud \
+  --timeout-ms 180000 \
+  --json \
+  --auto-confirm \
+  --expect-file src/main.js \
+  --expect-contains "expected output"
+```
+
+This launches the Electron app with isolated E2E state, opens the project via
+the normal Desktop project path, submits the prompt through the renderer command
+input, waits for a terminal session state, verifies optional expectations, and
+exits non-zero on stalled, error, timeout, or failed expectation results.
+
+See [Desktop Workflow Verification](docs/DESKTOP-WORKFLOW-VERIFICATION.md) for
+the full flag reference and JSON result shape.
+
 ## Design Philosophy
 
 ### CLI-first

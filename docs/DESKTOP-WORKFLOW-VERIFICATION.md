@@ -1,6 +1,105 @@
 # Desktop Workflow Verification
 
-Date: 2026-05-15
+Date: 2026-05-16
+
+## Desktop E2E Mode
+
+`nex-code-app --e2e` runs a reproducible Desktop scenario through the Electron
+app instead of only proving that the app launches. It opens a project through
+the same Desktop project path, submits the prompt through the renderer command
+input, waits for the server run to finish, checks optional expectations, writes
+a JSON report, and exits with CI-friendly status codes.
+
+Example:
+
+```bash
+nex-code-app --e2e \
+  --open-project /path/to/project \
+  --prompt-file /tmp/prompt.txt \
+  --model ollama:devstral-small-2:24b-cloud \
+  --timeout-ms 180000 \
+  --json \
+  --auto-confirm \
+  --expect-file src/main.js \
+  --expect-contains "desktop verification ok"
+```
+
+### Flags
+
+- `--e2e`: enable Desktop E2E mode.
+- `--open-project <path>`: project directory to open. This follows the normal
+  Desktop open-project flow. `NEX_DESKTOP_OPEN_PROJECT` is also supported.
+- `--prompt-file <path>`: file containing the prompt to submit through
+  `#cmd-input` and `#cmd-submit`.
+- `--prompt <text>`: inline prompt alternative for small smoke tests.
+- `--model <provider:model>`: model/provider spec applied to the Desktop server
+  environment before the prompt is submitted.
+- `--timeout-ms <ms>`: maximum run time before returning a timeout result.
+- `--json`: print the E2E result as JSON.
+- `--auto-confirm`: approve Desktop confirmation prompts during E2E.
+- `--confirm yes|no`: explicit confirmation behavior. `yes` approves and `no`
+  rejects confirmation prompts. Without this or `--auto-confirm`, confirmation
+  prompts remain manual and can cause an E2E timeout.
+- `--expect-file <path>`: require a project-relative file to exist after the
+  run. May be repeated.
+- `--expect-contains <text>`: require text to appear in the final assistant
+  text, expected files, or project diff. May be repeated.
+- `--expect-not-contains <text>`: require text to be absent from those outputs.
+  May be repeated.
+
+### JSON Result
+
+The JSON report includes:
+
+- `appBuild.version` and `appBuild.commit`, when available.
+- `openedProjectPath`.
+- `selectedModel`.
+- `promptHash` and shortened `prompt`.
+- `finalSessionState`.
+- `finalAssistantText`.
+- `toolActions`.
+- `confirmationMode` and `confirmations`.
+- `errors` and recent `logs`.
+- `gitStatusBefore` and `gitStatusAfter`.
+- `expectations` and `expectationsOk`.
+- `stateDir`.
+- `exitCode` and `statusReason`.
+
+`confirmationMode` is `manual`, `yes`, or `no`. Each entry in `confirmations`
+records the request id, tool name, critical flag, selected answer, handling
+method, and whether it was handled.
+
+### Exit Codes
+
+- `0`: the Desktop run reached `complete` and all expectations passed.
+- `1`: error or failed expectation.
+- `2`: stalled run.
+- `124`: timeout.
+
+### State Isolation
+
+E2E mode uses an isolated Electron `userData` directory. By default this is a
+temporary directory. Set `NEX_CODE_APP_STATE_DIR` to make the state location
+explicit for debugging.
+
+### Verification Standard
+
+Use the global launcher for final proof:
+
+```bash
+nex-code-app --e2e --open-project /tmp/project \
+  --prompt-file /tmp/prompt.txt \
+  --model mock:mock-model \
+  --json \
+  --auto-confirm \
+  --expect-file src/main.js \
+  --expect-contains "desktop verification ok"
+```
+
+A result may be called `Desktop scenario verified` only when this global command
+launches the Desktop app, submits the prompt through the renderer/UI path,
+reaches a successful complete state, verifies the expectations, and exits with
+code `0`.
 
 ## Sandbox
 
