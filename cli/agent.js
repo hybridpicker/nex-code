@@ -11739,6 +11739,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
           if (!READ_ONLY_PRE_BLOCK.includes(prep.fnName)) continue;
+          const readPath = prep.args?.path || "";
+          if (
+            _postEditVerifyPending &&
+            prep.fnName === "read_file" &&
+            readPath &&
+            (filesModified.has(readPath) ||
+              [...filesModified].some(
+                (p) => _normalizePromptPath(p) === _normalizePromptPath(readPath),
+              ))
+          ) {
+            continue;
+          }
           debugLog(
             `${C.red}  ✖ Creation hard-block: ${prep.fnName} denied — cap fired, files already written${C.reset}`,
           );
