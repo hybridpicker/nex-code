@@ -1569,6 +1569,298 @@ describe("agent.js", () => {
       );
     });
 
+    it("blocks transcript-derived adjacent-line rewrites for kcal insertions", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located nutrition ring section.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal line.",
+          tool_calls: [
+            {
+              id: "patch-bad",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>',
+                      new_text:
+                        '        <p class="text-sm text-muted">Daily goal</p>\n        <p class="text-xs text-muted">Remaining kcal</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Retrying with an insertion-only patch.",
+          tool_calls: [
+            {
+              id: "patch-good",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>',
+                      new_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>\n        <p class="text-xs text-muted">Remaining kcal</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="nutrition-ring-content">\n        <p class="text-xs text-muted">Daily goal</p>\n      </div>',
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      const patchCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCalls).toHaveLength(1);
+      expect(patchCalls[0][1].patches[0].new_text).toContain(
+        'class="text-xs text-muted">Daily goal',
+      );
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("rewrites an existing anchor line");
+    });
+
+    it("allows neutral insertion-only patches near a located target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card status area.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line without changing adjacent text.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      const patchCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCalls).toHaveLength(1);
+      expect(patchCalls[0][1].path).toBe("src/components/ProfileCard.jsx");
+    });
+
+    it("blocks neutral patches that rewrite an adjacent line instead of inserting", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-rewrite",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        '        <p className="text-xs">{profile.role}</p>\n        <p>Status: active</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the insertion guard.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+      );
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(0);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not edit adjacent existing lines");
+    });
+
+    it("blocks ask_user after the prompt and target range are sufficient", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target profile card section.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Asking even though the target is located.",
+          tool_calls: [
+            {
+              id: "ask-unneeded",
+              function: {
+                name: "ask_user",
+                arguments: {
+                  question: "Where should the status line go?",
+                  options: ["Above role", "Below role"],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Proceeding with the obvious insertion.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(executeTool.mock.calls.some(([name]) => name === "ask_user")).toBe(
+        false,
+      );
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("ask_user is unnecessary");
+    });
+
     it("requires editing when read scrolling and grep are both exhausted", async () => {
       callStream
         .mockResolvedValueOnce({

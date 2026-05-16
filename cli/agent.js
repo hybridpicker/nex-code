@@ -3663,6 +3663,82 @@ function _buildCompressionResumeTarget(filesRead, filesModified, taskText = "") 
   };
 }
 
+function _isActionableImplementationPrompt(taskText) {
+  return /\b(add|insert|show|display|include|append|create|change|update|modify|fix|implement|write)\b/i.test(
+    String(taskText || ""),
+  );
+}
+
+function _isSmallInsertionPrompt(taskText) {
+  const text = String(taskText || "");
+  return (
+    /\b(add|insert|include|append|show|display)\b/i.test(text) &&
+    !/\b(replace|rename|remove|delete|rewrite|refactor|convert|migrate)\b/i.test(
+      text,
+    )
+  );
+}
+
+function _patchLooksLikeInsertionAroundAnchor(oldText, newText) {
+  if (typeof oldText !== "string" || typeof newText !== "string") return false;
+  if (!oldText.trim() || oldText === newText) return false;
+  return newText.includes(oldText);
+}
+
+function _buildInsertionGuardMessage(filePath, targetRange = null) {
+  const rangeText = targetRange
+    ? ` lines ${targetRange.lineStart}-${targetRange.lineEnd}`
+    : "";
+  return (
+    `BLOCKED: this looks like a small insertion in "${filePath}"${rangeText}, ` +
+    "but the proposed edit rewrites an existing anchor line. Preserve the located target exactly: " +
+    "use patch_file/edit_file with old_text set to the unchanged anchor block and new_text equal to that same block plus only the new inserted line. Do not edit adjacent existing lines."
+  );
+}
+
+function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const patches =
+    prep.fnName === "patch_file"
+      ? Array.isArray(prep.args?.patches)
+        ? prep.args.patches
+        : []
+      : [
+          {
+            old_text: prep.args?.old_text,
+            new_text: prep.args?.new_text,
+          },
+        ];
+  if (patches.length === 0) return false;
+
+  const rewritesAnchor = patches.some(({ old_text, new_text }) => {
+    if (typeof old_text !== "string" || typeof new_text !== "string")
+      return false;
+    if (!old_text.trim() || !new_text.trim()) return false;
+    return !_patchLooksLikeInsertionAroundAnchor(old_text, new_text);
+  });
+  if (!rewritesAnchor) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content: _buildInsertionGuardMessage(editPath, locatedTarget.targetRange),
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
 /**
  * Extract structured TODO items from the plan text by matching file paths
  * that were read OR found via grep during the plan phase. Returns an array
@@ -10549,6 +10625,46 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   : "BLOCKED: implementation phase must not use bash/git or broad reading. Use a targeted glob/search/list_directory call only to locate the concrete implementation file, then read it with line_start/line_end or edit it.",
             tool_call_id: prep.callId,
           };
+        }
+      }
+
+      // ─── Scoped edit guard (headless small-model recovery) ────────────────
+      // Once a concrete target file/range has been located, keep the next step
+      // anchored there. Small models sometimes drift into ask_user or rewrite an
+      // adjacent line when the requested change is just an insertion near the
+      // located target.
+      {
+        const _locatedTarget = _buildCompressionResumeTarget(
+          filesRead,
+          filesModified,
+          userInput,
+        );
+        const _hasLocatedRange =
+          _locatedTarget?.targetFile && _locatedTarget?.targetRange;
+        if (_hasLocatedRange && getAutoConfirm()) {
+          for (const prep of prepared) {
+            if (!prep.canExecute) continue;
+            if (
+              prep.fnName === "ask_user" &&
+              _isActionableImplementationPrompt(userInput)
+            ) {
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: "tool",
+                content:
+                  `BLOCKED: ask_user is unnecessary. The prompt is actionable and the target is already located: ` +
+                  `${_locatedTarget.targetFile} lines ${_locatedTarget.targetRange.lineStart}-${_locatedTarget.targetRange.lineEnd}. ` +
+                  "Proceed with edit_file or patch_file. Ask the user only when required information is genuinely missing.",
+                tool_call_id: prep.callId,
+              };
+              continue;
+            }
+            _blockAdjacentRewriteForInsertion(
+              prep,
+              _locatedTarget,
+              userInput,
+            );
+          }
         }
       }
 
