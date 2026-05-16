@@ -3711,6 +3711,82 @@ function _getEditReplacementPatches(prep) {
   return [];
 }
 
+function _extractRequestedInsertionLineAnchor(taskText) {
+  const text = String(taskText || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const match = text.match(
+    /\b(?:below|after|under)\s+(?:the\s+)?(.{2,80}?)\s+line\b/i,
+  );
+  if (!match) return null;
+  const phrase = match[1]
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\b(existing|current|target|located)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (phrase.length < 2) return null;
+  return phrase;
+}
+
+function _findContextLineContaining(contextText, phrase) {
+  const needle = String(phrase || "").toLowerCase();
+  if (!needle) return "";
+  return String(contextText || "")
+    .split(/\r?\n/)
+    .find((line) => line.toLowerCase().includes(needle))
+    ?.trim();
+}
+
+function _blockPromptSpecifiedInsertionAnchor(
+  prep,
+  locatedTarget,
+  taskText,
+  contextText,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  if (!requestedAnchor) return false;
+  const contextAnchorLine = _findContextLineContaining(
+    contextText,
+    requestedAnchor,
+  );
+  if (!contextAnchorLine) return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+  const missesRequestedAnchor = patches.some(({ old_text, new_text }) => {
+    const oldText = String(old_text || "");
+    const newText = String(new_text || "");
+    if (!oldText.trim() || !newText.trim()) return false;
+    return (
+      !oldText.includes(contextAnchorLine) &&
+      !oldText.toLowerCase().includes(requestedAnchor.toLowerCase())
+    );
+  });
+  if (!missesRequestedAnchor) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: the prompt specifies inserting below/after the existing line containing "${requestedAnchor}", ` +
+      `but the proposed edit for "${editPath}" uses a different anchor. ` +
+      "Use old_text that includes the existing requested anchor line exactly, and new_text equal to that same anchor plus only the new inserted line.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
 function _blockUnknownInsertionAnchor(
   prep,
   locatedTarget,
@@ -10802,6 +10878,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
             if (
               _blockUnknownInsertionAnchor(
+                prep,
+                _locatedTarget,
+                userInput,
+                _targetContextText,
+              )
+            )
+              continue;
+            if (
+              _blockPromptSpecifiedInsertionAnchor(
                 prep,
                 _locatedTarget,
                 userInput,

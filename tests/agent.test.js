@@ -1658,6 +1658,85 @@ describe("agent.js", () => {
       ).toContain("rewrites an existing anchor line");
     });
 
+    it("blocks insertions that ignore a prompt-specified anchor line", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located target section.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying the insertion from the wrong existing line.",
+          tool_calls: [
+            {
+              id: "wrong-anchor",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>',
+                  new_text:
+                    '      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>\n      <div class="text-xs text-muted">Remaining kcal</div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Using the requested anchor line.",
+          tool_calls: [
+            {
+              id: "right-anchor",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>',
+                  new_text:
+                    '      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>\n      <div class="text-xs text-muted">Remaining kcal</div>',
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="nutrition-ring-content">\n      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>\n      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>\n    </div>',
+        )
+        .mockResolvedValueOnce("Edited");
+
+      await processInput(
+        "Add remaining kcal display below the Daily goal line in web/templates/fitness/index.html.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      const editCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCalls).toHaveLength(1);
+      expect(editCalls[0][1].old_text).toContain("Daily goal");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("prompt specifies inserting below/after");
+    });
+
     it("allows neutral insertion-only patches near a located target", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream
