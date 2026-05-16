@@ -26,6 +26,7 @@ const {
   fitToContext,
   forceCompress,
   buildProgressSnapshot,
+  buildTaskAnchorSnapshot,
   truncateFileContent,
   getEffectiveCompressionThreshold,
   COMPRESSION_THRESHOLD,
@@ -1292,6 +1293,52 @@ describe("context-engine.js", () => {
       expect(preserved).toBeDefined();
       expect(preserved.content).toContain("web/templates/fitness/index.html");
       expect(preserved.content).toContain("nextAction");
+    });
+
+    it("adds a pinned task anchor during emergency compression", () => {
+      registry.getActiveModel.mockReturnValue({
+        id: "tiny",
+        contextWindow: 120,
+      });
+      const messages = [
+        { role: "system", content: "System prompt" },
+        {
+          role: "user",
+          content:
+            "Add remaining kcal to the nutrition ring in workflow.html. Do not fix routes/ask.js.",
+        },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          role: i % 2 === 0 ? "assistant" : "tool",
+          content: `noise ${i}: Node crash in routes/ask.js ${"x".repeat(250)}`,
+        })),
+        { role: "user", content: "[SYSTEM] Context warning" },
+      ];
+
+      const { messages: result } = forceCompress(messages, [], true);
+      const anchor = result.find((m) => m._taskAnchor);
+      expect(anchor).toBeDefined();
+      expect(anchor._pinned).toBe(true);
+      expect(anchor.content).toContain("Add remaining kcal");
+      expect(anchor.content).toContain("workflow.html");
+    });
+  });
+
+  describe("buildTaskAnchorSnapshot()", () => {
+    it("anchors the original task and skips synthetic resume messages", () => {
+      const anchor = buildTaskAnchorSnapshot([
+        {
+          role: "user",
+          content: "Add remaining kcal to the nutrition ring",
+        },
+        {
+          role: "user",
+          content: "[RESUME AFTER COMPRESSION] Continue in routes/ask.js",
+        },
+      ]);
+
+      expect(anchor.content).toContain("Add remaining kcal");
+      expect(anchor.content).not.toContain("Continue in routes/ask.js");
+      expect(anchor._pinned).toBe(true);
     });
   });
 

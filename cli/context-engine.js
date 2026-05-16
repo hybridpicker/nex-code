@@ -936,6 +936,77 @@ function truncateFileContent(content, maxTokens) {
 // ─── Force Compression (Context-Too-Long Recovery) ─────────────
 
 const FORCE_COMPRESS_KEEP_RECENT = 6;
+const FORCE_TASK_ANCHOR_MAX_CHARS = 3000;
+
+function _messageText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content == null) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function _isSyntheticUserMessage(message) {
+  const text = _messageText(message).trim();
+  return (
+    text.startsWith("[SYSTEM WARNING]") ||
+    text.startsWith("[SYSTEM:") ||
+    text.startsWith("[SYSTEM]") ||
+    text.startsWith("[RESUME AFTER COMPRESSION]") ||
+    text.startsWith("[FRAMEWORK") ||
+    text.startsWith("BLOCKED:")
+  );
+}
+
+function _truncateTaskAnchor(text, maxChars = FORCE_TASK_ANCHOR_MAX_CHARS) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n[... original task truncated after ${maxChars} chars ...]`;
+}
+
+function buildTaskAnchorSnapshot(messages) {
+  const realUsers = messages.filter(
+    (m) => m?.role === "user" && !_isSyntheticUserMessage(m),
+  );
+  if (realUsers.length === 0) return null;
+
+  const originalTask = _truncateTaskAnchor(_messageText(realUsers[0]));
+  const latestUser = realUsers[realUsers.length - 1];
+  const latestDirection =
+    latestUser === realUsers[0]
+      ? ""
+      : _truncateTaskAnchor(_messageText(latestUser), 1500);
+  const parts = [
+    "## Current Task Anchor (preserved through compression)",
+    "Continue this task exactly. Do not switch to a different bug, crash, route, file, or project unless the user explicitly requested it after this anchor.",
+    "",
+    "Original user request:",
+    originalTask,
+  ];
+  if (latestDirection) {
+    parts.push("", "Most recent real user direction:", latestDirection);
+  }
+
+  return {
+    role: "system",
+    content: parts.join("\n"),
+    _pinned: true,
+    _taskAnchor: true,
+  };
+}
 
 /**
  * Emergency compression when the API rejects with "context too long".
@@ -973,10 +1044,18 @@ function forceCompress(messages, tools, nuclear = false) {
   const recentStart = Math.max(startIdx, messages.length - keepRecent);
   let oldMessages = messages.slice(startIdx, recentStart);
   let recentMessages = messages.slice(recentStart);
+  const taskAnchor = buildTaskAnchorSnapshot(messages);
   const pinnedMessages = [
     ...oldMessages.filter((m) => m && m._pinned),
     ...recentMessages.filter((m) => m && m._pinned),
   ];
+  if (
+    taskAnchor &&
+    !pinnedMessages.some((m) => m?._taskAnchor) &&
+    !(system && system._taskAnchor)
+  ) {
+    pinnedMessages.unshift(taskAnchor);
+  }
   oldMessages = oldMessages.filter((m) => !(m && m._pinned));
   recentMessages = recentMessages.filter((m) => !(m && m._pinned));
 
@@ -1087,6 +1166,7 @@ module.exports = {
   scoreMessageRelevance,
   extractActiveFiles,
   buildProgressSnapshot,
+  buildTaskAnchorSnapshot,
   fitToContext,
   forceCompress,
   truncateFileContent,
