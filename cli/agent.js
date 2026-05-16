@@ -3663,6 +3663,37 @@ function _buildCompressionResumeTarget(filesRead, filesModified, taskText = "") 
   };
 }
 
+function _withLocatedTargetContext(resumeTarget, messages, taskText = "") {
+  if (!resumeTarget?.targetFile) return resumeTarget;
+  const shortPath = _shortSessionPath(resumeTarget.targetFile);
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  for (const msg of [...messages].reverse()) {
+    const content = typeof msg.content === "string" ? msg.content : "";
+    if (!content.includes(shortPath) && !content.includes(resumeTarget.targetFile))
+      continue;
+    const lines = content.split(/\r?\n/);
+    const numberedLines = lines.filter((line) => /^\s*\d+:\s/.test(line));
+    const excerptLines = numberedLines.length > 0 ? numberedLines : lines;
+    let startIdx = 0;
+    if (requestedAnchor) {
+      const idx = excerptLines.findIndex((line) =>
+        line.toLowerCase().includes(requestedAnchor.toLowerCase()),
+      );
+      if (idx !== -1) startIdx = Math.max(0, idx - 3);
+    }
+    const excerpt = excerptLines.slice(startIdx, startIdx + 12).join("\n");
+    if (!excerpt.trim()) continue;
+    return {
+      ...resumeTarget,
+      locatedEvidence: [
+        ...(resumeTarget.locatedEvidence || []),
+        `Located target excerpt:\n${excerpt.slice(0, 1400)}`,
+      ],
+    };
+  }
+  return resumeTarget;
+}
+
 function _isActionableImplementationPrompt(taskText) {
   return /\b(add|insert|show|display|include|append|create|change|update|modify|fix|implement|write)\b/i.test(
     String(taskText || ""),
@@ -7549,6 +7580,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             filesModified,
             userInput,
           );
+          const _resumeTargetWithContext = _withLocatedTargetContext(
+            _resumeTarget,
+            apiMessages,
+            userInput,
+          );
           // Inject a fresh progress snapshot before compression so the model
           // retains its place after old messages are dropped. The snapshot is
           // pinned (_pinned:true) and will survive Phase 4 relevance removal.
@@ -7556,12 +7592,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (
             filesModified.size > 0 ||
             (_phaseEnabled && _currentPhase !== "plan") ||
-            _resumeTarget
+            _resumeTargetWithContext
           ) {
             const _snap = buildProgressSnapshot(conversationMessages, {
               filesModified,
               currentPhase: _phaseEnabled ? _currentPhase : null,
-              locatedTarget: _resumeTarget,
+              locatedTarget: _resumeTargetWithContext,
             });
             if (_snap) {
               // Replace any existing snapshot, then insert after system message
@@ -7584,18 +7620,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(
                 `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`,
               );
-            _grantPostCompressionReadRecovery(_resumeTarget);
+            _grantPostCompressionReadRecovery(_resumeTargetWithContext);
             // ── Post-compress state anchor for creation tasks ─────────────────
             // After compression the model may lose track of what was already
             // built and restart from scratch. Inject a compact progress note so
             // it continues rather than re-investigating.
-            if (_resumeTarget) {
+            if (_resumeTargetWithContext) {
               const _resumeAnchor = {
                 role: "user",
                 content:
                   `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
-                  `Target: ${_shortSessionPath(_resumeTarget.targetFile)}. ` +
-                  `Next action: ${_resumeTarget.nextAction}`,
+                  `Target: ${_shortSessionPath(_resumeTargetWithContext.targetFile)}. ` +
+                  `Next action: ${_resumeTargetWithContext.nextAction}`,
               };
               apiMessages.push(_resumeAnchor);
             }
@@ -14007,15 +14043,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             filesModified,
             userInput,
           );
+          const _postResumeTargetWithContext = _withLocatedTargetContext(
+            _postResumeTarget,
+            apiMessages,
+            userInput,
+          );
           if (
             filesModified.size > 0 ||
             (_phaseEnabled && _currentPhase !== "plan") ||
-            _postResumeTarget
+            _postResumeTargetWithContext
           ) {
             const _postSnap = buildProgressSnapshot(conversationMessages, {
               filesModified,
               currentPhase: _phaseEnabled ? _currentPhase : null,
-              locatedTarget: _postResumeTarget,
+              locatedTarget: _postResumeTargetWithContext,
             });
             if (_postSnap) {
               const _existingPostIdx = apiMessages.findIndex(
@@ -14034,14 +14075,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             forceCompress(apiMessages, _allToolsPost);
           if (_freed > 0) {
             apiMessages = _compressed;
-            _grantPostCompressionReadRecovery(_postResumeTarget);
-            if (_postResumeTarget) {
+            _grantPostCompressionReadRecovery(_postResumeTargetWithContext);
+            if (_postResumeTargetWithContext) {
               apiMessages.push({
                 role: "user",
                 content:
                   `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
-                  `Target: ${_shortSessionPath(_postResumeTarget.targetFile)}. ` +
-                  `Next action: ${_postResumeTarget.nextAction}`,
+                  `Target: ${_shortSessionPath(_postResumeTargetWithContext.targetFile)}. ` +
+                  `Next action: ${_postResumeTargetWithContext.nextAction}`,
               });
             }
             console.log(
