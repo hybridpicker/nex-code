@@ -9260,15 +9260,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
         }
         // If we just ran tools but the LLM produced no text → nudge it to summarize
-        if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
+        if (
+          !hasText &&
+          (totalSteps > 0 || filesRead.size > 0 || filesModified.size > 0) &&
+          i < MAX_ITERATIONS - 1
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
           const needsEditAction =
             filesModified.size === 0 &&
             _bashModifiedFiles === 0 &&
             !_isAnalysisOnlyPrompt &&
             !_isSynthesisHeavyPrompt;
+          const locatedEditAction =
+            needsEditAction &&
+            locatedTarget?.targetFile &&
+            locatedTarget?.targetRange &&
+            _isActionableImplementationPrompt(userInput);
           const nudge = {
             role: "user",
-            content: needsEditAction
+            content: locatedEditAction
+              ? `[SYSTEM] Empty response after locating ${locatedTarget.targetFile} lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. Make the scoped change now with edit_file or patch_file using an exact old_text anchor from the located range. Do not read more, ask the user, or summarize instead of editing.`
+              : needsEditAction
               ? "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results. This task requires a file edit: use edit_file or patch_file now with the exact lines already shown in the conversation. Do not summarize instead of editing."
               : "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
           };

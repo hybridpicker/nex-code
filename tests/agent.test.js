@@ -2377,7 +2377,7 @@ describe("agent.js", () => {
         getConversationMessages()
           .map((m) => m.content)
           .join("\n"),
-      ).toContain("This task requires a file edit: use edit_file or patch_file now");
+      ).toContain("Empty response after locating web/templates/dashboard.html");
     });
 
     it("allows one post-edit verification read of a previously read file", async () => {
