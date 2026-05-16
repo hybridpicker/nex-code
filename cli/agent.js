@@ -9025,6 +9025,37 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        if (
+          (getAutoConfirm() || opts.autoConfirm) &&
+          hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          filesRead.size > 0 &&
+          _isActionableImplementationPrompt(userInput)
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (locatedTarget?.targetFile && locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 3) {
+              _scopedNoEditNudges++;
+              const noEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] The target is already located: ${locatedTarget.targetFile} ` +
+                  `lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. ` +
+                  "Do not continue in prose, search, grep, or read. Make the scoped change now with edit_file or patch_file using exact old_text from the located range.",
+              };
+              conversationMessages.push(noEditNudge);
+              apiMessages.push(noEditNudge);
+              continue;
+            }
+          }
+        }
         const outstandingCommentedOutCode = hasText
           ? _getOutstandingCommentedOutCodeFindings(filesModified)
           : [];
