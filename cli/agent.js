@@ -10268,7 +10268,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const committed = _getLoopCount(fileReadCounts, path);
         const pending = _pendingReadCounts.get(path) || 0;
         const alreadyRead = committed + pending;
-        const allowFreshWriteFollowUp = _freshlyWrittenFiles.has(path);
+        const allowFreshWriteFollowUp =
+          _freshlyWrittenFiles.has(path) || _editedFilesNotReread.has(path);
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.

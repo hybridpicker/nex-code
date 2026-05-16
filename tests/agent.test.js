@@ -1462,6 +1462,73 @@ describe("agent.js", () => {
       );
     });
 
+    it("allows one post-edit verification read of a previously read file", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target file.",
+          tool_calls: [
+            {
+              id: "read-before-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the requested field.",
+          tool_calls: [
+            {
+              id: "edit-target",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: "</div>",
+                  new_text: "<div>remaining kcal</div></div>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edit on disk.",
+          tool_calls: [
+            {
+              id: "read-after-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verification passed after reading the edited file.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<div>kcal</div>")
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce("<div>remaining kcal</div>");
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 4 },
+      );
+
+      expect(executeTool.mock.calls[2][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain(
+        'BLOCKED: read_file("web/templates/fitness/index.html") denied',
+      );
+    });
+
     it("warns when context usage > 85%", async () => {
       process.env.NEX_DEBUG = "true";
       getUsage.mockReturnValueOnce({
