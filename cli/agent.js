@@ -6544,7 +6544,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           role: "assistant",
           content:
             fewShot.assistant +
-            "\n[END EXAMPLE — wait for the real user request below]",
+            "\n[END EXAMPLE — the next user message is the real task. Answer that next user message directly.]",
         },
         ...apiMessages.slice(1),
       ];

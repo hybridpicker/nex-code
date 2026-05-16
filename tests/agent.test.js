@@ -2063,6 +2063,27 @@ describe("agent.js", () => {
       );
     });
 
+    it("marks few-shot examples without telling the model to wait", async () => {
+      let firstMessages = null;
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return { content: "OK", tool_calls: [] };
+      });
+
+      await processInput(
+        "bei /fitness bzw ernährung hätte ich gern ein kcal-restfeld",
+        null,
+        { silent: true },
+      );
+
+      const joined = firstMessages
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n");
+      expect(joined).toContain("[EXAMPLE");
+      expect(joined).toContain("the next user message is the real task");
+      expect(joined).not.toContain("wait for the real user request");
+    });
+
     it("omits routing guide when < 2 models", async () => {
       getConfiguredProviders.mockReturnValueOnce([
         { name: "ollama", models: [{ id: "x", name: "X" }] },
