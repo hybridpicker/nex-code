@@ -3362,12 +3362,91 @@ function _lastSetValue(values) {
   return arr.length > 0 ? arr[arr.length - 1] : "";
 }
 
-function _buildCompressionResumeTarget(filesRead, filesModified) {
+const GENERIC_RESUME_TARGET_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "tsconfig.json",
+  "README.md",
+]);
+
+function _isGenericResumeTarget(filePath) {
+  return GENERIC_RESUME_TARGET_FILES.has(path.basename(String(filePath || "")));
+}
+
+function _taskSuggestsGenericResumeTarget(taskText, filePath) {
+  const text = String(taskText || "");
+  const base = path.basename(String(filePath || ""));
+  if (!text.trim()) return false;
+  if (text.includes(base)) return true;
+  if (base === "package.json" || base.endsWith("-lock.json")) {
+    return /\b(package|npm|pnpm|yarn|dependency|dependencies|devDependencies|script|version|bin)\b/i.test(
+      text,
+    );
+  }
+  if (base === "tsconfig.json") {
+    return /\b(tsconfig|typescript|typecheck|compiler option)\b/i.test(text);
+  }
+  if (base === "README.md") {
+    return /\b(readme|documentation|docs)\b/i.test(text);
+  }
+  return false;
+}
+
+function _selectCompressionResumeFile({
+  readFiles,
+  grepFiles,
+  globFiles,
+  filesModified,
+  taskText,
+}) {
+  const modified = new Set([...filesModified].filter(Boolean));
+  const candidates = [];
+  let order = 0;
+  for (const file of [...globFiles, ...grepFiles, ...readFiles]) {
+    if (!file) continue;
+    candidates.push({ file, order: order++ });
+  }
+
+  let best = null;
+  for (const candidate of candidates) {
+    const generic = _isGenericResumeTarget(candidate.file);
+    const modifiedScore = modified.has(candidate.file) ? 1000 : 0;
+    const relevanceScore = !generic
+      ? 500
+      : _taskSuggestsGenericResumeTarget(taskText, candidate.file)
+        ? 450
+        : -1;
+    if (relevanceScore < 0 && modifiedScore === 0) continue;
+    const score = modifiedScore + relevanceScore;
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && candidate.order > best.order)
+    ) {
+      best = { ...candidate, score };
+    }
+  }
+
+  return best?.file || null;
+}
+
+function _buildCompressionResumeTarget(filesRead, filesModified, taskText = "") {
   const readFiles = [...filesRead].filter(Boolean);
   const grepFiles = [..._sessionGrepFoundFiles].filter(Boolean);
   const globFiles = [..._sessionGlobFoundFiles].filter(Boolean);
   const targetFile =
-    _lastSetValue(readFiles) || _lastSetValue(grepFiles) || _lastSetValue(globFiles);
+    _selectCompressionResumeFile({
+      readFiles,
+      grepFiles,
+      globFiles,
+      filesModified,
+      taskText,
+    }) ||
+    _lastSetValue(readFiles.filter((f) => !_isGenericResumeTarget(f))) ||
+    _lastSetValue(grepFiles.filter((f) => !_isGenericResumeTarget(f))) ||
+    _lastSetValue(globFiles.filter((f) => !_isGenericResumeTarget(f)));
   if (!targetFile) return null;
 
   const ranges = _sessionFileReadRanges.get(targetFile) || [];
@@ -6934,6 +7013,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const _resumeTarget = _buildCompressionResumeTarget(
             filesRead,
             filesModified,
+            userInput,
           );
           // Inject a fresh progress snapshot before compression so the model
           // retains its place after old messages are dropped. The snapshot is
@@ -13124,6 +13204,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const _postResumeTarget = _buildCompressionResumeTarget(
             filesRead,
             filesModified,
+            userInput,
           );
           const { messages: _compressed, tokensRemoved: _freed } =
             forceCompress(apiMessages, _allToolsPost);
@@ -13532,6 +13613,7 @@ module.exports = {
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
   _extractRemovedImportSymbols,
+  _buildCompressionResumeTarget,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

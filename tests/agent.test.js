@@ -361,6 +361,7 @@ const {
   _detectAddedCommentedOutCode,
   _buildCommentedOutCodeNudge,
   _extractRemovedImportSymbols,
+  _buildCompressionResumeTarget,
 } = require("../cli/agent");
 const {
   callStream,
@@ -458,6 +459,30 @@ describe("agent.js", () => {
   function logOutput() {
     return logSpy.mock.calls.map((c) => c[0]).join("\n");
   }
+
+  describe("_buildCompressionResumeTarget()", () => {
+    it("does not resume a frontend task by targeting package.json", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["package.json"]),
+        new Set(),
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+      );
+
+      expect(target).toBeNull();
+    });
+
+    it("allows package.json when the task is about package scripts", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["package.json"]),
+        new Set(),
+        "Add an npm test script to package.json.",
+      );
+
+      expect(target).toEqual(
+        expect.objectContaining({ targetFile: "package.json" }),
+      );
+    });
+  });
 
   function spinnerLabels() {
     // Section headers are written to stdout via process.stdout.write (strip ANSI codes)
