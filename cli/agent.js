@@ -9327,7 +9327,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
-          getAutoConfirm() &&
+          (getAutoConfirm() || opts.autoConfirm) &&
           hasText &&
           !_phaseEnabled &&
           !opts.skillLoop &&
