@@ -8935,10 +8935,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         // If we just ran tools but the LLM produced no text → nudge it to summarize
         if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
+          const needsEditAction =
+            filesModified.size === 0 &&
+            _bashModifiedFiles === 0 &&
+            !_isAnalysisOnlyPrompt &&
+            !_isSynthesisHeavyPrompt;
           const nudge = {
             role: "user",
-            content:
-              "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
+            content: needsEditAction
+              ? "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results. This task requires a file edit: use edit_file or patch_file now with the exact lines already shown in the conversation. Do not summarize instead of editing."
+              : "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
           };
           apiMessages.push(nudge);
           conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)

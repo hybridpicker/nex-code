@@ -1701,6 +1701,43 @@ describe("agent.js", () => {
       ).toContain("Your next tool call must be edit_file or patch_file");
     });
 
+    it("nudges empty post-tool edit tasks toward editing instead of summarizing", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target template section.",
+          tool_calls: [
+            {
+              id: "read-template",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 20,
+                  line_end: 30,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the edit nudge.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce("<div>target value</div>");
+
+      await processInput("Add a remaining value to the dashboard template.");
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("This task requires a file edit: use edit_file or patch_file now");
+    });
+
     it("allows one post-edit verification read of a previously read file", async () => {
       callStream
         .mockResolvedValueOnce({
