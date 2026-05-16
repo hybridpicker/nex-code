@@ -121,6 +121,197 @@ describe("headless mode (bin/nex-code.js)", () => {
       expect(last.error).toContain("modified files");
     });
 
+    it("finalizes when a kcal edit is read back before an empty provider response", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-kcal-"));
+      const r = runCli(
+        [
+          "--auto",
+          "--json",
+          "--task",
+          "Update the nutrition display so kcal appears in the one-line diff, then verify the file readback.",
+        ],
+        {
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_WRITE_READ_THEN_NULL: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(0);
+      expect(
+        fs.readFileSync(path.join(cwd, "headless-recovered.txt"), "utf-8"),
+      ).toBe("stable edit\n");
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("done");
+      expect(last.success).toBe(true);
+      expect(last.response).toContain("Completed the requested edit");
+      expect(last.response).toContain("post-edit readback");
+    });
+
+    it("finalizes a neutral file edit after readback when the provider returns empty", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-neutral-"));
+      const r = runCli(
+        [
+          "--auto",
+          "--json",
+          "--task",
+          "Update src/components/ProfileCard.jsx and verify the edited file readback before finishing.",
+        ],
+        {
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_WRITE_READ_THEN_NULL: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(0);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("done");
+      expect(last.success).toBe(true);
+      expect(last.response).toContain("headless-recovered.txt");
+      expect(last.response).toContain(
+        "provider returned an empty response after successful post-edit verification",
+      );
+    });
+
+    it("finalizes from the CLI wrapper when a stream aborts after verified readback", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-abort-"));
+      const r = runCli(
+        [
+          "--auto",
+          "--json",
+          "--task",
+          "Update src/lib/request-handler.js and verify the edited file readback before finishing.",
+        ],
+        {
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_WRITE_READ_THEN_NULL: "1",
+            NEX_MOCK_WRITE_READ_THEN_ABORT_STREAM: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(0);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("done");
+      expect(last.success).toBe(true);
+      expect(last.response).toContain("model stream ended");
+      expect(last.response).toContain("post-edit readback");
+    });
+
+    it("does not recover as success when the write failed before readback", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-failed-"));
+      fs.writeFileSync(path.join(cwd, "headless-failed.txt"), "unchanged\n");
+      const r = runCli(
+        [
+          "--auto",
+          "--json",
+          "--task",
+          "Attempt an edit, read the file back, and finish.",
+        ],
+        {
+          cwd,
+          expectError: true,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(1);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("error");
+      expect(last.success).toBe(false);
+      expect(last.error).toContain("without a final assistant response");
+      expect(fs.readFileSync(path.join(cwd, "headless-failed.txt"), "utf-8")).toBe(
+        "unchanged\n",
+      );
+    });
+
+    it("replaces confused post-edit questions with a verified-work summary", () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-question-"));
+      const r = runCli(
+        [
+          "--auto",
+          "--json",
+          "--task",
+          "Update src/lib/request-handler.js and verify the edited file readback before finishing.",
+        ],
+        {
+          cwd,
+          env: {
+            NEX_NO_DOTENV: "1",
+            NEX_MOCK_PROVIDER: "1",
+            NEX_MOCK_WRITE_READ_THEN_QUESTION: "1",
+            HEADLESS_MODEL: "mock:mock-model",
+            NEX_NO_FLATRATE: "1",
+            OLLAMA_API_KEY: "",
+            NEX_PHASE_ROUTING: "0",
+          },
+        },
+      );
+      expect(r.exitCode).toBe(0);
+      const events = r.stdoutStripped
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const last = events[events.length - 1];
+      expect(last.type).toBe("done");
+      expect(last.success).toBe(true);
+      expect(last.response).toContain("Completed the requested edit");
+      expect(last.response).toContain("confused follow-up question");
+      expect(last.response).not.toContain("What would you like me to do");
+    });
+
     it("emits a terminal error event when the process exits after tool_start", () => {
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nex-headless-exit-"));
       const r = runCli(

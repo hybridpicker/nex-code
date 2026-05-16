@@ -59,6 +59,100 @@ function allUserText(messages) {
     .join("\n\n");
 }
 
+function buildWriteReadThenNullResponse(messages) {
+  if (hasToolResult(messages, "recover-read-1")) return null;
+  if (hasToolResult(messages, "recover-write-1")) {
+    return {
+      content:
+        "Reading back the edited file before simulating a missing final response.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "headless-recovered.txt" },
+          "recover-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Writing a file for the headless recovery scenario.",
+    tool_calls: [
+      toolCall(
+        "write_file",
+        { path: "headless-recovered.txt", content: "stable edit\n" },
+        "recover-write-1",
+      ),
+    ],
+  };
+}
+
+function buildFailedWriteReadAbortResponse(messages) {
+  if (hasToolResult(messages, "failed-read-1")) {
+    return {
+      content: "Ending after failed edit and readback.",
+      tool_calls: [],
+    };
+  }
+  if (hasToolResult(messages, "failed-edit-1")) {
+    return {
+      content: "Reading the file after a failed edit attempt.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "headless-failed.txt" },
+          "failed-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Attempting an edit that will fail before readback.",
+    tool_calls: [
+      toolCall(
+        "edit_file",
+        {
+          path: "headless-failed.txt",
+          old_text: "missing old text",
+          new_text: "changed\n",
+        },
+        "failed-edit-1",
+      ),
+    ],
+  };
+}
+
+function buildWriteReadThenQuestionResponse(messages) {
+  if (hasToolResult(messages, "question-read-1")) {
+    return {
+      content:
+        "What would you like me to do with src/lib/request-handler.js?",
+      tool_calls: [],
+    };
+  }
+  if (hasToolResult(messages, "question-write-1")) {
+    return {
+      content: "Reading back the edited file before asking a confused question.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "question-recovered.txt" },
+          "question-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Writing a file for the confused-question recovery scenario.",
+    tool_calls: [
+      toolCall(
+        "write_file",
+        { path: "question-recovered.txt", content: "stable edit\n" },
+        "question-write-1",
+      ),
+    ],
+  };
+}
+
 // Process-local state for deterministic multi-turn flows.
 // Headless CLI runs are single-task/single-session per process.
 let _mockSessionState = null;
@@ -1013,6 +1107,15 @@ class MockProvider extends BaseProvider {
         ],
       };
     }
+    if (process.env.NEX_MOCK_WRITE_READ_THEN_NULL === "1") {
+      return buildWriteReadThenNullResponse(messages);
+    }
+    if (process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1") {
+      return buildFailedWriteReadAbortResponse(messages);
+    }
+    if (process.env.NEX_MOCK_WRITE_READ_THEN_QUESTION === "1") {
+      return buildWriteReadThenQuestionResponse(messages);
+    }
     return buildDeterministicResponse(messages);
   }
 
@@ -1092,8 +1195,27 @@ class MockProvider extends BaseProvider {
       typeof options.onThinkingToken === "function"
         ? options.onThinkingToken
         : () => {};
-    const res = process.env.NEX_MOCK_WRITE_THEN_NULL === "1"
-      ? hasToolResult(messages, "write-null-1")
+    if (
+      process.env.NEX_MOCK_WRITE_READ_THEN_ABORT_STREAM === "1" &&
+      hasToolResult(messages, "recover-read-1")
+    ) {
+      onToken("Continuing after verified readback without committing a final message.");
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    if (
+      process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1" &&
+      hasToolResult(messages, "failed-read-1")
+    ) {
+      onToken("Continuing after failed edit readback without a final message.");
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    let res;
+    if (process.env.NEX_MOCK_WRITE_THEN_NULL === "1") {
+      res = hasToolResult(messages, "write-null-1")
         ? null
         : {
             content: "Writing a file before simulating a missing final response.",
@@ -1104,8 +1226,16 @@ class MockProvider extends BaseProvider {
                 "write-null-1",
               ),
             ],
-          }
-      : buildDeterministicResponse(messages);
+          };
+    } else if (process.env.NEX_MOCK_WRITE_READ_THEN_NULL === "1") {
+      res = buildWriteReadThenNullResponse(messages);
+    } else if (process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1") {
+      res = buildFailedWriteReadAbortResponse(messages);
+    } else if (process.env.NEX_MOCK_WRITE_READ_THEN_QUESTION === "1") {
+      res = buildWriteReadThenQuestionResponse(messages);
+    } else {
+      res = buildDeterministicResponse(messages);
+    }
     if (!res) return null;
 
     // Simulate streaming: emit content in a couple chunks for realism.

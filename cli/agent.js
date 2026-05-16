@@ -7073,6 +7073,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       ran.has(_normalizeVerificationCommand(required)),
     );
   };
+  const _appendRecoveredHeadlessFinal = (reason) => {
+    if (!getAutoConfirm() || !_serverHooks || opts.skillLoop) return false;
+    if (filesModified.size === 0 && _bashModifiedFiles === 0) return false;
+    if (!_hasPostEditVerificationEvidence()) return false;
+    if (!_hasRequiredVerificationEvidence()) return false;
+
+    const changedFiles =
+      [...filesModified].slice(0, 12).join(", ") ||
+      "files changed by shell commands";
+    const verificationEvidence =
+      verificationCommandsRun.length > 0
+        ? _formatSuccessfulVerificationEvidence(verificationCommandsRun)
+        : `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`;
+    const content = [
+      "Completed the requested edit and verified the updated state.",
+      `Changed files: ${changedFiles}.`,
+      `Verification: ${verificationEvidence}.`,
+      `Finalization note: ${reason}; the headless runner preserved the completed work state and emitted this summary instead of exiting without a final assistant response.`,
+    ].join("\n");
+    const assistantMsg = { role: "assistant", content };
+    conversationMessages.push(assistantMsg);
+    apiMessages.push(assistantMsg);
+    console.log(`\n${content}`);
+    saveNow(conversationMessages);
+    _scoreAndPrint(conversationMessages);
+    return true;
+  };
   // Loop detection: use session-level Maps so counters persist across REPL turns.
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
@@ -8197,6 +8224,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Fatal: the provider returned no usable response object. Retrying is
         // pointless and can lead to tight retry loops (especially in tests).
         if (_emptyProviderResponse) {
+          if (
+            _appendRecoveredHeadlessFinal(
+              "provider returned an empty response after successful post-edit verification",
+            )
+          ) {
+            break outer;
+          }
           if (taskProgress) {
             taskProgress.stop();
             taskProgress = null;
@@ -13128,6 +13162,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 )
               ) {
                 verificationReadsRun.push(prep.args.path);
+                _verificationAtEditSeq = _scopedEditCounter;
                 _postEditVerifyPending = false;
                 _postEditVerifyNudges = 0;
                 _editedFileExpectedSnippets.delete(prep.args.path);

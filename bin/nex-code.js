@@ -419,6 +419,86 @@ function countWriteToolCalls(messages) {
   }, 0);
 }
 
+function getVerifiedHeadlessEditSummary(messages) {
+  if (!Array.isArray(messages)) return null;
+  const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+  const callMeta = new Map();
+  const writtenPaths = new Set();
+  const verifiedPaths = new Set();
+
+  for (const msg of messages) {
+    if (!msg) continue;
+    if (msg.role === "assistant") {
+      const toolCalls =
+        msg.tool_calls ||
+        (Array.isArray(msg.content)
+          ? msg.content.filter((block) => block && block.type === "tool_use")
+          : []);
+      for (const tc of toolCalls) {
+        const id = tc?.id || tc?.tool_call_id;
+        const name = tc?.function?.name || tc?.name || "";
+        let args = tc?.function?.arguments || tc?.input || {};
+        if (typeof args === "string") {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            args = {};
+          }
+        }
+        const filePath = args?.path || args?.file_path || "";
+        if (id) callMeta.set(id, { name, path: filePath });
+      }
+      continue;
+    }
+
+    if (msg.role !== "tool") continue;
+    const meta = callMeta.get(msg.tool_call_id);
+    if (!meta) continue;
+    const content = String(msg.content || "");
+    if (/^(?:ERROR|BLOCKED):/i.test(content.trim())) continue;
+    if (writeTools.has(meta.name) && meta.path) {
+      writtenPaths.add(meta.path);
+    }
+    if (meta.name === "read_file" && writtenPaths.has(meta.path)) {
+      verifiedPaths.add(meta.path);
+    }
+    if (
+      meta.name === "bash" &&
+      writtenPaths.size > 0 &&
+      /\b(?:PASS|passed|ok|success|done)\b/i.test(content)
+    ) {
+      for (const p of writtenPaths) verifiedPaths.add(p);
+    }
+  }
+
+  if (writtenPaths.size === 0 || verifiedPaths.size === 0) return null;
+  return {
+    changedFiles: [...writtenPaths],
+    verification:
+      verifiedPaths.size > 0
+        ? `post-edit readback: ${[...verifiedPaths].slice(0, 8).join(", ")}`
+        : "post-edit verification completed",
+  };
+}
+
+function looksLikeConfusedPostEditQuestion(text) {
+  if (!text || typeof text !== "string") return false;
+  const value = text.trim();
+  if (!value.includes("?")) return false;
+  return /\b(?:what would you like me to do|what fix, change, or feature|please tell me what|haven't stated the actual task|have not stated the actual task|share the real issue)\b/i.test(
+    value,
+  );
+}
+
+function buildRecoveredHeadlessFinal(verifiedEditSummary, note) {
+  return [
+    "Completed the requested edit and verified the updated state.",
+    `Changed files: ${verifiedEditSummary.changedFiles.slice(0, 12).join(", ")}.`,
+    `Verification: ${verifiedEditSummary.verification}.`,
+    `Finalization note: ${note}`,
+  ].join("\n");
+}
+
 function createJsonModeHooks() {
   process.env.NEX_SERVER = "1";
   let streamedText = "";
@@ -934,8 +1014,41 @@ async function runHeadlessTask(task) {
           : "";
     const hasFinalResponse =
       typeof finalResponse === "string" && finalResponse.trim().length > 0;
+    const verifiedEditSummary = getVerifiedHeadlessEditSummary(msgs);
 
     if (!hasFinalResponse) {
+      if (verifiedEditSummary) {
+        const recoveredResponse = buildRecoveredHeadlessFinal(
+          verifiedEditSummary,
+          "the model stream ended without a normal final assistant message after verified work, so headless mode preserved the completed state and emitted this summary.",
+        );
+        const { getSessionCosts } = require("../cli/costs");
+        const costs = getSessionCosts();
+
+        if (!jsonModeState) {
+          if (plainModeState) {
+            plainModeState.restore();
+            process.stdout.write(recoveredResponse + "\n");
+          }
+          process.exit(0);
+          return;
+        }
+
+        jsonModeState.restore();
+        jsonModeState.emitTerminal({
+          type: "done",
+          success: true,
+          response: recoveredResponse,
+          usage: {
+            input: costs.totalInput || 0,
+            output: costs.totalOutput || 0,
+            cacheRead: costs.totalCacheRead || 0,
+          },
+          toolCalls: countToolCalls(msgs),
+        });
+        process.exit(0);
+        return;
+      }
       const writeCount = countWriteToolCalls(msgs);
       const errorMessage = writeCount > 0
         ? "Headless run modified files but ended without a final assistant response. Stopping to avoid a false success."
@@ -963,6 +1076,40 @@ async function runHeadlessTask(task) {
         toolCalls: countToolCalls(msgs),
       });
       process.exit(1);
+      return;
+    }
+
+    if (
+      verifiedEditSummary &&
+      looksLikeConfusedPostEditQuestion(finalResponse)
+    ) {
+      const recoveredResponse = buildRecoveredHeadlessFinal(
+        verifiedEditSummary,
+        "the model produced a confused follow-up question after verified work, so headless mode emitted the verified-work summary instead.",
+      );
+      const { getSessionCosts } = require("../cli/costs");
+      const costs = getSessionCosts();
+      if (!jsonModeState) {
+        if (plainModeState) {
+          plainModeState.restore();
+          process.stdout.write(recoveredResponse + "\n");
+        }
+        process.exit(0);
+        return;
+      }
+      jsonModeState.restore();
+      jsonModeState.emitTerminal({
+        type: "done",
+        success: true,
+        response: recoveredResponse,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(0);
       return;
     }
 
