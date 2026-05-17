@@ -30,6 +30,90 @@ let projectIsDeployable = false;
 let activeModelSpecOverride = null;
 let e2eRunStarted = false;
 
+function resolveDebugSessionDir(env) {
+  const sourceEnv = env || process.env;
+  const explicit = sourceEnv.NEX_CODE_APP_DEBUG_SESSION_DIR
+    || sourceEnv.NEX_CODE_DEBUG_SESSION_DIR
+    || sourceEnv.NEX_DESKTOP_DEBUG_SESSION_DIR
+    || null;
+  if (explicit) return path.resolve(explicit);
+
+  const stateDir = sourceEnv.NEX_CODE_APP_STATE_DIR || sourceEnv.NEX_DESKTOP_STATE_DIR || null;
+  if (!stateDir) return null;
+  const resolvedState = path.resolve(stateDir);
+  if (path.basename(resolvedState) !== "state") return null;
+  const parent = path.dirname(resolvedState);
+  if (!/^session-\d{8}-\d{6}$/.test(path.basename(parent))) return null;
+  return parent;
+}
+
+const debugSessionDir = resolveDebugSessionDir(process.env);
+let debugRunId = null;
+
+function ensureDebugSession() {
+  if (!debugSessionDir) return null;
+  try {
+    fs.mkdirSync(debugSessionDir, { recursive: true });
+    if (!debugRunId) debugRunId = new Date().toISOString().replace(/[:.]/g, "-");
+    return debugSessionDir;
+  } catch (e) {
+    return null;
+  }
+}
+
+function appendDebugJsonl(fileName, entry) {
+  const dir = ensureDebugSession();
+  if (!dir) return;
+  const payload = Object.assign({
+    at: new Date().toISOString(),
+    runId: debugRunId,
+  }, entry || {});
+  try {
+    fs.appendFileSync(path.join(dir, fileName), `${JSON.stringify(payload)}\n`, "utf8");
+  } catch (e) {}
+}
+
+function writeDebugSummary(extra) {
+  const dir = ensureDebugSession();
+  if (!dir) return;
+  const summary = Object.assign({
+    runId: debugRunId,
+    pid: process.pid,
+    appDir: path.resolve(__dirname, ".."),
+    projectPath: projectPath,
+    projectName: projectName,
+    projectBranch: projectBranch,
+    projectIsGit: projectIsGit,
+    projectIsDeployable: projectIsDeployable,
+    serverPid: serverProcess ? serverProcess.pid : null,
+    serverReady: serverReady,
+    updatedAt: new Date().toISOString(),
+  }, extra || {});
+  try {
+    fs.writeFileSync(path.join(dir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  } catch (e) {}
+}
+
+function writeDebugExit(reason, code) {
+  const dir = ensureDebugSession();
+  if (!dir) return;
+  const lines = [
+    `finished_at=${new Date().toISOString()}`,
+    `reason=${reason || "unknown"}`,
+    `exit_code=${code === null || code === undefined ? "" : code}`,
+    "",
+  ];
+  try {
+    fs.writeFileSync(path.join(dir, "exit.txt"), lines.join("\n"), "utf8");
+  } catch (e) {}
+}
+
+function recordDebugEvent(type, details) {
+  if (!debugSessionDir) return;
+  appendDebugJsonl("desktop-events.jsonl", Object.assign({ type: type }, details || {}));
+  writeDebugSummary({ lastEvent: type });
+}
+
 function getArgValue(argv, name) {
   const idx = argv.indexOf(name);
   if (idx === -1) return null;
@@ -463,21 +547,33 @@ function spawnServer(dirPath) {
     cwd: dirPath, stdio: ["pipe", "pipe", "pipe"],
     env: applyActiveModelEnv(Object.assign({}, process.env, { NEX_SERVER: "1", FORCE_COLOR: "0" })),
   });
+  recordDebugEvent("server-spawned", { cwd: dirPath, cliPath: cliPath, pid: serverProcess.pid });
   serverReady = false;
   const rl = readline.createInterface({ input: serverProcess.stdout, terminal: false });
   rl.on("line", function (line) {
-    try { handleMsg(JSON.parse(line.trim())); } catch (e) {}
+    try {
+      const msg = JSON.parse(line.trim());
+      appendDebugJsonl("server-events.jsonl", {
+        type: "server-message",
+        messageType: msg.type || null,
+        message: msg,
+      });
+      handleMsg(msg);
+    } catch (e) {}
   });
   serverProcess.stderr.on("data", function (d) {
     const text = d.toString().trim();
     if (desktopE2EOptions.enabled && text) desktopE2EResult.logs.push(text);
+    if (text) appendDebugJsonl("server-events.jsonl", { type: "stderr", text: text });
     send("nex:server-log", { text: text });
   });
   serverProcess.on("close", function (code) {
     serverProcess = null; serverReady = false;
+    recordDebugEvent("server-closed", { code: code });
     send("nex:server-closed", { code: code });
   });
   serverProcess.on("error", function (e) {
+    recordDebugEvent("server-error", { message: e.message });
     send("nex:server-error", { message: e.message });
   });
 }
@@ -612,6 +708,7 @@ function clickDesktopE2EConfirmation(msg, entry) {
 }
 
 function send(ch, data) {
+  recordDebugEvent("renderer-send", { channel: ch, data: data });
   try { if (mainWindow && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(ch, data); } catch (e) {}
 }
 
@@ -620,10 +717,19 @@ function sendToServer(obj) {
     send("nex:server-error", { message: "No project open. Use File → Open Project." });
     return;
   }
+  appendDebugJsonl("commands.jsonl", {
+    type: "send-to-server",
+    payload: obj,
+    textHash: obj && obj.text ? hashPrompt(obj.text) : null,
+    length: obj && obj.text ? String(obj.text).length : null,
+    projectPath: projectPath,
+    branch: projectBranch,
+  });
   serverProcess.stdin.write(JSON.stringify(obj) + "\n");
 }
 
 function createWindow() {
+  recordDebugEvent("window-create", { e2e: desktopE2EOptions.enabled });
   const iconPath = applyAppIcon();
   const isMac = process.platform === "darwin";
   mainWindow = new BrowserWindow({
@@ -642,17 +748,24 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.webContents.on("did-finish-load", function () {
+    recordDebugEvent("renderer-did-finish-load");
     mainWindow.webContents.send("nex:platform", { platform: process.platform });
     if (desktopE2EOptions.enabled) {
       runDesktopE2E();
     }
   });
   mainWindow.once("ready-to-show", function () {
+    recordDebugEvent("window-ready-to-show");
     if (desktopE2EOptions.enabled) return;
     mainWindow.show();
+    recordDebugEvent("window-shown");
     if (process.argv.includes("--dev")) mainWindow.webContents.openDevTools({ mode: "detach" });
   });
-  mainWindow.on("closed", function () { killServer(); mainWindow = null; });
+  mainWindow.on("closed", function () {
+    recordDebugEvent("window-closed");
+    writeDebugExit("window-closed", null);
+    killServer(); mainWindow = null;
+  });
 
   var template = [];
   if (isMac) template.push({ label: "nex-code", submenu: [{ role: "about" }, { type: "separator" }, { role: "quit" }] });
@@ -675,8 +788,12 @@ function createWindow() {
 
 async function openDialog() {
   try {
+    recordDebugEvent("open-project-dialog-opened");
     var r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"], title: "Open Project" });
-    if (r.canceled || r.filePaths.length === 0) return { ok: true, canceled: true };
+    if (r.canceled || r.filePaths.length === 0) {
+      recordDebugEvent("open-project-dialog-canceled");
+      return { ok: true, canceled: true };
+    }
     const normalizedPath = normalizeProjectPath(r.filePaths[0]);
     if (!normalizedPath) {
       const message = "Selected project path is not available.";
@@ -747,6 +864,7 @@ async function refreshProjectGitState() {
 async function openProject(dirPath) {
   const normalizedPath = normalizeProjectPath(dirPath);
   if (!normalizedPath) throw new Error("Project path is not available.");
+  recordDebugEvent("project-open-start", { path: normalizedPath });
   addDesktopE2EMilestone("project-open-requested", { path: normalizedPath });
   projectPath = normalizedPath;
   projectName = path.basename(normalizedPath);
@@ -761,6 +879,14 @@ async function openProject(dirPath) {
   } catch (e) {}
   spawnServer(normalizedPath);
   send("nex:project-opened", {
+    project: projectName,
+    branch: projectBranch || "unknown",
+    path: normalizedPath,
+    isGitRepository: projectIsGit,
+    isDeployable: projectIsDeployable,
+    gitState: gitState,
+  });
+  recordDebugEvent("project-opened", {
     project: projectName,
     branch: projectBranch || "unknown",
     path: normalizedPath,
@@ -1164,6 +1290,14 @@ function registerIpcHandlers() {
   });
   ipcMain.on("nex:command", function (_e, cmd) {
     const text = String(cmd || "").trim();
+    appendDebugJsonl("commands.jsonl", {
+      type: "renderer-command",
+      text: text,
+      length: text.length,
+      textHash: hashPrompt(text),
+      projectPath: projectPath,
+      branch: projectBranch,
+    });
     if (desktopE2EOptions.enabled) {
       desktopE2EResult.serverCommands.push({
         type: "chat",
@@ -1198,6 +1332,10 @@ function registerIpcHandlers() {
 
 if (process.versions && process.versions.electron) {
   app.whenReady().then(function () {
+    recordDebugEvent("app-ready", {
+      argv: process.argv,
+      versions: process.versions,
+    });
     registerIpcHandlers();
     createWindow();
     const initialProject = getInitialProjectPath();
@@ -1206,8 +1344,16 @@ if (process.versions && process.versions.electron) {
       openProject(normalizedProject);
     }
   });
-  app.on("window-all-closed", function () { killServer(); if (process.platform !== "darwin") app.quit(); });
-  app.on("before-quit", killServer);
+  app.on("window-all-closed", function () {
+    recordDebugEvent("window-all-closed");
+    writeDebugExit("window-all-closed", null);
+    killServer(); if (process.platform !== "darwin") app.quit();
+  });
+  app.on("before-quit", function (_event, code) {
+    recordDebugEvent("before-quit");
+    writeDebugExit("before-quit", code);
+    killServer();
+  });
 }
 
 module.exports = {
@@ -1221,5 +1367,6 @@ module.exports = {
   isSafeExternalUrl,
   isValidProjectPathInput,
   normalizeProjectPath,
+  resolveDebugSessionDir,
   registerIpcHandlers,
 };

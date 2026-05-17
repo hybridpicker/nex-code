@@ -44,6 +44,7 @@ const {
   parseDesktopE2EConfirmMode,
   parseDesktopE2EOptions,
   registerIpcHandlers,
+  resolveDebugSessionDir,
 } = require("../desktop/main");
 const { ipcMain } = require("electron");
 
@@ -159,6 +160,25 @@ describe("desktop main process IPC hardening", () => {
       expectNotContains: ["placeholder"],
       stateDir: "/tmp/nex-e2e-state",
     });
+  });
+
+  test("resolves explicit Desktop debug session directory", () => {
+    const debugDir = path.join(tmpRoot, "session-20260517-092246");
+
+    expect(resolveDebugSessionDir({
+      NEX_CODE_APP_DEBUG_SESSION_DIR: debugDir,
+    })).toBe(path.resolve(debugDir));
+  });
+
+  test("infers Desktop debug session directory from debug state dir", () => {
+    const debugDir = path.join(tmpRoot, "session-20260517-092246");
+
+    expect(resolveDebugSessionDir({
+      NEX_CODE_APP_STATE_DIR: path.join(debugDir, "state"),
+    })).toBe(path.resolve(debugDir));
+    expect(resolveDebugSessionDir({
+      NEX_CODE_APP_STATE_DIR: path.join(tmpRoot, "normal-state"),
+    })).toBe(null);
   });
 
   test("checks expect-contains against expected files instead of assistant text", () => {
