@@ -86,6 +86,9 @@ function _claimsEditedWorkWasPreexisting(text) {
   if (/\bnot\s+already\b/i.test(sample)) return false;
   if (/\bprevious\s+session\b|\bprior\s+session\b/i.test(sample)) return true;
   return (
+    /\b(already|previously|prior|pre-existing)\b.{0,100}\bin\s+place\b/i.test(
+      sample,
+    ) ||
     /\b(already|previously|prior|existing|pre-existing)\b.{0,100}\b(present|there|exists|existed|added|implemented|complete|completed|done|working)\b/i.test(
       sample,
     ) ||
