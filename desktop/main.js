@@ -1278,6 +1278,9 @@ function registerIpcHandlers() {
     const parsed = registry.parseModelSpec(spec);
     if (parsed && parsed.model) {
       process.env.DEFAULT_MODEL = parsed.model;
+      process.env.NEX_FORCE_MODEL = parsed.provider
+        ? `${parsed.provider}:${parsed.model}`
+        : parsed.model;
       if (parsed.provider) process.env.DEFAULT_PROVIDER = parsed.provider;
     }
     if (serverProcess) {

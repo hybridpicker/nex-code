@@ -2563,6 +2563,10 @@ let _verifyToolCalls = 0; // successful verification-phase tool calls in the cur
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
 let _stagnationNudges = 0; // soft-warning nudges for general stagnation detection
+
+function _hasForcedModelOverride() {
+  return !!String(process.env.NEX_FORCE_MODEL || "").trim();
+}
 let _consecutiveNoToolCalls = 0; // auto-escalate to stronger model if model produces no tool calls
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
@@ -7912,7 +7916,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const staleSeconds = Math.round(Math.max(elapsed, contentElapsed) / 1000);
           // Auto-switch to fast model instead of aborting.
           // The model-switch preserves progress and is more resilient.
-          if (fastModel && fastModel !== getActiveModelId() && STALE_AUTO_SWITCH) {
+          if (
+            fastModel &&
+            fastModel !== getActiveModelId() &&
+            STALE_AUTO_SWITCH &&
+            !_hasForcedModelOverride()
+          ) {
             debugLog(
               `${C.green}  🔄 Stream stale for ${staleSeconds}s — auto-switching to ${fastModel}${C.reset}`,
             );
@@ -8166,7 +8175,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               saveNow(conversationMessages);
               break;
             }
-            if (recovery.action === "switch") {
+            if (recovery.action === "switch" && !_hasForcedModelOverride()) {
               setActiveModel(`${recovery.provider}:${recovery.model}`);
               console.log(
                 `${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`,
@@ -8205,7 +8214,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   `${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`,
                 );
             }
-            if (STALE_AUTO_SWITCH) {
+            if (STALE_AUTO_SWITCH && !_hasForcedModelOverride()) {
               const fastModel =
                 MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
               if (fastModel && fastModel !== getActiveModelId()) {
@@ -8333,7 +8342,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           };
           const _nextModelSpec = _getFallbackChain()[0]; // already has provider:model format from routing config
-          if (_nextModelSpec) {
+          if (_nextModelSpec && !_hasForcedModelOverride()) {
             console.log(
               `${C.yellow}  ⚠ Model ${unavailableModel} unavailable (404) — switching to ${_nextModelSpec}${C.reset}`,
             );
@@ -9175,7 +9184,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           getAutoConfirm() &&
           _consecutiveNoToolCalls >= 3 &&
           totalToolCalls === 0 &&
-          !_boundedBacklogPlanActive
+          !_boundedBacklogPlanActive &&
+          !_hasForcedModelOverride()
         ) {
           const currentModel = getActiveModelId();
           const strongerModel = "devstral-2:123b";
@@ -14850,6 +14860,7 @@ module.exports = {
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _hasForcedModelOverride,
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,

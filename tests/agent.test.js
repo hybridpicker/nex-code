@@ -346,6 +346,7 @@ const {
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _hasForcedModelOverride,
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,
@@ -439,6 +440,7 @@ describe("agent.js", () => {
     restoreTimeout();
     delete process.env.NEX_MAX_TOOL_CALLS;
     delete process.env.NEX_DISABLE_TOOL_BUDGET;
+    delete process.env.NEX_FORCE_MODEL;
     isPlanMode.mockReturnValue(false);
     getPlanModePrompt.mockReturnValue("");
     logSpy.mockRestore();
@@ -463,6 +465,14 @@ describe("agent.js", () => {
   function logOutput() {
     return logSpy.mock.calls.map((c) => c[0]).join("\n");
   }
+
+  test("detects forced model override from environment", () => {
+    expect(_hasForcedModelOverride()).toBe(false);
+
+    process.env.NEX_FORCE_MODEL = "ollama:devstral-2:123b-cloud";
+
+    expect(_hasForcedModelOverride()).toBe(true);
+  });
 
   describe("_buildCompressionResumeTarget()", () => {
     it("does not resume a frontend task by targeting package.json", () => {
