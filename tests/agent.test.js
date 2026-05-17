@@ -2370,6 +2370,171 @@ describe("agent.js", () => {
       ).toHaveLength(1);
     });
 
+    it("corrects transcript-derived summaries that call new edits pre-existing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the nutrition ring.",
+          tool_calls: [
+            {
+              id: "read-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1875,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal line.",
+          tool_calls: [
+            {
+              id: "edit-fitness",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+                  new_text:
+                    '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>\n' +
+                    '<div class="text-[11px]" x-text="Math.round(targets.kcal - totals.kcal) + \' kcal\'"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited line.",
+          tool_calls: [
+            {
+              id: "readback-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1878,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "The remaining kcal field is already present and was added in a previous session.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed web/templates/fitness/index.html in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+        )
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce(
+          '<div class="text-[11px]" x-text="Math.round(targets.kcal - totals.kcal) + \' kcal\'"></div>',
+        );
+
+      await processInput(
+        "Add a remaining kcal display to the nutrition ring.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "described the requested change as already present",
+      );
+      expect(conversationText).toContain("Changed web/templates/fitness/index.html");
+    });
+
+    it("corrects neutral summaries that call new edits pre-existing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edited component.",
+          tool_calls: [
+            {
+              id: "readback-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "The status line already exists.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed src/components/ProfileCard.jsx in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<p>{profile.role}</p>")
+        .mockResolvedValueOnce("Patched")
+        .mockResolvedValueOnce("<p>Status: active</p>");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "described the requested change as already present",
+      );
+      expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
+    });
+
     it("blocks repeated reads of the same located target range before edits", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream

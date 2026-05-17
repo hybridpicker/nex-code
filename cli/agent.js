@@ -80,6 +80,21 @@ function _statesVerificationGap(text) {
   );
 }
 
+function _claimsEditedWorkWasPreexisting(text) {
+  if (!text || typeof text !== "string") return false;
+  const sample = text.slice(-1800);
+  if (/\bnot\s+already\b/i.test(sample)) return false;
+  if (/\bprevious\s+session\b|\bprior\s+session\b/i.test(sample)) return true;
+  return (
+    /\b(already|previously|prior|existing|pre-existing)\b.{0,100}\b(present|there|exists|existed|added|implemented|complete|completed|done|working)\b/i.test(
+      sample,
+    ) ||
+    /\b(present|there|exists|existed|added|implemented|complete|completed|done|working)\b.{0,100}\b(already|previously|prior|existing|pre-existing)\b/i.test(
+      sample,
+    )
+  );
+}
+
 function _looksLikeExplicitFinalSummary(text) {
   if (!text || typeof text !== "string") return false;
   return /^\s*(?:final\s+)?(?:summary|report|answer|result)\s*:/i.test(text);
@@ -7504,6 +7519,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
   let _scopedNoEditNudges = 0; // headless located-target prose without edits
+  let _preexistingFinalNudges = 0; // edited work described as if it already existed
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
   // ─── Post-edit verification freshness tracking ─────────────────────
@@ -9360,6 +9376,62 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           conversationMessages.push(stalledAssistantMsg);
           apiMessages.push(stalledAssistantMsg);
           console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (
+          hasText &&
+          !opts.skillLoop &&
+          (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+          _claimsEditedWorkWasPreexisting(content || streamedText || "")
+        ) {
+          if (_preexistingFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _preexistingFinalNudges++;
+            const changedFiles =
+              [...filesModified].slice(0, 12).join(", ") ||
+              "files changed by shell commands";
+            const verificationEvidence =
+              _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+              (verificationReadsRun.length > 0
+                ? `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                : "not run");
+            const correctionMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Your previous final answer described the requested change as already present or from a previous session, but this run modified files. Write an accurate final summary of what changed in this run.\n" +
+                `Changed files: ${changedFiles}.\n` +
+                `Verification: ${verificationEvidence}.\n` +
+                "Do not say the change was already present, pre-existing, or from a previous session.",
+            };
+            conversationMessages.push(correctionMsg);
+            apiMessages.push(correctionMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: edited work was described as pre-existing${C.reset}`,
+            );
+            continue;
+          }
+
+          const changedFiles =
+            [...filesModified].slice(0, 12).join(", ") ||
+            "files changed by shell commands";
+          const verificationEvidence =
+            _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+            (verificationReadsRun.length > 0
+              ? `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`
+              : "not run");
+          const correctedMsg =
+            "Completed the requested edit.\n\n" +
+            `Changed files: ${changedFiles}.\n` +
+            `Verification: ${verificationEvidence}.\n` +
+            "Finalization note: the model described the edited work as pre-existing, so nex-code replaced that with this evidence-based summary.";
+          const correctedAssistantMsg = {
+            role: "assistant",
+            content: correctedMsg,
+          };
+          conversationMessages.push(correctedAssistantMsg);
+          apiMessages.push(correctedAssistantMsg);
+          console.log(`\n${correctedMsg}`);
           saveNow(conversationMessages);
           _scoreAndPrint(conversationMessages);
           break outer;
