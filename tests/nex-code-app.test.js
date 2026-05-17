@@ -13,6 +13,7 @@ const {
   findProjectRoot,
   parseGitStatusEntries,
   selectManagedCheckoutUpdate,
+  safeCwd,
   buildLaunchArgs,
 } = require("../bin/nex-code-app.js");
 
@@ -169,6 +170,47 @@ describe("nex-code-app launcher helpers", () => {
         "--open-project",
         "/tmp/custom-project",
       ]);
+    } finally {
+      process.argv = originalArgv;
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("falls back when the launch cwd was deleted", () => {
+    const originalCwd = process.cwd;
+    const fallbackDir = makeTempDir("stable-home");
+
+    process.cwd = () => {
+      const error = new Error("ENOENT: no such file or directory, uv_cwd");
+      error.code = "ENOENT";
+      error.syscall = "uv_cwd";
+      throw error;
+    };
+
+    try {
+      expect(safeCwd(fallbackDir)).toBe(fallbackDir);
+    } finally {
+      process.cwd = originalCwd;
+    }
+  });
+
+  test("does not auto-open a deleted cwd fallback as a project", () => {
+    const originalArgv = process.argv;
+    const originalCwd = process.cwd;
+    const fallbackDir = makeTempDir("home");
+    const boundary = makeTempDir("app-devel");
+
+    process.argv = ["node", "nex-code-app"];
+    process.cwd = () => {
+      const error = new Error("ENOENT: no such file or directory, uv_cwd");
+      error.code = "ENOENT";
+      error.syscall = "uv_cwd";
+      throw error;
+    };
+
+    try {
+      expect(safeCwd(fallbackDir)).toBe(fallbackDir);
+      expect(buildLaunchArgs(boundary)).toEqual([]);
     } finally {
       process.argv = originalArgv;
       process.cwd = originalCwd;

@@ -77,6 +77,17 @@ function exists(filePath) {
   return fs.existsSync(filePath);
 }
 
+function safeCwd(fallbackDir = null) {
+  try {
+    return process.cwd();
+  } catch (error) {
+    if (error && (error.code === "ENOENT" || error.syscall === "uv_cwd")) {
+      return fallbackDir;
+    }
+    throw error;
+  }
+}
+
 function isProjectDirectory(dirPath) {
   if (!dirPath) return false;
   if (!exists(dirPath)) return false;
@@ -362,7 +373,7 @@ function buildLaunchArgs(rootDir) {
   if (forwardArgs.includes("--open-project")) return forwardArgs;
 
   const resolvedRoot = path.resolve(rootDir);
-  const launchProject = findProjectRoot(process.cwd(), resolvedRoot);
+  const launchProject = findProjectRoot(safeCwd(), resolvedRoot);
   if (launchProject && launchProject !== resolvedRoot) {
     return forwardArgs.concat(["--open-project", launchProject]);
   }
@@ -446,5 +457,6 @@ module.exports = {
   hasStrongProjectMarker,
   parseGitStatusEntries,
   selectManagedCheckoutUpdate,
+  safeCwd,
   buildLaunchArgs,
 };
