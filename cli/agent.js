@@ -9227,6 +9227,52 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const serverModeRequiresLocatedEdit = !!opts.serverMode;
         if (
           (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          !hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          filesRead.size > 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (locatedTarget?.targetFile && locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 3) {
+              _scopedNoEditNudges++;
+              const emptyNoEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] Your previous response was empty, but the target is already located: ` +
+                  `${locatedTarget.targetFile} lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. ` +
+                  "Your next response must contain exactly one edit_file or patch_file tool call for the requested scoped change. Do not search, grep, read, ask the user, or write prose before the tool call.",
+              };
+              conversationMessages.push(emptyNoEditNudge);
+              apiMessages.push(emptyNoEditNudge);
+              continue;
+            }
+
+            const stalledMsg =
+              "Implementation stalled before edits.\n\n" +
+              "The target file and range were located, but the model repeatedly returned empty responses without changing files. Stopping without reporting success so the workflow does not falsely pass.";
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
+        if (
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
           hasText &&
           !_phaseEnabled &&
           !opts.skillLoop &&

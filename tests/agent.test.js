@@ -2380,6 +2380,144 @@ describe("agent.js", () => {
       ).toHaveLength(1);
     });
 
+    it("recovers from empty headless responses after locating the kcal target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located nutrition ring section.",
+          tool_calls: [
+            {
+              id: "read-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1863,
+                  line_end: 1870,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the missing remaining kcal line.",
+          tool_calls: [
+            {
+              id: "patch-kcal",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>',
+                      new_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>\n' +
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Verbleibend \' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + \' kcal\'"></div>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "1863: <div class=\"nutrition-ring-content\">\n" +
+            "1864: <div x-text=\"Math.round(totals.kcal)\">0</div>\n" +
+            "1865: <div>kcal</div>\n" +
+            "1866: <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div>\n" +
+            "1867: </div>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "bei /fitness bzw ernährung hätte ich gern hier ein feld dass mir anzeigt wieviele kcal ich noch zu mir nehmen muss: <div class=\"nutrition-ring-content\"> <div class=\"text-3xl font-black text-gray-900 leading-none\" x-text=\"Math.round(totals.kcal)\">0</div> <div class=\"text-xs font-semibold text-gray-500 mt-1\">kcal</div> <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div> </div>",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your previous response was empty");
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
+    it("recovers from empty headless responses after locating a neutral target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "20: <article>\n21:   <h2>{profile.name}</h2>\n22:   <p>{profile.role}</p>\n23: </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your previous response was empty");
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
     it("corrects transcript-derived summaries that call new edits pre-existing", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream
