@@ -525,15 +525,24 @@ function getProviderDisabledReason(providerName, configured, hasModels) {
   return "";
 }
 
-function applyActiveModelEnv(env) {
-  if (!activeModelSpecOverride) return env;
+function buildActiveModelEnv(env, spec) {
+  if (!spec) return env;
   const registry = getProviderRegistry();
   if (!registry) return env;
-  const parsed = registry.parseModelSpec(activeModelSpecOverride);
+  const parsed = registry.parseModelSpec(spec);
   if (!parsed || !parsed.model) return env;
-  const next = Object.assign({}, env, { DEFAULT_MODEL: parsed.model });
+  const next = Object.assign({}, env, {
+    DEFAULT_MODEL: parsed.model,
+    NEX_FORCE_MODEL: parsed.provider
+      ? `${parsed.provider}:${parsed.model}`
+      : parsed.model,
+  });
   if (parsed.provider) next.DEFAULT_PROVIDER = parsed.provider;
   return next;
+}
+
+function applyActiveModelEnv(env) {
+  return buildActiveModelEnv(env, activeModelSpecOverride);
 }
 
 function spawnServer(dirPath) {
@@ -1372,6 +1381,7 @@ if (process.versions && process.versions.electron) {
 
 module.exports = {
   buildDesktopE2EOutput,
+  buildActiveModelEnv,
   classifyDesktopRunStatus,
   evaluateExpectations,
   isDesktopE2EPromptAccepted,

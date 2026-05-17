@@ -33,6 +33,7 @@ jest.mock("electron", () => ({
 }), { virtual: true });
 
 const {
+  buildActiveModelEnv,
   buildDesktopE2EOutput,
   classifyDesktopRunStatus,
   evaluateExpectations,
@@ -250,6 +251,19 @@ describe("desktop main process IPC hardening", () => {
     );
 
     expect(text).toBe("Task complete");
+  });
+
+  test("forces explicit Desktop E2E model through server env", () => {
+    const env = buildActiveModelEnv(
+      { DEFAULT_MODEL: "devstral-small-2:24b-cloud" },
+      "ollama:devstral-2:123b-cloud",
+    );
+
+    expect(env).toMatchObject({
+      DEFAULT_PROVIDER: "ollama",
+      DEFAULT_MODEL: "devstral-2:123b-cloud",
+      NEX_FORCE_MODEL: "ollama:devstral-2:123b-cloud",
+    });
   });
 
   test("requires wired renderer command controls before Desktop E2E submission", () => {
