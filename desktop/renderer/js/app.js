@@ -154,6 +154,28 @@ function refreshAllComponents() {
   }, 50);
 }
 
+let conversationTextFrame = null;
+let pendingConversationTextItem = null;
+function refreshConversationText(item) {
+  if (!item) return;
+  pendingConversationTextItem = item;
+
+  const scheduleFrame = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : function (callback) { return setTimeout(callback, 16); };
+
+  if (conversationTextFrame) return;
+  conversationTextFrame = scheduleFrame(() => {
+    const target = pendingConversationTextItem;
+    pendingConversationTextItem = null;
+    conversationTextFrame = null;
+
+    const updated = typeof updateTimelineConversationItem === "function"
+      && updateTimelineConversationItem(target);
+    if (!updated) refreshAllComponents();
+  });
+}
+
 // ─── Event Subscriptions ────────────────────────────────────────────────────
 
 function subscribeToEvents() {
@@ -211,7 +233,7 @@ function subscribeToEvents() {
     if (activeAssistant) {
       activeAssistant.text = (activeAssistant.text || "") + text;
       activeAssistant.status = "running";
-      refreshAllComponents();
+      refreshConversationText(activeAssistant);
     } else {
       addServerLog(text);
     }

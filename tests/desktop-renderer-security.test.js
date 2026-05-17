@@ -417,3 +417,49 @@ describe("desktop renderer conversation state", () => {
     expect(context.window.__nexCommandInputReady).toBe(true);
   });
 });
+
+describe("desktop renderer timeline updates", () => {
+  test("updates streamed assistant text without replacing the timeline", () => {
+    const textElement = createElementStub();
+    const stateElement = createElementStub();
+    const turnElement = createElementStub();
+    turnElement.dataset = { conversationId: "assistant-1" };
+    turnElement.classList = {
+      add: jest.fn(),
+      remove: jest.fn(),
+    };
+    turnElement.querySelector = jest.fn((selector) => {
+      if (selector === ".conversation-turn-text") return textElement;
+      if (selector === ".conversation-turn-state") return stateElement;
+      return null;
+    });
+
+    const track = createElementStub();
+    track.querySelectorAll = jest.fn(() => [turnElement]);
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => id === "timeline-track" ? track : null),
+      },
+    );
+
+    const updated = context.updateTimelineConversationItem({
+      id: "assistant-1",
+      kind: "assistant",
+      status: "running",
+      text: "Working on `desktop`",
+    });
+
+    expect(updated).toBe(true);
+    expect(track.innerHTML).toBe("");
+    expect(textElement.innerHTML).toBe("Working on `desktop`");
+    expect(stateElement.textContent).toBe("active");
+    expect(turnElement.classList.remove).toHaveBeenCalledWith(
+      "running",
+      "complete",
+      "stopped",
+      "error",
+    );
+    expect(turnElement.classList.add).toHaveBeenCalledWith("running");
+  });
+});

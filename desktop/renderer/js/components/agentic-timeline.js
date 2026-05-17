@@ -78,7 +78,7 @@ function renderConversationItem(item) {
   const kindClass = item.kind === "assistant" ? "assistant" : "user";
   const statusClass = item.status || "running";
   return `
-    <div class="conversation-turn ${kindClass} ${statusClass}">
+    <div class="conversation-turn ${kindClass} ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
       <div class="conversation-turn-meta">
         <span class="conversation-turn-role">${item.kind === "assistant" ? "nex-code" : "You"}</span>
         <span class="conversation-turn-time">${item.timestamp || ""}</span>
@@ -92,6 +92,31 @@ function renderConversationItem(item) {
       ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
     </div>
   `;
+}
+
+function updateTimelineConversationItem(item) {
+  if (!item || !item.id) return false;
+
+  const track = document.getElementById("timeline-track");
+  if (!track || typeof track.querySelectorAll !== "function") return false;
+
+  const turns = Array.from(track.querySelectorAll(".conversation-turn[data-conversation-id]"));
+  const turn = turns.find((node) => node.dataset && node.dataset.conversationId === item.id);
+  if (!turn) return false;
+
+  turn.classList.remove("running", "complete", "stopped", "error");
+  turn.classList.add(item.status || "running");
+
+  const state = turn.querySelector(".conversation-turn-state");
+  if (state) state.textContent = formatConversationState(item.status);
+
+  const text = turn.querySelector(".conversation-turn-text");
+  if (text) {
+    const html = formatConversationText(item.text);
+    if (text.innerHTML !== html) text.innerHTML = html;
+  }
+
+  return true;
 }
 
 function renderAskUserCard(query) {

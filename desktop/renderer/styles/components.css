@@ -464,7 +464,6 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  animation: fade-in 0.3s ease-out;
 }
 .conversation-turn-meta {
   display: flex;
