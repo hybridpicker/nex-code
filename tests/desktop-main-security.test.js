@@ -35,6 +35,7 @@ jest.mock("electron", () => ({
 const {
   buildDesktopE2EOutput,
   classifyDesktopRunStatus,
+  evaluateExpectations,
   isDesktopE2EPromptAccepted,
   isDesktopE2ERendererReady,
   isSafeExternalUrl,
@@ -158,6 +159,33 @@ describe("desktop main process IPC hardening", () => {
       expectNotContains: ["placeholder"],
       stateDir: "/tmp/nex-e2e-state",
     });
+  });
+
+  test("checks expect-contains against expected files instead of assistant text", () => {
+    const projectDir = fs.mkdtempSync(path.join(tmpRoot, "e2e-expect-"));
+    fs.mkdirSync(path.join(projectDir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, "src/app.js"), "const value = 1;\n");
+
+    const result = evaluateExpectations(
+      {
+        openProject: projectDir,
+        expectFiles: ["src/app.js"],
+        expectContains: ["targets.kcal - totals.kcal"],
+        expectNotContains: [],
+      },
+      "I would add targets.kcal - totals.kcal here.",
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "expect-contains",
+          value: "targets.kcal - totals.kcal",
+          ok: false,
+        }),
+      ]),
+    );
   });
 
   test("parses explicit Desktop E2E confirmation modes", () => {

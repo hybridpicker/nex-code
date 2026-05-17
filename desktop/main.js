@@ -905,7 +905,8 @@ async function submitPromptThroughRenderer(prompt) {
 }
 
 function buildExpectationCorpus(options, assistantText) {
-  const parts = [String(assistantText || "")];
+  const hasFileExpectations = (options.expectFiles || []).length > 0;
+  const parts = hasFileExpectations ? [] : [String(assistantText || "")];
   for (const filePath of options.expectFiles || []) {
     const resolved = path.resolve(options.openProject, filePath);
     try {
@@ -1212,6 +1213,7 @@ if (process.versions && process.versions.electron) {
 module.exports = {
   buildDesktopE2EOutput,
   classifyDesktopRunStatus,
+  evaluateExpectations,
   isDesktopE2EPromptAccepted,
   isDesktopE2ERendererReady,
   parseDesktopE2EOptions,

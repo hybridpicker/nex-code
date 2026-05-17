@@ -7536,6 +7536,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
   let _scopedNoEditNudges = 0; // headless located-target prose without edits
+  let _failedEditFinalNudges = 0; // failed write followed by prose without progress
   let _preexistingFinalNudges = 0; // edited work described as if it already existed
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
@@ -9835,6 +9836,48 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               continue;
             }
           }
+        }
+
+        if (
+          hasText &&
+          !opts.skillLoop &&
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          _sessionLastEditFailed.size > 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const failedEditPaths = [..._sessionLastEditFailed.keys()]
+            .filter(Boolean)
+            .slice(0, 8);
+          if (_failedEditFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _failedEditFinalNudges++;
+            const failedEditMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Implementation is not complete: your previous edit attempt failed and no files were changed. " +
+                "Do not finish in prose. Retry the edit now using exact old_text from the latest readback, or use patch_file if an exact replacement is too brittle.\n" +
+                `Failed edit path(s): ${failedEditPaths.join(", ") || "unknown"}.`,
+            };
+            conversationMessages.push(failedEditMsg);
+            apiMessages.push(failedEditMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Failed edit followed by final text — nudging for retry (${_failedEditFinalNudges}/2)${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            "A file edit was attempted but failed, and no files were changed. Stopping without reporting success so the workflow does not falsely pass.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
         }
 
         if (
