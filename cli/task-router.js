@@ -143,7 +143,19 @@ function getModelForCategory(categoryId) {
 
   // 2. Persistent routing config
   const config = loadRoutingConfig();
-  return config[categoryId] || null;
+  const configModel = config[categoryId] || null;
+
+  // 3. Fitness-weighted routing: if historical data shows the default model
+  //    underperforms for this category, switch to a proven alternative.
+  if (configModel) {
+    try {
+      const { getFitnessRecommendedModel } = require("./model-fitness");
+      const fitnessPick = getFitnessRecommendedModel(categoryId, configModel);
+      if (fitnessPick) return fitnessPick;
+    } catch { /* model-fitness not available or no data yet */ }
+  }
+
+  return configModel;
 }
 
 // ─── Phase-Based Routing ─────────────────────────────────────────────────────

@@ -40,6 +40,9 @@ const {
   getPhaseBudget,
   isPhaseRoutingEnabled,
 } = require("./task-router");
+const { runSelfVerification, buildVerificationEvidence } = require("./self-verify");
+const { logSessionOutcome, getProjectSizeBucket } = require("./model-fitness");
+const fileScrollGuard = require("./guards/file-scroll");
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
@@ -2506,6 +2509,8 @@ let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 =
 let _postWipeEverFired = false; // true once a context wipe has occurred this session
 let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
+let _selfVerifyRan = false; // true after self-verification has run this session (once-only)
+let _fitnessLogged = false; // true after session outcome has been logged (once-only)
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
 let _readsSinceCapFired = 0; // read-only calls after the investigation cap warning was injected
@@ -6335,6 +6340,8 @@ function _resetSessionTracking() {
   _postWipeEverFired = false;
   _filesModifiedAtWipe = 0;
   _postWipeBudgetExtended = false;
+  _selfVerifyRan = false;
+  _fitnessLogged = false;
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
   _readsSinceCapFired = 0;
@@ -8819,6 +8826,44 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               taskProgress = null;
             }
             setOnChange(null);
+            // ─── Self-verification: run deterministic checks before final answer ──
+            if (!_selfVerifyRan && filesModified.size > 0) {
+              _selfVerifyRan = true;
+              try {
+                const verifyResult = await runSelfVerification({
+                  filesModified,
+                  cwd: process.cwd(),
+                });
+                if (verifyResult.checks && verifyResult.checks.length > 0) {
+                  const evidenceBlock = buildVerificationEvidence(verifyResult);
+                  conversationMessages.push({ role: "user", content: evidenceBlock });
+                }
+              } catch (_verifyErr) {
+                debugLog(`  ⚠ Self-verification error: ${_verifyErr.message}`);
+              }
+            }
+            // ─── Session outcome logging for fitness routing ──────────────────
+            if (!_fitnessLogged) {
+              _fitnessLogged = true;
+              try {
+                const { getActiveModelId } = require("./providers/registry");
+                const { detectCategory } = require("./task-router");
+                const category = detectCategory(userInput);
+                const { getFileIndex } = require("./index-engine");
+                const fileCount = (getFileIndex() || []).length;
+                logSessionOutcome({
+                  model: getActiveModelId(),
+                  category: category?.id || "coding",
+                  phase: _phaseEnabled ? _currentPhase : null,
+                  projectFiles: fileCount || 0,
+                  success: filesModified.size > 0 && !_stalledThisSession,
+                  score: 0,
+                  durationMs: startTime ? Date.now() - startTime : 0,
+                });
+              } catch (_fitnessErr) {
+                debugLog(`  ⚠ Fitness logging error: ${_fitnessErr.message}`);
+              }
+            }
             _printResume(
               totalSteps,
               toolCounts,
@@ -8883,6 +8928,44 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               taskProgress = null;
             }
             setOnChange(null);
+            // ─── Self-verification: run deterministic checks before final answer ──
+            if (!_selfVerifyRan && filesModified.size > 0) {
+              _selfVerifyRan = true;
+              try {
+                const verifyResult = await runSelfVerification({
+                  filesModified,
+                  cwd: process.cwd(),
+                });
+                if (verifyResult.checks && verifyResult.checks.length > 0) {
+                  const evidenceBlock = buildVerificationEvidence(verifyResult);
+                  conversationMessages.push({ role: "user", content: evidenceBlock });
+                }
+              } catch (_verifyErr) {
+                debugLog(`  ⚠ Self-verification error: ${_verifyErr.message}`);
+              }
+            }
+            // ─── Session outcome logging for fitness routing ──────────────────
+            if (!_fitnessLogged) {
+              _fitnessLogged = true;
+              try {
+                const { getActiveModelId } = require("./providers/registry");
+                const { detectCategory } = require("./task-router");
+                const category = detectCategory(userInput);
+                const { getFileIndex } = require("./index-engine");
+                const fileCount = (getFileIndex() || []).length;
+                logSessionOutcome({
+                  model: getActiveModelId(),
+                  category: category?.id || "coding",
+                  phase: _phaseEnabled ? _currentPhase : null,
+                  projectFiles: fileCount || 0,
+                  success: filesModified.size > 0 && !_stalledThisSession,
+                  score: 0,
+                  durationMs: startTime ? Date.now() - startTime : 0,
+                });
+              } catch (_fitnessErr) {
+                debugLog(`  ⚠ Fitness logging error: ${_fitnessErr.message}`);
+              }
+            }
             _printResume(
               totalSteps,
               toolCounts,
