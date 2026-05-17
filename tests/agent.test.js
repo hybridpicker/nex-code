@@ -3131,6 +3131,264 @@ describe("agent.js", () => {
       ).toContain("Your next tool call must be edit_file or patch_file");
     });
 
+    it("injects deadlock-break message with exact file reference from varied path structures", async () => {
+      // Regression for Desktop/E2E read/grep deadlock loop with small models.
+      // Verifies the deadlock-break message references the exact file, not a
+      // hardcoded path, and works with deeply nested project structures.
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading section 1 of the config file.",
+          tool_calls: [
+            {
+              id: "read-a1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  line_start: 1,
+                  line_end: 25,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading section 2.",
+          tool_calls: [
+            {
+              id: "read-a2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  line_start: 50,
+                  line_end: 75,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying grep for the config key.",
+          tool_calls: [
+            {
+              id: "grep-b1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "DEFAULT_TIMEOUT",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying another grep pattern.",
+          tool_calls: [
+            {
+              id: "grep-b2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "timeoutMs",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying yet another grep.",
+          tool_calls: [
+            {
+              id: "grep-b3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "setTimeout",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "One more grep attempt.",
+          tool_calls: [
+            {
+              id: "grep-b4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "timeout config",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after deadlock message.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("// SettingsManager — section 1 content")
+        .mockResolvedValueOnce("// SettingsManager — section 2 content")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:42:DEFAULT_TIMEOUT = 5000")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:99:timeoutMs: number")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:156:setTimeout(() => {")
+        .mockResolvedValueOnce("(no matches)");
+
+      await processInput("Change the default timeout value in the settings manager.");
+
+      expect(executeTool).toHaveBeenCalledTimes(5);
+      const allMessages = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(allMessages).toContain("edit_file or patch_file");
+      // Verify the deadlock message references the actual file, not a hardcoded path
+      expect(allMessages).toContain("SettingsManager.ts");
+    });
+
+    it("detects read/grep deadlock on completely general file paths (anti-special-case)", async () => {
+      // Ensures the deadlock detection and escape valve work with generic,
+      // non-fitness, non-dashboard file paths. Uses a Python backend file
+      // in a deeply nested structure to prove the fix is not tied to any
+      // specific project pattern from the Desktop/E2E debug log.
+      callStream
+        .mockResolvedValueOnce({
+          content: "Read section one.",
+          tool_calls: [
+            {
+              id: "r1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 1,
+                  line_end: 30,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Read section two.",
+          tool_calls: [
+            {
+              id: "r2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 45,
+                  line_end: 70,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Read section three.",
+          tool_calls: [
+            {
+              id: "r3",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 100,
+                  line_end: 130,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 1.",
+          tool_calls: [
+            {
+              id: "g1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "process_payment",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 2.",
+          tool_calls: [
+            {
+              id: "g2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "handle_refund",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 3.",
+          tool_calls: [
+            {
+              id: "g3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "stripe.api_key",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 4.",
+          tool_calls: [
+            {
+              id: "g4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "charge",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Done after deadlock.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("# Payment Gateway — imports")
+        .mockResolvedValueOnce("# Payment Gateway — class definition")
+        .mockResolvedValueOnce("# Payment Gateway — helper methods")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:78:def process_payment(")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:134:def handle_refund(")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:12:stripe.api_key")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:45:charge =");
+
+      await processInput("Add Stripe webhook verification to payment gateway.");
+
+      expect(executeTool).toHaveBeenCalledTimes(6);
+      const allMessages = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(allMessages).toContain("edit_file or patch_file");
+      // Verify no hardcoded reference to fitness, dashboard, or jarvis-specific paths
+      expect(allMessages).not.toMatch(/fitness|dashboard\.html|jarvis/i);
+    });
+
     it("nudges empty post-tool edit tasks toward editing instead of summarizing", async () => {
       callStream
         .mockResolvedValueOnce({

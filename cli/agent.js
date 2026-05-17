@@ -2501,6 +2501,7 @@ let _compressionMsgCount = 0; // count consecutive identical compression message
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 let _sshStormCount = 0; // how many times the SSH storm warning has fired this session
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
+let _deadlockOnFile = null; // file path that triggered a read/grep deadlock — preserved across super-nuclear to break compression loops
 let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
 let _postWipeEverFired = false; // true once a context wipe has occurred this session
 let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
@@ -6329,6 +6330,7 @@ function _resetSessionTracking() {
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
+  _deadlockOnFile = null;
   _postWipeToolBudget = -1;
   _postWipeEverFired = false;
   _filesModifiedAtWipe = 0;
@@ -8612,6 +8614,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 }
               }
 
+              // If a read/grep deadlock was detected before the wipe, inject explicit
+              // edit instructions into findings so the model does not re-enter the
+              // same deadlock loop after compression. Without this, the deadlock-break
+              // message is lost and the model retries reads/ greps → another wipe.
+              if (_deadlockOnFile) {
+                const _deadShort = _deadlockOnFile.split("/").slice(-2).join("/");
+                const _deadGrepEvidence =
+                  _sessionLastGrepResultByPath.get(_deadlockOnFile) || "";
+                _findingParts.push(
+                  `[DEADLOCK ESCAPE] "${_deadShort}" — both read_file and grep were exhausted before this wipe. ` +
+                  (filesModified.size === 0
+                    ? "You MUST use edit_file or patch_file next. Do NOT re-read or grep this file — you already have its content."
+                    : "You have already edited some files. Continue with edit_file/patch_file using the evidence in context.") +
+                  (_deadGrepEvidence
+                    ? `\n\nLast grep evidence before wipe:\n${_deadGrepEvidence}`
+                    : ""),
+                );
+              }
               if (_findingParts.length > 0) {
                 const _findingsMsg = {
                   role: "user",
@@ -11670,8 +11690,30 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // in between, it is scrolling through the file chunk-by-chunk. Scrolling accumulates
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
+              //
+              // Deadlock escape valve: after at least one super-nuclear compression, if the
+              // model targets the same file that triggered the previous read/grep deadlock,
+              // allow ONE more targeted read instead of blocking again. This breaks the
+              // compression → deadlock → compression cycle observed with small models.
               const sectionCount = prevRanges.length; // sections already committed
-              if (
+              const _isDeadlockEscape =
+                _deadlockOnFile === path && _superNuclearFires >= 1;
+              if (_isDeadlockEscape) {
+                _deadlockOnFile = null; // one-time escape consumed
+                debugLog(
+                  `${C.yellow}  ⚠ Deadlock escape: allowing targeted read of "${path.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
+                );
+                const escapeMsg = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] One-time read pass for "${path}" after context wipe. ` +
+                    "Gather the exact lines you need, then edit immediately. " +
+                    "Do not re-read or grep this file again.",
+                };
+                conversationMessages.push(escapeMsg);
+                apiMessages.push(escapeMsg);
+                // Fall through — let the read execute this one time
+              } else if (
                 sectionCount >= SCROLL_BLOCK_SECTIONS &&
                 !prep._boundedBacklogPostGrepRead
               ) {
@@ -11697,6 +11739,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   };
                   conversationMessages.push(deadlockMsg);
                   apiMessages.push(deadlockMsg);
+                  _deadlockOnFile = path; // track for super-nuclear persistence
                   debugLog(
                     `${C.red}  ✖ Deadlock detected: "${shortPath}" — file-scroll and grep exhausted, requiring edit${C.reset}`,
                   );
@@ -11932,7 +11975,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const effectiveGrepAbort = fileAlreadyReadForGrep
           ? Math.min(3, LOOP_ABORT_GREP_FILE)
           : LOOP_ABORT_GREP_FILE;
-        if (alreadyGrepped >= effectiveGrepAbort) {
+        // Deadlock escape valve: after super-nuclear compression, allow ONE more
+        // grep on the deadlocked file instead of blocking again.
+        const _isGrepDeadlockEscape =
+          _deadlockOnFile === grepPath && _superNuclearFires >= 1;
+        if (_isGrepDeadlockEscape) {
+          _deadlockOnFile = null; // one-time escape consumed
+          debugLog(
+            `${C.yellow}  ⚠ Deadlock escape (grep): allowing one more grep on "${grepPath.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
+          );
+          const escapeMsg = {
+            role: "user",
+            content:
+              `[SYSTEM] One-time grep pass for "${grepPath}" after context wipe. ` +
+              "Use the grep results immediately to make your edit. " +
+              "Do not re-read or grep this file again.",
+          };
+          conversationMessages.push(escapeMsg);
+          apiMessages.push(escapeMsg);
+          // Fall through — let the grep execute this one time
+        } else if (alreadyGrepped >= effectiveGrepAbort) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
             `${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`,
@@ -11962,6 +12024,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             };
             conversationMessages.push(deadlockMsg);
             apiMessages.push(deadlockMsg);
+            _deadlockOnFile = grepPath; // track for super-nuclear persistence
             debugLog(
               `${C.red}  ✖ Deadlock detected: "${shortPath}" — both read and grep blocked, injecting deadlock-break${C.reset}`,
             );
