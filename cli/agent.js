@@ -9405,7 +9405,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           (_claimsEditedWorkWasPreexisting(content || streamedText || "") ||
             _claimsUnableToEditAfterEdits(content || streamedText || ""))
         ) {
-          if (_preexistingFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+          const shouldReplaceFinalAnswer =
+            getAutoConfirm() || opts.autoConfirm || opts.serverMode;
+          if (
+            !shouldReplaceFinalAnswer &&
+            _preexistingFinalNudges < 2 &&
+            i < MAX_ITERATIONS - 1
+          ) {
             _preexistingFinalNudges++;
             const changedFiles =
               [...filesModified].slice(0, 12).join(", ") ||
@@ -9441,9 +9447,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : "not run");
           const correctedMsg =
             "Completed the requested edit.\n\n" +
-            `Changed files: ${changedFiles}.\n` +
+            `Changed ${changedFiles}.\n` +
             `Verification: ${verificationEvidence}.\n` +
-            "Finalization note: the model produced an inaccurate final answer after edits, so nex-code replaced it with this evidence-based summary.";
+            "Finalization note: the previous final answer did not accurately describe this run, so nex-code replaced it with this evidence-based summary.";
           const correctedAssistantMsg = {
             role: "assistant",
             content: correctedMsg,
