@@ -5379,6 +5379,16 @@ describe("agent.js", () => {
       ).toBe(true);
       expect(
         agent._isSimpleDirectAnswerPrompt(
+          'bei /fitness hätte ich gern hier ein Feld für verbleibende kcal: <div class="nutrition-ring-content"><div x-text="Math.round(totals.kcal)"></div></div>',
+        ),
+      ).toBe(false);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'In /dashboard add a status label near this markup: <section class="summary"><span>{status}</span></section>',
+        ),
+      ).toBe(false);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
           "Identify and fix the memory leak in this Node.js code:\nconst emitter = new EventEmitter();",
         ),
       ).toBe(true);
