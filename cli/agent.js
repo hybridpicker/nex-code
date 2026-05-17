@@ -12479,8 +12479,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               );
             if (
               !isRequiredVerification &&
-              (filesModified.size > 0 || _bashModifiedFiles > 0) &&
-              hasPostEditReadback
+              (filesModified.size > 0 || _bashModifiedFiles > 0)
             ) {
               const changedFiles =
                 [...filesModified].slice(0, 12).join(", ") ||
@@ -12491,7 +12490,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   : [...filesModified]
                       .filter((file) => filesRead.has(file))
                       .slice(0, 8);
-              const readbackEvidence = `post-edit readback: ${readbackFiles.join(", ")}`;
+              const readbackEvidence = hasPostEditReadback
+                ? `post-edit readback: ${readbackFiles.join(", ")}`
+                : "not completed; optional package verification could not run in this workspace";
               const completedMsg =
                 "Completed the requested edit.\n\n" +
                 `Changed files: ${changedFiles}.\n` +
