@@ -35,6 +35,26 @@ function summarizeAssistantText(text) {
   return firstParagraph.slice(0, 240);
 }
 
+function looksLikeUnfinishedInvestigation(text) {
+  const normalized = String(text || "").trim().replace(/\s+/g, " ");
+  if (!normalized) return false;
+
+  const claimsCompletion =
+    /\b(done|complete|completed|fixed|implemented|updated|verified|changed|added|created|wrote|passed|successfully)\b/i.test(
+      normalized,
+    );
+  if (claimsCompletion) return false;
+
+  return (
+    /\b(?:i'll|i will|let me|i need to)\b.{0,120}\b(?:check|inspect|read|search|find|look at|understand)\b/i.test(
+      normalized,
+    ) &&
+    /(?:first|current|specific|actual|structure|section|file|content|:)\s*$/i.test(
+      normalized,
+    )
+  );
+}
+
 function classifyTurnOutcome(turnMessages) {
   const assistantMessages = Array.isArray(turnMessages)
     ? turnMessages
@@ -59,6 +79,14 @@ function classifyTurnOutcome(turnMessages) {
       lastAssistant,
     )
   ) {
+    return {
+      status: "stalled",
+      success: false,
+      summary: summarizeAssistantText(lastAssistant),
+    };
+  }
+
+  if (looksLikeUnfinishedInvestigation(lastAssistant)) {
     return {
       status: "stalled",
       success: false,
@@ -306,4 +334,9 @@ function startServerMode() {
   });
 }
 
-module.exports = { startServerMode, classifyTurnOutcome, summarizeAssistantText };
+module.exports = {
+  startServerMode,
+  classifyTurnOutcome,
+  summarizeAssistantText,
+  looksLikeUnfinishedInvestigation,
+};

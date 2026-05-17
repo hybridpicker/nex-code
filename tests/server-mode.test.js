@@ -183,6 +183,72 @@ describe("startServerMode", () => {
     });
   });
 
+  test("marks unfinished transcript-derived investigation text as non-success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            'I will add the "remaining kcal" field. Let me first check the current structure of the nutrition ring content section:',
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-unfinished-kcal","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-unfinished-kcal"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-unfinished-kcal",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("marks unfinished neutral investigation text as non-success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "I will update src/components/ProfileCard.jsx. Let me first inspect the current component structure:",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-unfinished-neutral","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-unfinished-neutral"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-unfinished-neutral",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("keeps completed implementation summaries as success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "Updated src/components/ProfileCard.jsx and verified the focused component test passed.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-complete-neutral","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-complete-neutral"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-complete-neutral",
+      status: "complete",
+      success: true,
+    });
+  });
+
   test("marks missing final assistant output as stalled", async () => {
     startFresh();
     getConversationMessages.mockReturnValueOnce([]).mockReturnValueOnce([]);

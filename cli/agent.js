@@ -8632,6 +8632,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 console.log(
                   `${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ""}${C.reset}`,
                 );
+                const stalledSummary =
+                  filesModified.size > 0
+                    ? `Implementation stalled after partial changes.\n\nThe run reached the super-nuclear context wipe limit after repeated blocked or oversized investigation steps.${modList} Stopping without reporting success so the workflow does not falsely pass.`
+                    : "Implementation stalled before edits.\n\nThe run reached the super-nuclear context wipe limit after repeated blocked or oversized investigation steps. Stopping without reporting success so the workflow does not falsely pass.";
+                conversationMessages.push({
+                  role: "assistant",
+                  content: stalledSummary,
+                });
                 if (taskProgress) {
                   taskProgress.stop();
                   taskProgress = null;
@@ -8646,7 +8654,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   { suppressHint: true },
                 );
                 saveNow(conversationMessages);
-                break;
+                break outer;
               }
 
               apiMessages = _superNuclear;
