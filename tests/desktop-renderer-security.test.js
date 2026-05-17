@@ -266,6 +266,44 @@ describe("desktop renderer conversation state", () => {
     ]);
   });
 
+  test("uses corrected done summary over stale streamed fitness text", () => {
+    const context = loadAppController();
+
+    const finalText = context.extractFinalAssistantText(
+      {
+        success: true,
+        summary:
+          "Completed the requested edit. Changed web/templates/fitness/index.html.",
+      },
+      {
+        text:
+          "The remaining kcal field has already been added on line 1867.",
+      },
+    );
+
+    expect(finalText).toContain("Completed the requested edit");
+    expect(finalText).toContain("web/templates/fitness/index.html");
+    expect(finalText).not.toContain("already been added");
+  });
+
+  test("uses corrected done response over stale streamed neutral text", () => {
+    const context = loadAppController();
+
+    const finalText = context.extractFinalAssistantText(
+      {
+        success: true,
+        response:
+          "Changed src/components/ProfileCard.jsx in this run and verified it.",
+      },
+      {
+        text: "The status line was already present.",
+      },
+    );
+
+    expect(finalText).toContain("Changed src/components/ProfileCard.jsx");
+    expect(finalText).not.toContain("already present");
+  });
+
   test("marks running user turns stopped when a run stalls", () => {
     const context = loadAppController();
 

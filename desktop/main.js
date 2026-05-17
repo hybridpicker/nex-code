@@ -637,10 +637,10 @@ function recordDesktopE2EServerEvent(msg) {
       ? (msg.status || "stalled")
       : "complete";
     desktopE2EResult.lastAction = msg.summary || null;
-    if (!desktopE2EResult.assistantText && msg.response) {
+    if (msg.response) {
       desktopE2EResult.assistantText = String(msg.response);
     }
-    if (!desktopE2EResult.assistantText && msg.summary) {
+    if (!msg.response && msg.summary) {
       desktopE2EResult.assistantText = String(msg.summary);
     }
     return;

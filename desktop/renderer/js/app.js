@@ -678,11 +678,6 @@ function applyVerificationFromToolEnd(payload, action) {
 }
 
 function extractFinalAssistantText(donePayload, activeAssistant) {
-  const streamed = activeAssistant && activeAssistant.text
-    ? activeAssistant.text.trim()
-    : "";
-  if (streamed) return streamed;
-
   const response = donePayload && typeof donePayload.response === "string"
     ? donePayload.response.trim()
     : "";
@@ -692,6 +687,11 @@ function extractFinalAssistantText(donePayload, activeAssistant) {
     ? donePayload.summary.trim()
     : "";
   if (summary) return summary;
+
+  const streamed = activeAssistant && activeAssistant.text
+    ? activeAssistant.text.trim()
+    : "";
+  if (streamed) return streamed;
 
   return activeAssistant && activeAssistant.text ? activeAssistant.text : "";
 }
