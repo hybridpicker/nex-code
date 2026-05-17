@@ -4372,6 +4372,84 @@ describe("agent.js", () => {
       ).toBe(false);
     });
 
+    it("finishes after readback when optional verification dependencies are missing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Applying the scoped fix.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              patches: [
+                {
+                  old_text: "<button>Save</button>",
+                  new_text: "<button>Save</button>\n<span>Status: active</span>",
+                },
+              ],
+            },
+          },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Reading the edited component.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: { path: "src/components/GameControls.jsx" },
+          },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "<button>Save</button>\n<span>Status: active</span>",
+      );
+
+      mockStream("Running lint as an extra check.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("EXIT 127\nsh: eslint: command not found");
+
+      try {
+        await processInput(
+          "Add a status line to src/components/GameControls.jsx.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      const messages = getConversationMessages();
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Completed the requested edit.") &&
+            m.content.includes("post-edit readback") &&
+            m.content.includes("Additional verification skipped") &&
+            m.content.includes("npm run lint"),
+        ),
+      ).toBe(true);
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete."),
+        ),
+      ).toBe(false);
+    });
+
     it("fails closed after repeated verification stalls without edit progress", async () => {
       getAutoConfirm.mockReturnValue(true);
 

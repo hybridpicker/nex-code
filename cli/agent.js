@@ -12450,6 +12450,49 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             res,
           );
           if (setupFailure) {
+            const normalizedFailedCommand = _normalizeVerificationCommand(
+              prep.args?.command || "",
+            );
+            const isRequiredVerification = requiredVerificationCommands.some(
+              (cmd) =>
+                _normalizeVerificationCommand(cmd) === normalizedFailedCommand,
+            );
+            const hasPostEditReadback =
+              verificationReadsRun.length > 0 ||
+              [...filesModified].some(
+                (file) => filesRead.has(file) && !_editedFilesNotReread.has(file),
+              );
+            if (
+              !isRequiredVerification &&
+              (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+              hasPostEditReadback
+            ) {
+              const changedFiles =
+                [...filesModified].slice(0, 12).join(", ") ||
+                "files changed by shell commands";
+              const readbackFiles =
+                verificationReadsRun.length > 0
+                  ? verificationReadsRun.slice(0, 8)
+                  : [...filesModified]
+                      .filter((file) => filesRead.has(file))
+                      .slice(0, 8);
+              const readbackEvidence = `post-edit readback: ${readbackFiles.join(", ")}`;
+              const completedMsg =
+                "Completed the requested edit.\n\n" +
+                `Changed files: ${changedFiles}.\n` +
+                `Verification: ${readbackEvidence}.\n` +
+                `Additional verification skipped: ${setupFailure}`;
+              const completedAssistantMsg = {
+                role: "assistant",
+                content: completedMsg,
+              };
+              conversationMessages.push(completedAssistantMsg);
+              apiMessages.push(completedAssistantMsg);
+              console.log(`\n${completedMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
             const stalledMsg =
               "Verification incomplete.\n\n" +
               `${setupFailure} In headless auto mode, stop here instead of asking to run npm install or other setup commands during the scoped task. Prepare the sandbox with dependencies installed, then rerun the same gate.`;
