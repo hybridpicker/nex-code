@@ -232,7 +232,7 @@ function startServerMode() {
             ? beforeSnapshot
             : [];
           const beforeCount = beforeMessages.length;
-          await processInput(msg.text, serverHooks);
+          await processInput(msg.text, serverHooks, { serverMode: true });
           const afterSnapshot = getConversationMessages?.();
           const afterMessages = Array.isArray(afterSnapshot)
             ? afterSnapshot

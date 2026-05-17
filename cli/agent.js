@@ -9151,15 +9151,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        const serverModeRequiresLocatedEdit = !!opts.serverMode;
         if (
-          (getAutoConfirm() || opts.autoConfirm) &&
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
           hasText &&
           !_phaseEnabled &&
           !opts.skillLoop &&
           filesModified.size === 0 &&
           _bashModifiedFiles === 0 &&
           filesRead.size > 0 &&
-          _isActionableImplementationPrompt(userInput)
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
         ) {
           const locatedTarget = _buildCompressionResumeTarget(
             filesRead,
@@ -9481,7 +9483,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             needsEditAction &&
             locatedTarget?.targetFile &&
             locatedTarget?.targetRange &&
-            _isActionableImplementationPrompt(userInput);
+            (_isActionableImplementationPrompt(userInput) ||
+              _isSmallInsertionPrompt(userInput));
           const nudge = {
             role: "user",
             content: locatedEditAction
@@ -9710,13 +9713,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
-          (getAutoConfirm() || opts.autoConfirm) &&
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
           hasText &&
           !_phaseEnabled &&
           !opts.skillLoop &&
           filesModified.size === 0 &&
           _bashModifiedFiles === 0 &&
-          _isActionableImplementationPrompt(userInput)
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
         ) {
           const _locatedTarget = _buildCompressionResumeTarget(
             filesRead,

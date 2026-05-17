@@ -121,7 +121,9 @@ describe("startServerMode", () => {
 
     await mockLineHandler('{"type":"chat","id":"msg-1","text":"hello"}');
 
-    expect(processInput).toHaveBeenCalledWith("hello", expect.any(Object));
+    expect(processInput).toHaveBeenCalledWith("hello", expect.any(Object), {
+      serverMode: true,
+    });
     // Should emit done
     const doneMsg = stdoutWrites.find((w) => w.includes('"done"'));
     expect(doneMsg).toBeDefined();
