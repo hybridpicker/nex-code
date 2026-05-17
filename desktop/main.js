@@ -1093,6 +1093,18 @@ function buildDesktopE2EOutput(result) {
   });
 }
 
+function selectDesktopE2EFinalAssistantText(rendererState, serverText, serverLastAction) {
+  const renderer = rendererState || {};
+  if (
+    renderer.lastAction === "Task complete" &&
+    serverLastAction &&
+    !/^Task complete$/i.test(String(renderer.finalAssistantText || "").trim())
+  ) {
+    return String(serverLastAction);
+  }
+  return renderer.finalAssistantText || serverText || serverLastAction || "";
+}
+
 async function runDesktopE2E() {
   if (!desktopE2EOptions.enabled || e2eRunStarted) return;
   e2eRunStarted = true;
@@ -1139,9 +1151,11 @@ async function runDesktopE2E() {
     });
 
     const rendererState = await readRendererE2EState();
-    const finalAssistantText = rendererState.finalAssistantText
-      || desktopE2EResult.assistantText
-      || "";
+    const finalAssistantText = selectDesktopE2EFinalAssistantText(
+      rendererState,
+      desktopE2EResult.assistantText,
+      desktopE2EResult.lastAction,
+    );
     const expectations = evaluateExpectations(desktopE2EOptions, finalAssistantText);
     const gitAfter = readGitStatusSync(normalizedProject);
     const result = {
@@ -1368,5 +1382,6 @@ module.exports = {
   isValidProjectPathInput,
   normalizeProjectPath,
   resolveDebugSessionDir,
+  selectDesktopE2EFinalAssistantText,
   registerIpcHandlers,
 };

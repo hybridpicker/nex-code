@@ -45,6 +45,7 @@ const {
   parseDesktopE2EOptions,
   registerIpcHandlers,
   resolveDebugSessionDir,
+  selectDesktopE2EFinalAssistantText,
 } = require("../desktop/main");
 const { ipcMain } = require("electron");
 
@@ -236,6 +237,19 @@ describe("desktop main process IPC hardening", () => {
       timedOut: true,
       lastAction: "Desktop run completion timed out after 240000ms",
     })).toMatchObject({ state: "timeout", exitCode: 124 });
+  });
+
+  test("prefers completion evidence over stale renderer failure text", () => {
+    const text = selectDesktopE2EFinalAssistantText(
+      {
+        finalAssistantText: "I cannot write that file.",
+        lastAction: "Task complete",
+      },
+      "I cannot write that file.",
+      "Task complete",
+    );
+
+    expect(text).toBe("Task complete");
   });
 
   test("requires wired renderer command controls before Desktop E2E submission", () => {
