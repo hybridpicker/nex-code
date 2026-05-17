@@ -3726,6 +3726,82 @@ function _patchLooksLikeInsertionAroundAnchor(oldText, newText) {
   return false;
 }
 
+function _promptExplicitlyRequestsWhitespaceInsertion(taskText) {
+  return /\b(?:blank|empty|whitespace-only|spacer)\s+line\b|\bextra\s+(?:spacing|space)\b|\bvertical\s+space\b/i.test(
+    String(taskText || ""),
+  );
+}
+
+function _getInsertionLineDelta(oldText, newText) {
+  if (typeof oldText !== "string" || typeof newText !== "string") return null;
+  const newline = newText.includes("\r\n") ? "\r\n" : "\n";
+  const oldLines = oldText.split(/\r?\n/);
+  const newLines = newText.split(/\r?\n/);
+  if (newLines.length <= oldLines.length) return null;
+
+  const inserted = [];
+  let oldIdx = 0;
+  const normalized = [];
+  for (const line of newLines) {
+    if (oldIdx < oldLines.length && line === oldLines[oldIdx]) {
+      normalized.push(line);
+      oldIdx++;
+    } else {
+      inserted.push(line);
+      if (line.trim()) normalized.push(line);
+    }
+  }
+  if (oldIdx !== oldLines.length) return null;
+
+  const nonWhitespaceInsertions = inserted.filter((line) => line.trim());
+  const whitespaceInsertions = inserted.filter((line) => !line.trim());
+  if (nonWhitespaceInsertions.length !== 1 || whitespaceInsertions.length === 0) {
+    return null;
+  }
+
+  return {
+    inserted,
+    normalizedText: normalized.join(newline),
+  };
+}
+
+function _normalizeWhitespaceOnlySingleLineInsertion(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (_promptExplicitlyRequestsWhitespaceInsertion(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  let changed = false;
+  const normalizePatch = (patch) => {
+    const delta = _getInsertionLineDelta(patch?.old_text, patch?.new_text);
+    if (!delta) return;
+    patch.new_text = delta.normalizedText;
+    changed = true;
+  };
+
+  if (prep.fnName === "patch_file") {
+    for (const patch of Array.isArray(prep.args?.patches) ? prep.args.patches : []) {
+      normalizePatch(patch);
+    }
+  } else {
+    const patch = {
+      old_text: prep.args?.old_text,
+      new_text: prep.args?.new_text,
+    };
+    normalizePatch(patch);
+    if (changed) prep.args.new_text = patch.new_text;
+  }
+  return changed;
+}
+
 function _buildInsertionGuardMessage(filePath, targetRange = null) {
   const rangeText = targetRange
     ? ` lines ${targetRange.lineStart}-${targetRange.lineEnd}`
@@ -11029,6 +11105,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               )
             )
               continue;
+            _normalizeWhitespaceOnlySingleLineInsertion(
+              prep,
+              _locatedTarget,
+              userInput,
+            );
             _blockAdjacentRewriteForInsertion(
               prep,
               _locatedTarget,

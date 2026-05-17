@@ -509,6 +509,118 @@ describe("agent.js", () => {
     });
   });
 
+  describe("single-line insertion whitespace guard", () => {
+    it("normalizes transcript-derived blank-line insertions for scoped edits", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Reading the located target.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "src/pages/FitnessSummary.jsx",
+              line_start: 20,
+              line_end: 28,
+            },
+          },
+          id: "read-fitness",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "20: <div className=\"metric\">Calories remaining</div>\n" +
+          "21: <div className=\"ring\" />",
+      );
+      mockStream("Applying the focused insertion.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/pages/FitnessSummary.jsx",
+              old_text: '<div className="metric">Calories remaining</div>',
+              new_text:
+                '<div className="metric">Calories remaining</div>\n' +
+                '<div className="value">Remaining kcal</div>\n',
+            },
+          },
+          id: "edit-fitness",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("PASS: inserted the requested line.", []);
+
+      await processInput(
+        "In src/pages/FitnessSummary.jsx, add the remaining kcal value after the Calories remaining line.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 5 },
+      );
+
+      const editCall = executeTool.mock.calls.find(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCall).toBeDefined();
+      expect(editCall[1].new_text).toBe(
+        '<div className="metric">Calories remaining</div>\n' +
+          '<div className="value">Remaining kcal</div>',
+      );
+    });
+
+    it("normalizes neutral scoped insertion patches with incidental blank lines", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Reading ProfileCard.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              line_start: 8,
+              line_end: 16,
+            },
+          },
+          id: "read-profile",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "8:   const displayName = user.name;\n" +
+          "9:   return <section>{displayName}</section>;",
+      );
+      mockStream("Applying one status line.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              patches: [
+                {
+                  old_text: "  const displayName = user.name;",
+                  new_text:
+                    "  const displayName = user.name;\n" +
+                    "  const statusText = user.status || 'Active';\n",
+                },
+              ],
+            },
+          },
+          id: "patch-profile",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("PASS: inserted the requested line.", []);
+
+      await processInput(
+        "In src/components/ProfileCard.jsx, insert one status line after the displayName line.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 5 },
+      );
+
+      const patchCall = executeTool.mock.calls.find(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCall).toBeDefined();
+      expect(patchCall[1].patches[0].new_text).toBe(
+        "  const displayName = user.name;\n" +
+          "  const statusText = user.status || 'Active';",
+      );
+    });
+  });
+
   function spinnerLabels() {
     // Section headers are written to stdout via process.stdout.write (strip ANSI codes)
     const stdoutSpy = process.stdout.write;
