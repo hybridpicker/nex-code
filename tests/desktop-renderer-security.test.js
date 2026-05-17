@@ -115,10 +115,132 @@ describe("desktop renderer HTML escaping", () => {
     expect(html).toContain("conversation-bubble-wrap");
     expect(html).toContain("conversation-turn user complete");
     expect(html).toContain("conversation-turn assistant running");
+    expect(html).toContain("conversation-step-message active cyan");
+    expect(html).toContain("I am finding the right files");
     expect(html).toContain("conversation-activity-item cyan");
     expect(html).toContain("Nex Code");
     expect(html).toContain("read_file in progress");
     expect(html).not.toContain("conversation-activity-item cyan\" open");
+  });
+
+  test("renders an assistant starting message before streamed text arrives", () => {
+    const elements = {
+      "timeline-track": createElementStub(),
+      "timeline": createElementStub(),
+      "task-complete": createElementStub(),
+      "timeline-status-pill": createElementStub(),
+      "timeline-status-text": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initTimelineComponents({
+      sessionState: "running",
+      agenticNodes: [],
+      conversationItems: [
+        {
+          id: "a1",
+          kind: "assistant",
+          text: "",
+          status: "running",
+          timestamp: "10:01",
+          phases: [],
+        },
+      ],
+    });
+
+    expect(elements["timeline-track"].innerHTML).toContain("I am getting started");
+    expect(elements["timeline-track"].innerHTML).not.toContain("conversation-turn-card");
+  });
+
+  test("keeps running kcal assistant prose out of the final answer card", () => {
+    const elements = {
+      "timeline-track": createElementStub(),
+      "timeline": createElementStub(),
+      "task-complete": createElementStub(),
+      "timeline-status-pill": createElementStub(),
+      "timeline-status-text": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initTimelineComponents({
+      sessionState: "running",
+      agenticNodes: [{ phase: "VERIFY", status: "active" }],
+      conversationItems: [
+        {
+          id: "a1",
+          kind: "assistant",
+          text: "The remaining kcal display is already complete.",
+          status: "running",
+          timestamp: "10:01",
+          phases: [
+            {
+              phase: "VERIFY",
+              detail: "post-edit readback",
+              status: "active",
+              color: "teal",
+            },
+          ],
+        },
+      ],
+    });
+
+    const html = elements["timeline-track"].innerHTML;
+    expect(html).toContain("I am checking the result");
+    expect(html).toContain("post-edit readback");
+    expect(html).not.toContain("conversation-final-card");
+    expect(html).not.toContain("already complete");
+  });
+
+  test("renders neutral assistant prose as final text after completion", () => {
+    const elements = {
+      "timeline-track": createElementStub(),
+      "timeline": createElementStub(),
+      "task-complete": createElementStub(),
+      "timeline-status-pill": createElementStub(),
+      "timeline-status-text": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initTimelineComponents({
+      sessionState: "complete",
+      agenticNodes: [{ phase: "VERIFY", status: "complete" }],
+      conversationItems: [
+        {
+          id: "a1",
+          kind: "assistant",
+          text: "Changed src/components/ProfileCard.jsx.",
+          status: "complete",
+          timestamp: "10:01",
+          phases: [
+            {
+              phase: "VERIFY",
+              detail: "post-edit readback",
+              status: "complete",
+              color: "teal",
+            },
+          ],
+        },
+      ],
+    });
+
+    const html = elements["timeline-track"].innerHTML;
+    expect(html).toContain("conversation-final-card");
+    expect(html).toContain("Changed src/components/ProfileCard.jsx.");
   });
 
   test("escapes completion banner project and phase text", () => {

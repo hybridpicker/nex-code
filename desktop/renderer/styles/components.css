@@ -489,6 +489,24 @@
   position: relative;
   padding-left: 32px;
 }
+.conversation-turn.assistant .conversation-bubble-wrap::before {
+  content: "N";
+  position: absolute;
+  left: 0;
+  top: 23px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 229, 255, 0.12);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  color: var(--accent-cyan);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+}
 .conversation-turn-meta {
   display: flex;
   align-items: center;
@@ -542,24 +560,6 @@
   background: rgba(25, 32, 44, 0.94);
   border-color: rgba(255, 255, 255, 0.11);
   border-bottom-left-radius: 7px;
-}
-.conversation-turn.assistant .conversation-turn-card::before {
-  content: "N";
-  position: absolute;
-  left: 0;
-  top: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(0, 229, 255, 0.12);
-  border: 1px solid rgba(0, 229, 255, 0.22);
-  color: var(--accent-cyan);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 700;
 }
 .conversation-turn-text,
 .conversation-assistant-text,
@@ -637,6 +637,48 @@
 .conversation-option-btn:hover {
   background: rgba(0, 229, 255, 0.16);
   border-color: rgba(0, 229, 255, 0.34);
+}
+
+.conversation-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+.conversation-step-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conversation-step-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 11px;
+  border-radius: 14px;
+  border-bottom-left-radius: 6px;
+  background: rgba(255, 255, 255, 0.032);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.conversation-step-message.active .conversation-step-card {
+  color: rgba(244, 247, 251, 0.92);
+  background: rgba(0, 229, 255, 0.075);
+  border-color: rgba(0, 229, 255, 0.16);
+}
+.conversation-step-status {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-tertiary);
+}
+.conversation-step-message.active .conversation-step-status {
+  color: var(--accent-cyan);
 }
 
 .conversation-activity-stack {

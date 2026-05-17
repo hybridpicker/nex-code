@@ -76,6 +76,8 @@ function renderEmptyConversation() {
 }
 
 function renderConversationItem(item) {
+  if (item.kind === "assistant") return renderAssistantConversationItem(item);
+
   const kindClass = item.kind === "assistant" ? "assistant" : "user";
   const statusClass = item.status || "running";
   return `
@@ -91,6 +93,33 @@ function renderConversationItem(item) {
         </div>
         ${renderAskUserCard(item.query)}
         ${renderPhaseStack(item.phases || [])}
+        ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderAssistantConversationItem(item) {
+  const statusClass = item.status || "running";
+  const phases = Array.isArray(item.phases) ? item.phases : [];
+  const hasText = String(item.text || "").trim().length > 0;
+  const showFinalText = hasText && (statusClass !== "running" || phases.length === 0);
+
+  return `
+    <div class="conversation-turn assistant ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
+      <div class="conversation-bubble-wrap">
+        <div class="conversation-turn-meta">
+          <span class="conversation-turn-role">Nex Code</span>
+          <span class="conversation-turn-time">${escapeConversationHtml(item.timestamp || "")}</span>
+          <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
+        </div>
+        ${phases.length > 0 ? renderAssistantStepMessages(phases) : (!showFinalText ? renderAssistantStartingMessage() : "")}
+        ${showFinalText ? `
+          <div class="conversation-turn-card conversation-final-card">
+            <div class="conversation-turn-text conversation-final-text">${formatConversationText(item.text)}</div>
+          </div>
+        ` : ""}
+        ${renderAskUserCard(item.query)}
         ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
       </div>
     </div>
@@ -117,6 +146,8 @@ function updateTimelineConversationItem(item) {
   if (text) {
     const html = formatConversationText(item.text);
     if (text.innerHTML !== html) text.innerHTML = html;
+  } else if (item.text) {
+    return false;
   }
 
   scrollTimelineToBottom();
@@ -169,6 +200,50 @@ function renderPhaseStack(phases) {
       ${phases.map(renderPhaseCard).join("")}
     </div>
   `;
+}
+
+function renderAssistantStartingMessage() {
+  return `
+    <div class="conversation-step-message active">
+      <div class="conversation-step-card">I am getting started...</div>
+    </div>
+  `;
+}
+
+function renderAssistantStepMessages(phases) {
+  return `
+    <div class="conversation-step-list">
+      ${phases.map(renderAssistantStepMessage).join("")}
+    </div>
+  `;
+}
+
+function renderAssistantStepMessage(node) {
+  const colorClass = node.color || "cyan";
+  const statusClass = node.status === "active" ? "active" : "complete";
+  return `
+    <div class="conversation-step-message ${statusClass} ${colorClass}">
+      <div class="conversation-step-card">
+        <span class="conversation-step-text">${escapeConversationHtml(formatStepMessage(node))}</span>
+        <span class="conversation-step-status">${node.status === "active" ? "now" : "done"}</span>
+      </div>
+      ${renderPhaseCard(node)}
+    </div>
+  `;
+}
+
+function formatStepMessage(node) {
+  const phase = String(node && node.phase || "WORK").toUpperCase();
+  const active = node && node.status === "active";
+  const messages = {
+    THINK: active ? "I am understanding the request..." : "I understood the request.",
+    PLAN: active ? "I am finding the right files..." : "I found the relevant files.",
+    IMPLEMENT: active ? "I am applying the change..." : "I applied the change.",
+    VERIFY: active ? "I am checking the result..." : "I checked the result.",
+    RESPONSE: active ? "I am writing the answer..." : "I prepared the answer.",
+    WORK: active ? "I am working through the next step..." : "I finished a work step.",
+  };
+  return messages[phase] || messages.WORK;
 }
 
 function renderPhaseCard(node) {
