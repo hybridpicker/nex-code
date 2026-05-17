@@ -3703,8 +3703,15 @@ function _isActionableImplementationPrompt(taskText) {
 
 function _isSmallInsertionPrompt(taskText) {
   const text = String(taskText || "");
+  const hasInlineCodeAnchor =
+    /```[\s\S]{1,2000}?```/.test(text) ||
+    /<[\w:-]+(?:\s+[^>]*)?>[\s\S]{0,1200}?<\/[\w:-]+>/.test(text) ||
+    /\b(?:const|let|var|function|class|def|return)\b[\s\S]{0,800}[;{}]/.test(
+      text,
+    );
   return (
-    /\b(add|insert|include|append|show|display)\b/i.test(text) &&
+    (/\b(add|insert|include|append|show|display)\b/i.test(text) ||
+      hasInlineCodeAnchor) &&
     !/\b(replace|rename|remove|delete|rewrite|refactor|convert|migrate)\b/i.test(
       text,
     )
@@ -4017,6 +4024,48 @@ function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
   prep.errorResult = {
     role: "tool",
     content: _buildInsertionGuardMessage(editPath, locatedTarget.targetRange),
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
+function _blockRepeatedSmallInsertionAfterEdit(
+  prep,
+  locatedTarget,
+  taskText,
+  filesModified,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const targetWasAlreadyModified = [...(filesModified || [])].some(
+    (modifiedPath) =>
+      _normalizePromptPath(modifiedPath) === _normalizePromptPath(editPath),
+  );
+  if (!targetWasAlreadyModified) return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+  const onlyAddsAnotherInsertion = patches.every(({ old_text, new_text }) =>
+    _patchLooksLikeInsertionAroundAnchor(old_text, new_text),
+  );
+  if (!onlyAddsAnotherInsertion) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: "${editPath}" was already modified for this small insertion request, ` +
+      "and this proposed edit only adds another adjacent insertion. Inspect the diff/readback and finalize, or replace the previous inserted line if it was wrong. Do not add a second synonymous field.",
     tool_call_id: prep.callId,
   };
   return true;
@@ -11110,6 +11159,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _locatedTarget,
               userInput,
             );
+            if (
+              _blockRepeatedSmallInsertionAfterEdit(
+                prep,
+                _locatedTarget,
+                userInput,
+                filesModified,
+              )
+            )
+              continue;
             _blockAdjacentRewriteForInsertion(
               prep,
               _locatedTarget,
@@ -14617,6 +14675,7 @@ module.exports = {
   _buildMalformedMarkupNudge,
   _extractRemovedImportSymbols,
   _buildCompressionResumeTarget,
+  _blockRepeatedSmallInsertionAfterEdit,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

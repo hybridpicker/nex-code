@@ -365,6 +365,7 @@ const {
   _buildMalformedMarkupNudge,
   _extractRemovedImportSymbols,
   _buildCompressionResumeTarget,
+  _blockRepeatedSmallInsertionAfterEdit,
 } = require("../cli/agent");
 const {
   callStream,
@@ -618,6 +619,81 @@ describe("agent.js", () => {
         "  const displayName = user.name;\n" +
           "  const statusText = user.status || 'Active';",
       );
+    });
+  });
+
+  describe("_blockRepeatedSmallInsertionAfterEdit()", () => {
+    function repeatedInsertionPrep(path, oldText, newText) {
+      return {
+        canExecute: true,
+        fnName: "patch_file",
+        callId: "patch-repeat",
+        args: {
+          path,
+          patches: [{ old_text: oldText, new_text: newText }],
+        },
+      };
+    }
+
+    it("blocks transcript-derived repeated kcal field insertions", () => {
+      const prep = repeatedInsertionPrep(
+        "web/templates/fitness/index.html",
+        '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+        '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>\n' +
+          '<div class="text-[11px]" x-text="\'Noch benötigt \' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + \' kcal\'"></div>',
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "web/templates/fitness/index.html" },
+        "User asks for a remaining kcal field near: <div class=\"nutrition-ring-content\"><div x-text=\"Math.round(totals.kcal)\"></div></div>",
+        new Set(["web/templates/fitness/index.html"]),
+      );
+
+      expect(blocked).toBe(true);
+      expect(prep.canExecute).toBe(false);
+      expect(prep.errorResult.content).toContain(
+        "Do not add a second synonymous field",
+      );
+    });
+
+    it("blocks neutral repeated insertions after the target file was edited", () => {
+      const prep = repeatedInsertionPrep(
+        "src/components/ProfileCard.jsx",
+        "        <p>{profile.role}</p>",
+        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "src/components/ProfileCard.jsx" },
+        "Add a status field to src/components/ProfileCard.jsx.",
+        new Set(["src/components/ProfileCard.jsx"]),
+      );
+
+      expect(blocked).toBe(true);
+      expect(prep.canExecute).toBe(false);
+      expect(prep.errorResult.content).toContain(
+        "Inspect the diff/readback and finalize",
+      );
+    });
+
+    it("allows replacement fixes after an earlier insertion was wrong", () => {
+      const prep = repeatedInsertionPrep(
+        "src/components/ProfileCard.jsx",
+        "        <p>Status: active</p>",
+        "        <p>Status: {profile.status}</p>",
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "src/components/ProfileCard.jsx" },
+        "Add a status field to src/components/ProfileCard.jsx.",
+        new Set(["src/components/ProfileCard.jsx"]),
+      );
+
+      expect(blocked).toBe(false);
+      expect(prep.canExecute).toBe(true);
     });
   });
 
