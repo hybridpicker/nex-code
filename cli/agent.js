@@ -8363,6 +8363,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Exhausted all fallbacks — stop with a clear message
           userMessage = `Model not found (404): ${unavailableModel} — no fallback available. Set NEX_FALLBACK_MODEL or run /models to list available models`;
           console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            `${userMessage}. Stopping without commit or push so the workflow does not falsely report success.`;
+          const stalledAssistantMsg = {
+            role: "assistant",
+            content: stalledMsg,
+          };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
           if (taskProgress) {
             taskProgress.stop();
             taskProgress = null;
