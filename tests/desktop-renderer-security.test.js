@@ -416,6 +416,60 @@ describe("desktop renderer conversation state", () => {
     expect(submit.addEventListener).toHaveBeenCalledWith("click", expect.any(Function));
     expect(context.window.__nexCommandInputReady).toBe(true);
   });
+
+  test("keeps server log collapsed until the header is clicked", () => {
+    const classes = new Set(["collapsed"]);
+    const output = createElementStub();
+    output.classList = {
+      add: jest.fn((name) => classes.add(name)),
+      remove: jest.fn((name) => classes.delete(name)),
+      contains: jest.fn((name) => classes.has(name)),
+      toggle: jest.fn((name, force) => {
+        if (force === undefined) {
+          if (classes.has(name)) classes.delete(name);
+          else classes.add(name);
+          return classes.has(name);
+        }
+        if (force) classes.add(name);
+        else classes.delete(name);
+        return force;
+      }),
+    };
+    const toggle = createElementStub();
+    toggle.setAttribute = jest.fn();
+    const stream = createElementStub();
+
+    const context = loadRendererScript("desktop/renderer/js/app.js", {
+      addEventListener: jest.fn(),
+      createElement: jest.fn(() => createElementStub()),
+      getElementById: jest.fn((id) => {
+        if (id === "server-output") return output;
+        if (id === "server-output-toggle") return toggle;
+        if (id === "server-stream") return stream;
+        return createElementStub();
+      }),
+    });
+
+    context.setupServerLogToggle();
+    context.addServerLog("ready");
+
+    expect(classes.has("collapsed")).toBe(true);
+    expect(toggle.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "false");
+
+    const clickHandler = toggle.addEventListener.mock.calls.find(
+      ([eventName]) => eventName === "click",
+    )[1];
+    clickHandler();
+
+    expect(classes.has("collapsed")).toBe(false);
+    expect(toggle.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "true");
+    expect(stream.appendChild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        className: "log-line",
+        textContent: "ready",
+      }),
+    );
+  });
 });
 
 describe("desktop renderer timeline updates", () => {

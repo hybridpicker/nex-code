@@ -109,6 +109,7 @@ function settleRunningUserConversations(status, message) {
 
 document.addEventListener("DOMContentLoaded", async () => {
   AppState.data.recentProjects = loadRecentProjects();
+  setupServerLogToggle();
 
   // Fetch initial state from main process
   try {
@@ -280,6 +281,7 @@ function subscribeToEvents() {
 
     question.textContent = d.question || "Allow this action?";
     confirmBox.classList.remove("hidden");
+    setServerLogExpanded(true);
     allow.onclick = () => {
       confirmBox.classList.add("hidden");
       window.nexAPI.sendConfirm(d.id, true);
@@ -953,11 +955,37 @@ function completeActiveNode() {
 
 // ─── Server Log ─────────────────────────────────────────────────────────────
 
+function setupServerLogToggle() {
+  const output = document.getElementById("server-output");
+  const toggle = document.getElementById("server-output-toggle");
+  if (!output || !toggle) return;
+
+  toggle.addEventListener("click", () => {
+    setServerLogExpanded(output.classList.contains("collapsed"));
+  });
+
+  syncServerLogExpandedState();
+}
+
+function setServerLogExpanded(expanded) {
+  const output = document.getElementById("server-output");
+  if (!output) return;
+  output.classList.toggle("collapsed", !expanded);
+  syncServerLogExpandedState();
+}
+
+function syncServerLogExpandedState() {
+  const output = document.getElementById("server-output");
+  const toggle = document.getElementById("server-output-toggle");
+  if (!output || !toggle) return;
+  const expanded = !output.classList.contains("collapsed");
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
 function addServerLog(text) {
   const output = document.getElementById("server-output");
   const stream = document.getElementById("server-stream");
   if (!output || !stream) return;
-  output.classList.remove("hidden");
   const div = document.createElement("div");
   div.className = "log-line";
   div.textContent = text;

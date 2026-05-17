@@ -117,17 +117,19 @@
       </div>
 
       <!-- Server Output -->
-      <div class="server-output hidden" id="server-output">
-        <div class="server-output-header">
+      <div class="server-output collapsed" id="server-output">
+        <button class="server-output-header" id="server-output-toggle" type="button" aria-expanded="false" aria-controls="server-output-body">
           <span>Server Log</span>
-          <span style="cursor:pointer;color:var(--text-tertiary)" onclick="document.getElementById('server-output').classList.add('hidden')">✕</span>
-        </div>
-        <div class="server-output-stream" id="server-stream"></div>
-        <div class="server-confirm hidden" id="server-confirm">
-          <div class="confirm-question" id="confirm-question"></div>
-          <div class="confirm-actions">
-            <button class="btn btn-success btn-sm" id="confirm-allow">Allow</button>
-            <button class="btn btn-danger btn-sm" id="confirm-deny">Deny</button>
+          <span class="server-output-chevron" aria-hidden="true">›</span>
+        </button>
+        <div class="server-output-body" id="server-output-body">
+          <div class="server-output-stream" id="server-stream"></div>
+          <div class="server-confirm hidden" id="server-confirm">
+            <div class="confirm-question" id="confirm-question"></div>
+            <div class="confirm-actions">
+              <button class="btn btn-success btn-sm" id="confirm-allow">Allow</button>
+              <button class="btn btn-danger btn-sm" id="confirm-deny">Deny</button>
+            </div>
           </div>
         </div>
       </div>

@@ -643,10 +643,36 @@
 }
 .server-output-header {
   display: flex; align-items: center; justify-content: space-between;
+  width: 100%;
   padding: 8px 16px;
+  border: 0;
   border-bottom: 1px solid var(--border-light);
+  background: transparent;
   font-family: var(--font-mono); font-size: 10px;
   color: var(--text-tertiary); text-transform: uppercase;
+  cursor: pointer;
+}
+.server-output-header:hover {
+  color: var(--text-secondary);
+}
+.server-output-body {
+  display: block;
+}
+.server-output.collapsed .server-output-body {
+  display: none;
+}
+.server-output.collapsed .server-output-header {
+  border-bottom: 0;
+}
+.server-output-chevron {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  font-size: 14px; line-height: 1;
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+.server-output.collapsed .server-output-chevron {
+  transform: rotate(0deg);
 }
 .server-output-stream {
   padding: 10px 16px; max-height: 200px; overflow-y: auto;
