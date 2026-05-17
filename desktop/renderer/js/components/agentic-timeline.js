@@ -82,7 +82,7 @@ function renderConversationItem(item) {
     <div class="conversation-turn ${kindClass} ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
       <div class="conversation-bubble-wrap">
         <div class="conversation-turn-meta">
-          <span class="conversation-turn-role">${item.kind === "assistant" ? "NEX-CODE" : "You"}</span>
+          <span class="conversation-turn-role">${item.kind === "assistant" ? "Nex Code" : "You"}</span>
           <span class="conversation-turn-time">${escapeConversationHtml(item.timestamp || "")}</span>
           <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
         </div>
@@ -180,7 +180,7 @@ function renderPhaseCard(node) {
   const hasBody = detail || content || extras;
 
   return `
-    <details class="conversation-activity-item ${colorClass}" ${node.status === "active" ? "open" : ""}>
+    <details class="conversation-activity-item ${colorClass}">
       <summary class="conversation-activity-summary">
         <span class="conversation-activity-dot ${colorClass}" aria-hidden="true"></span>
         <span class="conversation-activity-label">${escapeConversationHtml(formatActivityLabel(node.phase, detail))}</span>

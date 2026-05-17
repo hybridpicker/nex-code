@@ -116,7 +116,9 @@ describe("desktop renderer HTML escaping", () => {
     expect(html).toContain("conversation-turn user complete");
     expect(html).toContain("conversation-turn assistant running");
     expect(html).toContain("conversation-activity-item cyan");
+    expect(html).toContain("Nex Code");
     expect(html).toContain("read_file in progress");
+    expect(html).not.toContain("conversation-activity-item cyan\" open");
   });
 
   test("escapes completion banner project and phase text", () => {
