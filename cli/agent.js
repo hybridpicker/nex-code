@@ -98,6 +98,20 @@ function _claimsEditedWorkWasPreexisting(text) {
   );
 }
 
+function _claimsUnableToEditAfterEdits(text) {
+  if (!text || typeof text !== "string") return false;
+  const sample = text.slice(-1800);
+  return (
+    /\b(?:cannot|can't|unable to|not able to)\b.{0,80}\b(?:make|apply|perform)\b.{0,80}\b(?:file\s+)?edits?\b/i.test(
+      sample,
+    ) ||
+    /\btool-?call budget\b.{0,120}\b(?:exhausted|reached|used up)\b/i.test(
+      sample,
+    ) ||
+    /\bapply this (?:edit|change|patch)\b/i.test(sample)
+  );
+}
+
 function _looksLikeExplicitFinalSummary(text) {
   if (!text || typeof text !== "string") return false;
   return /^\s*(?:final\s+)?(?:summary|report|answer|result)\s*:/i.test(text);
@@ -9387,7 +9401,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           hasText &&
           !opts.skillLoop &&
           (filesModified.size > 0 || _bashModifiedFiles > 0) &&
-          _claimsEditedWorkWasPreexisting(content || streamedText || "")
+          (_claimsEditedWorkWasPreexisting(content || streamedText || "") ||
+            _claimsUnableToEditAfterEdits(content || streamedText || ""))
         ) {
           if (_preexistingFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
             _preexistingFinalNudges++;
@@ -9402,10 +9417,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const correctionMsg = {
               role: "user",
               content:
-                "[SYSTEM] Your previous final answer described the requested change as already present or from a previous session, but this run modified files. Write an accurate final summary of what changed in this run.\n" +
+                "[SYSTEM] Your previous final answer did not accurately describe this run: files were modified, but the answer described the work as pre-existing or told the user to apply edits manually. Write an accurate final summary of what changed in this run.\n" +
                 `Changed files: ${changedFiles}.\n` +
                 `Verification: ${verificationEvidence}.\n` +
-                "Do not say the change was already present, pre-existing, or from a previous session.",
+                "Do not say the change was already present, pre-existing, from a previous session, or that the user still needs to apply the edit.",
             };
             conversationMessages.push(correctionMsg);
             apiMessages.push(correctionMsg);
@@ -9427,7 +9442,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             "Completed the requested edit.\n\n" +
             `Changed files: ${changedFiles}.\n` +
             `Verification: ${verificationEvidence}.\n` +
-            "Finalization note: the model described the edited work as pre-existing, so nex-code replaced that with this evidence-based summary.";
+            "Finalization note: the model produced an inaccurate final answer after edits, so nex-code replaced it with this evidence-based summary.";
           const correctedAssistantMsg = {
             role: "assistant",
             content: correctedMsg,

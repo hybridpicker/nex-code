@@ -2453,7 +2453,7 @@ describe("agent.js", () => {
         .map((m) => m.content)
         .join("\n");
       expect(conversationText).toContain(
-        "described the requested change as already present",
+        "did not accurately describe this run",
       );
       expect(conversationText).toContain("Changed web/templates/fitness/index.html");
     });
@@ -2530,7 +2530,7 @@ describe("agent.js", () => {
         .map((m) => m.content)
         .join("\n");
       expect(conversationText).toContain(
-        "described the requested change as already present",
+        "did not accurately describe this run",
       );
       expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
     });
@@ -2607,7 +2607,85 @@ describe("agent.js", () => {
         .map((m) => m.content)
         .join("\n");
       expect(conversationText).toContain(
-        "described the requested change as already present",
+        "did not accurately describe this run",
+      );
+      expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
+    });
+
+    it("corrects summaries that claim edits cannot be made after editing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edited component.",
+          tool_calls: [
+            {
+              id: "readback-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "I cannot make further file edits because the tool-call budget is exhausted. Apply this edit manually.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed src/components/ProfileCard.jsx in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<p>{profile.role}</p>")
+        .mockResolvedValueOnce("Patched")
+        .mockResolvedValueOnce("<p>Status: active</p>");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "did not accurately describe this run",
       );
       expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
     });
