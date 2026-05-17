@@ -44,6 +44,81 @@ function createElementStub() {
 }
 
 describe("desktop renderer HTML escaping", () => {
+  test("keeps streamed assistant text in one de-duplicated bubble", () => {
+    const context = loadRendererScript("desktop/renderer/js/app.js", {
+      addEventListener: jest.fn(),
+      getElementById: jest.fn(() => null),
+    });
+
+    let text = "";
+    text = context.mergeAssistantStreamText(text, "Hello ", "run-1");
+    text = context.mergeAssistantStreamText(text, "Hello world", "run-1");
+    text = context.mergeAssistantStreamText(text, " world", "run-1");
+
+    expect(text).toBe("Hello world");
+    expect(
+      context.resolveFinalAssistantText(
+        { success: true, summary: "Hello" },
+        { text },
+      ),
+    ).toBe("Hello world");
+  });
+
+  test("renders conversation turns as bubbles with secondary activity", () => {
+    const elements = {
+      "timeline-track": createElementStub(),
+      "timeline": Object.assign(createElementStub(), {
+        scrollTop: 0,
+        scrollHeight: 500,
+      }),
+      "task-complete": createElementStub(),
+      "timeline-status-pill": createElementStub(),
+      "timeline-status-text": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+
+    context.initTimelineComponents({
+      sessionState: "running",
+      agenticNodes: [{ phase: "PLAN", status: "active" }],
+      conversationItems: [
+        {
+          id: "u1",
+          kind: "user",
+          text: "Long request\n\nSecond paragraph",
+          status: "complete",
+          timestamp: "10:00",
+        },
+        {
+          id: "a1",
+          kind: "assistant",
+          text: "Working on it",
+          status: "running",
+          timestamp: "10:01",
+          phases: [
+            {
+              phase: "PLAN",
+              detail: "read_file in progress",
+              status: "active",
+              color: "cyan",
+            },
+          ],
+        },
+      ],
+    });
+
+    const html = elements["timeline-track"].innerHTML;
+    expect(html).toContain("conversation-bubble-wrap");
+    expect(html).toContain("conversation-turn user complete");
+    expect(html).toContain("conversation-turn assistant running");
+    expect(html).toContain("conversation-activity-item cyan");
+    expect(html).toContain("read_file in progress");
+  });
+
   test("escapes completion banner project and phase text", () => {
     const elements = {
       "task-complete": createElementStub(),

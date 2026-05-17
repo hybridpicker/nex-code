@@ -17,6 +17,7 @@ function initTimelineComponents(data) {
   track.innerHTML = items.length > 0
     ? items.map(renderConversationItem).join("")
     : renderEmptyConversation();
+  scrollTimelineToBottom();
 
   track.querySelectorAll("[data-inline-answer]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -79,17 +80,19 @@ function renderConversationItem(item) {
   const statusClass = item.status || "running";
   return `
     <div class="conversation-turn ${kindClass} ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
-      <div class="conversation-turn-meta">
-        <span class="conversation-turn-role">${item.kind === "assistant" ? "nex-code" : "You"}</span>
-        <span class="conversation-turn-time">${item.timestamp || ""}</span>
-        <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
+      <div class="conversation-bubble-wrap">
+        <div class="conversation-turn-meta">
+          <span class="conversation-turn-role">${item.kind === "assistant" ? "NEX-CODE" : "You"}</span>
+          <span class="conversation-turn-time">${escapeConversationHtml(item.timestamp || "")}</span>
+          <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
+        </div>
+        <div class="conversation-turn-card">
+          <div class="conversation-turn-text">${formatConversationText(item.text)}</div>
+        </div>
+        ${renderAskUserCard(item.query)}
+        ${renderPhaseStack(item.phases || [])}
+        ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
       </div>
-      <div class="conversation-turn-card">
-        <div class="conversation-turn-text">${formatConversationText(item.text)}</div>
-      </div>
-      ${renderAskUserCard(item.query)}
-      ${renderPhaseStack(item.phases || [])}
-      ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
     </div>
   `;
 }
@@ -116,7 +119,23 @@ function updateTimelineConversationItem(item) {
     if (text.innerHTML !== html) text.innerHTML = html;
   }
 
+  scrollTimelineToBottom();
   return true;
+}
+
+function scrollTimelineToBottom() {
+  const timeline = document.getElementById("timeline");
+  if (!timeline) return;
+
+  const run = () => {
+    timeline.scrollTop = timeline.scrollHeight;
+  };
+
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
 }
 
 function renderAskUserCard(query) {
@@ -146,7 +165,7 @@ function renderAskUserCard(query) {
 function renderPhaseStack(phases) {
   if (!Array.isArray(phases) || phases.length === 0) return "";
   return `
-    <div class="conversation-phase-stack">
+    <div class="conversation-activity-stack">
       ${phases.map(renderPhaseCard).join("")}
     </div>
   `;
@@ -158,18 +177,32 @@ function renderPhaseCard(node) {
   const extras = renderPhaseExtras(node.phase, node.extras || {});
   const content = node.tokens || "";
   const detail = node.detail || "";
+  const hasBody = detail || content || extras;
 
   return `
-    <div class="conversation-phase-card ${colorClass}">
-      <div class="conversation-phase-header">
-        <span class="conversation-phase-label ${colorClass}">${escapeConversationHtml(node.phase)}</span>
-        <span class="conversation-phase-status">${statusText}</span>
-      </div>
-      <div class="conversation-phase-detail">${formatConversationText(detail)}</div>
-      ${content ? `<div class="conversation-phase-output">${formatConversationText(content)}</div>` : ""}
-      ${extras}
-    </div>
+    <details class="conversation-activity-item ${colorClass}" ${node.status === "active" ? "open" : ""}>
+      <summary class="conversation-activity-summary">
+        <span class="conversation-activity-dot ${colorClass}" aria-hidden="true"></span>
+        <span class="conversation-activity-label">${escapeConversationHtml(formatActivityLabel(node.phase, detail))}</span>
+        <span class="conversation-activity-status">${statusText}</span>
+      </summary>
+      ${hasBody ? `
+        <div class="conversation-activity-body">
+          ${detail ? `<div class="conversation-phase-detail">${formatConversationText(detail)}</div>` : ""}
+          ${content ? `<div class="conversation-phase-output">${formatConversationText(content)}</div>` : ""}
+          ${extras}
+        </div>
+      ` : ""}
+    </details>
   `;
+}
+
+function formatActivityLabel(phase, detail) {
+  const phaseText = String(phase || "WORK").toLowerCase();
+  const cleanDetail = String(detail || "").replace(/\s+/g, " ").trim();
+  if (!cleanDetail) return `${phaseText} activity`;
+  if (cleanDetail.length <= 80) return cleanDetail;
+  return `${cleanDetail.slice(0, 77)}...`;
 }
 
 function renderPhaseExtras(phase, extras) {

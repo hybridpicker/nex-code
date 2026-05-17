@@ -232,7 +232,12 @@ function subscribeToEvents() {
     const text = sanitizeDisplayText(d.text);
     const activeAssistant = getActiveAssistantConversation();
     if (activeAssistant) {
-      activeAssistant.text = (activeAssistant.text || "") + text;
+      activeAssistant.text = mergeAssistantStreamText(
+        activeAssistant.text || "",
+        text,
+        d && d.id,
+      );
+      if (d && d.id) activeAssistant.streamId = d.id;
       activeAssistant.status = "running";
       refreshConversationText(activeAssistant);
     } else {
@@ -298,7 +303,7 @@ function subscribeToEvents() {
     const success = d && d.success !== false && d.status !== "stalled";
     const terminalState = getTerminalSessionState(d, success);
     const activeAssistant = getActiveAssistantConversation();
-    const finalText = extractFinalAssistantText(d, activeAssistant);
+    const finalText = resolveFinalAssistantText(d, activeAssistant);
     if (activeAssistant) {
       activeAssistant.text = finalText;
       activeAssistant.status = success ? "complete" : "stopped";
@@ -677,23 +682,80 @@ function applyVerificationFromToolEnd(payload, action) {
   AppState.data.verificationStatus = ok ? "passed" : "failed";
 }
 
-function extractFinalAssistantText(donePayload, activeAssistant) {
-  const response = donePayload && typeof donePayload.response === "string"
-    ? donePayload.response.trim()
+function mergeAssistantStreamText(currentText, incomingText, streamId) {
+  const current = String(currentText || "");
+  const incoming = String(incomingText || "");
+  if (!incoming) return current;
+
+  if (current && incoming === current) return collapseRepeatedAssistantText(current);
+  if (current && current.endsWith(incoming)) return collapseRepeatedAssistantText(current);
+  if (current && incoming.startsWith(current)) return collapseRepeatedAssistantText(incoming);
+
+  if (
+    streamId &&
+    current &&
+    incoming.length > current.length &&
+    incoming.includes(current)
+  ) {
+    return collapseRepeatedAssistantText(incoming);
+  }
+
+  return collapseRepeatedAssistantText(current + incoming);
+}
+
+function collapseRepeatedAssistantText(text) {
+  let value = String(text || "");
+
+  for (let i = 0; i < 3; i += 1) {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    if (trimmed.length % 2 !== 0) break;
+    const half = trimmed.length / 2;
+    const left = trimmed.slice(0, half).trim();
+    const right = trimmed.slice(half).trim();
+    if (!left || left !== right) break;
+    value = left;
+  }
+
+  return value;
+}
+
+function resolveFinalAssistantText(donePayload, activeAssistant) {
+  const streamed = activeAssistant && activeAssistant.text
+    ? collapseRepeatedAssistantText(activeAssistant.text.trim())
     : "";
-  if (response) return response;
+
+  const response = donePayload && typeof donePayload.response === "string"
+    ? collapseRepeatedAssistantText(donePayload.response.trim())
+    : "";
+  if (response) {
+    if (!streamed) return response;
+    if (response === streamed) return streamed;
+    if (response.includes(streamed)) return collapseRepeatedAssistantText(response);
+    if (streamed.includes(response)) return streamed;
+    return response;
+  }
 
   const summary = donePayload && typeof donePayload.summary === "string"
     ? donePayload.summary.trim()
     : "";
+  if (summary && shouldUseCompletionSummary(summary, streamed)) return summary;
+  if (streamed) return streamed;
   if (summary) return summary;
 
-  const streamed = activeAssistant && activeAssistant.text
-    ? activeAssistant.text.trim()
-    : "";
-  if (streamed) return streamed;
-
   return activeAssistant && activeAssistant.text ? activeAssistant.text : "";
+}
+
+function extractFinalAssistantText(donePayload, activeAssistant) {
+  return resolveFinalAssistantText(donePayload, activeAssistant);
+}
+
+function shouldUseCompletionSummary(summary, streamed) {
+  if (!summary || !streamed) return false;
+  if (summary === streamed || streamed.includes(summary) || summary.includes(streamed)) {
+    return false;
+  }
+  return /\b(completed|changed|fixed|updated|implemented|created|added|removed|verified)\b/i.test(summary);
 }
 
 function showTaskComplete() {
