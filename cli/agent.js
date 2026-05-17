@@ -7650,6 +7650,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _bashModifiedFiles === 0 &&
     _sessionLastEditFailed.size === 0 &&
     _boundedBacklogImplementationReads > 0;
+  const _buildBlockedLoopStallMessage = () => {
+    const detail = _blockedAfterImplementationRead()
+      ? "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing."
+      : "The model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer.";
+    return (
+      "Implementation stalled before edits.\n\n" +
+      `${detail} Stopping without commit or push so the workflow does not falsely report success.`
+    );
+  };
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
@@ -12431,20 +12440,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
             );
-            if (_blockedAfterImplementationRead()) {
-              const stalledMsg =
-                "Implementation stalled before edits.\n\n" +
-                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
-              const stalledAssistantMsg = {
-                role: "assistant",
-                content: stalledMsg,
-              };
-              conversationMessages.push(stalledAssistantMsg);
-              apiMessages.push(stalledAssistantMsg);
-              console.log(`\n${stalledMsg}`);
-              saveNow(conversationMessages);
-              _scoreAndPrint(conversationMessages);
-            }
+            const stalledMsg = _buildBlockedLoopStallMessage();
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -13919,20 +13924,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`,
             );
-            if (_blockedAfterImplementationRead()) {
-              const stalledMsg =
-                "Implementation stalled before edits.\n\n" +
-                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
-              const stalledAssistantMsg = {
-                role: "assistant",
-                content: stalledMsg,
-              };
-              conversationMessages.push(stalledAssistantMsg);
-              apiMessages.push(stalledAssistantMsg);
-              console.log(`\n${stalledMsg}`);
-              saveNow(conversationMessages);
-              _scoreAndPrint(conversationMessages);
-            }
+            const stalledMsg = _buildBlockedLoopStallMessage();
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;

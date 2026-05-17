@@ -5570,6 +5570,41 @@ describe("agent.js", () => {
       delete process.env.NEX_DEBUG;
     });
 
+    it("records a stalled final message when repeated reads are blocked", async () => {
+      process.env.NEX_DEBUG = "true";
+      for (let i = 0; i < 8; i++) {
+        mockStream(i === 0 ? "I will inspect the profile card first." : "", [
+          {
+            function: {
+              name: "read_file",
+              arguments: {
+                path: "src/components/ProfileCard.jsx",
+                line_start: 1,
+                line_end: 40,
+              },
+            },
+            id: `profile-read-${i}`,
+          },
+        ]);
+      }
+      mockStream("Done"); // fallback — should not be reached after loop abort
+      executeTool.mockResolvedValue(
+        "1: export function ProfileCard() { return <section />; }",
+      );
+
+      await processInput(
+        "In src/components/ProfileCard.jsx add a status field near the summary section.",
+      );
+
+      const lastAssistant = getConversationMessages()
+        .filter((m) => m.role === "assistant")
+        .at(-1);
+      expect(logOutput()).toContain("Loop abort");
+      expect(lastAssistant.content).toContain("Implementation stalled before edits");
+      expect(lastAssistant.content).toContain("blocked by loop guards");
+      delete process.env.NEX_DEBUG;
+    });
+
     it("warns after consecutive tool errors", async () => {
       process.env.NEX_DEBUG = "true";
       // 10 consecutive errors to trigger warning (LOOP_WARN_ERRORS = 10)

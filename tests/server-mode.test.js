@@ -156,6 +156,33 @@ describe("startServerMode", () => {
     });
   });
 
+  test("marks blocked-loop stalls as non-success after stale planning text", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            'I will add the "remaining kcal" field. Let me first read the specific section to understand the current structure:',
+        },
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer. Stopping without commit or push so the workflow does not falsely report success.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-blocked-loop","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-blocked-loop"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-blocked-loop",
+      status: "stalled",
+      success: false,
+    });
+  });
+
   test("marks missing final assistant output as stalled", async () => {
     startFresh();
     getConversationMessages.mockReturnValueOnce([]).mockReturnValueOnce([]);
