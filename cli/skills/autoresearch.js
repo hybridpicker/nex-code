@@ -17,7 +17,18 @@
 const { execSync, execFileSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { T: _T } = require("../theme");
+
+// Theme module may not be available in dist/ builds where skills are copied
+// as-is but theme is bundled into dist/nex-code.js. Fall back to no-op.
+let _T;
+try {
+  _T = require("../theme").T;
+} catch {
+  _T = new Proxy(
+    {},
+    { get: () => (str) => str },
+  );
+}
 
 // Lazy-load agent to reset read guards between experiments
 function resetReadGuards() {

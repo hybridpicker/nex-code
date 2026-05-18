@@ -4143,6 +4143,16 @@ function _blockRepeatedLocatedTargetRead(prep, locatedTarget, taskText) {
     });
   });
   if (hasCompressionRecovery) return false;
+
+  // Deadlock escape: after super-nuclear compression, allow one targeted re-read
+  // of the deadlocked file even if the located target was already read. Without
+  // this, the located-target guard blocks re-reads after context wipe and the
+  // deadlock escape in the overlap detection section never gets a chance to fire.
+  if (_deadlockOnFile === readPath && _superNuclearFires >= 1) {
+    _deadlockOnFile = null; // one-time escape consumed
+    return false; // allow the read
+  }
+
   const previousRanges = _sessionFileReadRanges.get(readPath) || [];
   const alreadyRead = previousRanges.some(
     ([prevStart, prevEnd]) => prevStart === start && prevEnd === end,
