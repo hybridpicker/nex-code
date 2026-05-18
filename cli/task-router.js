@@ -163,16 +163,16 @@ function getModelForCategory(categoryId) {
     } catch { /* model-fitness not available or no data yet */ }
   }
 
-  // 4. Fall back to Ollama USE_CASES recommendation when no config model exists,
-  //    or when the config model is known to have insufficient context for this
-  //    category (e.g. 128K devstral-small routed to scoped-edit).
-  if (!configModel || _configModelNeedsContextUpgrade(configModel, categoryId)) {
+  // 4. When the config model exists but is known to have insufficient context
+  //    for this category (e.g. 128K devstral-small routed to scoped-edit), fall
+  //    back to Ollama USE_CASES for a better recommendation. Only activates when
+  //    a config model IS set — returns null normally if no config exists.
+  if (_configModelNeedsContextUpgrade(configModel, categoryId)) {
     try {
       const { getOllamaRecommendations } = require("./providers/ollama");
       const useCase = USECASE_FOR_CATEGORY[categoryId] || "coding";
       const recs = getOllamaRecommendations(useCase, 3);
       if (recs.length > 0) {
-        // Prefer a recommendation that differs from the weak config model
         const better = recs.find((r) => r.id !== configModel) || recs[0];
         return better.id;
       }
