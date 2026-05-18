@@ -1073,14 +1073,15 @@ const ALL_TASKS = [...TASKS, ...PHASE_TASKS, ...IMPLEMENT_TASKS];
 // Hardcoded seed list — used only when no benchmark-results.json exists yet.
 // After the first /benchmark --all run this list is superseded by saved results.
 const _DEFAULT_MODELS_SEED = [
-  "devstral-2:123b",
-  "kimi-k2.5",
-  "glm-5:cloud",
-  "qwen3-coder:480b",
-  "qwen3-coder-next",
-  "ministral-3:14b",
-  "minimax-m2.7:cloud",
-  "kimi-k2:1t",
+  // Large-context models lead — 128K-only models stall on real projects
+  "deepseek-v4-flash:cloud",    // 1M context, fast, proven scoped-edit (2/2)
+  "qwen3.5:35b-a3b",            // 262K context, fast, free local
+  "qwen3-coder-next",           // 262K context, agentic
+  "devstral-2:123b",            // 128K, strong coding
+  "kimi-k2.5",                  // 256K, strong reasoning
+  "qwen3-coder:480b",           // 128K, agentic specialist
+  "minimax-m2.7:cloud",         // 128K, balanced
+  "kimi-k2:1t",                 // 256K, top reasoning
 ];
 
 /**
@@ -1112,8 +1113,10 @@ function _loadDefaultModels() {
 
 const DEFAULT_MODELS = _loadDefaultModels();
 
-// QUICK_MODELS: top 3 from DEFAULT_MODELS (fastest well-known models first)
-const _QUICK_SEED = ["minimax-m2.7:cloud", "qwen3-coder:480b", "devstral-2:123b"];
+// QUICK_MODELS: top 3 from DEFAULT_MODELS prioritizing large-context fast models.
+// devstral-2:123b removed because 128K stalls on real projects (>50 files).
+// qwen3.5:35b-a3b and deepseek-v4-flash:cloud have 2-8× more context window.
+const _QUICK_SEED = ["qwen3.5:35b-a3b", "deepseek-v4-flash:cloud", "minimax-m2.7:cloud"];
 const QUICK_MODELS = (() => {
   // Pick top 3 from DEFAULT_MODELS that overlap with seed, else use full top-3
   const top3 = DEFAULT_MODELS.slice(0, 3);
@@ -1286,6 +1289,23 @@ const CATEGORY_ROUTE_KEY = {
   "phase-verify": "verify",
 };
 
+// Context window sizes for benchmarked models — used to apply a bonus during
+// category scoring. Models with ≥256K context handle real projects without
+// compactor thrashing; 128K models stall on projects with >50 files.
+const MODEL_CONTEXT_WINDOW = {
+  "deepseek-v4-flash:cloud": 1048576,
+  "deepseek-v4-pro:cloud": 1048576,
+  "qwen3.5:35b-a3b": 262144,
+  "qwen3.5:122b-a10b": 262144,
+  "qwen3.5:397b-cloud": 262144,
+  "qwen3.5:27b": 262144,
+  "qwen3-coder-next": 262144,
+  "kimi-k2:1t": 256000,
+  "kimi-k2.5": 256000,
+  "kimi-k2-thinking": 256000,
+  // Everything not listed defaults to 131072 (128K)
+};
+
 function buildSummary(modelResults) {
   return Object.entries(modelResults)
     .map(([model, results]) => {
@@ -1318,7 +1338,17 @@ function buildSummary(modelResults) {
         const catAvg =
           catResults.map(scoreResult).reduce((a, b) => a + b, 0) /
           catResults.length;
-        categoryScores[routeKey] = Math.round(catAvg * 10) / 10;
+        let catScore = Math.round(catAvg * 10) / 10;
+
+        // Context-window bonus: models with ≥256K context score higher on
+        // real-project-critical categories where compactor thrashing kills 128K
+        // models. Bonus is small enough (≤4pts) to not override genuine quality,
+        // but enough to break ties and nudge routing toward models that scale.
+        const cw = MODEL_CONTEXT_WINDOW[model] || 131072;
+        const ctxBonus = cw >= 1048576 ? 4 : cw >= 256000 ? 2 : 0;
+        catScore = Math.round((catScore + ctxBonus) * 10) / 10;
+
+        categoryScores[routeKey] = catScore;
       }
 
       return {
@@ -1586,6 +1616,19 @@ function autoUpdateRouting(summary) {
         if (!currentInRun) {
           // Current routing model wasn't tested — don't overwrite blindly.
           // It may still be the global best; we just don't know from this run.
+          continue;
+        }
+      }
+
+      // Scoped-edit guard: never route a 128K-only model to scoped-edit, even
+      // if it won the synthetic benchmark. Real projects overflow 128K windows
+      // and the compactor thrashing kills scoped-edit reliability completely.
+      if (cat === "scoped-edit") {
+        const ctx = MODEL_CONTEXT_WINDOW[model] || 131072;
+        if (ctx <= 131072) {
+          console.log(
+            `  ${C.yellow}⚠ scoped-edit winner ${model} has only 128K context — skipping route update.${C.reset}`,
+          );
           continue;
         }
       }
