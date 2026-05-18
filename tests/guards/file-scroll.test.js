@@ -47,7 +47,6 @@ describe("guards/file-scroll.js", () => {
 
     it("blocks when section count exceeds scrollBlockSections", () => {
       const state = makeState();
-      // Simulate 3 prior reads on the same file
       state.fileReadRanges.set("src/app.js", [
         [1, 30],
         [40, 70],
@@ -84,7 +83,7 @@ describe("guards/file-scroll.js", () => {
         [40, 70],
         [80, 110],
       ]);
-      state.grepFileCounts.set("src/app.js", 5); // grep exhausted
+      state.grepFileCounts.set("src/app.js", 5);
       state.loopAbortGrepFile = 5;
 
       const prep = makePrep({
@@ -96,7 +95,6 @@ describe("guards/file-scroll.js", () => {
       expect(result.errorResult.content).toContain("grep is also exhausted");
       expect(result.errorResult.content).toContain("edit_file or patch_file");
 
-      // Deadlock message should be injected into conversation
       const deadlockInjected = state.conversationMessages.some((m) =>
         m.content.includes("Both read_file and grep are now blocked"),
       );
@@ -120,11 +118,8 @@ describe("guards/file-scroll.js", () => {
       });
       const result = check(prep, state);
 
-      // Should NOT block — deadlock escape valve activated
       expect(result.blocked).toBe(false);
-      // Deadlock token should be consumed
       expect(state.deadlockOnFile).toBeNull();
-      // Escape message injected
       const escapeInjected = state.conversationMessages.some((m) =>
         m.content.includes("One-time read pass"),
       );
@@ -146,6 +141,128 @@ describe("guards/file-scroll.js", () => {
       expect(result.blocked).toBe(false);
       expect(result._scrollWarn).toBeDefined();
       expect(result._scrollWarn.sectionCount).toBe(3);
+    });
+
+    // ─── Regression: deadlock escape + post-compression re-read ──────────────
+    // When super-nuclear compression drops context, the model legitimately needs
+    // to re-read content that was already in context. The deadlock escape valve
+    // must allow this one-time pass — otherwise the overlap detection in agent.js
+    // blocks every re-read and the session stalls permanently.
+
+    it("deadlock escape is consumed after one use (one-time pass)", () => {
+      const state = makeState();
+      state.fileReadRanges.set("src/app.js", [
+        [100, 130],
+        [140, 170],
+        [180, 210],
+      ]);
+      state.grepFileCounts.set("src/app.js", 5);
+      state.deadlockOnFile = "src/app.js";
+      state.superNuclearFires = 1;
+
+      const prep1 = makePrep({
+        args: { path: "src/app.js", line_start: 120, line_end: 150 },
+      });
+      const result1 = check(prep1, state);
+      expect(result1.blocked).toBe(false);
+      expect(state.deadlockOnFile).toBeNull();
+
+      const prep2 = makePrep({
+        args: { path: "src/app.js", line_start: 160, line_end: 190 },
+      });
+      const result2 = check(prep2, state);
+      expect(result2.blocked).toBe(true);
+    });
+
+    it("deadlock escape does not fire without super-nuclear compression", () => {
+      const state = makeState();
+      state.fileReadRanges.set("src/app.js", [
+        [1, 30],
+        [40, 70],
+        [80, 110],
+      ]);
+      state.grepFileCounts.set("src/app.js", 5);
+      state.deadlockOnFile = "src/app.js";
+      state.superNuclearFires = 0;
+
+      const prep = makePrep({
+        args: { path: "src/app.js", line_start: 120, line_end: 150 },
+      });
+      const result = check(prep, state);
+
+      expect(result.blocked).toBe(true);
+      expect(state.deadlockOnFile).toBe("src/app.js");
+    });
+
+    it("deadlock escape does not fire for a different file", () => {
+      const state = makeState();
+      state.fileReadRanges.set("src/utils.js", [
+        [1, 30],
+        [40, 70],
+        [80, 110],
+      ]);
+      state.grepFileCounts.set("src/utils.js", 5);
+      state.deadlockOnFile = "src/app.js";
+      state.superNuclearFires = 1;
+
+      const prep = makePrep({
+        args: { path: "src/utils.js", line_start: 120, line_end: 150 },
+      });
+      const result = check(prep, state);
+
+      expect(result.blocked).toBe(true);
+      expect(state.deadlockOnFile).toBe("src/app.js");
+    });
+
+    it("deadlock escape works with deeply nested file paths", () => {
+      const deepPath = "web/templates/fitness/index.html";
+      const state = makeState();
+      state.fileReadRanges.set(deepPath, [
+        [1, 150],
+        [500, 650],
+        [1000, 1150],
+      ]);
+      state.grepFileCounts.set(deepPath, 5);
+      state.deadlockOnFile = deepPath;
+      state.superNuclearFires = 1;
+
+      const prep = makePrep({
+        args: { path: deepPath, line_start: 1860, line_end: 1870 },
+      });
+      const result = check(prep, state);
+
+      expect(result.blocked).toBe(false);
+      expect(state.deadlockOnFile).toBeNull();
+      const escapeInjected = state.conversationMessages.some((m) =>
+        m.content.includes("One-time read pass"),
+      );
+      expect(escapeInjected).toBe(true);
+    });
+
+    it("deadlock escape injects guidance into both conversation and API messages", () => {
+      const state = makeState();
+      state.fileReadRanges.set("src/app.js", [
+        [1, 30],
+        [40, 70],
+        [80, 110],
+      ]);
+      state.grepFileCounts.set("src/app.js", 5);
+      state.deadlockOnFile = "src/app.js";
+      state.superNuclearFires = 1;
+
+      const prep = makePrep({
+        args: { path: "src/app.js", line_start: 120, line_end: 150 },
+      });
+      check(prep, state);
+
+      const inConv = state.conversationMessages.some((m) =>
+        m.content.includes("One-time read pass"),
+      );
+      const inApi = state.apiMessages.some((m) =>
+        m.content.includes("One-time read pass"),
+      );
+      expect(inConv).toBe(true);
+      expect(inApi).toBe(true);
     });
   });
 

@@ -11692,6 +11692,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const newEnd = parseInt(prep.args.line_end, 10) || newStart + 350;
             const prevRanges = _sessionFileReadRanges.get(path) || [];
             let blocked = false;
+
+            // Deadlock escape valve: after super-nuclear compression, allow ONE
+            // targeted read of the deadlocked file even if the range was previously
+            // read. Without this check before the overlap loop, the overlap detection
+            // always blocks re-reads and the model can never recover after context
+            // compression — it enters a permanent deadlock where read_file and grep
+            // are both blocked and the session stalls (loop abort).
+            const _isDeadlockEscape =
+              _deadlockOnFile === path && _superNuclearFires >= 1;
+            if (_isDeadlockEscape) {
+              _deadlockOnFile = null; // one-time escape consumed
+              debugLog(
+                `${C.yellow}  ⚠ Deadlock escape: allowing targeted re-read of "${path.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
+              );
+              const escapeMsg = {
+                role: "user",
+                content:
+                  `[SYSTEM] One-time read pass for "${path}" after context wipe. ` +
+                  "Gather the exact lines you need, then edit immediately. " +
+                  "Do not re-read or grep this file again.",
+              };
+              conversationMessages.push(escapeMsg);
+              apiMessages.push(escapeMsg);
+              // Skip the overlap loop — let the read execute this one time.
+            } else {
             for (const [ps, pe] of prevRanges) {
               const overlapStart = Math.max(newStart, ps);
               const overlapEnd = Math.min(newEnd, pe);
@@ -11767,6 +11792,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 }
               }
             }
+            } // end else — non-escape overlap check path
             if (!blocked) {
               // No significant overlap with any single previous range — but check for scroll pattern.
               // If the agent has read 3+ non-overlapping sections of the same file without an edit
@@ -11774,29 +11800,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
               //
-              // Deadlock escape valve: after at least one super-nuclear compression, if the
-              // model targets the same file that triggered the previous read/grep deadlock,
-              // allow ONE more targeted read instead of blocking again. This breaks the
-              // compression → deadlock → compression cycle observed with small models.
+              // Deadlock escape (overlap bypass) is handled before the overlap loop above.
+              // This section only handles scroll-pattern deadlocks and warnings.
               const sectionCount = prevRanges.length; // sections already committed
-              const _isDeadlockEscape =
-                _deadlockOnFile === path && _superNuclearFires >= 1;
-              if (_isDeadlockEscape) {
-                _deadlockOnFile = null; // one-time escape consumed
-                debugLog(
-                  `${C.yellow}  ⚠ Deadlock escape: allowing targeted read of "${path.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
-                );
-                const escapeMsg = {
-                  role: "user",
-                  content:
-                    `[SYSTEM] One-time read pass for "${path}" after context wipe. ` +
-                    "Gather the exact lines you need, then edit immediately. " +
-                    "Do not re-read or grep this file again.",
-                };
-                conversationMessages.push(escapeMsg);
-                apiMessages.push(escapeMsg);
-                // Fall through — let the read execute this one time
-              } else if (
+              // Deadlock escape is now handled before the overlap loop (above).
+              // _deadlockOnFile is already consumed there if it matched, so this
+              // path only fires for fresh file-scroll deadlocks (section count
+              // high but no overlap with previous reads).
+              if (
                 sectionCount >= SCROLL_BLOCK_SECTIONS &&
                 !prep._boundedBacklogPostGrepRead
               ) {
