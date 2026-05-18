@@ -65,6 +65,31 @@ if (r.status !== 'completed') { console.log(r.status); } else { console.log(r.co
 " 2>/dev/null || echo "unknown"
 }
 
+merge_devel_into_main() {
+  git checkout main
+  touch "$MERGE_MARKER"
+
+  if git merge-base --is-ancestor main devel 2>/dev/null || \
+     git merge-base --is-ancestor devel main 2>/dev/null || \
+     [ -n "$(git merge-base main devel 2>/dev/null || true)" ]; then
+    git merge devel --no-edit
+    return
+  fi
+
+  echo "[merge-to-main] No common main/devel ancestor found."
+  echo "[merge-to-main] Creating a one-time reconciliation merge with devel's tree..."
+
+  git merge -s ours --no-commit --allow-unrelated-histories devel
+  git read-tree --reset -u devel
+  git commit -m "Merge branch 'devel' into main"
+
+  # A no-commit reconciliation merge does not consistently trigger post-merge
+  # across Git versions. Invoke the project hook explicitly so the standard
+  # version bump, main push, devel sync, and GitHub Actions publish still run.
+  touch "$MERGE_MARKER"
+  "$(git rev-parse --show-toplevel)/hooks/post-merge"
+}
+
 echo "[merge-to-main] Waiting for CI on devel @ ${SHORT_SHA}..."
 
 while true; do
@@ -73,9 +98,7 @@ while true; do
   case "$STATUS" in
     success)
       echo "[merge-to-main] CI passed. Merging devel → main..."
-      git checkout main
-      touch "$MERGE_MARKER"
-      git merge devel --no-edit
+      merge_devel_into_main
       echo "[merge-to-main] Merge complete. post-merge hook will handle version bump and publish."
       exit 0
       ;;
