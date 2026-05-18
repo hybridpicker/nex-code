@@ -145,41 +145,45 @@ function getModelForCategory(categoryId) {
   // 0. Hard override (e.g. --gemini): always use the forced model
   if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
 
-  // 1. Per-session env override
+  // 1. Per-session env override. Stale benchmark-written env routes still go
+  //    through the scoped-edit context guard below.
   const cat = CATEGORIES[categoryId];
-  if (cat?.envVar && process.env[cat.envVar]) return process.env[cat.envVar];
+  const envModel = cat?.envVar ? process.env[cat.envVar] || null : null;
+  if (envModel && !_configModelNeedsContextUpgrade(envModel, categoryId)) {
+    return envModel;
+  }
 
   // 2. Persistent routing config
   const config = loadRoutingConfig();
   const configModel = config[categoryId] || null;
+  const configuredModel = envModel || configModel;
 
   // 3. Fitness-weighted routing: if historical data shows the default model
   //    underperforms for this category, switch to a proven alternative.
-  if (configModel) {
+  if (configuredModel) {
     try {
       const { getFitnessRecommendedModel } = require("./model-fitness");
-      const fitnessPick = getFitnessRecommendedModel(categoryId, configModel);
+      const fitnessPick = getFitnessRecommendedModel(categoryId, configuredModel);
       if (fitnessPick) return fitnessPick;
     } catch { /* model-fitness not available or no data yet */ }
   }
 
-  // 4. When the config model exists but is known to have insufficient context
-  //    for this category (e.g. 128K devstral-small routed to scoped-edit), fall
-  //    back to Ollama USE_CASES for a better recommendation. Only activates when
-  //    a config model IS set — returns null normally if no config exists.
-  if (_configModelNeedsContextUpgrade(configModel, categoryId)) {
+  // 4. Scoped-edit needs a large-context model. If no scoped-edit route exists,
+  //    or an env/config route points at a 128K model, fall back to Ollama
+  //    USE_CASES for a safer recommendation.
+  if (_configModelNeedsContextUpgrade(configuredModel, categoryId)) {
     try {
       const { getOllamaRecommendations } = require("./providers/ollama");
       const useCase = USECASE_FOR_CATEGORY[categoryId] || "coding";
       const recs = getOllamaRecommendations(useCase, 3);
       if (recs.length > 0) {
-        const better = recs.find((r) => r.id !== configModel) || recs[0];
+        const better = recs.find((r) => r.id !== configuredModel) || recs[0];
         return better.id;
       }
     } catch { /* ollama provider not available */ }
   }
 
-  return configModel;
+  return configuredModel;
 }
 
 // Category → USE_CASE mapping for fallback model selection
@@ -195,8 +199,8 @@ const USECASE_FOR_CATEGORY = {
   "scoped-edit": "scoped-edit",
 };
 
-// 128K models cannot handle scoped-edit on real projects — the context window
-// overflows and the compactor/deadlock cycle kills reliability.
+// Missing scoped-edit routes and 128K models both need upgrade. On real projects
+// the context window overflows and the compactor/deadlock cycle kills reliability.
 const SCOPED_EDIT_MIN_CONTEXT = 256000;
 function _configModelNeedsContextUpgrade(modelId, categoryId) {
   if (categoryId !== "scoped-edit") return false;

@@ -198,6 +198,7 @@ describe("task-router.js", () => {
       delete process.env.NEX_ROUTE_FRONTEND;
       delete process.env.NEX_ROUTE_SYSADMIN;
       delete process.env.NEX_ROUTE_CODING;
+      delete process.env.NEX_ROUTE_SCOPED_EDIT;
       const dir = path.dirname(ROUTING_CONFIG_PATH);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
@@ -217,6 +218,29 @@ describe("task-router.js", () => {
     it("returns config value when no env var", () => {
       saveRoutingConfig({ sysadmin: "sysadmin-model" });
       expect(getModelForCategory("sysadmin")).toBe("sysadmin-model");
+    });
+
+    it("falls back to a large-context model when scoped-edit has no route", () => {
+      const model = getModelForCategory("scoped-edit");
+      const { OLLAMA_MODELS } = require("../cli/providers/ollama");
+      expect(model).toBeTruthy();
+      expect(OLLAMA_MODELS[model].contextWindow).toBeGreaterThanOrEqual(256000);
+    });
+
+    it("upgrades stale scoped-edit config routes below 256K context", () => {
+      saveRoutingConfig({ "scoped-edit": "devstral-small-2:24b" });
+      const model = getModelForCategory("scoped-edit");
+      const { OLLAMA_MODELS } = require("../cli/providers/ollama");
+      expect(model).not.toBe("devstral-small-2:24b");
+      expect(OLLAMA_MODELS[model].contextWindow).toBeGreaterThanOrEqual(256000);
+    });
+
+    it("upgrades stale scoped-edit env routes below 256K context", () => {
+      process.env.NEX_ROUTE_SCOPED_EDIT = "devstral-small-2:24b";
+      const model = getModelForCategory("scoped-edit");
+      const { OLLAMA_MODELS } = require("../cli/providers/ollama");
+      expect(model).not.toBe("devstral-small-2:24b");
+      expect(OLLAMA_MODELS[model].contextWindow).toBeGreaterThanOrEqual(256000);
     });
 
     it("returns null for unknown category", () => {

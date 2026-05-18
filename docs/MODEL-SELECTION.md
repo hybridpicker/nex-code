@@ -84,6 +84,41 @@ Or via environment:
 - `NEX_PHASE_ROUTING=0` — disable phase routing entirely
 - `NEX_PHASE_ROUTING=1` — force-enable on non-Ollama providers
 
+## Scoped-Edit Routing
+
+For tasks that target specific file sections (detected via patterns like "add a field to",
+"inside the X div", "around line N"), nex-code routes to a dedicated `scoped-edit` category.
+
+### Context-Window Awareness
+
+Scoped-edit tasks on real projects (>50 files, >1000-line templates) require models with
+at least 256K context. The router applies two layers of protection:
+
+1. **USE_CASES fallback** (`task-router.js`): When scoped-edit has no route, or the
+   env/config route has a 128K model, `getModelForCategory()` automatically falls
+   back to `getOllamaRecommendations()` which ranks models by quality score +
+   context-window bonus (+8 for ≥256K, +12 for ≥1M).
+
+2. **Benchmark guard** (`benchmark.js`): `autoUpdateRouting()` rejects 128K scoped-edit winners
+   with a warning, preventing a synthetic benchmark from routing a small-context model to a
+   real-project category it cannot handle.
+
+### Defaults
+
+| Category | Default (no config) | Fallback (env/config has 128K model) |
+|---|---|---|
+| `scoped-edit` | `qwen3-coder-next` (262K) | `qwen3-coder-next` (262K) |
+| `quick-fix` | `qwen3.5:35b-a3b` | `deepseek-v4-flash:cloud` |
+| `coding` | `qwen3-coder-next` (262K) | `deepseek-v4-flash:cloud` |
+
+### Quality Score Recalibration (v0.5.33+)
+
+| Model | Old | New | Reason |
+|---|---|---|---|
+| `devstral-small-2:24b` | 82 | **74** | 128K stalls on >50-file projects |
+| `qwen3.5:35b-a3b` | 84 | **88** | 262K context, free local |
+| `deepseek-v4-flash:cloud` | 90 | **92** | 1M context, proven 3/3 scoped-edit passes |
+
 ## Environment Variables
 
 ```bash
@@ -91,7 +126,8 @@ Or via environment:
 NEX_ORCHESTRATOR_MODEL=kimi-k2.5
 NEX_HEAVY_MODEL=qwen3-coder:480b
 NEX_STANDARD_MODEL=devstral-2:123b
-NEX_FAST_MODEL=devstral-small-2:24b
+NEX_FAST_MODEL=qwen3.5:35b-a3b
+NEX_ROUTE_SCOPED_EDIT=deepseek-v4-flash:cloud
 NEX_PHASE_ROUTING=1    # force-enable (auto on Ollama Cloud)
 ```
 

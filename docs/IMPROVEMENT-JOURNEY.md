@@ -192,6 +192,85 @@ turns.
 
 ---
 
+### 2026-05-18
+
+#### `00872ef` — Deadlock escape moved before overlap detection
+
+**Problem**: On projects with >50 files, the compactor would super-nuclear-compress
+context, the model would try to re-read content it had already seen, and the overlap
+detection would block every re-read. The deadlock escape valve (`_deadlockOnFile === path
+&& _superNuclearFires >= 1`) existed but was placed inside `if (!blocked)` — unreachable
+because the overlap check always set `blocked = true` first. Result: 5 consecutive blocked
+calls → loop abort → zero edits.
+
+**Fix**: Moved the deadlock escape check *before* the overlap detection loop in
+`cli/agent.js`. When escape conditions are met, the overlap loop is skipped entirely.
+The escape is one-time — consumed after first use.
+
+**Impact**: CLI scoped-edit tasks on jarvis-agent (1400+ files) now produce edits
+instead of stalling. Desktop E2E completes cleanly.
+
+#### `567f0c5` — Remaining stall-paths + dist skill loader
+
+**Problem**: `_blockRepeatedLocatedTargetRead()` (line 4116) also blocks exact re-reads
+and runs before the overlap section where the fix lives. `autoresearch.js` skill required
+`../theme` at load time, but in dist/ builds skills are copied as-is while theme is
+bundled — causing `MODULE_NOT_FOUND` in Desktop.
+
+**Fix**: Added the same deadlock escape gate to `_blockRepeatedLocatedTargetRead()`.
+Wrapped the theme require in try-catch with a Proxy no-op fallback.
+
+#### `c525151` — Scoped-edit routing + context-window-aware ranking
+
+**Problem**: The task router (`OLLAMA_USE_CASES`) prioritized `devstral-small-2:24b` (128K)
+for quick-fix and coding tasks. On real projects this model overflows context and stalls.
+The routing config at `~/.nex-code/model-routing.json` hardcoded this model for all
+categories, overriding any USE_CASES defaults.
+
+**Fix**:
+- New `scoped-edit` task category with dedicated USE_CASES list
+- `getOllamaRecommendations()` applies context-window bonus (+8 for ≥256K, +12 for ≥1M)
+- USE_CASES reordered: large-context models lead quick-fix and coding
+- `scoped-edit` list excludes 128K models entirely
+- Quality scores: devstral-small 82→74, qwen3.5:35b-a3b 84→88, deepseek-v4-flash 90→92
+- `scoped-edit` added to `DETECTION_ORDER` and `CATEGORY_ROUTE_KEY`
+- Benchmark category env syncing extended to scoped-edit, bug-fix, feature-add, refactor
+
+#### `5a0ef70` — Benchmark context-window-aware scoring + scoped-edit guard
+
+**Problem**: A 128K model could win the scoped-edit benchmark category on synthetic
+single-task tests and get routed to real projects where it would stall. The benchmark
+seed lists still led with 128K models.
+
+**Fix**:
+- `MODEL_CONTEXT_WINDOW` table: maps 12 models to context sizes
+- Category scoring in `buildSummary()` applies +2-4pt context-window bonus
+- `_DEFAULT_MODELS_SEED` reordered: large-context models first
+- `_QUICK_SEED` updated: `qwen3.5:35b-a3b`, `deepseek-v4-flash:cloud`, `minimax-m2.7`
+- `autoUpdateRouting()`: absolute guard blocks 128K scoped-edit winners with warning
+- `ministral-3:14b` and `glm-5:cloud` removed from seed (untested/weak)
+
+#### `207bfdd` — Task-router USE_CASES fallback for stale routing configs
+
+**Problem**: `getModelForCategory()` returned the routing config value unconditionally.
+If the config had `devstral-small-2:24b` for scoped-edit (set by a pre-fix benchmark),
+the model would be forced onto scoped-edit tasks and stall.
+
+**Fix**: `_configModelNeedsContextUpgrade()` checks if the config model has <256K context
+for scoped-edit. If so, falls back to `getOllamaRecommendations()` for a better model.
+Added `USECASE_FOR_CATEGORY` mapping and `SCOPED_EDIT_MIN_CONTEXT` constant.
+
+#### Follow-up — Scoped-edit fallback covers missing and env routes
+
+**Problem**: Desktop can run from a managed checkout with older local settings where
+`scoped-edit` is missing from `model-routing.json`, while `.env` still contains stale
+128K task routes from a previous benchmark.
+
+**Fix**: The router now applies the scoped-edit context guard to both env and config
+routes. A missing scoped-edit route or a stale `NEX_ROUTE_SCOPED_EDIT=devstral-small-2:24b`
+falls back to a ≥256K recommendation, while `NEX_FORCE_MODEL` remains a hard manual
+override.
+
 ## 3. How the Benchmark System Works
 
 ### Session Scorer (`cli/session-scorer.js`)

@@ -60,6 +60,50 @@ The goal is not provider abstraction for its own sake. The goal is to make model
 - **Repository-aware behavior** including context from the current project, config, and Git state
 - **Safety controls** around confirmations, sensitive operations, and destructive commands
 
+## Milestone: Scoped-Edit Reliability & Context-Window-Aware Routing
+
+As of `v0.5.33+`, nex-code handles scoped edits on real-world projects — targeted
+changes to specific file sections — with production reliability. This was validated
+against `jarvis-agent` (a 1400+ file Django/Alpine.js project with 3155-line templates).
+
+### The Problem
+
+Small models (`devstral-small-2:24b`, 128K context) would stall permanently on
+projects with >50 files. The compactor would purge context, the model would try to
+re-read lost content, and the overlap guard would block every re-read. After 5
+consecutive blocked calls the loop guard aborted — zero edits made.
+
+### The Fix
+
+**Deadlock escape ordering** (commits `00872ef`, `567f0c5`): The deadlock escape
+valve now fires *before* the overlap detection, allowing one targeted re-read after
+super-nuclear compression. Previously it was placed inside `if (!blocked)` — unreachable
+because the overlap check always blocked first.
+
+**Context-window-aware routing** (commits `c525151`, `5a0ef70`, `207bfdd` and follow-ups):
+
+- New `scoped-edit` task category detected via patterns like "add a field to", "inside the X div"
+- `getOllamaRecommendations()` applies context-window bonus: +8pts for ≥256K, +12pts for ≥1M
+- Benchmark scoring includes context-window bonus to prevent 128K models from winning categories
+- `autoUpdateRouting` guards scoped-edit: rejects 128K winners with a warning
+- Missing or stale scoped-edit routes fall back to a ≥256K model even when old env/config values exist
+- Quality scores recalibrated: `devstral-small-2:24b` 82→74, `deepseek-v4-flash:cloud` 90→92, `qwen3.5:35b-a3b` 84→88
+
+### Verified
+
+- **CLI**: `deepseek-v4-flash:cloud` (1M context) — 2/2 full successes on test fixture, 1/1 on real `jarvis-agent`
+- **CLI**: `devstral-small-2:24b-cloud` (128K) — now produces scoped edits instead of stalling (was 0/1 before fix)
+- **Desktop E2E**: Clean completion, no loop abort
+- **Test suite**: 3637 tests passing, 5 new regression tests for the deadlock escape
+
+### Recommended Models for Scoped Edits
+
+| Model | Context | Speed | Cost |
+|---|---|---|---|
+| `qwen3.5:35b-a3b` | 262K | fast | free (local) |
+| `deepseek-v4-flash:cloud` | 1M | fast | cloud |
+| `qwen3-coder-next` | 262K | balanced | cloud |
+
 ## Architecture
 
 At a high level, `nex-code` is organized as an orchestration layer on top of model providers and developer tools.
@@ -110,7 +154,7 @@ The global Desktop launcher can run reproducible headless Desktop scenarios:
 nex-code-app --e2e \
   --open-project /path/to/project \
   --prompt-file /tmp/prompt.txt \
-  --model ollama:devstral-small-2:24b-cloud \
+  --model ollama:deepseek-v4-flash:cloud \
   --timeout-ms 180000 \
   --json \
   --auto-confirm \
