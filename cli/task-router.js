@@ -56,6 +56,14 @@ const CATEGORIES = {
     pattern:
       /\b(react|vue|angular|svelte|jsx|tsx|html|css|scss|sass|tailwind|bootstrap|component|dom\b|ui\s|button|modal|navbar|sidebar|stylesheet|responsive|flexbox|grid|animation|frontend|front.end|onclick|hover|transition|web\s+design|landing\s+page|browser\s+event)\b/i,
   },
+  "scoped-edit": {
+    id: "scoped-edit",
+    label: "Scoped Edit",
+    icon: "✂",
+    envVar: "NEX_ROUTE_SCOPED_EDIT",
+    pattern:
+      /\b(edit_file|scoped\s+(?:change|edit)|add\s+a\s+(?:new\s+)?(?:field|line|div|button|section)\s+(?:to|in)\b|inside\s+the\s+\S+\s+div|around\s+line\s+\d+|modify\s+(?:the\s+)?template|insert\s+(?:a\s+)?\S+\s+(?:before|after|between)|change\s+(?:this|the)\s+(?:line|div|section|field)|update\s+(?:the\s+)?\S+\s+(?:in|inside)\b)\b/i,
+  },
   sysadmin: {
     id: "sysadmin",
     label: "Sysadmin",
@@ -93,7 +101,7 @@ const CATEGORIES = {
 // Priority order: more precise patterns first, then general ones, coding last.
 // bug-fix/feature-add/refactor come after domain categories so "fix Docker container"
 // matches "sysadmin" not "bug-fix", and "add chart component" matches "frontend" not "feature-add".
-const DETECTION_ORDER = ["agentic", "frontend", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
+const DETECTION_ORDER = ["agentic", "frontend", "scoped-edit", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -293,6 +301,10 @@ function saveRoutingConfig(routing) {
     if (merged.sysadmin) updateEnv("NEX_ROUTE_SYSADMIN", merged.sysadmin);
     if (merged.data) updateEnv("NEX_ROUTE_DATA", merged.data);
     if (merged.agentic) updateEnv("NEX_ROUTE_AGENTIC", merged.agentic);
+    if (merged["scoped-edit"]) updateEnv("NEX_ROUTE_SCOPED_EDIT", merged["scoped-edit"]);
+    if (merged["bug-fix"]) updateEnv("NEX_ROUTE_BUG_FIX", merged["bug-fix"]);
+    if (merged["feature-add"]) updateEnv("NEX_ROUTE_FEATURE", merged["feature-add"]);
+    if (merged.refactor) updateEnv("NEX_ROUTE_REFACTOR", merged.refactor);
 
     if (merged.phases) {
       if (merged.phases.plan) updateEnv("NEX_PHASE_PLAN_MODEL", merged.phases.plan);

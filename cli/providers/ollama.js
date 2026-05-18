@@ -61,7 +61,10 @@ const OLLAMA_MODELS = {
     contextWindow: 131072,
     capability: "fast-coding",
     speed: "fast",
-    quality: 82,
+    // Downgraded 82→74: 128K context window causes compactor thrashing and
+    // stall on projects with >50 files or >1000-line templates. Confirmed by
+    // Desktop E2E scoped-edit failure on a 30-module / 1500-line project.
+    quality: 74,
     recommendedFor: ["quick-fix", "sysadmin", "fallback"],
   },
   "minimax-m2.7:cloud": {
@@ -122,8 +125,10 @@ const OLLAMA_MODELS = {
     contextWindow: 1048576,
     capability: "general",
     speed: "fast",
-    quality: 90,
-    recommendedFor: ["coding", "quick-fix", "fallback"],
+    // 1M context window handles any real project without compactor pressure.
+    // Confirmed 2/2 scoped-edit successes on 30-module / 1500-line project.
+    quality: 92,
+    recommendedFor: ["coding", "quick-fix", "scoped-edit", "fallback"],
   },
   "deepseek-v3.2": {
     id: "deepseek-v3.2",
@@ -177,8 +182,10 @@ const OLLAMA_MODELS = {
     contextWindow: 262144,
     capability: "fast-coding",
     speed: "fast",
-    quality: 84,
-    recommendedFor: ["quick-fix", "coding", "fallback"],
+    // Raised 84→88: 262K context (2× 128K models), runs locally for free,
+    // recommended as primary quick-fix / scoped-edit model.
+    quality: 88,
+    recommendedFor: ["quick-fix", "scoped-edit", "coding", "fallback"],
   },
   "qwen3.5:27b": {
     id: "qwen3.5:27b",
@@ -353,18 +360,32 @@ const OLLAMA_MODELS = {
 };
 
 const OLLAMA_USE_CASES = {
-  coding: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b", "deepseek-v4-pro:cloud"],
+  // Primary coding: large-context models first — they handle real projects without
+  // compactor thrashing. devstral-small-2:24b removed because 128K context fails on
+  // any project over ~50 files (observed in scoped-edit benchmarks).
+  coding: ["qwen3-coder-next", "deepseek-v4-flash:cloud", "qwen3-coder:480b", "devstral-2:123b", "deepseek-v4-pro:cloud"],
   agentic: ["qwen3-coder:480b", "qwen3-coder-next", "devstral-2:123b", "deepseek-v4-pro:cloud"],
   reasoning: ["kimi-k2:1t", "kimi-k2-thinking", "kimi-k2.5"],
   "large-context": ["qwen3-coder-next", "qwen3.5:397b-cloud", "kimi-k2.5"],
   frontend: ["qwen3.5:397b-cloud", "qwen3-coder-next", "qwen3-coder:480b"],
-  "quick-fix": ["devstral-small-2:24b", "qwen3-next:80b", "ministral-3:14b", "deepseek-v4-flash:cloud"],
-  fallback: ["devstral-small-2:24b", "deepseek-v4-flash:cloud", "deepseek-v3.2", "qwen3.5:35b-a3b"],
+  // Quick-fix / scoped-edit: large-context models now lead because real projects
+  // (30+ files, 1000+ line templates) overflow 128K windows and stall small models.
+  // qwen3.5:35b-a3b has 262K context (2× devstral-small) and runs locally for free.
+  "quick-fix": ["qwen3.5:35b-a3b", "deepseek-v4-flash:cloud", "devstral-small-2:24b", "qwen3-next:80b"],
+  // Scoped-edit: fast models with enough context window for real project file sizes.
+  // devstral-small is excluded because 128K is insufficient for projects with
+  // large template files or many modules — confirmed by Desktop E2E test failure.
+  "scoped-edit": ["qwen3.5:35b-a3b", "deepseek-v4-flash:cloud", "qwen3-coder-next", "qwen3.5:122b-a10b"],
+  fallback: ["qwen3.5:35b-a3b", "deepseek-v4-flash:cloud", "deepseek-v3.2", "devstral-small-2:24b"],
   "open-source": ["qwen3-coder:480b", "devstral-2:123b", "gpt-oss:120b"],
 };
 
 function getOllamaRecommendations(useCase = "coding", limit = 5) {
   const wanted = OLLAMA_USE_CASES[useCase] || OLLAMA_USE_CASES.coding;
+  // Context-window-aware scoring: models with ≥256K context get a bonus because
+  // they handle real projects (30+ files, 1000+ line templates) without compactor
+  // thrashing. 128K models stall frequently; 1M models never hit the limit.
+  const contextBonus = (cw) => (cw >= 1048576 ? 12 : cw >= 256000 ? 8 : cw >= 131072 ? 0 : -4);
   const ranked = wanted
     .map((id) => OLLAMA_MODELS[id])
     .filter(Boolean)
@@ -373,7 +394,11 @@ function getOllamaRecommendations(useCase = "coding", limit = 5) {
         .filter((m) => !wanted.includes(m.id))
         .filter((m) => (m.recommendedFor || []).includes(useCase)),
     )
-    .sort((a, b) => (b.quality || 0) - (a.quality || 0));
+    .sort((a, b) => {
+      const scoreA = (a.quality || 0) + contextBonus(a.contextWindow || 0);
+      const scoreB = (b.quality || 0) + contextBonus(b.contextWindow || 0);
+      return scoreB - scoreA;
+    });
   return ranked.slice(0, limit);
 }
 

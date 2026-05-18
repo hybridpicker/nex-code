@@ -1278,9 +1278,10 @@ const CATEGORY_ROUTE_KEY = {
   sysadmin: "sysadmin",
   data: "data",
   agentic: "agentic",
-  resilience: "coding", // resilience is a core coding-agent skill
-  ssh: "sysadmin",      // SSH tasks route to sysadmin model
-  git: "coding",        // git workflow is a coding-category skill
+  resilience: "coding",
+  ssh: "sysadmin",
+  git: "coding",
+  "file-ops": "scoped-edit",       // targeted reads/edits → scoped-edit routing
   "phase-plan": "plan",
   "phase-verify": "verify",
 };
@@ -1299,6 +1300,7 @@ function buildSummary(modelResults) {
       for (const routeKey of [
         "coding",
         "frontend",
+        "scoped-edit",
         "sysadmin",
         "data",
         "agentic",
@@ -1359,6 +1361,7 @@ function rankCategoryWinners(summary) {
   for (const routeKey of [
     "coding",
     "frontend",
+    "scoped-edit",
     "sysadmin",
     "data",
     "agentic",
@@ -1523,7 +1526,7 @@ function printResults(summary, taskCount) {
   }
 
   // Per-category winners (only shown if category tasks were included)
-  const catRoutes = ["coding", "frontend", "sysadmin", "data", "agentic", "plan", "verify"];
+  const catRoutes = ["coding", "frontend", "scoped-edit", "sysadmin", "data", "agentic", "plan", "verify"];
   const hasCatData = summary.some(
     (r) => Object.keys(r.categoryScores).length > 1,
   );
