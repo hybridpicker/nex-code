@@ -163,7 +163,50 @@ function getModelForCategory(categoryId) {
     } catch { /* model-fitness not available or no data yet */ }
   }
 
+  // 4. Fall back to Ollama USE_CASES recommendation when no config model exists,
+  //    or when the config model is known to have insufficient context for this
+  //    category (e.g. 128K devstral-small routed to scoped-edit).
+  if (!configModel || _configModelNeedsContextUpgrade(configModel, categoryId)) {
+    try {
+      const { getOllamaRecommendations } = require("./providers/ollama");
+      const useCase = USECASE_FOR_CATEGORY[categoryId] || "coding";
+      const recs = getOllamaRecommendations(useCase, 3);
+      if (recs.length > 0) {
+        // Prefer a recommendation that differs from the weak config model
+        const better = recs.find((r) => r.id !== configModel) || recs[0];
+        return better.id;
+      }
+    } catch { /* ollama provider not available */ }
+  }
+
   return configModel;
+}
+
+// Category → USE_CASE mapping for fallback model selection
+const USECASE_FOR_CATEGORY = {
+  coding: "coding",
+  frontend: "frontend",
+  sysadmin: "sysadmin",
+  data: "coding",
+  agentic: "agentic",
+  "bug-fix": "quick-fix",
+  "feature-add": "coding",
+  refactor: "coding",
+  "scoped-edit": "scoped-edit",
+};
+
+// 128K models cannot handle scoped-edit on real projects — the context window
+// overflows and the compactor/deadlock cycle kills reliability.
+const SCOPED_EDIT_MIN_CONTEXT = 256000;
+function _configModelNeedsContextUpgrade(modelId, categoryId) {
+  if (categoryId !== "scoped-edit") return false;
+  try {
+    const { OLLAMA_MODELS } = require("./providers/ollama");
+    const info = OLLAMA_MODELS[modelId];
+    return !info || (info.contextWindow || 131072) < SCOPED_EDIT_MIN_CONTEXT;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Phase-Based Routing ─────────────────────────────────────────────────────
