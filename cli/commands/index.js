@@ -1734,9 +1734,34 @@ async function handleSlashCommand(input, rl) {
               );
             }
           }
+        } else if (planContent && planContent.trim()) {
+          createPlan("Approved prose plan", [
+            { description: "Execute the approved plan", files: [] },
+          ]);
+          approvePlan();
+          startExecution();
+          setPlanMode(false);
+          _updateFooterMode();
+          invalidateSystemPromptCache();
+          console.log(
+            `${C.green}${C.bold}Plan approved!${C.reset} Executing saved plan...`,
+          );
+          console.log(
+            `${C.dim}Plan mode disabled — write tools are now available.${C.reset}`,
+          );
+          const { processInput: _pi } = require("../agent");
+          const execPrompt = `[PLAN APPROVED — EXECUTE NOW]\n\nImplement the following plan step by step. All tools are now available.\n\n${planContent}`;
+          try {
+            await _pi(execPrompt);
+          } catch (err) {
+            console.log(
+              `${C.red}Error: ${err.message?.split("\n")[0]}${C.reset}`,
+            );
+          }
         } else {
           console.log(
-            `${C.red}No plan to approve. Enter plan mode first with /plan${C.reset}`,
+            `${C.yellow}No plan is ready to approve yet.${C.reset}\n` +
+              `${C.dim}Wait for the ${C.reset}${C.cyan}Plan ready${C.reset}${C.dim} prompt, or start planning with ${C.reset}${C.cyan}/plan <task>${C.reset}${C.dim}.${C.reset}`,
           );
         }
         return true;
@@ -1748,7 +1773,7 @@ async function handleSlashCommand(input, rl) {
       console.log(`
 ${C.cyan}${C.bold}┌─ PLAN MODE ───────────────────────────────────────┐${C.reset}
 ${C.cyan}${C.bold}│${C.reset}  Analysis only — no file changes until approved   ${C.cyan}${C.bold}│${C.reset}
-${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · /plan approve to execute${C.reset}  ${C.cyan}${C.bold}│${C.reset}
+${C.cyan}${C.bold}│${C.reset}  ${C.dim}Read-only tools only · approve the plan to run${C.reset}  ${C.cyan}${C.bold}│${C.reset}
 ${C.cyan}${C.bold}└───────────────────────────────────────────────────┘${C.reset}`);
       if (arg) {
         console.log(`${C.dim}Task: ${arg}${C.reset}`);
@@ -4359,7 +4384,7 @@ async function startREPL() {
         _setPM(true);
         _inv();
         console.log(
-          `${C.cyan}${C.bold}⎇  Auto Plan Mode${C.reset}${C.dim} — implementation task detected · read-only until /plan approve${C.reset}`,
+          `${C.cyan}${C.bold}⎇  Planning first${C.reset}${C.dim} — I will inspect, show a plan, then ask before editing${C.reset}`,
         );
       }
     }

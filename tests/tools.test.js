@@ -407,6 +407,20 @@ describe("tools.js", () => {
       expect(result).not.toContain("node_modules");
     });
 
+    it("skips private agent state and virtualenv directories", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".nex"));
+      fs.mkdirSync(path.join(tmpDir, "venv"));
+      fs.mkdirSync(path.join(tmpDir, "__pycache__"));
+      fs.writeFileSync(path.join(tmpDir, "index.js"), "");
+
+      const result = await executeTool("list_directory", { path: tmpDir });
+
+      expect(result).toContain("index.js");
+      expect(result).not.toContain(".nex");
+      expect(result).not.toContain("venv");
+      expect(result).not.toContain("__pycache__");
+    });
+
     it("returns error for missing directory", async () => {
       const result = await executeTool("list_directory", {
         path: path.join(tmpDir, "missing-dir"),
@@ -467,6 +481,23 @@ describe("tools.js", () => {
       expect(result).toContain("hello");
       expect(result).toContain(".js");
     });
+
+    it("does not search private agent state or virtualenv directories", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".nex", "audit"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "venv", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, ".nex", "audit", "run.jsonl"), "SECRET_NEEDLE\n");
+      fs.writeFileSync(path.join(tmpDir, "venv", "lib", "dep.py"), "SECRET_NEEDLE\n");
+      fs.writeFileSync(path.join(tmpDir, "app.js"), "SECRET_NEEDLE\n");
+
+      const result = await executeTool("search_files", {
+        path: tmpDir,
+        pattern: "SECRET_NEEDLE",
+      });
+
+      expect(result).toContain("app.js");
+      expect(result).not.toContain(".nex");
+      expect(result).not.toContain("venv");
+    });
   });
 
   // ─── glob tool ──────────────────────────────────────────────
@@ -522,6 +553,26 @@ describe("tools.js", () => {
       expect(result).toContain("app.js");
       expect(result).not.toContain("node_modules");
       expect(result).not.toContain(".git");
+    });
+
+    it("skips private agent state and virtualenv directories", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".nex", "audit"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "venv", "lib"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, ".venv", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, ".nex", "audit", "run.js"), "");
+      fs.writeFileSync(path.join(tmpDir, "venv", "lib", "dep.js"), "");
+      fs.writeFileSync(path.join(tmpDir, ".venv", "lib", "dep.js"), "");
+      fs.writeFileSync(path.join(tmpDir, "app.js"), "");
+
+      const result = await executeTool("glob", {
+        pattern: "**/*.js",
+        path: tmpDir,
+      });
+
+      expect(result).toContain("app.js");
+      expect(result).not.toContain(".nex");
+      expect(result).not.toContain("venv");
+      expect(result).not.toContain(".venv");
     });
 
     it("prioritizes stronger path matches over newer files", async () => {
@@ -611,6 +662,26 @@ describe("tools.js", () => {
       });
       const lines = result.split("\n");
       expect(lines[0]).toContain("defs.js");
+    });
+
+    it("does not search private agent state or virtualenv directories", async () => {
+      fs.mkdirSync(path.join(tmpDir, ".nex", "audit"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "venv", "lib"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, ".venv", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, ".nex", "audit", "run.jsonl"), "SECRET_NEEDLE\n");
+      fs.writeFileSync(path.join(tmpDir, "venv", "lib", "dep.py"), "SECRET_NEEDLE\n");
+      fs.writeFileSync(path.join(tmpDir, ".venv", "lib", "dep.py"), "SECRET_NEEDLE\n");
+      fs.writeFileSync(path.join(tmpDir, "app.js"), "SECRET_NEEDLE\n");
+
+      const result = await executeTool("grep", {
+        pattern: "SECRET_NEEDLE",
+        path: tmpDir,
+      });
+
+      expect(result).toContain("app.js");
+      expect(result).not.toContain(".nex");
+      expect(result).not.toContain("venv");
+      expect(result).not.toContain(".venv");
     });
   });
 
@@ -2784,17 +2855,21 @@ describe("tools.js", () => {
 
   // ─── k8s_pods local ──────────────────────────────────────────
   describe("k8s_pods variations", () => {
-    it("runs without namespace (all namespaces)", async () => {
+    // Skipped in CI: hosted runners may have kubectl installed but no reachable
+    // cluster, causing kubectl discovery to exceed Jest's per-test timeout.
+    const itLocal = process.env.CI ? it.skip : it;
+
+    itLocal("runs without namespace (all namespaces)", async () => {
       const result = await executeTool("k8s_pods", {});
       expect(typeof result).toBe("string");
     });
 
-    it("runs with namespace", async () => {
+    itLocal("runs with namespace", async () => {
       const result = await executeTool("k8s_pods", { namespace: "default" });
       expect(typeof result).toBe("string");
     });
 
-    it("runs with label", async () => {
+    itLocal("runs with label", async () => {
       const result = await executeTool("k8s_pods", { label: "app=web" });
       expect(typeof result).toBe("string");
     });

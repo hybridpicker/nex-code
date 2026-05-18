@@ -318,6 +318,9 @@ describe("registry.js", () => {
       jest
         .spyOn(ollama, "chat")
         .mockRejectedValueOnce(new Error("429 Too Many Requests"));
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("429 Too Many Requests"));
       jest.spyOn(openai, "isConfigured").mockReturnValue(true);
       jest.spyOn(openai, "chat").mockResolvedValueOnce({ content: "ok" });
 
@@ -326,6 +329,7 @@ describe("registry.js", () => {
       expect(openai.chat).toHaveBeenCalled();
 
       ollama.chat.mockRestore();
+      ollama.stream.mockRestore();
       openai.chat.mockRestore();
       openai.isConfigured.mockRestore();
     });
@@ -341,6 +345,9 @@ describe("registry.js", () => {
       jest
         .spyOn(ollama, "chat")
         .mockRejectedValueOnce(new Error("401 Unauthorized"));
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("401 Unauthorized"));
       jest.spyOn(openai, "isConfigured").mockReturnValue(true);
       jest.spyOn(openai, "chat").mockResolvedValueOnce({ content: "ok" });
 
@@ -350,6 +357,7 @@ describe("registry.js", () => {
       expect(openai.chat).not.toHaveBeenCalled();
 
       ollama.chat.mockRestore();
+      ollama.stream.mockRestore();
       openai.chat.mockRestore();
       openai.isConfigured.mockRestore();
     });
@@ -365,9 +373,15 @@ describe("registry.js", () => {
       jest
         .spyOn(ollama, "chat")
         .mockRejectedValueOnce(new Error("500 Internal Server Error"));
+      jest
+        .spyOn(ollama, "stream")
+        .mockRejectedValueOnce(new Error("500 Internal Server Error"));
       jest.spyOn(openai, "isConfigured").mockReturnValue(true);
       jest
         .spyOn(openai, "chat")
+        .mockRejectedValueOnce(new Error("500 Internal Server Error"));
+      jest
+        .spyOn(openai, "stream")
         .mockRejectedValueOnce(new Error("500 Internal Server Error"));
 
       await expect(registry.callChat([], [])).rejects.toThrow(
@@ -377,7 +391,9 @@ describe("registry.js", () => {
       expect(openai.chat).toHaveBeenCalled();
 
       ollama.chat.mockRestore();
+      ollama.stream.mockRestore();
       openai.chat.mockRestore();
+      openai.stream.mockRestore();
       openai.isConfigured.mockRestore();
     });
 

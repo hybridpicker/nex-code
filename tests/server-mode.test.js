@@ -13,6 +13,12 @@ jest.mock("../cli/safety", () => ({
 jest.mock("../cli/agent", () => ({
   processInput: jest.fn().mockResolvedValue(undefined),
   clearConversation: jest.fn(),
+  getConversationMessages: jest.fn().mockReturnValue([]),
+  setAbortSignalGetter: jest.fn(),
+}));
+
+jest.mock("../cli/tools", () => ({
+  setAskUserHandler: jest.fn(),
 }));
 
 let mockLineHandler;
@@ -32,7 +38,13 @@ jest.mock("readline", () => ({
 }));
 
 const { setConfirmHook } = require("../cli/safety");
-const { processInput, clearConversation } = require("../cli/agent");
+const {
+  processInput,
+  clearConversation,
+  getConversationMessages,
+  setAbortSignalGetter,
+} = require("../cli/agent");
+const { setAskUserHandler } = require("../cli/tools");
 
 let stdoutWrites;
 let stderrWrites;
@@ -57,7 +69,10 @@ beforeEach(() => {
   mockLineHandler = null;
   processInput.mockReset().mockResolvedValue(undefined);
   clearConversation.mockReset();
+  getConversationMessages.mockReset().mockReturnValue([]);
+  setAbortSignalGetter.mockReset();
   setConfirmHook.mockReset();
+  setAskUserHandler.mockReset();
 });
 
 afterEach(() => {
@@ -98,14 +113,183 @@ describe("startServerMode", () => {
 
   test("handles chat message and calls processInput", async () => {
     startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        { role: "assistant", content: "Implemented the requested change and verified it." },
+      ]);
 
     await mockLineHandler('{"type":"chat","id":"msg-1","text":"hello"}');
 
-    expect(processInput).toHaveBeenCalledWith("hello", expect.any(Object));
+    expect(processInput).toHaveBeenCalledWith("hello", expect.any(Object), {
+      serverMode: true,
+    });
     // Should emit done
     const doneMsg = stdoutWrites.find((w) => w.includes('"done"'));
     expect(doneMsg).toBeDefined();
-    expect(JSON.parse(doneMsg).id).toBe("msg-1");
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-1",
+      status: "complete",
+      success: true,
+    });
+  });
+
+  test("marks stalled runs as non-success when the assistant reports no work completed", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe implementation phase exhausted its turn budget without changing files.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-2","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-2"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-2",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("marks blocked-loop stalls as non-success after stale planning text", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            'I will add the "remaining kcal" field. Let me first read the specific section to understand the current structure:',
+        },
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer. Stopping without commit or push so the workflow does not falsely report success.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-blocked-loop","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-blocked-loop"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-blocked-loop",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("keeps completed work as success when redundant readbacks stall later", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "The src/settings.js file now includes desktopVerification and npm test passed.",
+        },
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer. Stopping without commit or push so the workflow does not falsely report success.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-complete-then-blocked","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-complete-then-blocked"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-complete-then-blocked",
+      status: "complete",
+      success: true,
+      summary: expect.stringContaining("desktopVerification"),
+    });
+  });
+
+  test("marks unfinished transcript-derived investigation text as non-success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            'I will add the "remaining kcal" field. Let me first check the current structure of the nutrition ring content section:',
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-unfinished-kcal","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-unfinished-kcal"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-unfinished-kcal",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("marks unfinished neutral investigation text as non-success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "I will update src/components/ProfileCard.jsx. Let me first inspect the current component structure:",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-unfinished-neutral","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-unfinished-neutral"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-unfinished-neutral",
+      status: "stalled",
+      success: false,
+    });
+  });
+
+  test("keeps completed implementation summaries as success", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "Updated src/components/ProfileCard.jsx and verified the focused component test passed.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-complete-neutral","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-complete-neutral"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-complete-neutral",
+      status: "complete",
+      success: true,
+    });
+  });
+
+  test("marks missing final assistant output as stalled", async () => {
+    startFresh();
+    getConversationMessages.mockReturnValueOnce([]).mockReturnValueOnce([]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-3","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-3"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-3",
+      status: "stalled",
+      success: false,
+      summary: "The run stopped without a final assistant response.",
+    });
   });
 
   test("handles confirm message and resolves pending confirm", async () => {
@@ -131,6 +315,27 @@ describe("startServerMode", () => {
     expect(result).toBe(true);
   });
 
+  test("preserves ask_user text answers from the desktop renderer", async () => {
+    startFresh();
+
+    const askHandler = setAskUserHandler.mock.calls[0][0];
+    const askPromise = askHandler("Which file should I edit?", []);
+
+    const reqMsg = stdoutWrites.find((w) => w.includes('"ask_user"'));
+    expect(reqMsg).toBeDefined();
+    const req = JSON.parse(reqMsg);
+
+    await mockLineHandler(
+      JSON.stringify({
+        type: "confirm",
+        id: req.id,
+        answer: "desktop/renderer/js/app.js",
+      }),
+    );
+
+    await expect(askPromise).resolves.toBe("desktop/renderer/js/app.js");
+  });
+
   test("cancel message resolves all pending confirms with false", async () => {
     startFresh();
     const hookFn = setConfirmHook.mock.calls[0][0];
@@ -142,6 +347,48 @@ describe("startServerMode", () => {
 
     expect(await p1).toBe(false);
     expect(await p2).toBe(false);
+  });
+
+  test("cancel message aborts an active chat and emits cancelled done once", async () => {
+    startFresh();
+    let resolveRun;
+    processInput.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRun = resolve; }),
+    );
+
+    const chatPromise = mockLineHandler(
+      '{"type":"chat","id":"msg-cancel","text":"slow"}',
+    );
+    await Promise.resolve();
+
+    const abortSignal = setAbortSignalGetter.mock.calls[0][0]();
+    expect(abortSignal.aborted).toBe(false);
+
+    await mockLineHandler('{"type":"cancel"}');
+
+    expect(abortSignal.aborted).toBe(true);
+    const cancelDone = stdoutWrites
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter((msg) => msg && msg.id === "msg-cancel" && msg.type === "done");
+    expect(cancelDone).toEqual([
+      expect.objectContaining({
+        status: "cancelled",
+        success: false,
+        summary: "Run cancelled by user.",
+      }),
+    ]);
+
+    resolveRun();
+    await chatPromise;
+
+    const allDone = stdoutWrites
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter((msg) => msg && msg.id === "msg-cancel" && msg.type === "done");
+    expect(allDone).toHaveLength(1);
   });
 
   test("clear message calls clearConversation", async () => {

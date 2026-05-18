@@ -213,19 +213,31 @@ function validateToolArgs(toolName, args) {
       corrected[key] = String(corrected[key]);
       wasCorrected = true;
     } else if (
+      expected === "string" &&
+      (actual !== "string" || Array.isArray(corrected[key]))
+    ) {
+      const type = Array.isArray(corrected[key]) ? "array" : actual;
+      errors.push(`Parameter "${key}" must be a string, got ${type}`);
+    } else if (
       expected === "number" &&
       actual === "string" &&
       !isNaN(corrected[key])
     ) {
       corrected[key] = Number(corrected[key]);
       wasCorrected = true;
+    } else if (expected === "number" && actual !== "number") {
+      const type = Array.isArray(corrected[key]) ? "array" : actual;
+      errors.push(`Parameter "${key}" must be a number, got ${type}`);
     } else if (expected === "boolean" && actual === "string") {
       corrected[key] = corrected[key] === "true";
       wasCorrected = true;
+    } else if (expected === "boolean" && actual !== "boolean") {
+      const type = Array.isArray(corrected[key]) ? "array" : actual;
+      errors.push(`Parameter "${key}" must be a boolean, got ${type}`);
     }
   }
 
-  if (errors.length > 0 && !wasCorrected) {
+  if (errors.length > 0) {
     return {
       valid: false,
       error:

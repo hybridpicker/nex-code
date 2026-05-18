@@ -134,7 +134,7 @@ class OpenAIProvider extends BaseProvider {
 
   _formatSingleMessage(msg) {
     if (msg.role === "assistant" && msg.tool_calls) {
-      return {
+      const formatted = {
         role: "assistant",
         content: msg.content || null,
         tool_calls: msg.tool_calls.map((tc) => ({
@@ -148,6 +148,17 @@ class OpenAIProvider extends BaseProvider {
                 : JSON.stringify(tc.function.arguments),
           },
         })),
+      };
+      if (msg.reasoning_content) {
+        formatted.reasoning_content = msg.reasoning_content;
+      }
+      return formatted;
+    }
+    if (msg.role === "assistant" && msg.reasoning_content) {
+      return {
+        role: "assistant",
+        content: msg.content || "",
+        reasoning_content: msg.reasoning_content,
       };
     }
     if (msg.role === "tool") {
@@ -291,7 +302,10 @@ class OpenAIProvider extends BaseProvider {
       throw new Error(`API Error${status}: ${msg}`);
     }
 
-    const parser = openaiProtocol.createStreamParser(onToken);
+    const parser = openaiProtocol.createStreamParser(onToken, {
+      onReasoningToken: options.onReasoningToken,
+      onThinkingToken: options.onThinkingToken,
+    });
 
     return new Promise((resolve, reject) => {
       if (options.signal) {

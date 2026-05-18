@@ -36,8 +36,11 @@ const { spawnSync, execSync } = require("child_process");
 // ── Config ────────────────────────────────────────────────────────────────
 const HOME = process.env.HOME || "/home/nex-worker";
 const PLAYGROUND_DIR = path.join(HOME, "playground");
+const NEX_CODE_DIR = path.join(HOME, ".nex-code");
 const RESULTS_FILE = path.join(HOME, ".nex-code/practice-results.json");
 const TASKS_FILE = path.join(__dirname, "practice-tasks.json");
+const CUSTOM_REGISTRY_FILE = path.join(NEX_CODE_DIR, "custom-practice-registry.json");
+const CUSTOM_TASKS_FILE = path.join(NEX_CODE_DIR, "custom-practice-tasks.json");
 const PRACTICE_BRANCH = "nex-practice";
 const MAX_PLAYGROUND_MB = 10_000; // 10 GB disk quota
 const TASK_TIMEOUT_MS = 600_000; // 10 min per task
@@ -67,7 +70,27 @@ const PROJECTS = {
   "django-app":     { path: path.join(HOME, "apps/django-app/django-app"), type: "django" },
   "nex-worker-agent":   { path: path.join(HOME, "nex-worker-agent"),           type: "node" },
   "nex-code":       { path: path.join(HOME, "Coding/nex-code"),        type: "node" },
+  "nex-desktop":    { path: path.join(HOME, "Coding/nex-code"),        type: "node" },
 };
+
+function readJsonFileSafe(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (e) {
+    log(`Cannot load ${path.basename(filePath)}: ${e.message}`);
+    return fallback;
+  }
+}
+
+function loadProjectRegistry() {
+  const customRegistry = readJsonFileSafe(CUSTOM_REGISTRY_FILE, {});
+  const customProjects = customRegistry?.projects;
+  if (!customProjects || typeof customProjects !== "object" || Array.isArray(customProjects)) {
+    return PROJECTS;
+  }
+  return { ...PROJECTS, ...customProjects };
+}
 
 // ── Logging ───────────────────────────────────────────────────────────────
 function log(...args) {
@@ -91,23 +114,33 @@ function checkDiskQuota() {
 
 // ── Load tasks ────────────────────────────────────────────────────────────
 function loadTasks() {
-  try {
-    return JSON.parse(fs.readFileSync(TASKS_FILE, "utf8"));
-  } catch (e) {
-    log(`Cannot load tasks: ${e.message}`);
-    return {};
+  const defaultTasks = readJsonFileSafe(TASKS_FILE, {});
+  const customTasks = readJsonFileSafe(CUSTOM_TASKS_FILE, {});
+  const mergedTasks = { ...defaultTasks };
+
+  if (!customTasks || typeof customTasks !== "object" || Array.isArray(customTasks)) {
+    return mergedTasks;
   }
+
+  for (const [project, tasks] of Object.entries(customTasks)) {
+    if (!Array.isArray(tasks)) continue;
+    const defaultProjectTasks = Array.isArray(mergedTasks[project]) ? mergedTasks[project] : [];
+    mergedTasks[project] = [...defaultProjectTasks, ...tasks];
+  }
+
+  return mergedTasks;
 }
 
 // ── Pick a task ───────────────────────────────────────────────────────────
 function pickTask(projectFilter) {
+  const projectRegistry = loadProjectRegistry();
   const allTasks = loadTasks();
   const available = [];
 
   for (const [project, tasks] of Object.entries(allTasks)) {
     if (projectFilter && project !== projectFilter) continue;
-    if (!PROJECTS[project]) continue;
-    if (!fs.existsSync(PROJECTS[project].path)) continue;
+    if (!projectRegistry[project]) continue;
+    if (!fs.existsSync(projectRegistry[project].path)) continue;
 
     for (const task of tasks) {
       available.push({ project, ...task });
@@ -134,7 +167,7 @@ function pickTask(projectFilter) {
 
 // ── Create worktree ───────────────────────────────────────────────────────
 function createWorktree(project) {
-  const info = PROJECTS[project];
+  const info = loadProjectRegistry()[project];
   if (!info) return null;
 
   const timestamp = Date.now();
@@ -512,7 +545,7 @@ function scoreResult(worktreePath, task, projectType, runResult) {
 // ── Clean up worktree ─────────────────────────────────────────────────────
 function cleanupWorktree(worktreePath, project) {
   try {
-    const info = PROJECTS[project];
+    const info = loadProjectRegistry()[project];
     execSync(`rm -rf "${worktreePath}"`, { timeout: 30_000 });
     if (info) {
       execSync(`cd "${info.path}" && git worktree prune 2>/dev/null`, { timeout: 10_000 });
@@ -565,6 +598,7 @@ function extractInsights(result) {
 
 // ── Main ──────────────────────────────────────────────────────────────────
 function run(args) {
+  const projectRegistry = loadProjectRegistry();
   // Parse args
   const projectFilter = args.includes("--project")
     ? args[args.indexOf("--project") + 1]
@@ -573,7 +607,7 @@ function run(args) {
   if (args.includes("--list")) {
     const tasks = loadTasks();
     for (const [project, taskList] of Object.entries(tasks)) {
-      const exists = PROJECTS[project] && fs.existsSync(PROJECTS[project]?.path);
+      const exists = projectRegistry[project] && fs.existsSync(projectRegistry[project]?.path);
       console.log(`\n${project} ${exists ? "✓" : "✗ (not found)"}:`);
       for (const t of taskList) {
         console.log(`  [${t.category}] ${t.description} (${t.difficulty || "medium"})`);
@@ -594,7 +628,7 @@ function run(args) {
   if (!task) return null;
 
   const project = task.project;
-  const info = PROJECTS[project];
+  const info = projectRegistry[project];
 
   log("═══════════════════════════════════════════════════");
   log(`Nex-Code-Playground — Practice Run`);

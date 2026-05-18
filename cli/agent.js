@@ -40,6 +40,9 @@ const {
   getPhaseBudget,
   isPhaseRoutingEnabled,
 } = require("./task-router");
+const { runSelfVerification, buildVerificationEvidence } = require("./self-verify");
+const { logSessionOutcome, getProjectSizeBucket } = require("./model-fitness");
+const fileScrollGuard = require("./guards/file-scroll");
 
 // Save session immediately — used on all terminal paths (break/return) so the
 // debounced timeout doesn't race against process exit.
@@ -77,6 +80,38 @@ function _statesVerificationGap(text) {
   if (!text || typeof text !== "string") return false;
   return /\b(not verified|verification (?:was )?not run|tests? (?:were )?not run|build (?:was )?not run|unchecked|unverified)\b/i.test(
     text,
+  );
+}
+
+function _claimsEditedWorkWasPreexisting(text) {
+  if (!text || typeof text !== "string") return false;
+  const sample = text.slice(-1800);
+  if (/\bnot\s+already\b/i.test(sample)) return false;
+  if (/\bprevious\s+session\b|\bprior\s+session\b/i.test(sample)) return true;
+  return (
+    /\b(already|previously|prior|pre-existing)\b.{0,100}\bin\s+place\b/i.test(
+      sample,
+    ) ||
+    /\b(already|previously|prior|existing|pre-existing)\b.{0,100}\b(present|there|exists|existed|added|implemented|complete|completed|done|working)\b/i.test(
+      sample,
+    ) ||
+    /\b(present|there|exists|existed|added|implemented|complete|completed|done|working)\b.{0,100}\b(already|previously|prior|existing|pre-existing)\b/i.test(
+      sample,
+    )
+  );
+}
+
+function _claimsUnableToEditAfterEdits(text) {
+  if (!text || typeof text !== "string") return false;
+  const sample = text.slice(-1800);
+  return (
+    /\b(?:cannot|can't|unable to|not able to)\b.{0,80}\b(?:make|apply|perform)\b.{0,80}\b(?:file\s+)?edits?\b/i.test(
+      sample,
+    ) ||
+    /\btool-?call budget\b.{0,120}\b(?:exhausted|reached|used up)\b/i.test(
+      sample,
+    ) ||
+    /\bapply this (?:edit|change|patch)\b/i.test(sample)
   );
 }
 
@@ -1088,7 +1123,9 @@ async function prepareToolCall(tc) {
 
   // Plan mode hard enforcement — block all non-read-only tools
   if (isPlanMode() && !PLAN_MODE_ALLOWED_TOOLS.has(fnName)) {
-    console.log(`${C.yellow}  ✗ ${fnName}: blocked in plan mode${C.reset}`);
+    console.log(
+      `${C.dim}  ↳ ${fnName} deferred — planning is read-only until approval${C.reset}`,
+    );
     return {
       callId,
       fnName,
@@ -1096,7 +1133,7 @@ async function prepareToolCall(tc) {
       canExecute: false,
       errorResult: {
         role: "tool",
-        content: `PLAN MODE: '${fnName}' is blocked. Only read-only tools are allowed. Present your plan as text output instead of making changes.`,
+        content: `PLAN MODE: '${fnName}' is deferred. Planning is read-only; present the plan as text and wait for approval before editing.`,
         tool_call_id: callId,
       },
     };
@@ -1186,22 +1223,7 @@ async function prepareToolCall(tc) {
   if (_writeTools.has(fnName) && process.env.NEX_SCOPE) {
     const filePath = finalArgs.path || finalArgs.file_path || "";
     if (filePath) {
-      const scopePatterns = process.env.NEX_SCOPE.split(",").map((s) => s.trim());
-      const normalizedPath = filePath.replace(/\\/g, "/");
-      const inScope = scopePatterns.some((pattern) => {
-        // Simple glob: * matches any characters, ** matches across directories
-        const regex = new RegExp(
-          "^" +
-            pattern
-              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-              .replace(/\*\*/g, "___DOUBLESTAR___")
-              .replace(/\*/g, "[^/]*")
-              .replace(/___DOUBLESTAR___/g, ".*") +
-            "$",
-        );
-        return regex.test(normalizedPath) || normalizedPath.endsWith(pattern) || normalizedPath === pattern;
-      });
-      if (!inScope) {
+      if (!_pathMatchesScope(filePath)) {
         debugLog(
           `${C.yellow}  ✗ ${fnName}: ${filePath} outside scope (--scope ${process.env.NEX_SCOPE})${C.reset}`,
         );
@@ -1216,6 +1238,219 @@ async function prepareToolCall(tc) {
               `SCOPE BLOCKED: '${filePath}' is outside the allowed scope. ` +
               `Only these files may be edited: ${process.env.NEX_SCOPE}. ` +
               `Use read_file to inspect other files, but do not edit them.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+    }
+  }
+  if (
+    fnName === "bash" &&
+    process.env.NEX_SCOPE &&
+    _isDependencyMutationCommand(finalArgs.command) &&
+    !_scopeAllowsDependencyMutation()
+  ) {
+    debugLog(
+      `${C.yellow}  ✗ bash: dependency mutation outside scope (--scope ${process.env.NEX_SCOPE})${C.reset}`,
+    );
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `SCOPE BLOCKED: dependency install/update commands can modify package manifests or lockfiles, ` +
+          `which are outside the allowed scope: ${process.env.NEX_SCOPE}. ` +
+          `Do not install or update dependencies for warning cleanup. Fix the scoped source files or ask for a wider scope.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+  if (fnName === "bash" && _masksCommandFailure(finalArgs.command)) {
+    debugLog(`${C.yellow}  ✗ bash: command masks failures${C.reset}`);
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `BLOCKED: '${finalArgs.command}' masks command failures. ` +
+          `Run verification commands without '|| true', 'exit 0', or 'set +e' so failures remain visible and actionable.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+  if (
+    process.env.NEX_SCOPE &&
+    _verificationFocusPaths.size > 0 &&
+    (fnName === "read_file" || fnName === "edit_file" || fnName === "patch_file")
+  ) {
+    const targetPath = String(finalArgs.path || "");
+    if (
+      targetPath &&
+      !_pathMatchesScope(targetPath) === false &&
+      ![..._verificationFocusPaths].some(
+        (focusPath) =>
+          targetPath === focusPath || targetPath.endsWith(`/${focusPath}`) || focusPath.endsWith(`/${targetPath}`),
+      )
+    ) {
+      return {
+        callId,
+        fnName,
+        args: finalArgs,
+        canExecute: false,
+        errorResult: {
+          role: "tool",
+          content:
+            `BLOCKED: verification already identified remaining failing scoped files: ${[..._verificationFocusPaths].join(", ")}. ` +
+            `Target one of those files now instead of exploring elsewhere.`,
+          tool_call_id: callId,
+        },
+      };
+    }
+  }
+  // ─── Verification retry streak block ────────────────────────────────
+  // When a required verification command has failed multiple times without
+  // an intervening successful edit, block further verification attempts.
+  // This prevents the agent from looping on lint/test without making fixes.
+  if (
+    process.env.NEX_SCOPE &&
+    fnName === "bash" &&
+    _verificationRetryStreak >= 2 &&
+    _isVerificationCommandCall({ fnName, args: finalArgs })
+  ) {
+    return {
+      callId,
+      fnName,
+      args: finalArgs,
+      canExecute: false,
+      errorResult: {
+        role: "tool",
+        content:
+          `BLOCKED: The same verification command has already failed ${_verificationRetryStreak} times. ` +
+          `Edit the failing file(s) first to fix the reported errors, then rerun verification. ` +
+          `Do not run another verification command until an edit has been applied.`,
+        tool_call_id: callId,
+      },
+    };
+  }
+
+  if (process.env.NEX_SCOPE && _verificationFollowUpPath) {
+    if (
+      fnName === "read_file" ||
+      fnName === "edit_file" ||
+      fnName === "patch_file" ||
+      fnName === "write_file"
+    ) {
+      const targetPath = String(finalArgs.path || "");
+      if (targetPath && !_pathsReferToSameFile(targetPath, _verificationFollowUpPath)) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: ${_verificationFollowUpCommand || "The failed verification command"} identified ` +
+              `${_verificationFollowUpPath} as the exact scoped file that still needs a no-unused-vars fix` +
+              `${_verificationFollowUpBindings.length > 0 ? ` (remove: ${_verificationFollowUpBindings.join(", ")})` : ""}. ` +
+              `Edit that file now, then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+      // ── Block unrelated import/declaration removal ──────────────────
+      // When the follow-up guard has specific bindings (e.g. currentPlayer),
+      // reject edits that also remove imports or declarations NOT named in
+      // the guard bindings. This prevents the model from stripping `import
+      // React` when lint only asked to remove `currentPlayer`.
+      if (
+        targetPath &&
+        _verificationFollowUpBindings.length > 0 &&
+        (fnName === "edit_file" || fnName === "patch_file" || fnName === "write_file")
+      ) {
+        let removedImports = [];
+        if (fnName === "edit_file") {
+          removedImports = _extractRemovedImportSymbols(
+            finalArgs.old_text || finalArgs.old_str || "",
+            finalArgs.new_text || finalArgs.new_str || "",
+          );
+        } else if (fnName === "patch_file") {
+          const patches = finalArgs.patches || finalArgs.replacements || [];
+          for (const p of patches) {
+            removedImports.push(
+              ..._extractRemovedImportSymbols(
+                p.old_text || p.old_str || "",
+                p.new_text || p.new_str || "",
+              ),
+            );
+          }
+        } else if (fnName === "write_file") {
+          // For write_file we can't compare against old content inline,
+          // but we check that the new content doesn't drop any known
+          // imports that were present when the follow-up guard was set.
+          // The post-edit handler (below) will catch write_file removals
+          // by reading back the file.
+        }
+        const unrelatedRemovals = removedImports.filter(
+          (r) => !_verificationFollowUpBindings.includes(r.symbol),
+        );
+        if (unrelatedRemovals.length > 0) {
+          const names = unrelatedRemovals.map((r) => r.symbol).join(", ");
+          return {
+            callId,
+            fnName,
+            args: finalArgs,
+            canExecute: false,
+            errorResult: {
+              role: "tool",
+              content:
+                `BLOCKED: Your edit removes import(s) ${names} which were not listed in the no-unused-vars errors. ` +
+                `Only remove: ${_verificationFollowUpBindings.join(", ")}. ` +
+                `Restore the unrelated import(s), then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+              tool_call_id: callId,
+            },
+          };
+        }
+      }
+      // ── End unrelated import guard ──────────────────────────────────
+    }
+    if (fnName === "bash") {
+      const normalizedCommand = _normalizeVerificationCommand(finalArgs.command || "");
+      const requiredCommand = _normalizeVerificationCommand(_verificationFollowUpCommand);
+      if (_verificationFollowUpNeedsEdit) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: ${_verificationFollowUpCommand || "The failed verification command"} already pinpointed ` +
+              `${_verificationFollowUpPath} and ${_verificationFollowUpBindings.join(", ") || "an unused binding"} ` +
+              `as the remaining no-unused-vars issue. Edit that exact scoped file first, then rerun ` +
+              `${_verificationFollowUpCommand || "the same verification command"}.`,
+            tool_call_id: callId,
+          },
+        };
+      }
+      if (requiredCommand && normalizedCommand !== requiredCommand) {
+        return {
+          callId,
+          fnName,
+          args: finalArgs,
+          canExecute: false,
+          errorResult: {
+            role: "tool",
+            content:
+              `BLOCKED: rerun ${_verificationFollowUpCommand} now. ` +
+              `Do not switch to a different verification or shell command until that exact command has been rerun.`,
             tool_call_id: callId,
           },
         };
@@ -1289,6 +1524,577 @@ async function executeToolRouted(fnName, args, options = {}) {
   const mcpResult = await routeMCPCall(fnName, args);
   if (mcpResult !== null) return mcpResult;
   return executeTool(fnName, args, options);
+}
+
+function _isToolResultError(fnName, content) {
+  const firstLine = String(content || "").split("\n")[0];
+  return (
+    firstLine.startsWith("ERROR") ||
+    firstLine.includes("CANCELLED") ||
+    firstLine.includes("BLOCKED") ||
+    (fnName === "bash" && /^EXIT\s+(?!0\b)/.test(firstLine)) ||
+    (fnName === "spawn_agents" &&
+      !/✓ Agent/.test(content) &&
+      /✗ Agent/.test(content))
+  );
+}
+
+function _pathMatchesScope(filePath, scopeValue = process.env.NEX_SCOPE || "") {
+  if (!filePath || !scopeValue) return false;
+  const scopePatterns = scopeValue.split(",").map((s) => s.trim()).filter(Boolean);
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  return scopePatterns.some((pattern) => {
+    const regex = new RegExp(
+      "^" +
+        pattern
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*\*/g, "___DOUBLESTAR___")
+          .replace(/\*/g, "[^/]*")
+          .replace(/___DOUBLESTAR___/g, ".*") +
+        "$",
+    );
+    return (
+      regex.test(normalizedPath) ||
+      normalizedPath.endsWith(pattern) ||
+      normalizedPath === pattern
+    );
+  });
+}
+
+function _isDependencyMutationCommand(command) {
+  return /\b(?:npm\s+(?:install|i|add|update|dedupe)|yarn\s+(?:add|install|upgrade)|pnpm\s+(?:add|install|update)|bun\s+(?:add|install)|pip3?\s+install)\b/i.test(
+    String(command || ""),
+  );
+}
+
+function _masksCommandFailure(command) {
+  return /(?:\|\|\s*(?:true|:|exit\s+0)\b|;\s*true\s*$|;\s*exit\s+0\s*$|\bset\s+\+e\b)/.test(
+    String(command || ""),
+  );
+}
+
+function _detectVerificationSetupFailure(command, output) {
+  const cmd = String(command || "").trim();
+  const text = String(output || "");
+  if (!cmd || !text) return "";
+  const looksMissingTool =
+    /\b(?:eslint|vite|vitest|jest|tsc|typescript|webpack|babel)\b.*\b(?:command not found|not found)\b/i.test(
+      text,
+    ) || /\bsh:\s*(?:eslint|vite|vitest|jest|tsc)\b.*\bnot found\b/i.test(text);
+  const looksMissingDependency =
+    /\bnode_modules\b/i.test(text) ||
+    /\bMODULE_NOT_FOUND\b/.test(text) ||
+    /\bCannot find package\b/i.test(text) ||
+    /\bCannot find module\b/i.test(text) ||
+    /\bError:\s+Cannot find module\b/i.test(text);
+  if (!looksMissingTool && !looksMissingDependency) return "";
+  if (
+    /Cannot find module/i.test(text) &&
+    !/\bnode_modules\b/i.test(text) &&
+    !/\b(?:eslint|vite|vitest|jest|tsc|typescript|webpack|babel)\b/i.test(text)
+  ) {
+    return "";
+  }
+  const summaryLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line &&
+        (/\bnode_modules\b/i.test(line) ||
+          /\bMODULE_NOT_FOUND\b/.test(line) ||
+          /\bCannot find package\b/i.test(line) ||
+          /\bCannot find module\b/i.test(line) ||
+          /\bcommand not found\b/i.test(line)),
+    );
+  return (
+    `The verification command ${cmd} could not run because project dependencies are missing or broken in this workspace.` +
+    `${summaryLine ? ` ${summaryLine}` : ""}`
+  );
+}
+
+function _scopeAllowsDependencyMutation(scopeValue = process.env.NEX_SCOPE || "") {
+  return [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "requirements.txt",
+    "pyproject.toml",
+    "poetry.lock",
+  ].some((file) => _pathMatchesScope(file, scopeValue));
+}
+
+function _isSourceLikePath(filePath) {
+  return /\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp|css|scss|sass)$/i.test(
+    String(filePath || ""),
+  );
+}
+
+function _isMarkupLikePath(filePath) {
+  return /\.(?:html|vue|svelte|jsx|tsx)$/i.test(String(filePath || ""));
+}
+
+function _looksLikeCommentedOutCode(line) {
+  const raw = String(line || "").trim();
+  if (!raw) return false;
+
+  let body = "";
+  if (/^\/\//.test(raw)) body = raw.replace(/^\/\/+/, "").trim();
+  else if (/^#/.test(raw)) body = raw.replace(/^#+/, "").trim();
+  else if (/^\/\*/.test(raw)) body = raw.replace(/^\/\*+/, "").replace(/\*\/$/, "").trim();
+  else if (/^\*/.test(raw)) body = raw.replace(/^\*+/, "").replace(/\*\/$/, "").trim();
+  else return false;
+
+  if (!body) return false;
+  if (/^(todo|fixme|note|eslint-|stylelint-|ts-ignore|ts-expect-error|@|copyright|license)\b/i.test(body)) {
+    return false;
+  }
+
+  return (
+    /^(?:const|let|var|function|class|import|export|return|if|else|for|while|switch|case|try|catch|finally|await|async|def|from|print|console\.|describe\(|it\(|test\(|expect\(|module\.exports|public|private|protected)\b/.test(
+      body,
+    ) ||
+    /^<\/?[A-Za-z][\w:-]*(?:\s|>|\/>)/.test(body) ||
+    /(?:=>|[{};=]|\w+\s*\([^)]*\)\s*(?:\{|;)?$)/.test(body)
+  );
+}
+
+function _detectAddedCommentedOutCode(diffText, fallbackPath = "") {
+  const findings = [];
+  let currentPath = fallbackPath || "";
+  let nextLine = null;
+
+  for (const line of String(diffText || "").split(/\r?\n/)) {
+    const fileMatch = line.match(/^\+\+\+\s+b\/(.+)$/);
+    if (fileMatch) {
+      currentPath = fileMatch[1];
+      nextLine = null;
+      continue;
+    }
+
+    const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunkMatch) {
+      nextLine = Number(hunkMatch[1]);
+      continue;
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      const added = line.slice(1);
+      if (_isSourceLikePath(currentPath) && _looksLikeCommentedOutCode(added)) {
+        findings.push({
+          path: currentPath || fallbackPath,
+          line: Number.isFinite(nextLine) ? nextLine : null,
+          text: added.trim(),
+        });
+      }
+      if (nextLine !== null) nextLine++;
+      continue;
+    }
+
+    if (!line.startsWith("-") && nextLine !== null) nextLine++;
+  }
+
+  return findings;
+}
+
+function _looksLikeMalformedDuplicateOpeningTag(line) {
+  const raw = String(line || "").trim();
+  if (!raw || raw.startsWith("<!--")) return false;
+  const match = raw.match(/^<([A-Za-z][\w:-]*)\b[^>\n]*>\s*<\1>$/);
+  if (!match) return false;
+  const tag = match[1].toLowerCase();
+  return ![
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+  ].includes(tag);
+}
+
+function _detectAddedMalformedMarkup(diffText, fallbackPath = "") {
+  const findings = [];
+  let currentPath = fallbackPath || "";
+  let nextLine = null;
+
+  for (const line of String(diffText || "").split(/\r?\n/)) {
+    const fileMatch = line.match(/^\+\+\+\s+b\/(.+)$/);
+    if (fileMatch) {
+      currentPath = fileMatch[1];
+      nextLine = null;
+      continue;
+    }
+
+    const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunkMatch) {
+      nextLine = Number(hunkMatch[1]);
+      continue;
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      const added = line.slice(1);
+      if (
+        _isMarkupLikePath(currentPath) &&
+        _looksLikeMalformedDuplicateOpeningTag(added)
+      ) {
+        findings.push({
+          path: currentPath || fallbackPath,
+          line: Number.isFinite(nextLine) ? nextLine : null,
+          text: added.trim(),
+        });
+      }
+      if (nextLine !== null) nextLine++;
+      continue;
+    }
+
+    if (!line.startsWith("-") && nextLine !== null) nextLine++;
+  }
+
+  return findings;
+}
+
+function _detectAddedMalformedMarkupFromContents(beforeText, afterText, filePath = "") {
+  if (!_isMarkupLikePath(filePath)) return [];
+  const beforeLines = String(beforeText || "").split("\n");
+  const afterLines = String(afterText || "").split("\n");
+  const findings = [];
+  let beforeIdx = 0;
+
+  for (let afterIdx = 0; afterIdx < afterLines.length; afterIdx++) {
+    const afterLine = afterLines[afterIdx];
+    if (beforeIdx < beforeLines.length && beforeLines[beforeIdx] === afterLine) {
+      beforeIdx++;
+      continue;
+    }
+    if (_looksLikeMalformedDuplicateOpeningTag(afterLine)) {
+      findings.push({
+        path: filePath,
+        line: afterIdx + 1,
+        text: afterLine.trim(),
+      });
+    }
+  }
+
+  return findings;
+}
+
+function _detectAddedCommentedOutCodeFromContents(beforeText, afterText, filePath = "") {
+  const beforeLines = String(beforeText || "").split("\n");
+  const afterLines = String(afterText || "").split("\n");
+  const findings = [];
+  let beforeIdx = 0;
+
+  for (let afterIdx = 0; afterIdx < afterLines.length; afterIdx++) {
+    const afterLine = afterLines[afterIdx];
+    if (beforeIdx < beforeLines.length && beforeLines[beforeIdx] === afterLine) {
+      beforeIdx++;
+      continue;
+    }
+    if (_looksLikeCommentedOutCode(afterLine)) {
+      findings.push({
+        path: filePath,
+        line: afterIdx + 1,
+        text: afterLine.trim(),
+      });
+    }
+  }
+
+  return findings;
+}
+
+function _extractBareImports(text) {
+  const source = String(text || "");
+  const found = new Set();
+  const patterns = [
+    /\bimport\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+    /\bexport\s+[^'"]+?\s+from\s+['"]([^'"]+)['"]/g,
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source))) {
+      const spec = String(match[1] || "").trim();
+      if (!spec || spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("node:")) {
+        continue;
+      }
+      found.add(spec);
+    }
+  }
+  return [...found];
+}
+
+// ─── Import symbol extraction ──────────────────────────────────────────
+// Extracts the import symbols (default + named) from old_text that are
+// not present in new_text. Used by the no-unused-vars follow-up guard to
+// block unrelated import removals (e.g. removing `import React` when lint
+// only flagged `currentPlayer`).
+function _extractRemovedImportSymbols(oldText, newText) {
+  const oldSrc = String(oldText || "");
+  const newSrc = String(newText || "");
+  const oldImports = new Map(); // symbol → import line
+  const newImports = new Set();
+  const importLineRe = /^\s*import\s+(.+?)\s+from\s+/gm;
+  let match;
+  while ((match = importLineRe.exec(oldSrc))) {
+    const spec = match[1].trim();
+    const defaultMatch = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+    if (defaultMatch) oldImports.set(defaultMatch[1], match[0].trim());
+    const namedMatch = spec.match(/\{([^}]+)\}/);
+    if (namedMatch) {
+      namedMatch[1].split(",").forEach((name) => {
+        const clean = name.trim().split(/\s+as\s+/)[0].trim();
+        if (clean) oldImports.set(clean, match[0].trim());
+      });
+    }
+  }
+  while ((match = importLineRe.exec(newSrc))) {
+    const spec = match[1].trim();
+    const defaultMatch = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+    if (defaultMatch) newImports.add(defaultMatch[1]);
+    const namedMatch = spec.match(/\{([^}]+)\}/);
+    if (namedMatch) {
+      namedMatch[1].split(",").forEach((name) => {
+        const clean = name.trim().split(/\s+as\s+/)[0].trim();
+        if (clean) newImports.add(clean);
+      });
+    }
+  }
+  const removed = [];
+  for (const [sym, line] of oldImports) {
+    if (!newImports.has(sym)) removed.push({ symbol: sym, line });
+  }
+  return removed;
+}
+
+function _packageNameFromSpecifier(specifier) {
+  const spec = String(specifier || "").trim();
+  if (!spec) return "";
+  if (spec.startsWith("@")) {
+    const parts = spec.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : spec;
+  }
+  return spec.split("/")[0];
+}
+
+function _isDeclaredDependency(pkgName) {
+  if (!pkgName) return false;
+  try {
+    const pkgJson = JSON.parse(
+      fsSync.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    );
+    return [
+      "dependencies",
+      "devDependencies",
+      "peerDependencies",
+      "optionalDependencies",
+    ].some((field) => !!pkgJson?.[field]?.[pkgName]);
+  } catch {
+    return false;
+  }
+}
+
+function _isResolvableDependency(specifier) {
+  if (!specifier) return false;
+  try {
+    require.resolve(specifier, { paths: [process.cwd()] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function _detectNewUnresolvedImportsFromContents(beforeText, afterText, filePath = "") {
+  const beforeImports = new Set(_extractBareImports(beforeText));
+  const afterImports = _extractBareImports(afterText);
+  const findings = [];
+  for (const specifier of afterImports) {
+    if (beforeImports.has(specifier)) continue;
+    const packageName = _packageNameFromSpecifier(specifier);
+    if (!packageName) continue;
+    if (_isDeclaredDependency(packageName) || _isResolvableDependency(specifier)) {
+      continue;
+    }
+    findings.push({
+      path: filePath,
+      specifier,
+      packageName,
+    });
+  }
+  return findings;
+}
+
+function _getAddedCommentedOutCodeFindings(filePath, fallbackBeforeContent) {
+  if (!_isSourceLikePath(filePath)) return [];
+  try {
+    const { execFileSync } = require("child_process");
+    const insideWorkTree = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 32,
+    }).trim();
+    if (insideWorkTree !== "true") return [];
+
+    const diff = execFileSync("git", ["diff", "--unified=0", "--", filePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 1024,
+    });
+    return _detectAddedCommentedOutCode(diff, filePath);
+  } catch {
+    try {
+      if (typeof fallbackBeforeContent !== "string") return [];
+      const afterContent = fsSync.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
+      return _detectAddedCommentedOutCodeFromContents(
+        fallbackBeforeContent,
+        afterContent,
+        filePath,
+      );
+    } catch {
+      return [];
+    }
+  }
+}
+
+function _buildCommentedOutCodeNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path}${f.line ? `:${f.line}` : ""} -> ${f.text}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit added commented-out code that looks like disabled source.\n" +
+    `${shown}\n` +
+    "Remove dead/commented-out code instead of silencing lint or type errors. Make a targeted edit now, then rerun the relevant verification command before finalizing."
+  );
+}
+
+function _buildUndeclaredImportNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path} -> ${f.specifier}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit introduced imports from packages that are not declared or resolvable in this workspace.\n" +
+    `${shown}\n` +
+    "Package manifests are outside scope, so do not add new package imports. Remove the import or solve the task within the already declared dependencies before finalizing."
+  );
+}
+
+function _buildMalformedMarkupNudge(findings) {
+  const shown = findings
+    .slice(0, 5)
+    .map((f) => `${f.path}${f.line ? `:${f.line}` : ""} -> ${f.text}`)
+    .join("\n");
+  return (
+    "[SYSTEM QUALITY GUARD] Your latest edit added markup that appears to leave an element unclosed.\n" +
+    `${shown}\n` +
+    "Fix the malformed opening tag now, then re-read the edited section and run the narrowest relevant verification before finalizing."
+  );
+}
+
+function _getOutstandingCommentedOutCodeFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    findings.push(
+      ..._getAddedCommentedOutCodeFindings(
+        filePath,
+        _commentedOutCodeSessionBaselines.get(filePath),
+      ),
+    );
+  }
+  return findings;
+}
+
+function _getAddedMalformedMarkupFindings(filePath, fallbackBeforeContent) {
+  if (!_isMarkupLikePath(filePath)) return [];
+  try {
+    const { execFileSync } = require("child_process");
+    const insideWorkTree = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 32,
+    }).trim();
+    if (insideWorkTree !== "true") return [];
+
+    const diff = execFileSync("git", ["diff", "--unified=0", "--", filePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+      maxBuffer: 1024 * 1024,
+    });
+    return _detectAddedMalformedMarkup(diff, filePath);
+  } catch {
+    try {
+      if (typeof fallbackBeforeContent !== "string") return [];
+      const afterContent = fsSync.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
+      return _detectAddedMalformedMarkupFromContents(
+        fallbackBeforeContent,
+        afterContent,
+        filePath,
+      );
+    } catch {
+      return [];
+    }
+  }
+}
+
+function _getOutstandingMalformedMarkupFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    findings.push(
+      ..._getAddedMalformedMarkupFindings(
+        filePath,
+        _commentedOutCodeSessionBaselines.get(filePath),
+      ),
+    );
+  }
+  return findings;
+}
+
+function _getOutstandingUndeclaredImportFindings(filePaths) {
+  const findings = [];
+  for (const filePath of filePaths || []) {
+    if (!_commentedOutCodeSessionBaselines.has(filePath)) continue;
+    try {
+      const currentContent = fsSync.readFileSync(
+        path.resolve(process.cwd(), filePath),
+        "utf8",
+      );
+      findings.push(
+        ..._detectNewUnresolvedImportsFromContents(
+          _commentedOutCodeSessionBaselines.get(filePath),
+          currentContent,
+          filePath,
+        ),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+  return findings;
 }
 
 /**
@@ -1365,10 +2171,48 @@ async function executeSingleTool(prep, quiet = false) {
     _serverHooks.onToolStart(prep.fnName, prep.args);
   }
 
-  const toolResult = await executeToolRouted(prep.fnName, prep.args, {
-    silent: true,
-    autoConfirm: prep.confirmedByUser === true,
-  });
+  if (
+    ["write_file", "edit_file", "patch_file"].includes(prep.fnName) &&
+    prep.args?.path &&
+    !_commentedOutCodeSessionBaselines.has(prep.args.path)
+  ) {
+    try {
+      const baselinePath = path.resolve(process.cwd(), prep.args.path);
+      const baselineContent = fsSync.existsSync(baselinePath)
+        ? fsSync.readFileSync(baselinePath, "utf8")
+        : "";
+      _commentedOutCodeSessionBaselines.set(prep.args.path, baselineContent);
+    } catch {
+      _commentedOutCodeSessionBaselines.set(prep.args.path, "");
+    }
+  }
+
+  if (process.env.NEX_MOCK_EXIT_AFTER_TOOL_START === "1") {
+    process.exit(0);
+  }
+  if (process.env.NEX_MOCK_HANG_AFTER_TOOL_START === "1") {
+    await new Promise(() => {});
+  }
+
+  let toolResult;
+  try {
+    toolResult = await executeToolRouted(prep.fnName, prep.args, {
+      silent: true,
+      autoConfirm: prep.confirmedByUser === true,
+    });
+  } catch (err) {
+    const errorText = `ERROR: ${err?.message || String(err)}`;
+    const errorSummary = formatToolSummary(
+      prep.fnName,
+      prep.args,
+      errorText,
+      true,
+    );
+    if (_serverHooks?.onToolEnd) {
+      _serverHooks.onToolEnd(prep.fnName, errorSummary, false);
+    }
+    throw err;
+  }
 
   // Vision tools (visual_review, clipboard_image) return { text, images }
   let _visionImages = null;
@@ -1387,14 +2231,7 @@ async function executeSingleTool(prep, quiet = false) {
         `\n...(truncated ${safeResult.length - 50000} chars)`
       : safeResult;
 
-  const firstLine = truncated.split("\n")[0];
-  const isError =
-    firstLine.startsWith("ERROR") ||
-    firstLine.includes("CANCELLED") ||
-    firstLine.includes("BLOCKED") ||
-    (prep.fnName === "spawn_agents" &&
-      !/✓ Agent/.test(truncated) &&
-      /✗ Agent/.test(truncated));
+  const isError = _isToolResultError(prep.fnName, truncated);
   const summary = formatToolSummary(prep.fnName, prep.args, truncated, isError);
 
   if (!quiet) {
@@ -1429,6 +2266,9 @@ async function executeSingleTool(prep, quiet = false) {
   // the LLM sees the correction in its very next context window and can course-
   // correct for subsequent steps. We never block these — just nudge.
   let finalContent = compressedContent;
+  if (isError && prep.fnName === "bash" && /^EXIT\s+(?!0\b)/.test(compressedContent)) {
+    finalContent = `ERROR: bash command failed.\n${compressedContent}`;
+  }
   if (prep.fnName === "bash" && prep.args?.command) {
     const cmd = prep.args.command.trim();
     const isWrite = /cat\s*>|<</.test(cmd);
@@ -1643,6 +2483,7 @@ const _sessionBashCmdCounts = new Map();
 const _sessionGrepPatternCounts = new Map();
 const _sessionGrepFileCounts = new Map(); // per-file grep count (different patterns on same file)
 const _sessionGrepFoundFiles = new Set(); // files that appeared in grep results (not just searched)
+const _sessionLastGrepResultByPath = new Map();
 const _sessionGlobSearchCounts = new Map(); // glob/search_files pattern loop detection
 const _sessionGlobCoreTerms = new Map(); // coreToken → Set<pattern> — detect varied patterns targeting the same term
 const _sessionGlobFoundFiles = new Set(); // files that appeared in glob results
@@ -1654,6 +2495,7 @@ const _sessionReReadBlockShown = new Map(); // track how many times block messag
 const _sessionToolArgErrorCounts = new Map(); // tool name → cumulative arg-validation error count this session
 const _sessionRangeBlockCounts = new Map(); // "path:start-end" → count of times that exact range was blocked
 const _sessionDupeToolCounts = new Map(); // "toolName|argsJSON" → { count, ts } — dedup identical tool calls
+const _postCompressionReadRecovery = new Map(); // path → Array<{start,end}> allowed once after context compression
 let _sessionConsecutiveSshCalls = 0;
 let _superNuclearFires = 0; // total super-nuclear compressions this session (cap at 2)
 let _planRejectionCount = 0; // times plan-without-reads was rejected this session (cap: 2)
@@ -1662,10 +2504,13 @@ let _compressionMsgCount = 0; // count consecutive identical compression message
 let _sshBlockedAfterStorm = false; // blocks SSH calls after storm warning fires
 let _sshStormCount = 0; // how many times the SSH storm warning has fired this session
 let _sshDeadlockRelaxCount = 0; // how many times the dual-block deadlock relaxer has fired (hard-cap: 1)
+let _deadlockOnFile = null; // file path that triggered a read/grep deadlock — preserved across super-nuclear to break compression loops
 let _postWipeToolBudget = -1; // remaining tool calls after a context wipe (-1 = no active budget)
 let _postWipeEverFired = false; // true once a context wipe has occurred this session
 let _filesModifiedAtWipe = 0; // filesModified.size at time of last context wipe (progress baseline)
 let _postWipeBudgetExtended = false; // true after the one-time progress extension has been granted
+let _selfVerifyRan = false; // true after self-verification has run this session (once-only)
+let _fitnessLogged = false; // true after session outcome has been logged (once-only)
 let _readOnlyCallsSinceEdit = 0; // read-only tool calls (reads, greps, finds, SSH) since last file edit
 let _investigationCapFired = false; // true once the investigation cap warning has been injected
 let _readsSinceCapFired = 0; // read-only calls after the investigation cap warning was injected
@@ -1696,6 +2541,19 @@ let _gitPushDetected = false; // true once a successful git push is detected in 
 let _gitPushRaw = ""; // last seen git push output (for summary honesty)
 let _lastGitStatusEvidence = ""; // last user-visible worktree status evidence (git_status tool or bash git status)
 let _lastGitStatusCommand = ""; // "git_status" | "bash:git status --short --branch"
+const _commentedOutCodeNudges = new Set(); // path:line:text keys already nudged this session
+const _commentedOutCodeSessionBaselines = new Map(); // path -> file content before the first successful session edit
+let _commentedOutCodeFinalNudges = 0; // prevent infinite re-nudging on stalled finalization
+const _malformedMarkupNudges = new Set(); // path:line:text keys already nudged this session
+let _malformedMarkupFinalNudges = 0;
+const _undeclaredImportNudges = new Set(); // path:specifier keys already nudged this session
+let _undeclaredImportFinalNudges = 0;
+const _verificationFocusPaths = new Set(); // failing scoped files from recent verification
+let _verificationFollowUpPath = "";
+let _verificationFollowUpCommand = "";
+let _verificationFollowUpBindings = [];
+let _verificationFollowUpNeedsEdit = false;
+let _verificationFollowUpJustSet = false; // guard against immediate self-clear
 
 // ─── Phase-based routing state ──────────────────────────────────────────────
 let _currentPhase = "plan"; // 'plan' | 'implement' | 'verify'
@@ -1711,13 +2569,20 @@ let _verifyToolCalls = 0; // successful verification-phase tool calls in the cur
 let _verifyCompletionNudges = 0; // nudges sent when verify tries to finish without enough evidence
 let _implementNoProgressNudges = 0; // nudges sent when implementation produces prose but no edits/tools
 let _stagnationNudges = 0; // soft-warning nudges for general stagnation detection
+
+function _hasForcedModelOverride() {
+  return !!String(process.env.NEX_FORCE_MODEL || "").trim();
+}
 let _consecutiveNoToolCalls = 0; // auto-escalate to stronger model if model produces no tool calls
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
+let _consecutiveFailedVerifications = 0; // headless auto: abort after 3+ failed verifications with no edit progress
+let _verificationRetryStreak = 0; // block re-running failed required verifications until an edit is made
 let _detectedCategoryId = null; // task category detected on first user message
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
+const _editedFileExpectedSnippets = new Map(); // path -> snippets that should appear in readback
 let _boundedBacklogPlanActive = false; // true for automation/backlog prompts that must choose one task
 let _boundedBacklogPlanReads = 0; // read/search evidence gathered during the plan phase
 let _boundedBacklogNamedEvidenceReads = 0; // reads/searches that touch prompt-named backlog files
@@ -2660,6 +3525,651 @@ function _drainCompletedBackgroundJobs(conversationMessages, apiMessages) {
   }
 }
 
+function _shortSessionPath(filePath) {
+  return String(filePath || "").split("/").slice(-2).join("/");
+}
+
+function _grantPostCompressionReadRecovery(resumeTarget) {
+  const targetFile = resumeTarget?.targetFile;
+  const targetRange = resumeTarget?.targetRange;
+  if (!targetFile || !targetRange) return;
+  const start = parseInt(targetRange.lineStart, 10);
+  const end = parseInt(targetRange.lineEnd, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+  if (start <= 1 && end >= 350) return;
+  _postCompressionReadRecovery.set(targetFile, [{ start, end }]);
+}
+
+function _consumePostCompressionReadRecovery(filePath, lineStart, lineEnd) {
+  const allowances = _postCompressionReadRecovery.get(filePath);
+  if (!allowances || allowances.length === 0) return false;
+  const start = parseInt(lineStart, 10);
+  const end = parseInt(lineEnd, 10) || start + 350;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+
+  const idx = allowances.findIndex((range) => {
+    const overlapStart = Math.max(start, range.start);
+    const overlapEnd = Math.min(end, range.end);
+    if (overlapEnd <= overlapStart) return false;
+    const requestedLen = Math.max(end - start, 1);
+    const savedLen = Math.max(range.end - range.start, 1);
+    return overlapEnd - overlapStart >= Math.min(requestedLen, savedLen) * 0.7;
+  });
+  if (idx === -1) return false;
+  allowances.splice(idx, 1);
+  if (allowances.length === 0) _postCompressionReadRecovery.delete(filePath);
+  return true;
+}
+
+function _lastSetValue(values) {
+  const arr = [...values].filter(Boolean);
+  return arr.length > 0 ? arr[arr.length - 1] : "";
+}
+
+const GENERIC_RESUME_TARGET_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "tsconfig.json",
+  "README.md",
+  "VERSION",
+]);
+
+function _isGenericResumeTarget(filePath) {
+  return GENERIC_RESUME_TARGET_FILES.has(path.basename(String(filePath || "")));
+}
+
+function _taskSuggestsGenericResumeTarget(taskText, filePath) {
+  const text = String(taskText || "");
+  const base = path.basename(String(filePath || ""));
+  if (!text.trim()) return false;
+  if (text.includes(base)) return true;
+  if (base === "package.json" || base.endsWith("-lock.json")) {
+    return /\b(package|npm|pnpm|yarn|dependency|dependencies|devDependencies|script|version|bin)\b/i.test(
+      text,
+    );
+  }
+  if (base === "tsconfig.json") {
+    return /\b(tsconfig|typescript|typecheck|compiler option)\b/i.test(text);
+  }
+  if (base === "README.md") {
+    return /\b(readme|documentation|docs)\b/i.test(text);
+  }
+  if (base === "VERSION") {
+    return /\b(version|release|bump)\b/i.test(text);
+  }
+  return false;
+}
+
+function _selectCompressionResumeFile({
+  readFiles,
+  grepFiles,
+  globFiles,
+  filesModified,
+  taskText,
+}) {
+  const modified = new Set([...filesModified].filter(Boolean));
+  const candidates = [];
+  let order = 0;
+  for (const file of [...globFiles, ...grepFiles, ...readFiles]) {
+    if (!file) continue;
+    candidates.push({ file, order: order++ });
+  }
+
+  let best = null;
+  for (const candidate of candidates) {
+    const generic = _isGenericResumeTarget(candidate.file);
+    const modifiedScore = modified.has(candidate.file) ? 1000 : 0;
+    const relevanceScore = !generic
+      ? 500
+      : _taskSuggestsGenericResumeTarget(taskText, candidate.file)
+        ? 450
+        : -1;
+    if (relevanceScore < 0 && modifiedScore === 0) continue;
+    const score = modifiedScore + relevanceScore;
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && candidate.order > best.order)
+    ) {
+      best = { ...candidate, score };
+    }
+  }
+
+  return best?.file || null;
+}
+
+function _buildCompressionResumeTarget(filesRead, filesModified, taskText = "") {
+  const readFiles = [...filesRead].filter(Boolean);
+  const grepFiles = [..._sessionGrepFoundFiles].filter(Boolean);
+  const globFiles = [..._sessionGlobFoundFiles].filter(Boolean);
+  const targetFile =
+    _selectCompressionResumeFile({
+      readFiles,
+      grepFiles,
+      globFiles,
+      filesModified,
+      taskText,
+    }) ||
+    _lastSetValue(readFiles.filter((f) => !_isGenericResumeTarget(f))) ||
+    _lastSetValue(grepFiles.filter((f) => !_isGenericResumeTarget(f))) ||
+    _lastSetValue(globFiles.filter((f) => !_isGenericResumeTarget(f)));
+  if (!targetFile) return null;
+
+  const ranges = _sessionFileReadRanges.get(targetFile) || [];
+  const lastRange = ranges.length > 0 ? ranges[ranges.length - 1] : null;
+  const targetRange = lastRange
+    ? { lineStart: lastRange[0], lineEnd: lastRange[1] }
+    : null;
+  const locatedEvidence = [];
+  if (readFiles.length > 0) {
+    locatedEvidence.push(
+      `Read file context: ${readFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+  if (grepFiles.length > 0) {
+    locatedEvidence.push(
+      `Grep located: ${grepFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+  if (globFiles.length > 0) {
+    locatedEvidence.push(
+      `Glob/search located: ${globFiles.slice(-3).map(_shortSessionPath).join(", ")}`,
+    );
+  }
+
+  const completedSteps = [];
+  if (readFiles.length > 0) completedSteps.push("Target file context was read");
+  if (grepFiles.length > 0 || globFiles.length > 0)
+    completedSteps.push("Candidate target path was located");
+  if (filesModified.size > 0)
+    completedSteps.push("At least one file has already been modified");
+
+  const rangeText = targetRange
+    ? ` lines ${targetRange.lineStart}-${targetRange.lineEnd}`
+    : "";
+  const targetWasRead = readFiles.includes(targetFile);
+  const nextAction =
+    filesModified.size > 0
+      ? `Continue from the existing edits. Verify or apply only the missing scoped follow-up; do not restart broad exploration.`
+      : targetWasRead
+        ? `Apply the requested scoped edit in ${_shortSessionPath(targetFile)}${rangeText} using edit_file or patch_file. If exact old_text is missing, do one targeted read around the located range; do not restart with broad search.`
+        : `Read only the located target in ${_shortSessionPath(targetFile)} with line_start/line_end, then make the scoped edit; do not restart broad search.`;
+
+  return {
+    targetFile,
+    ...(targetRange ? { targetRange } : {}),
+    locatedEvidence,
+    completedSteps,
+    nextAction,
+  };
+}
+
+function _withLocatedTargetContext(resumeTarget, messages, taskText = "") {
+  if (!resumeTarget?.targetFile) return resumeTarget;
+  const shortPath = _shortSessionPath(resumeTarget.targetFile);
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  for (const msg of [...messages].reverse()) {
+    const content = typeof msg.content === "string" ? msg.content : "";
+    if (!content.includes(shortPath) && !content.includes(resumeTarget.targetFile))
+      continue;
+    const lines = content.split(/\r?\n/);
+    const numberedLines = lines.filter((line) => /^\s*\d+:\s/.test(line));
+    const excerptLines = numberedLines.length > 0 ? numberedLines : lines;
+    let startIdx = 0;
+    if (requestedAnchor) {
+      const idx = excerptLines.findIndex((line) =>
+        line.toLowerCase().includes(requestedAnchor.toLowerCase()),
+      );
+      if (idx !== -1) startIdx = Math.max(0, idx - 3);
+    }
+    const excerpt = excerptLines.slice(startIdx, startIdx + 12).join("\n");
+    if (!excerpt.trim()) continue;
+    return {
+      ...resumeTarget,
+      locatedEvidence: [
+        ...(resumeTarget.locatedEvidence || []),
+        `Located target excerpt:\n${excerpt.slice(0, 1400)}`,
+      ],
+    };
+  }
+  return resumeTarget;
+}
+
+function _isActionableImplementationPrompt(taskText) {
+  return /\b(add|insert|show|display|include|append|create|change|update|modify|fix|implement|write)\b/i.test(
+    String(taskText || ""),
+  );
+}
+
+function _isSmallInsertionPrompt(taskText) {
+  const text = String(taskText || "");
+  const hasInlineCodeAnchor =
+    /```[\s\S]{1,2000}?```/.test(text) ||
+    /<[\w:-]+(?:\s+[^>]*)?>[\s\S]{0,1200}?<\/[\w:-]+>/.test(text) ||
+    /\b(?:const|let|var|function|class|def|return)\b[\s\S]{0,800}[;{}]/.test(
+      text,
+    );
+  return (
+    (/\b(add|insert|include|append|show|display)\b/i.test(text) ||
+      hasInlineCodeAnchor) &&
+    !/\b(replace|rename|remove|delete|rewrite|refactor|convert|migrate)\b/i.test(
+      text,
+    )
+  );
+}
+
+function _patchLooksLikeInsertionAroundAnchor(oldText, newText) {
+  if (typeof oldText !== "string" || typeof newText !== "string") return false;
+  if (!oldText.trim() || oldText === newText) return false;
+  if (newText.includes(oldText)) return true;
+  const oldLines = oldText.split(/\r?\n/);
+  const newLines = newText.split(/\r?\n/);
+  if (newLines.length <= oldLines.length) return false;
+  let oldIdx = 0;
+  for (const line of newLines) {
+    if (line === oldLines[oldIdx]) oldIdx++;
+    if (oldIdx === oldLines.length) return true;
+  }
+  return false;
+}
+
+function _promptExplicitlyRequestsWhitespaceInsertion(taskText) {
+  return /\b(?:blank|empty|whitespace-only|spacer)\s+line\b|\bextra\s+(?:spacing|space)\b|\bvertical\s+space\b/i.test(
+    String(taskText || ""),
+  );
+}
+
+function _getInsertionLineDelta(oldText, newText) {
+  if (typeof oldText !== "string" || typeof newText !== "string") return null;
+  const newline = newText.includes("\r\n") ? "\r\n" : "\n";
+  const oldLines = oldText.split(/\r?\n/);
+  const newLines = newText.split(/\r?\n/);
+  if (newLines.length <= oldLines.length) return null;
+
+  const inserted = [];
+  let oldIdx = 0;
+  const normalized = [];
+  for (const line of newLines) {
+    if (oldIdx < oldLines.length && line === oldLines[oldIdx]) {
+      normalized.push(line);
+      oldIdx++;
+    } else {
+      inserted.push(line);
+      if (line.trim()) normalized.push(line);
+    }
+  }
+  if (oldIdx !== oldLines.length) return null;
+
+  const nonWhitespaceInsertions = inserted.filter((line) => line.trim());
+  const whitespaceInsertions = inserted.filter((line) => !line.trim());
+  if (nonWhitespaceInsertions.length !== 1 || whitespaceInsertions.length === 0) {
+    return null;
+  }
+
+  return {
+    inserted,
+    normalizedText: normalized.join(newline),
+  };
+}
+
+function _normalizeWhitespaceOnlySingleLineInsertion(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (_promptExplicitlyRequestsWhitespaceInsertion(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  let changed = false;
+  const normalizePatch = (patch) => {
+    const delta = _getInsertionLineDelta(patch?.old_text, patch?.new_text);
+    if (!delta) return;
+    patch.new_text = delta.normalizedText;
+    changed = true;
+  };
+
+  if (prep.fnName === "patch_file") {
+    for (const patch of Array.isArray(prep.args?.patches) ? prep.args.patches : []) {
+      normalizePatch(patch);
+    }
+  } else {
+    const patch = {
+      old_text: prep.args?.old_text,
+      new_text: prep.args?.new_text,
+    };
+    normalizePatch(patch);
+    if (changed) prep.args.new_text = patch.new_text;
+  }
+  return changed;
+}
+
+function _buildInsertionGuardMessage(filePath, targetRange = null) {
+  const rangeText = targetRange
+    ? ` lines ${targetRange.lineStart}-${targetRange.lineEnd}`
+    : "";
+  return (
+    `BLOCKED: this looks like a small insertion in "${filePath}"${rangeText}, ` +
+    "but the proposed edit rewrites an existing anchor line. Preserve the located target exactly: " +
+    "use patch_file/edit_file with old_text set to the unchanged anchor block and new_text equal to that same block plus only the new inserted line. Do not edit adjacent existing lines."
+  );
+}
+
+function _getEditReplacementPatches(prep) {
+  if (prep.fnName === "patch_file") {
+    return Array.isArray(prep.args?.patches) ? prep.args.patches : [];
+  }
+  if (prep.fnName === "edit_file") {
+    return [
+      {
+        old_text: prep.args?.old_text,
+        new_text: prep.args?.new_text,
+      },
+    ];
+  }
+  return [];
+}
+
+function _extractRequestedInsertionLineAnchor(taskText) {
+  const text = String(taskText || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const match = text.match(
+    /\b(?:below|after|under)\s+(?:the\s+)?(.{2,80}?)\s+line\b/i,
+  );
+  if (!match) return null;
+  const phrase = match[1]
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\b(existing|current|target|located)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (phrase.length < 2) return null;
+  return phrase;
+}
+
+function _findContextLineContaining(contextText, phrase) {
+  const needle = String(phrase || "").toLowerCase();
+  if (!needle) return "";
+  return _stripReadLinePrefixes(contextText)
+    .split(/\r?\n/)
+    .find((line) => line.toLowerCase().includes(needle))
+    ?.trim();
+}
+
+function _stripReadLinePrefixes(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\d+:\s?/, ""))
+    .join("\n");
+}
+
+function _contextContainsAnchorBlock(contextText, oldText) {
+  if (typeof oldText !== "string") return false;
+  if (!oldText.trim()) return false;
+  const context = String(contextText || "");
+  if (context.includes(oldText)) return true;
+
+  const strippedContext = _stripReadLinePrefixes(context);
+  if (strippedContext.includes(oldText)) return true;
+
+  const anchorLines = oldText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (anchorLines.length === 0) return false;
+  const contextLines = strippedContext
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  for (let i = 0; i <= contextLines.length - anchorLines.length; i++) {
+    const matches = anchorLines.every(
+      (line, offset) => contextLines[i + offset] === line,
+    );
+    if (matches) return true;
+  }
+  return false;
+}
+
+function _blockPromptSpecifiedInsertionAnchor(
+  prep,
+  locatedTarget,
+  taskText,
+  contextText,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  if (!requestedAnchor) return false;
+  const contextAnchorLine = _findContextLineContaining(
+    contextText,
+    requestedAnchor,
+  );
+  if (!contextAnchorLine) return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+  const missesRequestedAnchor = patches.some(({ old_text, new_text }) => {
+    const oldText = String(old_text || "");
+    const newText = String(new_text || "");
+    if (!oldText.trim() || !newText.trim()) return false;
+    return (
+      !oldText.includes(contextAnchorLine) &&
+      !oldText.toLowerCase().includes(requestedAnchor.toLowerCase())
+    );
+  });
+  if (!missesRequestedAnchor) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: the prompt specifies inserting below/after the existing line containing "${requestedAnchor}", ` +
+      `but the proposed edit for "${editPath}" uses a different anchor. ` +
+      "Use old_text that includes the existing requested anchor line exactly, and new_text equal to that same anchor plus only the new inserted line.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
+function _blockUnknownInsertionAnchor(
+  prep,
+  locatedTarget,
+  taskText,
+  contextText,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+
+  const missingAnchor = patches.some(({ old_text }) => {
+    if (typeof old_text !== "string") return false;
+    const anchor = old_text.trim();
+    if (!anchor) return false;
+    return !_contextContainsAnchorBlock(contextText, old_text);
+  });
+  if (!missingAnchor) return false;
+
+  const rangeText = locatedTarget.targetRange
+    ? ` lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}`
+    : "";
+  const requestedAnchor = _extractRequestedInsertionLineAnchor(taskText);
+  const contextAnchorLine = requestedAnchor
+    ? _findContextLineContaining(contextText, requestedAnchor)
+    : "";
+  const anchorHint = contextAnchorLine
+    ? ` The located anchor line is: ${JSON.stringify(contextAnchorLine)}. Use old_text containing that exact line; do not invent surrounding blocks.`
+    : "";
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: the proposed old_text for "${editPath}" was not found in the located target context${rangeText}. ` +
+      "For this small insertion, use only an exact anchor block that was already read from the target file." +
+      anchorHint +
+      " If compression removed the snippet, do one targeted read of the located range, then retry with old_text copied from that output.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
+function _blockAdjacentRewriteForInsertion(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+
+  const rewritesAnchor = patches.some(({ old_text, new_text }) => {
+    if (typeof old_text !== "string" || typeof new_text !== "string")
+      return false;
+    if (!old_text.trim() || !new_text.trim()) return false;
+    return !_patchLooksLikeInsertionAroundAnchor(old_text, new_text);
+  });
+  if (!rewritesAnchor) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content: _buildInsertionGuardMessage(editPath, locatedTarget.targetRange),
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
+function _blockRepeatedSmallInsertionAfterEdit(
+  prep,
+  locatedTarget,
+  taskText,
+  filesModified,
+) {
+  if (!prep?.canExecute) return false;
+  if (!_isSmallInsertionPrompt(taskText)) return false;
+  if (!["edit_file", "patch_file"].includes(prep.fnName)) return false;
+
+  const editPath = prep.args?.path || prep.args?.file_path || "";
+  if (!editPath || !locatedTarget?.targetFile) return false;
+  if (
+    _normalizePromptPath(editPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+
+  const targetWasAlreadyModified = [...(filesModified || [])].some(
+    (modifiedPath) =>
+      _normalizePromptPath(modifiedPath) === _normalizePromptPath(editPath),
+  );
+  if (!targetWasAlreadyModified) return false;
+
+  const patches = _getEditReplacementPatches(prep);
+  if (patches.length === 0) return false;
+  const onlyAddsAnotherInsertion = patches.every(({ old_text, new_text }) =>
+    _patchLooksLikeInsertionAroundAnchor(old_text, new_text),
+  );
+  if (!onlyAddsAnotherInsertion) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: "${editPath}" was already modified for this small insertion request, ` +
+      "and this proposed edit only adds another adjacent insertion. Inspect the diff/readback and finalize, or replace the previous inserted line if it was wrong. Do not add a second synonymous field.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
+function _blockRepeatedLocatedTargetRead(prep, locatedTarget, taskText) {
+  if (!prep?.canExecute) return false;
+  if (prep.fnName !== "read_file") return false;
+  if (!_isActionableImplementationPrompt(taskText)) return false;
+  const readPath = prep.args?.path || "";
+  if (!readPath || !locatedTarget?.targetFile || !locatedTarget?.targetRange)
+    return false;
+  if (
+    _normalizePromptPath(readPath) !==
+    _normalizePromptPath(locatedTarget.targetFile)
+  )
+    return false;
+  const start = parseInt(prep.args?.line_start, 10);
+  const end = parseInt(prep.args?.line_end, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const hasCompressionRecovery = [
+    ..._postCompressionReadRecovery.entries(),
+  ].some(([allowPath, ranges]) => {
+    if (_normalizePromptPath(allowPath) !== _normalizePromptPath(readPath))
+      return false;
+    return ranges.some((range) => {
+      const overlapStart = Math.max(start, range.start);
+      const overlapEnd = Math.min(end, range.end);
+      if (overlapEnd <= overlapStart) return false;
+      const requestedLen = Math.max(end - start, 1);
+      const savedLen = Math.max(range.end - range.start, 1);
+      return overlapEnd - overlapStart >= Math.min(requestedLen, savedLen) * 0.7;
+    });
+  });
+  if (hasCompressionRecovery) return false;
+
+  // Deadlock escape: after super-nuclear compression, allow one targeted re-read
+  // of the deadlocked file even if the located target was already read. Without
+  // this, the located-target guard blocks re-reads after context wipe and the
+  // deadlock escape in the overlap detection section never gets a chance to fire.
+  if (_deadlockOnFile === readPath && _superNuclearFires >= 1) {
+    _deadlockOnFile = null; // one-time escape consumed
+    return false; // allow the read
+  }
+
+  const previousRanges = _sessionFileReadRanges.get(readPath) || [];
+  const alreadyRead = previousRanges.some(
+    ([prevStart, prevEnd]) => prevStart === start && prevEnd === end,
+  );
+  if (!alreadyRead) return false;
+
+  prep.canExecute = false;
+  prep.errorResult = {
+    role: "tool",
+    content:
+      `BLOCKED: ${readPath} lines ${start}-${end} were already read and the target is located. ` +
+      "Do not re-read the same target range. Make the scoped change now with edit_file or patch_file using exact old_text from the existing context.",
+    tool_call_id: prep.callId,
+  };
+  return true;
+}
+
 /**
  * Extract structured TODO items from the plan text by matching file paths
  * that were read OR found via grep during the plan phase. Returns an array
@@ -2770,6 +4280,43 @@ function _commandForScript(scriptName) {
   return `npm run ${scriptName}`;
 }
 
+function _normalizeSnippetText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function _extractExpectedReadbackSnippets(args = {}, fnName = "") {
+  const candidates = [];
+  if (fnName === "write_file") {
+    candidates.push(args.content || "");
+  } else {
+    candidates.push(args.new_text || args.newText || args.replacement || "");
+  }
+
+  return [
+    ...new Set(
+      candidates
+        .flatMap((text) => {
+          const normalized = _normalizeSnippetText(text);
+          if (!normalized) return [];
+          const lineSnippets = String(text)
+            .split("\n")
+            .map(_normalizeSnippetText)
+            .filter((line) => line.length >= 12 && !/^[{}()[\];,]+$/.test(line));
+          return [normalized, ...lineSnippets];
+        })
+        .filter((snippet) => snippet.length >= 12)
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 6),
+    ),
+  ];
+}
+
+function _readbackContainsExpectedSnippet(readback, expectedSnippets = []) {
+  if (!expectedSnippets || expectedSnippets.length === 0) return true;
+  const normalizedReadback = _normalizeSnippetText(readback);
+  return expectedSnippets.some((snippet) => normalizedReadback.includes(snippet));
+}
+
 // Verification principle: read back what you wrote.
 // After every edit, confirm the file content matches intent before continuing.
 function _buildPostEditVerifyPrompt(filesModified, commands, relatedTests) {
@@ -2806,6 +4353,269 @@ function _isVerificationCommandCall(prep) {
       cmd,
     ) || /\bnode\s+["']?[\w./ -]+\.(?:c?js|mjs)\b/.test(cmd)
   );
+}
+
+function _extractExactVerificationOnlyCommand(taskText) {
+  const text = String(taskText || "").trim();
+  if (!text) return "";
+  const verificationOnly =
+    /\bverification\s+only\b/i.test(text) ||
+    (/\brun\s+exactly\b/i.test(text) &&
+      /\bdo\s+not\s+(?:edit|modify|change)\b/i.test(text) &&
+      /\bdo\s+not\s+run\s+other\s+commands?\s+first\b/i.test(text));
+  if (!verificationOnly) return "";
+
+  const match =
+    text.match(/\brun\s+exactly\s*`([^`\n]+)`/i) ||
+    text.match(/\brun\s+exactly\s*:\s*([\s\S]*?)(?:\.\s+Do\s+not|\n|$)/i);
+  const command = match ? String(match[1]).trim().replace(/\s+/g, " ") : "";
+  if (!command) return "";
+  return _isVerificationCommandCall({ fnName: "bash", args: { command } })
+    ? command
+    : "";
+}
+
+async function _runExactVerificationOnlyCommand(command) {
+  const args = { command };
+  if (_serverHooks?.onToolStart) {
+    _serverHooks.onToolStart("bash", args);
+  }
+
+  let result = "";
+  let isError = false;
+  try {
+    result = await executeTool("bash", args, {
+      silent: true,
+      autoConfirm: true,
+    });
+    isError = _isToolResultError("bash", result);
+  } catch (err) {
+    result = `ERROR: ${err?.message || String(err)}`;
+    isError = true;
+  }
+
+  const summary = formatToolSummary("bash", args, result, isError);
+  if (_serverHooks?.onToolEnd) {
+    _serverHooks.onToolEnd("bash", summary, !isError);
+  }
+
+  const assistantText = isError
+    ? `Verification failed: ${command}`
+    : `Verification passed: ${command}`;
+  conversationMessages.push({ role: "assistant", content: assistantText });
+  saveNow(conversationMessages);
+  _scoreAndPrint(conversationMessages);
+  console.log(assistantText);
+  return { success: !isError, command, content: assistantText };
+}
+
+async function _runRequiredVerificationCommandOnce(command, verificationCommandsRun) {
+  const normalized = _normalizeVerificationCommand(command);
+  const alreadyRan = verificationCommandsRun.some(
+    (ran) => _normalizeVerificationCommand(ran) === normalized,
+  );
+  if (alreadyRan) return { skipped: true };
+
+  const args = { command };
+  if (_serverHooks?.onToolStart) {
+    _serverHooks.onToolStart("bash", args);
+  }
+
+  let result = "";
+  let isError = false;
+  try {
+    result = await executeTool("bash", args, {
+      silent: true,
+      autoConfirm: true,
+    });
+    isError = _isToolResultError("bash", result);
+  } catch (err) {
+    result = `ERROR: ${err?.message || String(err)}`;
+    isError = true;
+  }
+
+  const summary = formatToolSummary("bash", args, result, isError);
+  if (_serverHooks?.onToolEnd) {
+    _serverHooks.onToolEnd("bash", summary, !isError);
+  }
+
+  if (!isError) {
+    verificationCommandsRun.push(command.slice(0, 160));
+  }
+
+  return {
+    skipped: false,
+    success: !isError,
+    command,
+    summary,
+    content: String(result || ""),
+  };
+}
+
+function _extractRequiredVerificationCommands(taskText) {
+  const text = String(taskText || "");
+  if (!text) return [];
+  const commands = _extractExactRequiredVerificationCommands(text);
+  const explicitPatterns = [
+    /\b(npm\s+run\s+lint)\b/i,
+    /\b(npm\s+run\s+build)\b/i,
+    /\b(npm\s+test)\b/i,
+    /\b(npx\s+jest\b[^\n.]*)/i,
+    /\b(vitest(?:\s+run)?\b[^\n.]*)/i,
+    /\b(pytest\b[^\n.]*)/i,
+    /\b(tsc\b[^\n.]*)/i,
+  ];
+  for (const pattern of explicitPatterns) {
+    const match = text.match(pattern);
+    if (match) commands.push(match[1].trim().replace(/\s+/g, " "));
+  }
+  return [...new Set(commands)];
+}
+
+function _extractExactRequiredVerificationCommands(taskText) {
+  const text = String(taskText || "");
+  if (!text) return [];
+  const commands = [];
+  const patterns = [
+    /\brun\s+exactly\s*`([^`\n]+)`/gi,
+    /\brun\s+exactly\s*:\s*([^\n.]+(?:\.[cm]?js|\.mjs)?[^\n.]*)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const command = String(match[1] || "").trim().replace(/\s+/g, " ");
+      if (
+        command &&
+        _isVerificationCommandCall({ fnName: "bash", args: { command } })
+      ) {
+        commands.push(command);
+      }
+    }
+  }
+
+  return [...new Set(commands)];
+}
+
+function _normalizeVerificationCommand(command) {
+  return String(command || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function _formatSuccessfulVerificationEvidence(commands) {
+  const seen = new Set();
+  return commands
+    .map((cmd) => String(cmd || "").trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .filter((cmd) => {
+      const key = _normalizeVerificationCommand(cmd);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((cmd) => `${cmd} (passed)`)
+    .join(" | ");
+}
+
+function _summaryReportsRequiredVerification(text, requiredCommands) {
+  if (!requiredCommands || requiredCommands.length === 0) return true;
+  const summary = _normalizeVerificationCommand(text);
+  if (!summary) return false;
+  const speculativePass =
+    /\b(?:should|would|could|may|might)\b.{0,80}\bpass(?:ed|es)?\b/i.test(
+      text || "",
+    );
+  if (speculativePass) return false;
+  const reportsPassingResult =
+    /\b(pass(?:ed|es)?|success(?:ful(?:ly)?)?|succeed(?:ed)?|exit code 0|0 errors?|no errors?)\b/i.test(
+      text || "",
+    );
+  if (!reportsPassingResult) return false;
+  return requiredCommands.every((cmd) =>
+    summary.includes(_normalizeVerificationCommand(cmd)),
+  );
+}
+
+function _extractVerificationFailurePaths(output) {
+  const text = String(output || "");
+  const matches = text.match(/(?:^|\n)(\/[^\n]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp)|[A-Za-z0-9_./-]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp))(?=\n|:\d|\s*$)/gm) || [];
+  const seen = new Set();
+  const paths = [];
+  for (const raw of matches) {
+    const candidate = raw.trim();
+    if (!candidate) continue;
+    let normalized = candidate;
+    if (path.isAbsolute(candidate)) {
+      const rel = path.relative(process.cwd(), candidate);
+      normalized = rel && !rel.startsWith("..") ? rel : candidate;
+    }
+    normalized = normalized.replace(/\\/g, "/");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+  return paths;
+}
+
+function _extractUnusedBindingHints(output) {
+  const text = String(output || "");
+  const hints = [];
+  const patterns = [
+    /'([^']+)'\s+is defined but never used/gi,
+    /'([^']+)'\s+is assigned a value but never used/gi,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text))) {
+      const name = String(match[1] || "").trim();
+      if (!name) continue;
+      if (!hints.includes(name)) hints.push(name);
+    }
+  }
+  return hints;
+}
+
+// Extract { file, binding } pairs from lint output so per-file follow-up
+// guards target the right binding in the right scoped file.
+function _extractUnusedBindingsPerFile(output) {
+  const text = String(output || "");
+  const pairs = [];
+  // Match: path/to/file.ext:line:col  error/warn  'binding' is defined/assigned but never used
+  const pattern =
+    /([^\s:]+\.(?:[cm]?[jt]sx?|vue|svelte|py|rb|go|rs|java|kt|kts|swift|php|cs|cpp|cc|cxx|c|h|hpp))(?::\d+)?(?::\d+)?\s+\w+\s+'([^']+)'\s+(?:is defined but never used|is assigned a value but never used)/gi;
+  let match;
+  while ((match = pattern.exec(text))) {
+    pairs.push({ file: String(match[1] || "").trim(), binding: String(match[2] || "").trim() });
+  }
+  return pairs;
+}
+
+function _pathsReferToSameFile(left, right) {
+  const a = _normalizePromptPath(left).replace(/\\/g, "/");
+  const b = _normalizePromptPath(right).replace(/\\/g, "/");
+  if (!a || !b) return false;
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+function _clearVerificationFollowUpGuard() {
+  _verificationFollowUpPath = "";
+  _verificationFollowUpCommand = "";
+  _verificationFollowUpBindings = [];
+  _verificationFollowUpNeedsEdit = false;
+  _verificationFollowUpJustSet = false;
+  // Reset edit sequence tracking so old verification evidence
+  // doesn't carry over after the guard clears.
+  if (typeof _scopedEditCounter === "number") _scopedEditCounter = 0;
+  if (typeof _verificationAtEditSeq === "number") _verificationAtEditSeq = -1;
+}
+
+function _setVerificationFollowUpGuard({ path, command, bindings = [] }) {
+  _verificationFollowUpPath = _normalizePromptPath(path).replace(/\\/g, "/");
+  _verificationFollowUpCommand = String(command || "").trim();
+  _verificationFollowUpBindings = bindings
+    .map((binding) => String(binding || "").trim())
+    .filter(Boolean);
+  _verificationFollowUpNeedsEdit = true;
+  _verificationFollowUpJustSet = true;
 }
 
 async function _inferSymbolTargets(taskText) {
@@ -3029,6 +4839,15 @@ async function _transitionPhase(
   _sessionRangeBlockCounts.clear();
   _sessionBashCmdCounts.clear();
   _sessionFileEditCounts.clear();
+  _commentedOutCodeNudges.clear();
+  _commentedOutCodeSessionBaselines.clear();
+  _commentedOutCodeFinalNudges = 0;
+  _malformedMarkupNudges.clear();
+  _malformedMarkupFinalNudges = 0;
+  _undeclaredImportNudges.clear();
+  _undeclaredImportFinalNudges = 0;
+  _verificationFocusPaths.clear();
+  _clearVerificationFollowUpGuard();
 
   // Extract structured TODOs from plan findings + files already read.
   if (targetPhase === "implement") {
@@ -3355,6 +5174,16 @@ function _isSimpleDirectAnswerPrompt(userInput) {
     ) ||
     /\b(?:create|write|save)\s+(?:a\s+)?file\b/.test(lower) ||
     /\b(?:read|search|inspect|look through|find in|run|install)\b/.test(lower)
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(?:add|change|update|modify|insert|show|display|fix|implement)\b/i.test(
+      text,
+    ) &&
+    (/\b(?:in|on|at|for|bei|auf)\s+\/[a-z0-9][\w/-]*/i.test(text) ||
+      /\b(?:page|screen|view|template)\b/i.test(text))
   ) {
     return false;
   }
@@ -4037,7 +5866,7 @@ All relative paths resolve from this directory.
 PROJECT CONTEXT:
 ${projectContext}
 ${memoryContext ? `\n## Project Instructions (NEX.md)\n\n${memoryContext}\n` : ""}${skillInstructions ? `\n${skillInstructions}\n` : ""}${planPrompt ? `\n${planPrompt}\n` : ""}
-${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Should I...?", "Would you like me to...?", or similar permission prompts.\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n## Match the task type — do NOT escalate analysis into edits\n- **Analysis / explanation / exploration tasks** ("analyze", "explain", "describe", "list", "summarize", "what is", "how does", "review", "audit") → produce the analysis/answer as text and STOP. Do NOT then start editing files. Do NOT invent a follow-up "implementation phase" that the user did not ask for. The analysis IS the deliverable.\n- **Implementation tasks** ("fix", "add", "create", "change", "refactor", "implement", "rewrite", "update", "migrate") → execute immediately, no proposals, no questions.\n- The user's ORIGINAL prompt determines the mode. Do not escalate from analysis to implementation in the same turn unless the user explicitly says so in a NEW message.\n\n- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code — do NOT search for files. The snippet is self-contained\n- After identifying root cause via SSH on a FIX request: IMMEDIATELY fix it (edit file + restart service). Do NOT ask for permission or offer alternatives first.\n- **File creation override** (only for implementation tasks): In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
+${languagePrompt ? `${languagePrompt}\n` : ""}${deploymentContext ? `${deploymentContext}\n\n` : ""}${getAutoConfirm() ? `# YOLO Mode — Auto-Execute\n\nYou are in YOLO mode (autoConfirm=true). All tool calls are pre-approved.\n- NEVER ask for confirmation — just execute tasks directly\n- NEVER end responses with questions like "Should I...?", "Would you like me to...?", or similar permission prompts.\n- If something is ambiguous, make a reasonable assumption and state it, then proceed\n- OVERRIDE "simple questions": If the user pastes any server error message, SSH investigate FIRST — NEVER answer from training knowledge alone\n\n## Match the task type — do NOT escalate analysis into edits\n- **Analysis / explanation / exploration tasks** ("analyze", "explain", "describe", "list", "summarize", "what is", "how does", "review", "audit") → produce the analysis/answer as text and STOP. Do NOT then start editing files. Do NOT invent a follow-up "implementation phase" that the user did not ask for. The analysis IS the deliverable.\n- **Implementation tasks** ("fix", "add", "create", "change", "refactor", "implement", "rewrite", "update", "migrate") → execute immediately, no proposals, no questions.\n- The user's ORIGINAL prompt determines the mode. Do not escalate from analysis to implementation in the same turn unless the user explicitly says so in a NEW message.\n\n- **Inline code tasks**: If the prompt contains a code snippet and asks you to modify/add to/improve it, answer DIRECTLY with the improved code only when the snippet is self-contained. If the prompt also names an app route, page, screen, view, template, file, or existing project location, treat the snippet as locator context: inspect the workspace and edit the matching file.\n- After identifying root cause via SSH on a FIX request: IMMEDIATELY fix it (edit file + restart service). Do NOT ask for permission or offer alternatives first.\n- **File creation override** (only for implementation tasks): In auto mode, ALWAYS use write_file to create files on disk. Do NOT just paste file content in your text response — nobody reads it. Makefiles, Dockerfiles, documentation, config files, scripts — write_file is mandatory. Your text output is invisible in this mode.\n\n` : ""}
 ${getAutoConfirm() ? `# Direct Answer Override\n\nFor self-contained tasks asking for a SQL query, cron expression, regex explanation/refactor, small Makefile, Dockerfile snippet, or small JS/Python function, this overrides the file creation rule above: answer in text only. Do not inspect the workspace, create files, run commands, or install packages unless the user explicitly asks for those actions. Never install Node.js built-in modules such as fs, path, events, http, https, crypto, stream, util, or os.\n\n` : ""}
 <!-- SYSTEM_PROMPT_DYNAMIC_BOUNDARY -->
 
@@ -4158,6 +5987,7 @@ After frontend_recon returns:
   - Don't add features, refactoring, or "improvements" beyond what was asked.
   - Don't add error handling for impossible scenarios. Only validate at system boundaries.
   - Don't add docstrings/comments to code you didn't change.
+  - Do not leave commented-out code to silence lint or type errors. Delete unused code instead.
   - Don't create helpers or abstractions for one-time operations.
   - Three similar lines of code is better than a premature abstraction.
 - MANDATORY FINAL RESPONSE: When your task is complete, you MUST write at least 2 sentences summarizing (1) what you changed, (2) why you changed it, and (3) what the expected impact is. Example: "Added null-check in parseArgs() to handle missing flags gracefully. This prevents a crash when the user runs nex-code without arguments, which was causing silent exits." NEVER end with just "Done", "Done.", "Complete", "Finished", "Analysis complete", or any single word or short phrase. A bare one-liner is a quality failure — always write a substantive closing paragraph.
@@ -4494,6 +6324,7 @@ function _resetSessionTracking() {
   _sessionGrepPatternCounts.clear();
   _sessionGrepFileCounts.clear();
   _sessionGrepFoundFiles.clear();
+  _sessionLastGrepResultByPath.clear();
   _sessionGlobSearchCounts.clear();
   _sessionGlobCoreTerms.clear();
   _sessionGlobFoundFiles.clear();
@@ -4503,16 +6334,24 @@ function _resetSessionTracking() {
   _sessionLastEditFailed.clear();
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
+  _editedFileExpectedSnippets.clear();
   _sessionDupeToolCounts.clear();
+  _postCompressionReadRecovery.clear();
+  _commentedOutCodeNudges.clear();
+  _malformedMarkupNudges.clear();
+  _malformedMarkupFinalNudges = 0;
   _sessionConsecutiveSshCalls = 0;
   _superNuclearFires = 0;
   _planRejectionCount = 0;
   _sshBlockedAfterStorm = false;
   _sshDeadlockRelaxCount = 0;
+  _deadlockOnFile = null;
   _postWipeToolBudget = -1;
   _postWipeEverFired = false;
   _filesModifiedAtWipe = 0;
   _postWipeBudgetExtended = false;
+  _selfVerifyRan = false;
+  _fitnessLogged = false;
   _readOnlyCallsSinceEdit = 0;
   _investigationCapFired = false;
   _readsSinceCapFired = 0;
@@ -4541,6 +6380,9 @@ function _resetSessionTracking() {
   _consecutiveNoToolCalls = 0;
   _postEditVerifyPending = false;
   _postEditVerifyNudges = 0;
+  _consecutiveFailedVerifications = 0;
+  _verificationRetryStreak = 0;
+  _verificationFollowUpJustSet = false;
   _planPhaseBlockedCount = 0;
   _lastPlanBlockedTool = null;
   _detectedCategoryId = null;
@@ -5140,6 +6982,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   conversationMessages.push({ role: "user", content: userContent });
   trimConversationHistory();
 
+  const exactVerificationCommand =
+    typeof userContent === "string"
+      ? _extractExactVerificationOnlyCommand(userContent)
+      : "";
+  if (exactVerificationCommand) {
+    return await _runExactVerificationOnlyCommand(exactVerificationCommand);
+  }
+
   if (directAnswerMode) {
     const deterministic = _getDeterministicDirectAnswer(userInput);
     if (deterministic) {
@@ -5418,7 +7268,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           role: "assistant",
           content:
             fewShot.assistant +
-            "\n[END EXAMPLE — wait for the real user request below]",
+            "\n[END EXAMPLE — the next user message is the real task. Answer that next user message directly.]",
         },
         ...apiMessages.slice(1),
       ];
@@ -5660,15 +7510,119 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const filesRead = new Set();
   const verificationCommandsRun = [];
   const verificationReadsRun = [];
+  const exactRequiredVerificationCommands =
+    _extractExactRequiredVerificationCommands(userInput);
+  const requiredVerificationCommands = _extractRequiredVerificationCommands(
+    userInput,
+  );
+  // ─── Pre-edit lint enforcement ───────────────────────────────────────
+  // When the task explicitly names a lint command (npm run lint, eslint),
+  // inject a system instruction to run it FIRST before editing any files.
+  // This ensures the verification follow-up guard (which extracts exact
+  // unused binding names from lint output) is armed before the agent
+  // attempts file edits, preventing wrong-line edits like removing an
+  // import statement instead of a destructured prop binding.
+  if (
+    requiredVerificationCommands.length > 0 &&
+    requiredVerificationCommands.some((cmd) =>
+      /\b(?:npm\s+run\s+lint|lint|eslint)\b/i.test(cmd),
+    )
+  ) {
+    const preLintMsg = {
+      role: "user",
+      content:
+        `[SYSTEM] Before editing any files, run ${requiredVerificationCommands.join(" or ")} first ` +
+        `to see the current errors. Fix each error by removing only the unused variable, ` +
+        `not any import statements or other code. After fixing, rerun ${requiredVerificationCommands.join(" or ")} ` +
+        `to verify.`,
+    };
+    conversationMessages.push(preLintMsg);
+    apiMessages.push(preLintMsg);
+  }
+
+  // ─── Pre-edit test enforcement ───────────────────────────────────────
+  // When the task asks to "add a test" or "run npm test", inject a system
+  // instruction to read the target files and then add the test. This
+  // prevents investigation stalls where the model reads extensively but
+  // never produces the requested code change.
+  if (
+    requiredVerificationCommands.length > 0 &&
+    requiredVerificationCommands.some((cmd) =>
+      /\b(?:npm\s+test|vitest|jest|pytest)\b/i.test(cmd),
+    )
+  ) {
+    const preTestMsg = {
+      role: "user",
+      content:
+        `[SYSTEM] Read the target source file and its existing test file, then ` +
+        `add the requested test code. Do not read unrelated files — focus on the ` +
+        `scoped files and their direct imports. After adding the test, run ` +
+        `${requiredVerificationCommands.join(" or ")} ` +
+        `to verify it passes.`,
+    };
+    conversationMessages.push(preTestMsg);
+    apiMessages.push(preTestMsg);
+  }
   const _editedFilesNotReread = new Set(); // files edited but not re-read — block second edit until re-read
   let _readOnlyToolStreak = 0; // consecutive read-only tool iterations (no file writes)
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
+  let _scopedNoEditNudges = 0; // headless located-target prose without edits
+  let _failedEditFinalNudges = 0; // failed write followed by prose without progress
+  let _preexistingFinalNudges = 0; // edited work described as if it already existed
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
-  const _hasPostEditVerificationEvidence = () =>
-    verificationCommandsRun.length > 0 || verificationReadsRun.length > 0;
+  // ─── Post-edit verification freshness tracking ─────────────────────
+  // When an edit happens after verification was already run, the old
+  // verification evidence is stale. Track an edit sequence counter so
+  // that `_hasPostEditVerificationEvidence` returns false when the last
+  // verification was run before the most recent scoped edit.
+  let _scopedEditCounter = 0;
+  let _verificationAtEditSeq = -1;
+  const _hasPostEditVerificationEvidence = () => {
+    if (verificationCommandsRun.length === 0 && verificationReadsRun.length === 0)
+      return false;
+    // If edits happened after the last verification, evidence is stale.
+    if (_scopedEditCounter > _verificationAtEditSeq) return false;
+    return verificationCommandsRun.length > 0 || verificationReadsRun.length > 0;
+  };
+  const _hasRequiredVerificationEvidence = () => {
+    if (requiredVerificationCommands.length === 0) return true;
+    const ran = new Set(
+      verificationCommandsRun.map((cmd) => _normalizeVerificationCommand(cmd)),
+    );
+    return requiredVerificationCommands.every((required) =>
+      ran.has(_normalizeVerificationCommand(required)),
+    );
+  };
+  const _appendRecoveredHeadlessFinal = (reason) => {
+    if (!getAutoConfirm() || !_serverHooks || opts.skillLoop) return false;
+    if (filesModified.size === 0 && _bashModifiedFiles === 0) return false;
+    if (!_hasPostEditVerificationEvidence()) return false;
+    if (!_hasRequiredVerificationEvidence()) return false;
+
+    const changedFiles =
+      [...filesModified].slice(0, 12).join(", ") ||
+      "files changed by shell commands";
+    const verificationEvidence =
+      verificationCommandsRun.length > 0
+        ? _formatSuccessfulVerificationEvidence(verificationCommandsRun)
+        : `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`;
+    const content = [
+      "Completed the requested edit and verified the updated state.",
+      `Changed files: ${changedFiles}.`,
+      `Verification: ${verificationEvidence}.`,
+      `Finalization note: ${reason}; the headless runner preserved the completed work state and emitted this summary instead of exiting without a final assistant response.`,
+    ].join("\n");
+    const assistantMsg = { role: "assistant", content };
+    conversationMessages.push(assistantMsg);
+    apiMessages.push(assistantMsg);
+    console.log(`\n${content}`);
+    saveNow(conversationMessages);
+    _scoreAndPrint(conversationMessages);
+    return true;
+  };
   // Loop detection: use session-level Maps so counters persist across REPL turns.
   // If they were declared locally here they would reset on every processInput() call,
   // allowing the agent to bypass abort thresholds by running N-1 bad calls per turn.
@@ -5694,8 +7648,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const fileReadCounts = _sessionFileReadCounts;
   const LOOP_WARN_READS = (_phaseEnabled ? 6 : 4) * _sk;
   const LOOP_ABORT_READS = (_phaseEnabled ? 10 : 8) * _sk;
-  const TARGETED_READ_HARD_CAP = (_phaseEnabled ? 12 : 10) * _sk;
+  const TARGETED_READ_HARD_CAP =
+    (_phaseEnabled
+      ? _profile.phaseTargetedReadHardCap
+      : _profile.targetedReadHardCap) * _sk;
   const NARROW_READ_PASS_THROUGH = 25;
+  const SCROLL_WARN_SECTIONS = _profile.scrollWarnSections;
+  const SCROLL_BLOCK_SECTIONS = _profile.scrollBlockSections;
+  const INVESTIGATION_GRACE = _profile.investigationGrace;
   let consecutiveErrors = 0;
   const LOOP_WARN_ERRORS = 10 * _sk;
   const LOOP_ABORT_ERRORS = 15 * _sk;
@@ -5709,6 +7669,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
     _bashModifiedFiles === 0 &&
     _sessionLastEditFailed.size === 0 &&
     _boundedBacklogImplementationReads > 0;
+  const _buildBlockedLoopStallMessage = () => {
+    const detail = _blockedAfterImplementationRead()
+      ? "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing."
+      : "The model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer.";
+    return (
+      "Implementation stalled before edits.\n\n" +
+      `${detail} Stopping without commit or push so the workflow does not falsely report success.`
+    );
+  };
   let truncatedSwarmCount = 0;
   const LOOP_WARN_SWARM = 2 * _sk;
   const LOOP_ABORT_SWARM = 3; // abort after 3 all-truncated swarm calls in a row
@@ -5716,6 +7685,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let forceFinalBudgetNudges = 0;
   let forceFinalAfterBatch = false;
   let boundedBacklogEmptyResponseNudges = 0;
+  let requiredVerificationSummaryNudges = 0;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -5752,7 +7722,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   const _rawUserText = typeof userInput === "string" ? userInput.trim() : "";
   const _isAnalysisOnlyPrompt =
     _rawUserText.length > 0 &&
-    /^\s*(analyze|analyse|explain|describe|review|audit|summari[sz]e|list|understand|document|documentation|docs|what is|what does|how does|show me|show the|show all|tell me about)/i.test(
+    /^\s*(analyze|analyse|explain|describe|review|audit|summari[sz]e|list|understand|document|documentation|docs|inspect|read|find|identify|what is|what does|how does|show me|show the|show all|tell me(?:\s+(?:about|the|which|what|whether|if|me))?)/i.test(
       _rawUserText,
     ) &&
     !/\b(fix|bug|crash|error|implement|add|create|change|update|refactor|rewrite|broken|fail|patch|migrate|port|build|edit|write|delete|remove|install|setup|deploy|run)\b/i.test(
@@ -5807,17 +7777,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _autoCtx = getUsage(apiMessages, _allTools);
         const _threshold = totalSteps === 0 ? 65 : 78;
         if (_autoCtx.percentage >= _threshold) {
+          const _resumeTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          const _resumeTargetWithContext = _withLocatedTargetContext(
+            _resumeTarget,
+            apiMessages,
+            userInput,
+          );
           // Inject a fresh progress snapshot before compression so the model
           // retains its place after old messages are dropped. The snapshot is
           // pinned (_pinned:true) and will survive Phase 4 relevance removal.
           // Always refresh the snapshot so it reflects the latest state.
           if (
             filesModified.size > 0 ||
-            (_phaseEnabled && _currentPhase !== "plan")
+            (_phaseEnabled && _currentPhase !== "plan") ||
+            _resumeTargetWithContext
           ) {
             const _snap = buildProgressSnapshot(conversationMessages, {
               filesModified,
               currentPhase: _phaseEnabled ? _currentPhase : null,
+              locatedTarget: _resumeTargetWithContext,
             });
             if (_snap) {
               // Replace any existing snapshot, then insert after system message
@@ -5840,10 +7822,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               console.log(
                 `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allTools).percentage)}%]${C.reset}`,
               );
+            _grantPostCompressionReadRecovery(_resumeTargetWithContext);
             // ── Post-compress state anchor for creation tasks ─────────────────
             // After compression the model may lose track of what was already
             // built and restart from scratch. Inject a compact progress note so
             // it continues rather than re-investigating.
+            if (_resumeTargetWithContext) {
+              const _resumeAnchor = {
+                role: "user",
+                content:
+                  `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
+                  `Target: ${_shortSessionPath(_resumeTargetWithContext.targetFile)}. ` +
+                  `Next action: ${_resumeTargetWithContext.nextAction}`,
+              };
+              apiMessages.push(_resumeAnchor);
+            }
             if (_isCreationTask && filesModified.size >= 3) {
               const _doneFiles = [...filesModified]
                 .map((f) => f.split("/").pop())
@@ -5931,20 +7924,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // Stale-stream detection: warn and auto-switch to fast model instead of aborting.
       // Trust the model-switch fallback (STALE_AUTO_SWITCH) — hard abort kills progress.
       let lastTokenTime = Date.now();
+      let lastContentTime = Date.now(); // only reset by onToken (text), NOT onThinkingToken
       let staleWarned = false;
       let staleSwitched = false;
       const staleAbort = new AbortController();
+      const staleTimerInterval = Math.max(
+        100,
+        Math.min(5000, Math.floor(STALE_ABORT_MS / 2) || 100),
+      );
       const staleTimer = setInterval(async () => {
         const elapsed = Date.now() - lastTokenTime;
-        if (elapsed >= STALE_ABORT_MS && !staleSwitched) {
+        const contentElapsed = Date.now() - lastContentTime;
+        // Abort when: (a) no tokens at all for STALE_ABORT_MS, OR
+        // (b) thinking tokens are arriving but no actual content for STALE_ABORT_MS.
+        if ((elapsed >= STALE_ABORT_MS || contentElapsed >= STALE_ABORT_MS) && !staleSwitched) {
           staleSwitched = true;
           stream._clearCursorLine();
           const fastModel = MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
+          const staleSeconds = Math.round(Math.max(elapsed, contentElapsed) / 1000);
           // Auto-switch to fast model instead of aborting.
           // The model-switch preserves progress and is more resilient.
-          if (fastModel && fastModel !== getActiveModelId() && STALE_AUTO_SWITCH) {
+          if (
+            fastModel &&
+            fastModel !== getActiveModelId() &&
+            STALE_AUTO_SWITCH &&
+            !_hasForcedModelOverride()
+          ) {
             debugLog(
-              `${C.green}  🔄 Stream stale for ${Math.round(elapsed / 1000)}s — auto-switching to ${fastModel}${C.reset}`,
+              `${C.green}  🔄 Stream stale for ${staleSeconds}s — auto-switching to ${fastModel}${C.reset}`,
             );
             try {
               const { setActiveModel } = require("./ollama");
@@ -5957,7 +7964,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             }
           } else {
             debugLog(
-              `${C.yellow}  ⚠ Stream stale for ${Math.round(elapsed / 1000)}s — aborting and retrying${C.reset}`,
+              `${C.yellow}  ⚠ Stream stale for ${staleSeconds}s — aborting and retrying${C.reset}`,
             );
             staleAbort.abort();
           }
@@ -5979,7 +7986,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           }
         }
-      }, 5000);
+      }, staleTimerInterval);
       staleTimer.unref?.();
 
       // Token batching for streaming optimization
@@ -6065,6 +8072,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           },
           onToken: (text) => {
             lastTokenTime = Date.now();
+            lastContentTime = Date.now();
             staleWarned = false;
 
             // In server mode: forward token to hook, skip all TTY handling
@@ -6150,6 +8158,11 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
         // Stale abort → progressive retry: 1st=resend, 2nd=compress+resend, exhausted=last-resort compress
         if (staleAbort.signal.aborted && !_getAbortSignal()?.aborted) {
+          if (_serverHooks && getAutoConfirm()) {
+            throw new Error(
+              `Headless stream stale: no final content arrived within ${Math.round(STALE_ABORT_MS / 1000)}s.`,
+            );
+          }
           staleRetries++;
           if (staleRetries > MAX_STALE_RETRIES) {
             // Last-resort: force-compress once, then reset for fresh attempts
@@ -6190,7 +8203,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               saveNow(conversationMessages);
               break;
             }
-            if (recovery.action === "switch") {
+            if (recovery.action === "switch" && !_hasForcedModelOverride()) {
               setActiveModel(`${recovery.provider}:${recovery.model}`);
               console.log(
                 `${C.green}  ✓ Switched to ${recovery.provider}:${recovery.model}${C.reset}`,
@@ -6229,7 +8242,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   `${C.dim}  [force-compressed — ~${tokensRemoved} tokens freed]${C.reset}`,
                 );
             }
-            if (STALE_AUTO_SWITCH) {
+            if (STALE_AUTO_SWITCH && !_hasForcedModelOverride()) {
               const fastModel =
                 MODEL_EQUIVALENTS.fast?.[getActiveProviderName()];
               if (fastModel && fastModel !== getActiveModelId()) {
@@ -6357,7 +8370,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
           };
           const _nextModelSpec = _getFallbackChain()[0]; // already has provider:model format from routing config
-          if (_nextModelSpec) {
+          if (_nextModelSpec && !_hasForcedModelOverride()) {
             console.log(
               `${C.yellow}  ⚠ Model ${unavailableModel} unavailable (404) — switching to ${_nextModelSpec}${C.reset}`,
             );
@@ -6369,6 +8382,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Exhausted all fallbacks — stop with a clear message
           userMessage = `Model not found (404): ${unavailableModel} — no fallback available. Set NEX_FALLBACK_MODEL or run /models to list available models`;
           console.log(`${C.red}  ✗ ${userMessage}${C.reset}`);
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            `${userMessage}. Stopping without commit or push so the workflow does not falsely report success.`;
+          const stalledAssistantMsg = {
+            role: "assistant",
+            content: stalledMsg,
+          };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
           if (taskProgress) {
             taskProgress.stop();
             taskProgress = null;
@@ -6608,6 +8631,24 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 }
               }
 
+              // If a read/grep deadlock was detected before the wipe, inject explicit
+              // edit instructions into findings so the model does not re-enter the
+              // same deadlock loop after compression. Without this, the deadlock-break
+              // message is lost and the model retries reads/ greps → another wipe.
+              if (_deadlockOnFile) {
+                const _deadShort = _deadlockOnFile.split("/").slice(-2).join("/");
+                const _deadGrepEvidence =
+                  _sessionLastGrepResultByPath.get(_deadlockOnFile) || "";
+                _findingParts.push(
+                  `[DEADLOCK ESCAPE] "${_deadShort}" — both read_file and grep were exhausted before this wipe. ` +
+                  (filesModified.size === 0
+                    ? "You MUST use edit_file or patch_file next. Do NOT re-read or grep this file — you already have its content."
+                    : "You have already edited some files. Continue with edit_file/patch_file using the evidence in context.") +
+                  (_deadGrepEvidence
+                    ? `\n\nLast grep evidence before wipe:\n${_deadGrepEvidence}`
+                    : ""),
+                );
+              }
               if (_findingParts.length > 0) {
                 const _findingsMsg = {
                   role: "user",
@@ -6628,6 +8669,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 console.log(
                   `${C.yellow}  💡 Task may exceed model context. Try /clear and break it into smaller steps.${modList ? C.dim + modList : ""}${C.reset}`,
                 );
+                const stalledSummary =
+                  filesModified.size > 0
+                    ? `Implementation stalled after partial changes.\n\nThe run reached the super-nuclear context wipe limit after repeated blocked or oversized investigation steps.${modList} Stopping without reporting success so the workflow does not falsely pass.`
+                    : "Implementation stalled before edits.\n\nThe run reached the super-nuclear context wipe limit after repeated blocked or oversized investigation steps. Stopping without reporting success so the workflow does not falsely pass.";
+                conversationMessages.push({
+                  role: "assistant",
+                  content: stalledSummary,
+                });
                 if (taskProgress) {
                   taskProgress.stop();
                   taskProgress = null;
@@ -6642,7 +8691,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   { suppressHint: true },
                 );
                 saveNow(conversationMessages);
-                break;
+                break outer;
               }
 
               apiMessages = _superNuclear;
@@ -6753,6 +8802,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         // Fatal: the provider returned no usable response object. Retrying is
         // pointless and can lead to tight retry loops (especially in tests).
         if (_emptyProviderResponse) {
+          if (
+            _appendRecoveredHeadlessFinal(
+              "provider returned an empty response after successful post-edit verification",
+            )
+          ) {
+            break outer;
+          }
           if (taskProgress) {
             taskProgress.stop();
             taskProgress = null;
@@ -6780,6 +8836,44 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               taskProgress = null;
             }
             setOnChange(null);
+            // ─── Self-verification: run deterministic checks before final answer ──
+            if (!_selfVerifyRan && filesModified.size > 0) {
+              _selfVerifyRan = true;
+              try {
+                const verifyResult = await runSelfVerification({
+                  filesModified,
+                  cwd: process.cwd(),
+                });
+                if (verifyResult.checks && verifyResult.checks.length > 0) {
+                  const evidenceBlock = buildVerificationEvidence(verifyResult);
+                  conversationMessages.push({ role: "user", content: evidenceBlock });
+                }
+              } catch (_verifyErr) {
+                debugLog(`  ⚠ Self-verification error: ${_verifyErr.message}`);
+              }
+            }
+            // ─── Session outcome logging for fitness routing ──────────────────
+            if (!_fitnessLogged) {
+              _fitnessLogged = true;
+              try {
+                const { getActiveModelId } = require("./providers/registry");
+                const { detectCategory } = require("./task-router");
+                const category = detectCategory(userInput);
+                const { getFileIndex } = require("./index-engine");
+                const fileCount = (getFileIndex() || []).length;
+                logSessionOutcome({
+                  model: getActiveModelId(),
+                  category: category?.id || "coding",
+                  phase: _phaseEnabled ? _currentPhase : null,
+                  projectFiles: fileCount || 0,
+                  success: filesModified.size > 0 && !_stalledThisSession,
+                  score: 0,
+                  durationMs: startTime ? Date.now() - startTime : 0,
+                });
+              } catch (_fitnessErr) {
+                debugLog(`  ⚠ Fitness logging error: ${_fitnessErr.message}`);
+              }
+            }
             _printResume(
               totalSteps,
               toolCounts,
@@ -6844,6 +8938,44 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               taskProgress = null;
             }
             setOnChange(null);
+            // ─── Self-verification: run deterministic checks before final answer ──
+            if (!_selfVerifyRan && filesModified.size > 0) {
+              _selfVerifyRan = true;
+              try {
+                const verifyResult = await runSelfVerification({
+                  filesModified,
+                  cwd: process.cwd(),
+                });
+                if (verifyResult.checks && verifyResult.checks.length > 0) {
+                  const evidenceBlock = buildVerificationEvidence(verifyResult);
+                  conversationMessages.push({ role: "user", content: evidenceBlock });
+                }
+              } catch (_verifyErr) {
+                debugLog(`  ⚠ Self-verification error: ${_verifyErr.message}`);
+              }
+            }
+            // ─── Session outcome logging for fitness routing ──────────────────
+            if (!_fitnessLogged) {
+              _fitnessLogged = true;
+              try {
+                const { getActiveModelId } = require("./providers/registry");
+                const { detectCategory } = require("./task-router");
+                const category = detectCategory(userInput);
+                const { getFileIndex } = require("./index-engine");
+                const fileCount = (getFileIndex() || []).length;
+                logSessionOutcome({
+                  model: getActiveModelId(),
+                  category: category?.id || "coding",
+                  phase: _phaseEnabled ? _currentPhase : null,
+                  projectFiles: fileCount || 0,
+                  success: filesModified.size > 0 && !_stalledThisSession,
+                  score: 0,
+                  durationMs: startTime ? Date.now() - startTime : 0,
+                });
+              } catch (_fitnessErr) {
+                debugLog(`  ⚠ Fitness logging error: ${_fitnessErr.message}`);
+              }
+            }
             _printResume(
               totalSteps,
               toolCounts,
@@ -7014,7 +9146,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _isUnmodifiedBoundedBacklogImplementation(
                 filesModified,
                 _bashModifiedFiles,
-              )
+              ) ||
+              (getAutoConfirm() &&
+                filesModified.size === 0 &&
+                _bashModifiedFiles === 0 &&
+                conversationMessages.some(
+                  (m) =>
+                    m.role === "assistant" &&
+                    typeof m.content === "string" &&
+                    _looksLikeBoundedBacklogDecision(m.content),
+                ))
             ) {
               const stalledMsg =
                 "Implementation stalled before edits.\n\n" +
@@ -7086,6 +9227,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       const assistantMsg = { role: "assistant", content: content || "" };
+      if (result.reasoning_content) {
+        assistantMsg.reasoning_content = result.reasoning_content;
+      }
       if (tool_calls && tool_calls.length > 0) {
         assistantMsg.tool_calls = tool_calls;
         _consecutiveNoToolCalls = 0; // reset auto-escalation counter
@@ -7118,6 +9262,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       // re-reads. This is a hard backstop for read-only deliverables.
       if (
         _isAnalysisOnlyPrompt &&
+        (!tool_calls || tool_calls.length === 0) &&
         !isTooShort(content || streamedText || "") &&
         filesModified.size === 0 &&
         _bashModifiedFiles === 0
@@ -7179,7 +9324,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           getAutoConfirm() &&
           _consecutiveNoToolCalls >= 3 &&
           totalToolCalls === 0 &&
-          !_boundedBacklogPlanActive
+          !_boundedBacklogPlanActive &&
+          !_hasForcedModelOverride()
         ) {
           const currentModel = getActiveModelId();
           const strongerModel = "devstral-2:123b";
@@ -7199,6 +9345,328 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
         const hasText =
           (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        const serverModeRequiresLocatedEdit = !!opts.serverMode;
+        if (
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          !hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          filesRead.size > 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (locatedTarget?.targetFile && locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 3) {
+              _scopedNoEditNudges++;
+              const emptyNoEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] Your previous response was empty, but the target is already located: ` +
+                  `${locatedTarget.targetFile} lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. ` +
+                  "Your next response must contain exactly one edit_file or patch_file tool call for the requested scoped change. Do not search, grep, read, ask the user, or write prose before the tool call.",
+              };
+              conversationMessages.push(emptyNoEditNudge);
+              apiMessages.push(emptyNoEditNudge);
+              continue;
+            }
+
+            const stalledMsg =
+              "Implementation stalled before edits.\n\n" +
+              "The target file and range were located, but the model repeatedly returned empty responses without changing files. Stopping without reporting success so the workflow does not falsely pass.";
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
+        if (
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          filesRead.size > 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (locatedTarget?.targetFile && locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 3) {
+              _scopedNoEditNudges++;
+              const noEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] The target is already located: ${locatedTarget.targetFile} ` +
+                  `lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. ` +
+                  "Do not continue in prose, search, grep, or read. Make the scoped change now with edit_file or patch_file using exact old_text from the located range.",
+              };
+              conversationMessages.push(noEditNudge);
+              apiMessages.push(noEditNudge);
+              continue;
+            }
+          }
+        }
+        const outstandingCommentedOutCode = hasText
+          ? _getOutstandingCommentedOutCodeFindings(filesModified)
+          : [];
+        const outstandingMalformedMarkup = hasText
+          ? _getOutstandingMalformedMarkupFindings(filesModified)
+          : [];
+        const outstandingUndeclaredImports =
+          hasText &&
+          process.env.NEX_SCOPE &&
+          !_scopeAllowsDependencyMutation()
+            ? _getOutstandingUndeclaredImportFindings(filesModified)
+            : [];
+        if (outstandingCommentedOutCode.length > 0) {
+          if (_commentedOutCodeFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _commentedOutCodeFinalNudges++;
+            const qualityMsg = {
+              role: "user",
+              content:
+                _buildCommentedOutCodeNudge(outstandingCommentedOutCode) +
+                "\nDo not finish with PASS/verified language while this dead code remains.",
+            };
+            conversationMessages.push(qualityMsg);
+            apiMessages.push(qualityMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: commented-out dead code remains in edited files${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited files still contain newly added commented-out dead code. Stopping without reporting success so the workflow does not falsely pass a lint-fix task.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (outstandingMalformedMarkup.length > 0) {
+          if (_malformedMarkupFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _malformedMarkupFinalNudges++;
+            const markupMsg = {
+              role: "user",
+              content:
+                _buildMalformedMarkupNudge(outstandingMalformedMarkup) +
+                "\nDo not report success while the edited markup appears malformed.",
+            };
+            conversationMessages.push(markupMsg);
+            apiMessages.push(markupMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: malformed markup remains in edited files${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited markup still appears malformed. Stopping without reporting success so the workflow does not falsely pass.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (outstandingUndeclaredImports.length > 0) {
+          if (_undeclaredImportFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _undeclaredImportFinalNudges++;
+            const importMsg = {
+              role: "user",
+              content:
+                _buildUndeclaredImportNudge(outstandingUndeclaredImports) +
+                "\nDo not report success while these undeclared imports remain.",
+            };
+            conversationMessages.push(importMsg);
+            apiMessages.push(importMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: undeclared package imports remain in edited files${C.reset}`,
+            );
+            continue;
+          }
+          const stalledMsg =
+            "Implementation incomplete.\n\n" +
+            "The edited files introduced package imports that are not declared or resolvable, and package manifests are outside scope. Stopping without reporting success so the workflow does not falsely pass.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (
+          hasText &&
+          !_hasRequiredVerificationEvidence() &&
+          requiredVerificationCommands.length > 0
+        ) {
+          const missingRequiredCommand = exactRequiredVerificationCommands.find(
+            (required) =>
+              !verificationCommandsRun.some(
+                (ran) =>
+                  _normalizeVerificationCommand(ran) ===
+                  _normalizeVerificationCommand(required),
+              ),
+          );
+          if (
+            missingRequiredCommand &&
+            (filesModified.size > 0 || _bashModifiedFiles > 0)
+          ) {
+            const verificationResult =
+              await _runRequiredVerificationCommandOnce(
+                missingRequiredCommand,
+                verificationCommandsRun,
+              );
+            _verificationAtEditSeq = _scopedEditCounter;
+            _postEditVerifyPending = false;
+            _postEditVerifyNudges = 0;
+
+            if (!verificationResult.success) {
+              const failedAssistantMsg = {
+                role: "assistant",
+                content:
+                  `Verification failed: ${missingRequiredCommand}\n\n` +
+                  "The requested verification command ran once and failed. No further commands were run after verification.",
+              };
+              conversationMessages.push(failedAssistantMsg);
+              apiMessages.push(failedAssistantMsg);
+              console.log(`\n${failedAssistantMsg.content}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
+          }
+
+          if (_hasRequiredVerificationEvidence()) {
+            const verificationEvidence =
+              _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+              requiredVerificationCommands.map((cmd) => `${cmd} (passed)`).join(" | ");
+            const summaryMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] The exact verification command has now run successfully.\n" +
+                `Verification: ${verificationEvidence}.\n` +
+                "Write the final summary now. Do not run any more commands.",
+            };
+            conversationMessages.push(summaryMsg);
+            apiMessages.push(summaryMsg);
+            continue;
+          }
+
+          if (_postEditVerifyNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _postEditVerifyNudges++;
+            const verifyMsg = {
+              role: "user",
+              content:
+                `[SYSTEM] The task explicitly requires these verification commands before finishing: ${requiredVerificationCommands.join(" | ")}.\n` +
+                `Successful verification evidence so far: ${verificationCommandsRun.length > 0 ? verificationCommandsRun.join(" | ") : "none"}.\n` +
+                "Do not report success yet. Run the required verification command(s) and only then summarize PASS or FAIL.",
+            };
+            conversationMessages.push(verifyMsg);
+            apiMessages.push(verifyMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: required verification command not yet passed${C.reset}`,
+            );
+            continue;
+          }
+          const stalledMsg =
+            "Verification incomplete.\n\n" +
+            `The task explicitly required ${requiredVerificationCommands.join(" | ")}, but that successful verification evidence was not collected before finalization. Stopping without reporting success.`;
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+        if (
+          hasText &&
+          !opts.skillLoop &&
+          (filesModified.size > 0 || _bashModifiedFiles > 0) &&
+          (_claimsEditedWorkWasPreexisting(content || streamedText || "") ||
+            _claimsUnableToEditAfterEdits(content || streamedText || ""))
+        ) {
+          const shouldReplaceFinalAnswer =
+            getAutoConfirm() || opts.autoConfirm || opts.serverMode;
+          if (
+            !shouldReplaceFinalAnswer &&
+            _preexistingFinalNudges < 2 &&
+            i < MAX_ITERATIONS - 1
+          ) {
+            _preexistingFinalNudges++;
+            const changedFiles =
+              [...filesModified].slice(0, 12).join(", ") ||
+              "files changed by shell commands";
+            const verificationEvidence =
+              _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+              (verificationReadsRun.length > 0
+                ? `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`
+                : "not run");
+            const correctionMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Your previous final answer did not accurately describe this run: files were modified, but the answer described the work as pre-existing or told the user to apply edits manually. Write an accurate final summary of what changed in this run.\n" +
+                `Changed files: ${changedFiles}.\n` +
+                `Verification: ${verificationEvidence}.\n` +
+                "Do not say the change was already present, pre-existing, from a previous session, or that the user still needs to apply the edit.",
+            };
+            conversationMessages.push(correctionMsg);
+            apiMessages.push(correctionMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Finalization blocked: edited work was described as pre-existing${C.reset}`,
+            );
+            continue;
+          }
+
+          const changedFiles =
+            [...filesModified].slice(0, 12).join(", ") ||
+            "files changed by shell commands";
+          const verificationEvidence =
+            _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+            (verificationReadsRun.length > 0
+              ? `post-edit readback: ${verificationReadsRun.slice(0, 8).join(", ")}`
+              : "not run");
+          const correctedMsg =
+            "Completed the requested edit.\n\n" +
+            `Changed ${changedFiles}.\n` +
+            `Verification: ${verificationEvidence}.\n` +
+            "Finalization note: the previous final answer did not accurately describe this run, so nex-code replaced it with this evidence-based summary.";
+          const correctedAssistantMsg = {
+            role: "assistant",
+            content: correctedMsg,
+          };
+          conversationMessages.push(correctedAssistantMsg);
+          apiMessages.push(correctedAssistantMsg);
+          console.log(`\n${correctedMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
         if (
           !hasText &&
           _boundedBacklogPlanActive &&
@@ -7299,11 +9767,34 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
         }
         // If we just ran tools but the LLM produced no text → nudge it to summarize
-        if (!hasText && totalSteps > 0 && i < MAX_ITERATIONS - 1) {
+        if (
+          !hasText &&
+          (totalSteps > 0 || filesRead.size > 0 || filesModified.size > 0) &&
+          i < MAX_ITERATIONS - 1
+        ) {
+          const locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          const needsEditAction =
+            filesModified.size === 0 &&
+            _bashModifiedFiles === 0 &&
+            !_isAnalysisOnlyPrompt &&
+            !_isSynthesisHeavyPrompt;
+          const locatedEditAction =
+            needsEditAction &&
+            locatedTarget?.targetFile &&
+            locatedTarget?.targetRange &&
+            (_isActionableImplementationPrompt(userInput) ||
+              _isSmallInsertionPrompt(userInput));
           const nudge = {
             role: "user",
-            content:
-              "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
+            content: locatedEditAction
+              ? `[SYSTEM] Empty response after locating ${locatedTarget.targetFile} lines ${locatedTarget.targetRange.lineStart}-${locatedTarget.targetRange.lineEnd}. Make the scoped change now with edit_file or patch_file using an exact old_text anchor from the located range. Do not read more, ask the user, or summarize instead of editing.`
+              : needsEditAction
+              ? "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results. This task requires a file edit: use edit_file or patch_file now with the exact lines already shown in the conversation. Do not summarize instead of editing."
+              : "[SYSTEM] You ran tools but produced no visible output. The user CANNOT see tool results — only your text. Please summarize your findings now.",
           };
           apiMessages.push(nudge);
           conversationMessages.push(nudge); // keep both arrays in sync (turn-alternation invariant)
@@ -7351,6 +9842,23 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _bashModifiedFiles === 0
         ) {
           const implementationText = content || streamedText || "";
+          if (
+            /^Implementation stalled before edits\./i.test(
+              implementationText.trim(),
+            )
+          ) {
+            console.log(`\n${implementationText.trim()}`);
+            _printResume(
+              totalSteps,
+              toolCounts,
+              filesModified,
+              filesRead,
+              startTime,
+            );
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
           if (
             _claimsVerificationOrCompletion(implementationText) &&
             !_statesVerificationGap(implementationText) &&
@@ -7508,6 +10016,83 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
 
         if (
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          hasText &&
+          !_phaseEnabled &&
+          !opts.skillLoop &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const _locatedTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          if (_locatedTarget?.targetFile && _locatedTarget?.targetRange) {
+            if (_scopedNoEditNudges < 2) {
+              _scopedNoEditNudges++;
+              const noEditNudge = {
+                role: "user",
+                content:
+                  `[SYSTEM] The target is already located: ${_locatedTarget.targetFile} ` +
+                  `lines ${_locatedTarget.targetRange.lineStart}-${_locatedTarget.targetRange.lineEnd}. ` +
+                  "Do not continue in prose and do not ask the user. Make the scoped change now with edit_file or patch_file using an exact old_text anchor from the located range.",
+              };
+              conversationMessages.push(noEditNudge);
+              apiMessages.push(noEditNudge);
+              debugLog(
+                `${C.yellow}  ⚠ Located target but no edit — nudging for scoped edit (${_scopedNoEditNudges}/2)${C.reset}`,
+              );
+              continue;
+            }
+          }
+        }
+
+        if (
+          hasText &&
+          !opts.skillLoop &&
+          (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          _sessionLastEditFailed.size > 0 &&
+          (_isActionableImplementationPrompt(userInput) ||
+            _isSmallInsertionPrompt(userInput))
+        ) {
+          const failedEditPaths = [..._sessionLastEditFailed.keys()]
+            .filter(Boolean)
+            .slice(0, 8);
+          if (_failedEditFinalNudges < 2 && i < MAX_ITERATIONS - 1) {
+            _failedEditFinalNudges++;
+            const failedEditMsg = {
+              role: "user",
+              content:
+                "[SYSTEM] Implementation is not complete: your previous edit attempt failed and no files were changed. " +
+                "Do not finish in prose. Retry the edit now using exact old_text from the latest readback, or use patch_file if an exact replacement is too brittle.\n" +
+                `Failed edit path(s): ${failedEditPaths.join(", ") || "unknown"}.`,
+            };
+            conversationMessages.push(failedEditMsg);
+            apiMessages.push(failedEditMsg);
+            debugLog(
+              `${C.yellow}  ⚠ Failed edit followed by final text — nudging for retry (${_failedEditFinalNudges}/2)${C.reset}`,
+            );
+            continue;
+          }
+
+          const stalledMsg =
+            "Implementation stalled before edits.\n\n" +
+            "A file edit was attempted but failed, and no files were changed. Stopping without reporting success so the workflow does not falsely pass.";
+          const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+          conversationMessages.push(stalledAssistantMsg);
+          apiMessages.push(stalledAssistantMsg);
+          console.log(`\n${stalledMsg}`);
+          saveNow(conversationMessages);
+          _scoreAndPrint(conversationMessages);
+          break outer;
+        }
+
+        if (
           hasText &&
           _looksLikeExplicitFinalSummary(content || streamedText || "") &&
           !opts.skillLoop &&
@@ -7559,7 +10144,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !_phaseEnabled &&
           (filesModified.size > 0 || _bashModifiedFiles > 0) &&
           _postEditVerifyPending &&
-          !_hasPostEditVerificationEvidence() &&
+          (!_hasPostEditVerificationEvidence() ||
+            !_hasRequiredVerificationEvidence()) &&
           _postEditVerifyNudges < 2
         ) {
           _postEditVerifyNudges++;
@@ -7574,12 +10160,52 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 suggestedChecks,
                 relatedTests,
               ) +
+              (requiredVerificationCommands.length > 0
+                ? `\nRequired by the task before finishing: ${requiredVerificationCommands.join(" | ")}.`
+                : "") +
               "\nDo not write a final completion summary until this verification evidence exists.",
           };
           conversationMessages.push(verifyMsg);
           apiMessages.push(verifyMsg);
           debugLog(
             `${C.yellow}  ⚠ Headless completion blocked — verification required (${_postEditVerifyNudges}/2)${C.reset}`,
+          );
+          continue;
+        }
+
+        const _assistantFinalText = content || streamedText || "";
+        const _needsRequiredVerificationSummary =
+          getAutoConfirm() &&
+          !opts.skillLoop &&
+          !_phaseEnabled &&
+          hasText &&
+          requiredVerificationCommands.length > 0 &&
+          _hasRequiredVerificationEvidence() &&
+          !_summaryReportsRequiredVerification(
+            _assistantFinalText,
+            requiredVerificationCommands,
+          );
+        if (
+          _needsRequiredVerificationSummary &&
+          requiredVerificationSummaryNudges < 2 &&
+          i < MAX_ITERATIONS - 1
+        ) {
+          requiredVerificationSummaryNudges++;
+          const verificationEvidence =
+            _formatSuccessfulVerificationEvidence(verificationCommandsRun) ||
+            requiredVerificationCommands.map((cmd) => `${cmd} (passed)`).join(" | ");
+          const summaryMsg = {
+            role: "user",
+            content:
+              "[SYSTEM] Verification is complete, but the final summary must report the exact verification command and result.\n" +
+              `Changed files: ${[...filesModified].slice(0, 8).join(", ") || "files changed by shell commands"}.\n` +
+              `Verification: ${verificationEvidence}.\n` +
+              "Write the final summary now. Do not say a command should pass; state the command that ran and that it passed.",
+          };
+          conversationMessages.push(summaryMsg);
+          apiMessages.push(summaryMsg);
+          debugLog(
+            `${C.yellow}  ⚠ Headless final summary blocked — exact verification result required${C.reset}`,
           );
           continue;
         }
@@ -7598,6 +10224,12 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !isTooShort(content || streamedText || "") &&
           totalSteps >= 1 &&
           (!_postEditVerifyPending || _hasPostEditVerificationEvidence()) &&
+          _hasRequiredVerificationEvidence() &&
+          (requiredVerificationCommands.length === 0 ||
+            _summaryReportsRequiredVerification(
+              content || streamedText || "",
+              requiredVerificationCommands,
+            )) &&
           !_phaseEnabled;
         if (_canHeadlessEarlyExit) {
           debugLog(
@@ -8109,7 +10741,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 setPlanMode,
               } = require("./planner");
               process.stdout.write(
-                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord})${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.yellow}[E]${C.reset}${C.dim}dit${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord}). Review it, then choose:${C.reset}\n` +
+                  `  ${C.green}[Enter/A] approve and run${C.reset}  ${C.yellow}[E] edit plan${C.reset}  ${C.red}[R] reject${C.reset}\n` +
+                  `${C.dim}Choice:${C.reset} `,
               );
               const wasRaw = process.stdin.isRaw;
               const choice = await new Promise((resolve) => {
@@ -8137,7 +10771,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 );
               } else if (choice === "e") {
                 console.log(
-                  `${C.yellow}Type /plan edit to open in editor, or give feedback.${C.reset}`,
+                  `${C.yellow}Plan kept as draft.${C.reset} Type ${C.cyan}/plan edit${C.reset}${C.yellow} to open it in your editor, or reply with what to change.${C.reset}`,
                 );
               } else {
                 // 'a', Enter (\r), space, or anything else → approve
@@ -8159,7 +10793,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
             } else {
               console.log(
-                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset} Type ${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review.${C.reset}`,
+                `\n${C.cyan}${C.bold}Plan ready${C.reset} ${C.dim}(${extractedSteps.length} ${stepWord} extracted).${C.reset}\n` +
+                  `${C.dim}Next:${C.reset} type ${C.cyan}/plan approve${C.reset}${C.dim} to run it, or ${C.reset}${C.cyan}/plan edit${C.reset}${C.dim} to review first.${C.reset}`,
               );
             }
             if (_autoApproved) {
@@ -8185,7 +10820,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 setPlanMode,
               } = require("./planner");
               process.stdout.write(
-                `\n${C.cyan}${C.bold}Plan ready.${C.reset}  ${C.green}[A]${C.reset}${C.dim}pprove${C.reset}  ${C.red}[R]${C.reset}${C.dim}eject${C.reset}  ${C.dim}[↵ = approve]:${C.reset} `,
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Review it, then choose:${C.reset}\n` +
+                  `  ${C.green}[Enter/A] approve and run${C.reset}  ${C.red}[R] reject${C.reset}\n` +
+                  `${C.dim}Choice:${C.reset} `,
               );
               const wasRaw2 = process.stdin.isRaw;
               const choice2 = await new Promise((resolve) => {
@@ -8229,7 +10866,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               }
             } else {
               console.log(
-                `\n${C.cyan}${C.bold}Plan ready.${C.reset} ${C.dim}Type ${C.reset}${C.cyan}/plan approve${C.reset}${C.dim} to execute, or ask follow-up questions to refine.${C.reset}`,
+                `\n${C.cyan}${C.bold}Plan ready.${C.reset}\n` +
+                  `${C.dim}Next:${C.reset} type ${C.cyan}/plan approve${C.reset}${C.dim} to run it, or ask for changes to refine it.${C.reset}`,
               );
             }
             if (_prosePlanApproved) {
@@ -8409,7 +11047,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             );
             const _verificationEvidence =
               verificationCommandsRun.length > 0
-                ? verificationCommandsRun.join(" | ")
+                ? _formatSuccessfulVerificationEvidence(verificationCommandsRun)
                 : verificationReadsRun.length > 0
                   ? `post-edit read: ${verificationReadsRun.slice(0, 8).join(", ")}`
                   : "not run; state this explicitly and do not claim tests/build/checks passed";
@@ -8600,6 +11238,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           if (!prep.canExecute) continue;
           if (_isVerificationCommandCall(prep)) continue;
           if (!blockedPostEditTools.has(prep.fnName)) continue;
+          const postEditReadPath = prep.args?.path || prep.args?.file_path || "";
+          const isEditedFileReadback =
+            prep.fnName === "read_file" &&
+            postEditReadPath &&
+            (filesModified.has(postEditReadPath) ||
+              _freshlyWrittenFiles.has(postEditReadPath) ||
+              _editedFilesNotReread.has(postEditReadPath));
+          if (isEditedFileReadback) continue;
           prep.canExecute = false;
           prep.errorResult = {
             role: "tool",
@@ -8797,6 +11443,89 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── Scoped edit guard (headless small-model recovery) ────────────────
+      // Once a concrete target file/range has been located, keep the next step
+      // anchored there. Small models sometimes drift into ask_user or rewrite an
+      // adjacent line when the requested change is just an insertion near the
+      // located target.
+      {
+        const _locatedTarget = _buildCompressionResumeTarget(
+          filesRead,
+          filesModified,
+          userInput,
+        );
+        const _hasLocatedRange =
+          _locatedTarget?.targetFile && _locatedTarget?.targetRange;
+        if (_hasLocatedRange) {
+          const _targetContextText = apiMessages
+            .map((m) => (typeof m.content === "string" ? m.content : ""))
+            .join("\n");
+          for (const prep of prepared) {
+            if (!prep.canExecute) continue;
+            if (
+              _blockRepeatedLocatedTargetRead(
+                prep,
+                _locatedTarget,
+                userInput,
+              )
+            )
+              continue;
+            if (
+              prep.fnName === "ask_user" &&
+              _isActionableImplementationPrompt(userInput)
+            ) {
+              prep.canExecute = false;
+              prep.errorResult = {
+                role: "tool",
+                content:
+                  `BLOCKED: ask_user is unnecessary. The prompt is actionable and the target is already located: ` +
+                  `${_locatedTarget.targetFile} lines ${_locatedTarget.targetRange.lineStart}-${_locatedTarget.targetRange.lineEnd}. ` +
+                  "Proceed with edit_file or patch_file. Ask the user only when required information is genuinely missing.",
+                tool_call_id: prep.callId,
+              };
+              continue;
+            }
+            if (
+              _blockUnknownInsertionAnchor(
+                prep,
+                _locatedTarget,
+                userInput,
+                _targetContextText,
+              )
+            )
+              continue;
+            if (
+              _blockPromptSpecifiedInsertionAnchor(
+                prep,
+                _locatedTarget,
+                userInput,
+                _targetContextText,
+              )
+            )
+              continue;
+            _normalizeWhitespaceOnlySingleLineInsertion(
+              prep,
+              _locatedTarget,
+              userInput,
+            );
+            if (
+              _blockRepeatedSmallInsertionAfterEdit(
+                prep,
+                _locatedTarget,
+                userInput,
+                filesModified,
+              )
+            )
+              continue;
+            _blockAdjacentRewriteForInsertion(
+              prep,
+              _locatedTarget,
+              userInput,
+            );
+          }
+        }
+      }
+
       // ─── Pre-batch context pressure check ───────────────────────────────────
       // Warn the LLM before it executes tool calls that could overflow context.
       // Uses apiMessages only (no tools) — slight undercount, fine for thresholds.
@@ -8880,14 +11609,15 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const committed = _getLoopCount(fileReadCounts, path);
         const pending = _pendingReadCounts.get(path) || 0;
         const alreadyRead = committed + pending;
-        const allowFreshWriteFollowUp = _freshlyWrittenFiles.has(path);
+        const allowFreshWriteFollowUp =
+          _freshlyWrittenFiles.has(path) || _editedFilesNotReread.has(path);
         // Targeted re-reads (line_start provided) are allowed — the 350-line cap means the model
         // legitimately needs multiple reads to cover a large file. Only block unbounded re-reads
         // (no line_start) since those re-flood the context with the same content.
         const isTargetedReRead = prep.args?.line_start != null;
         const editFailCount = _sessionLastEditFailed.get(path) || 0;
         const lastEditFailed = editFailCount > 0;
-        const EDIT_RECOVERY_MAX = 2; // max times we allow unconditional edit-recovery reads per file
+        const EDIT_RECOVERY_MAX = 4; // max times we allow unconditional edit-recovery reads per file
 
         // Hard cap: block if total reads (unbounded + targeted) >= TARGETED_READ_HARD_CAP.
         // Between 1 and cap-1: unbounded re-reads are blocked immediately; targeted reads are
@@ -8930,7 +11660,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Targeted re-read within cap — allow. Clear edit-failure flag when used.
           // Edit recovery: allow up to EDIT_RECOVERY_MAX unconditional re-reads per file after
           // a failed edit. Beyond that, the model must use existing context instead of re-reading.
-          if (lastEditFailed && editFailCount <= EDIT_RECOVERY_MAX) {
+          const compressionRecoveryRead = _consumePostCompressionReadRecovery(
+            path,
+            prep.args.line_start,
+            prep.args.line_end,
+          );
+          if (compressionRecoveryRead) {
+            const shortPath = path.split("/").slice(-2).join("/");
+            debugLog(
+              `${C.cyan}  ↩ Targeted re-read: "${shortPath}" lines ${prep.args.line_start}-${prep.args.line_end || "?"} — context was compressed${C.reset}`,
+            );
+          } else if (lastEditFailed && editFailCount <= EDIT_RECOVERY_MAX) {
             const shortPath = path.split("/").slice(-2).join("/");
             console.log(
               `${C.cyan}  ↩ Targeted re-read: "${shortPath}" (line_start=${prep.args.line_start}) — edit recovery #${editFailCount}${C.reset}`,
@@ -8946,7 +11686,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.canExecute = false;
             prep.errorResult = {
               role: "tool",
-              content: `BLOCKED: read_file("${path}") denied — edit recovery budget exhausted (${EDIT_RECOVERY_MAX} recovery reads used). You already have the file content. Use grep_search to find the exact line numbers of the text you want to change, then retry edit_file with the exact text shown.`,
+              content: `BLOCKED: read_file("${path}") denied — edit recovery budget exhausted (${EDIT_RECOVERY_MAX} recovery reads used). You already have the file content. Use grep to find the exact line numbers of the text you want to change, then retry edit_file with the exact text shown.`,
               tool_call_id: prep.callId,
             };
           } else {
@@ -8962,6 +11702,31 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             const newEnd = parseInt(prep.args.line_end, 10) || newStart + 350;
             const prevRanges = _sessionFileReadRanges.get(path) || [];
             let blocked = false;
+
+            // Deadlock escape valve: after super-nuclear compression, allow ONE
+            // targeted read of the deadlocked file even if the range was previously
+            // read. Without this check before the overlap loop, the overlap detection
+            // always blocks re-reads and the model can never recover after context
+            // compression — it enters a permanent deadlock where read_file and grep
+            // are both blocked and the session stalls (loop abort).
+            const _isDeadlockEscape =
+              _deadlockOnFile === path && _superNuclearFires >= 1;
+            if (_isDeadlockEscape) {
+              _deadlockOnFile = null; // one-time escape consumed
+              debugLog(
+                `${C.yellow}  ⚠ Deadlock escape: allowing targeted re-read of "${path.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
+              );
+              const escapeMsg = {
+                role: "user",
+                content:
+                  `[SYSTEM] One-time read pass for "${path}" after context wipe. ` +
+                  "Gather the exact lines you need, then edit immediately. " +
+                  "Do not re-read or grep this file again.",
+              };
+              conversationMessages.push(escapeMsg);
+              apiMessages.push(escapeMsg);
+              // Skip the overlap loop — let the read execute this one time.
+            } else {
             for (const [ps, pe] of prevRanges) {
               const overlapStart = Math.max(newStart, ps);
               const overlapEnd = Math.min(newEnd, pe);
@@ -8978,15 +11743,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 // A narrow read that is 100% inside a known range re-reads content
                 // already in context and must be blocked regardless of its size.
                 const fullyContained = overlapLen >= newLen;
+                const shortPath = path.split("/").slice(-2).join("/");
+                const rangeKey = `${path}:${newStart}-${newEnd}`;
+                const rangeBlockCount =
+                  (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
+                const allowOneNarrowAutoReread =
+                  getAutoConfirm() &&
+                  isNarrowRead &&
+                  fullyContained &&
+                  rangeBlockCount === 1;
+                if (allowOneNarrowAutoReread) {
+                  debugLog(
+                    `${C.cyan}  ↩ Targeted re-read: "${shortPath}" lines ${newStart}-${newEnd} — allowing one narrow duplicate in auto mode${C.reset}`,
+                  );
+                  break;
+                }
                 if (
                   fullyContained ||
                   (!isNarrowRead &&
                     (overlapLen / newLen >= 0.7 || overlapLen / oldLen >= 0.7))
                 ) {
-                  const shortPath = path.split("/").slice(-2).join("/");
-                  const rangeKey = `${path}:${newStart}-${newEnd}`;
-                  const rangeBlockCount =
-                    (_sessionRangeBlockCounts.get(rangeKey) || 0) + 1;
                   _sessionRangeBlockCounts.set(rangeKey, rangeBlockCount);
                   if (superreads) {
                     debugLog(
@@ -9026,15 +11802,21 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 }
               }
             }
+            } // end else — non-escape overlap check path
             if (!blocked) {
               // No significant overlap with any single previous range — but check for scroll pattern.
               // If the agent has read 3+ non-overlapping sections of the same file without an edit
               // in between, it is scrolling through the file chunk-by-chunk. Scrolling accumulates
               // context faster than grep and usually means the agent lost track of what it already read.
               // Warn at section 3, hard-block at section 4.
+              //
+              // Deadlock escape (overlap bypass) is handled before the overlap loop above.
+              // This section only handles scroll-pattern deadlocks and warnings.
               const sectionCount = prevRanges.length; // sections already committed
-              const SCROLL_WARN_SECTIONS = 2; // after 2 prior sections (3rd read) — warn
-              const SCROLL_BLOCK_SECTIONS = 3; // after 3 prior sections (4th read) — hard block
+              // Deadlock escape is now handled before the overlap loop (above).
+              // _deadlockOnFile is already consumed there if it matched, so this
+              // path only fires for fresh file-scroll deadlocks (section count
+              // high but no overlap with previous reads).
               if (
                 sectionCount >= SCROLL_BLOCK_SECTIONS &&
                 !prep._boundedBacklogPostGrepRead
@@ -9045,12 +11827,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 );
                 const grepAlsoExhausted =
                   _getLoopCount(grepFileCounts, path) >= LOOP_ABORT_GREP_FILE;
+                if (grepAlsoExhausted) {
+                  const lastGrepEvidence =
+                    _sessionLastGrepResultByPath.get(path) || "";
+                  const deadlockMsg = {
+                    role: "user",
+                    content:
+                      `[SYSTEM] Both read_file and grep are now blocked for "${path}". ` +
+                      `You have already read ${sectionCount} sections and exhausted grep on this file. ` +
+                      (lastGrepEvidence
+                        ? `Recent grep evidence to edit from:\n${lastGrepEvidence}\n`
+                        : "") +
+                      "Your next tool call must be edit_file or patch_file using the exact lines already shown in the conversation. " +
+                      "If you cannot edit from that evidence, stop and state the blocker plainly.",
+                  };
+                  conversationMessages.push(deadlockMsg);
+                  apiMessages.push(deadlockMsg);
+                  _deadlockOnFile = path; // track for super-nuclear persistence
+                  debugLog(
+                    `${C.red}  ✖ Deadlock detected: "${shortPath}" — file-scroll and grep exhausted, requiring edit${C.reset}`,
+                  );
+                }
                 prep.canExecute = false;
                 prep.errorResult = {
                   role: "tool",
                   content: grepAlsoExhausted
-                    ? `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). Grep is also exhausted. The content you need is already in your context — work with what you have.`
-                    : `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep_search to find the exact lines you need instead of continuing to scroll.`,
+                    ? `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern), and grep is also exhausted. Use edit_file or patch_file with the exact lines already in context.`
+                    : `BLOCKED: read_file("${path}") denied — you have already read ${sectionCount} different sections of this file (file-scroll pattern). You have seen most of this file. Use grep to find the exact lines you need instead of continuing to scroll.`,
                   tool_call_id: prep.callId,
                 };
               } else if (sectionCount >= SCROLL_WARN_SECTIONS) {
@@ -9276,7 +12079,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const effectiveGrepAbort = fileAlreadyReadForGrep
           ? Math.min(3, LOOP_ABORT_GREP_FILE)
           : LOOP_ABORT_GREP_FILE;
-        if (alreadyGrepped >= effectiveGrepAbort) {
+        // Deadlock escape valve: after super-nuclear compression, allow ONE more
+        // grep on the deadlocked file instead of blocking again.
+        const _isGrepDeadlockEscape =
+          _deadlockOnFile === grepPath && _superNuclearFires >= 1;
+        if (_isGrepDeadlockEscape) {
+          _deadlockOnFile = null; // one-time escape consumed
+          debugLog(
+            `${C.yellow}  ⚠ Deadlock escape (grep): allowing one more grep on "${grepPath.split("/").slice(-2).join("/")}" — one-time pass after context wipe${C.reset}`,
+          );
+          const escapeMsg = {
+            role: "user",
+            content:
+              `[SYSTEM] One-time grep pass for "${grepPath}" after context wipe. ` +
+              "Use the grep results immediately to make your edit. " +
+              "Do not re-read or grep this file again.",
+          };
+          conversationMessages.push(escapeMsg);
+          apiMessages.push(escapeMsg);
+          // Fall through — let the grep execute this one time
+        } else if (alreadyGrepped >= effectiveGrepAbort) {
           const shortPath = grepPath.split("/").slice(-2).join("/");
           debugLog(
             `${C.red}  ✖ Blocked grep: "${shortPath}" grepped ${alreadyGrepped}× with different patterns — flood threshold exceeded${C.reset}`,
@@ -9284,14 +12106,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // Check if reads are also exhausted for this file — if so, inject a deadlock-break
           // message so the model doesn't bounce between "use grep" and "read the file" forever.
           const readsForFile = _getLoopCount(fileReadCounts, grepPath);
-          const readsAlsoBlocked = readsForFile >= TARGETED_READ_HARD_CAP;
+          const readSectionsForFile =
+            (_sessionFileReadRanges.get(grepPath) || []).length;
+          const readsAlsoBlocked =
+            readsForFile >= TARGETED_READ_HARD_CAP ||
+            readSectionsForFile >= SCROLL_BLOCK_SECTIONS ||
+            fileAlreadyReadForGrep;
           if (readsAlsoBlocked) {
+            const lastGrepEvidence =
+              _sessionLastGrepResultByPath.get(grepPath) || "";
             const deadlockMsg = {
               role: "user",
-              content: `[SYSTEM] Both read_file and grep are now blocked for "${grepPath}". You have already read ${readsForFile} sections and tried ${alreadyGrepped} grep patterns. Do NOT attempt to read or grep this file again. The content you need is already in your conversation context — scroll back to find it, or proceed with what you know.`,
+              content:
+                `[SYSTEM] Both read_file and grep are now blocked for "${grepPath}". ` +
+                `You have already read ${readSectionsForFile || readsForFile} sections and tried ${alreadyGrepped} grep patterns. ` +
+                (lastGrepEvidence
+                  ? `Recent grep evidence to edit from:\n${lastGrepEvidence}\n`
+                  : "") +
+                "Do NOT attempt to read or grep this file again. Your next tool call must be edit_file or patch_file using the exact lines already shown in the conversation. " +
+                "If you cannot edit from that evidence, stop and state the blocker plainly.",
             };
             conversationMessages.push(deadlockMsg);
             apiMessages.push(deadlockMsg);
+            _deadlockOnFile = grepPath; // track for super-nuclear persistence
             debugLog(
               `${C.red}  ✖ Deadlock detected: "${shortPath}" — both read and grep blocked, injecting deadlock-break${C.reset}`,
             );
@@ -9300,7 +12137,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           prep.errorResult = {
             role: "tool",
             content: readsAlsoBlocked
-              ? `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried AND reads are also exhausted. The content is already in your context. Do not attempt to read or grep this file again.`
+              ? `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried AND reads are also exhausted. Use edit_file or patch_file with the exact lines already in context; do not attempt to read or grep this file again.`
               : fileAlreadyReadForGrep
                 ? `BLOCKED: grep("${grepPath}") denied — file was already read and ${alreadyGrepped} grep patterns tried. The content is already in your context; use it instead of searching again.`
                 : `BLOCKED: grep("${grepPath}") denied — ${alreadyGrepped} patterns already tried. Work with the grep results already in your context.`,
@@ -9476,6 +12313,18 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         for (const prep of prepared) {
           if (!prep.canExecute) continue;
           if (!READ_ONLY_PRE_BLOCK.includes(prep.fnName)) continue;
+          const readPath = prep.args?.path || "";
+          if (
+            _postEditVerifyPending &&
+            prep.fnName === "read_file" &&
+            readPath &&
+            (filesModified.has(readPath) ||
+              [...filesModified].some(
+                (p) => _normalizePromptPath(p) === _normalizePromptPath(readPath),
+              ))
+          ) {
+            continue;
+          }
           debugLog(
             `${C.red}  ✖ Creation hard-block: ${prep.fnName} denied — cap fired, files already written${C.reset}`,
           );
@@ -9822,20 +12671,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
             );
-            if (_blockedAfterImplementationRead()) {
-              const stalledMsg =
-                "Implementation stalled before edits.\n\n" +
-                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
-              const stalledAssistantMsg = {
-                role: "assistant",
-                content: stalledMsg,
-              };
-              conversationMessages.push(stalledAssistantMsg);
-              apiMessages.push(stalledAssistantMsg);
-              console.log(`\n${stalledMsg}`);
-              saveNow(conversationMessages);
-              _scoreAndPrint(conversationMessages);
-            }
+            const stalledMsg = _buildBlockedLoopStallMessage();
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -9917,20 +12762,196 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (
           !isOk &&
           prep.fnName === "bash" &&
-          _sessionFileEditCounts.size > 0
+          _isVerificationCommandCall(prep) &&
+          getAutoConfirm()
         ) {
+          const setupFailure = _detectVerificationSetupFailure(
+            prep.args?.command || "",
+            res,
+          );
+          if (setupFailure) {
+            const normalizedFailedCommand = _normalizeVerificationCommand(
+              prep.args?.command || "",
+            );
+            const isRequiredVerification = requiredVerificationCommands.some(
+              (cmd) =>
+                _normalizeVerificationCommand(cmd) === normalizedFailedCommand,
+            );
+            const hasPostEditReadback =
+              verificationReadsRun.length > 0 ||
+              [...filesModified].some(
+                (file) => filesRead.has(file) && !_editedFilesNotReread.has(file),
+              );
+            if (
+              !isRequiredVerification &&
+              (filesModified.size > 0 || _bashModifiedFiles > 0)
+            ) {
+              const changedFiles =
+                [...filesModified].slice(0, 12).join(", ") ||
+                "files changed by shell commands";
+              const readbackFiles =
+                verificationReadsRun.length > 0
+                  ? verificationReadsRun.slice(0, 8)
+                  : [...filesModified]
+                      .filter((file) => filesRead.has(file))
+                      .slice(0, 8);
+              const readbackEvidence = hasPostEditReadback
+                ? `post-edit readback: ${readbackFiles.join(", ")}`
+                : "not completed; optional package verification could not run in this workspace";
+              const completedMsg =
+                "Completed the requested edit.\n\n" +
+                `Changed files: ${changedFiles}.\n` +
+                `Verification: ${readbackEvidence}.\n` +
+                `Additional verification skipped: ${setupFailure}`;
+              const completedAssistantMsg = {
+                role: "assistant",
+                content: completedMsg,
+              };
+              conversationMessages.push(completedAssistantMsg);
+              apiMessages.push(completedAssistantMsg);
+              console.log(`\n${completedMsg}`);
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
+            const stalledMsg =
+              "Verification incomplete.\n\n" +
+              `${setupFailure} In headless auto mode, stop here instead of asking to run npm install or other setup commands during the scoped task. Prepare the sandbox with dependencies installed, then rerun the same gate.`;
+            const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
+            break outer;
+          }
+        }
+        if (
+          !isOk &&
+          prep.fnName === "bash"
+        ) {
+          // Headless auto: abort after consecutive failed verification
+          // commands with no edit progress between them.
+          const _isVerifyCmd =
+            /\b(test|jest|vitest|pytest|mocha|tsc|build|lint|eslint|check)\b/.test(
+              (prep.args?.command || "").toLowerCase(),
+            );
+          if (_isVerifyCmd && getAutoConfirm()) {
+            _consecutiveFailedVerifications++;
+            _verificationRetryStreak++;
+            if (_consecutiveFailedVerifications >= 3) {
+              const stalledMsg =
+                "Verification incomplete.\n\n" +
+                "Three consecutive verification commands failed without edit progress. " +
+                "Stopping here instead of looping further.";
+              const stalledAssistantMsg = { role: "assistant", content: stalledMsg };
+              conversationMessages.push(stalledAssistantMsg);
+              apiMessages.push(stalledAssistantMsg);
+              console.log(`\n${stalledMsg}`);
+              if (taskProgress) {
+                taskProgress.stop();
+                taskProgress = null;
+              }
+              setOnChange(null);
+              _printResume(
+                totalSteps,
+                toolCounts,
+                filesModified,
+                filesRead,
+                startTime,
+              );
+              saveNow(conversationMessages);
+              _scoreAndPrint(conversationMessages);
+              break outer;
+            }
+          }
           const cmd = (prep.args?.command || "").toLowerCase();
+          // Only clear a previously-set follow-up guard when the model
+          // reruns the required command — not when the guard was just set
+          // in this same iteration (which would nullify it immediately).
+          const _guardJustSetThisIteration =
+            _verificationFollowUpJustSet &&
+            _normalizeVerificationCommand(prep.args?.command || "") ===
+              _normalizeVerificationCommand(_verificationFollowUpCommand);
+          if (_guardJustSetThisIteration) {
+            _verificationFollowUpJustSet = false;
+          } else if (
+            _verificationFollowUpCommand &&
+            _normalizeVerificationCommand(prep.args?.command || "") ===
+              _normalizeVerificationCommand(_verificationFollowUpCommand)
+          ) {
+            _clearVerificationFollowUpGuard();
+          }
           const isTestLike =
             /\b(test|jest|vitest|pytest|mocha|tsc|build|lint|eslint|check)\b/.test(
               cmd,
             );
           if (isTestLike) {
+            // Clear focus paths and re-read edited files
+            _verificationFocusPaths.clear();
             for (const [editedPath] of _sessionFileEditCounts) {
               if (!_sessionLastEditFailed.has(editedPath)) {
                 _sessionLastEditFailed.set(editedPath, 1);
                 debugLog(
                   `${C.cyan}  ↩ Test failure — queuing recovery re-read: "${editedPath.split("/").pop()}"${C.reset}`,
                 );
+              }
+            }
+            if (process.env.NEX_SCOPE) {
+              const remainingPaths = _extractVerificationFailurePaths(res).filter(
+                (candidate) => _pathMatchesScope(candidate),
+              );
+              if (remainingPaths.length > 0) {
+                for (const remainingPath of remainingPaths) {
+                  _verificationFocusPaths.add(remainingPath);
+                }
+                const unusedNames = _extractUnusedBindingHints(res);
+                const focusMsg = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] Verification failed in these remaining scoped files: ${remainingPaths.join(", ")}.\n` +
+                    `${unusedNames.length > 0 ? `Remove the unused binding(s) directly: ${unusedNames.join(", ")}. ` : ""}` +
+                    "Do not add imports, comments, or disable rules. Fix those file(s) now before running more broad verification. Prefer a targeted read_file range on the failing file, then edit it directly.",
+                };
+                conversationMessages.push(focusMsg);
+                apiMessages.push(focusMsg);
+                const isLintCommand = /\b(?:npm\s+run\s+lint|eslint)\b/i.test(
+                  prep.args?.command || "",
+                );
+                if (
+                  isLintCommand &&
+                  remainingPaths.length >= 1 &&
+                  unusedNames.length > 0
+                ) {
+                  // Scope bindings to the file being targeted so the
+                  // model is told to remove e.g. currentPlayer from
+                  // GameControls.jsx, not now from sound.js.
+                  const perFilePairs = _extractUnusedBindingsPerFile(res);
+                  const targetFile = remainingPaths[0];
+                  const targetBindings = perFilePairs
+                    .filter((p) =>
+                      remainingPaths.some((rp) =>
+                        _pathsReferToSameFile(p.file, rp),
+                      ),
+                    )
+                    .filter((p) => _pathsReferToSameFile(p.file, targetFile))
+                    .map((p) => p.binding);
+                  const guardBindings =
+                    targetBindings.length > 0 ? targetBindings : unusedNames;
+                  _setVerificationFollowUpGuard({
+                    path: targetFile,
+                    command: prep.args?.command || "",
+                    bindings: guardBindings,
+                  });
+                  const exactFileMsg = {
+                    role: "user",
+                    content:
+                      `[SYSTEM] ${String(prep.args?.command || "").trim()} failed in scoped file ${targetFile} with no-unused-vars on ${guardBindings.join(", ")}.\n` +
+                      `Do not finalize. Your next action must target that exact file: remove the unused binding(s) ${guardBindings.join(", ")}, then rerun ${String(prep.args?.command || "").trim()}.`,
+                  };
+                  conversationMessages.push(exactFileMsg);
+                  apiMessages.push(exactFileMsg);
+                }
               }
             }
           }
@@ -9993,7 +13014,91 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           ["write_file", "edit_file", "patch_file"].includes(prep.fnName)
         ) {
           if (prep.args && prep.args.path) {
+            _verificationFocusPaths.delete(prep.args.path);
+            if (_pathsReferToSameFile(prep.args.path, _verificationFollowUpPath)) {
+              // ── Post-edit import removal check (write_file fallback) ──
+              // The pre-edit guard catches import removals in edit_file/
+              // patch_file args, but write_file provides the full new content
+              // without the old. After the write succeeds, read the file back
+              // and verify no unrelated imports were silently dropped.
+              if (
+                _verificationFollowUpBindings.length > 0 &&
+                prep.fnName === "write_file"
+              ) {
+                try {
+                  const writtenContent = require("fs").readFileSync(
+                    prep.args.path,
+                    "utf8",
+                  );
+                  const importSymbols = [];
+                  const importRe =
+                    /^\s*import\s+(.+?)\s+from\s+/gm;
+                  let im;
+                  while ((im = importRe.exec(writtenContent))) {
+                    const spec = im[1].trim();
+                    const dm = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+                    if (dm) importSymbols.push(dm[1]);
+                    const nm = spec.match(/\{([^}]+)\}/);
+                    if (nm) {
+                      nm[1].split(",").forEach((n) => {
+                        const clean = n.trim().split(/\s+as\s+/)[0].trim();
+                        if (clean) importSymbols.push(clean);
+                      });
+                    }
+                  }
+                  // Check if the file lost an import symbol not in the
+                  // follow-up bindings compared to the tool result content.
+                  const writtenImports = new Set(importSymbols);
+                  const guardBindings = new Set(_verificationFollowUpBindings);
+                  // We need a baseline — use the content arg as the source
+                  const contentArg =
+                    prep.args.content || prep.args.text || "";
+                  const baselineImports = [];
+                  while ((im = importRe.exec(String(contentArg || "")))) {
+                    const spec = im[1].trim();
+                    const dm = spec.match(/^(\w+)(?:\s*,|\s*$)/);
+                    if (dm) baselineImports.push(dm[1]);
+                    const nm = spec.match(/\{([^}]+)\}/);
+                    if (nm) {
+                      nm[1].split(",").forEach((n) => {
+                        const clean = n.trim().split(/\s+as\s+/)[0].trim();
+                        if (clean) baselineImports.push(clean);
+                      });
+                    }
+                  }
+                  const removedNotInBindings = baselineImports.filter(
+                    (sym) =>
+                      !writtenImports.has(sym) && !guardBindings.has(sym),
+                  );
+                  if (removedNotInBindings.length > 0) {
+                    const names = removedNotInBindings.join(", ");
+                    const restoreMsg = {
+                      role: "user",
+                      content:
+                        `[SYSTEM] Your write_file removed import(s) ${names} which were not listed in the no-unused-vars errors. ` +
+                        `Only remove: ${_verificationFollowUpBindings.join(", ")}. ` +
+                        `Restore those import(s) now, then rerun ${_verificationFollowUpCommand || "the same verification command"}.`,
+                    };
+                    conversationMessages.push(restoreMsg);
+                    apiMessages.push(restoreMsg);
+                    // Do NOT clear _verificationFollowUpNeedsEdit — the edit
+                    // introduced an unrelated change and must be corrected.
+                  } else {
+                    _verificationFollowUpNeedsEdit = false;
+                  }
+                } catch {
+                  // If read-back fails, allow the edit to clear the guard —
+                  // the pre-edit guard is the primary defense.
+                  _verificationFollowUpNeedsEdit = false;
+                }
+              } else {
+                _verificationFollowUpNeedsEdit = false;
+              }
+              // ── End post-edit import check ────────────────────────
+            }
             _sessionLastEditFailed.delete(prep.args.path); // clear failure flag on success
+            _consecutiveFailedVerifications = 0; // reset verification stall counter
+            _verificationRetryStreak = 0; // allow verification retries after a successful edit
             filesModified.add(prep.args.path);
             // TODO observer: mark plan items as done when their file gets edited
             for (const todo of _planTodos) {
@@ -10041,6 +13146,81 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _postEditVerifyPending = true;
               _postEditVerifyNudges = 0;
               _needsPostEditVerifyPrompt = true;
+              _scopedEditCounter++;
+            }
+            const commentedOutFindings = _getAddedCommentedOutCodeFindings(
+              prep.args.path,
+              _commentedOutCodeSessionBaselines.get(prep.args.path),
+            ).filter((finding) => {
+              const key = `${finding.path}:${finding.line || ""}:${finding.text}`;
+              if (_commentedOutCodeNudges.has(key)) return false;
+              _commentedOutCodeNudges.add(key);
+              return true;
+            });
+            if (commentedOutFindings.length > 0) {
+              const qualityMsg = {
+                role: "user",
+                content: _buildCommentedOutCodeNudge(commentedOutFindings),
+              };
+              conversationMessages.push(qualityMsg);
+              apiMessages.push(qualityMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Diff quality guard: commented-out code detected in ${prep.args.path}${C.reset}`,
+              );
+            }
+            const malformedMarkupFindings = _getAddedMalformedMarkupFindings(
+              prep.args.path,
+              _commentedOutCodeSessionBaselines.get(prep.args.path),
+            ).filter((finding) => {
+              const key = `${finding.path}:${finding.line || ""}:${finding.text}`;
+              if (_malformedMarkupNudges.has(key)) return false;
+              _malformedMarkupNudges.add(key);
+              return true;
+            });
+            if (malformedMarkupFindings.length > 0) {
+              const markupMsg = {
+                role: "user",
+                content: _buildMalformedMarkupNudge(malformedMarkupFindings),
+              };
+              conversationMessages.push(markupMsg);
+              apiMessages.push(markupMsg);
+              debugLog(
+                `${C.yellow}  ⚠ Diff quality guard: malformed markup detected in ${prep.args.path}${C.reset}`,
+              );
+            }
+            if (process.env.NEX_SCOPE && !_scopeAllowsDependencyMutation()) {
+              const undeclaredImportFindings = _detectNewUnresolvedImportsFromContents(
+                _commentedOutCodeSessionBaselines.get(prep.args.path),
+                (() => {
+                  try {
+                    return fsSync.readFileSync(
+                      path.resolve(process.cwd(), prep.args.path),
+                      "utf8",
+                    );
+                  } catch {
+                    return "";
+                  }
+                })(),
+                prep.args.path,
+              ).filter((finding) => {
+                const key = `${finding.path}:${finding.specifier}`;
+                if (_undeclaredImportNudges.has(key)) return false;
+                _undeclaredImportNudges.add(key);
+                return true;
+              });
+              if (undeclaredImportFindings.length > 0) {
+                const importMsg = {
+                  role: "user",
+                  content: _buildUndeclaredImportNudge(
+                    undeclaredImportFindings,
+                  ),
+                };
+                conversationMessages.push(importMsg);
+                apiMessages.push(importMsg);
+                debugLog(
+                  `${C.yellow}  ⚠ Quality guard: undeclared import detected in ${prep.args.path}${C.reset}`,
+                );
+              }
             }
           }
         }
@@ -10104,6 +13284,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             // the edit once without hitting the "already read" block.
             const _editedPath = prep.args?.path || prep.args?.file_path;
             if (_editedPath) {
+              const expectedSnippets = _extractExpectedReadbackSnippets(
+                prep.args || {},
+                prep.fnName,
+              );
+              if (expectedSnippets.length > 0) {
+                _editedFileExpectedSnippets.set(_editedPath, expectedSnippets);
+              }
               if (prep.fnName === "write_file") {
                 _freshlyWrittenFiles.add(_editedPath);
                 _sessionFileReadCounts.delete(_editedPath);
@@ -10180,9 +13367,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           }
           if (isOk && _isVerificationCommandCall(prep)) {
             const cmd = String(prep.args?.command || "").trim();
-            if (cmd) verificationCommandsRun.push(cmd.slice(0, 160));
+            if (cmd) {
+              verificationCommandsRun.push(cmd.slice(0, 160));
+              _verificationAtEditSeq = _scopedEditCounter;
+            }
             _postEditVerifyPending = false;
             _postEditVerifyNudges = 0;
+            _verificationFocusPaths.clear();
+            if (
+              _verificationFollowUpCommand &&
+              _normalizeVerificationCommand(cmd) ===
+                _normalizeVerificationCommand(_verificationFollowUpCommand)
+            ) {
+              _clearVerificationFollowUpGuard();
+            }
             if (
               _stickyGitPreflightRequired &&
               (filesModified.size > 0 || _bashModifiedFiles > 0) &&
@@ -10232,7 +13430,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           // 2. Creation task with edits already made — agent should be building, not reading
           // 3. Grace period exhausted (6 reads after cap) — prevents infinite investigation spirals
           //    where the model ignores the soft cap warning and reads until context/timeout
-          const INVESTIGATION_GRACE = 6; // reads allowed after cap fires before hard-block
           const _hardBlockActive =
             !_phaseEnabled &&
             _investigationCapFired &&
@@ -10277,8 +13474,38 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               : _readsSinceCapFired >= INVESTIGATION_GRACE
                 ? `${_readOnlyCallsSinceEdit} consecutive reads without an edit`
                 : `${_editsMadeThisSession} file edit(s) already made`;
-            // Soft-warn: inject advisory nudge but let the tool execute.
-            // The model decides when investigation is enough — no hard block.
+            // In headless/auto mode, hard-block further read-only tools.
+            // The model has exhausted its investigation budget — it must
+            // now edit or verify, not read more. Without this block,
+            // investigation stalls can continue indefinitely because the
+            // soft-warn resets the cap counter, creating a read-nudge-read loop.
+            if (getAutoConfirm()) {
+              debugLog(
+                `${C.yellow}  ⚠ Investigation cap HARD-BLOCK: ${_blockReason} — blocking ${prep.fnName}${C.reset}`,
+              );
+              const _blockMsg = _rootCauseDetected
+                ? `BLOCKED: root cause already identified (${_rootCauseSummary}). Edit the file now with edit_file or patch_file — reading is blocked.`
+                : `BLOCKED: ${_readOnlyCallsSinceEdit} consecutive reads without an edit. You MUST make an edit now with edit_file, patch_file, or write_file. Reading more files is blocked until you make an edit.`;
+              conversationMessages.push({
+                role: "user",
+                content: `[SYSTEM] ${_blockMsg}`,
+              });
+              apiMessages.push({
+                role: "user",
+                content: `[SYSTEM] ${_blockMsg}`,
+              });
+              // Do NOT reset cap state — the block must stay active.
+              // Return a blocked result so the model sees the rejection.
+              return {
+                msg: {
+                  role: "tool",
+                  content: _blockMsg,
+                  tool_call_id: prep.callId,
+                },
+                summary: `BLOCKED: ${_blockMsg}`,
+              };
+            }
+            // Interactive mode: soft-warn only — the user can override.
             debugLog(
               `${C.yellow}  ⚠ Investigation cap soft-warn: ${_blockReason} — allowing but nudging${C.reset}`,
             );
@@ -10620,6 +13847,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !res.startsWith("(no matches)")
         ) {
           const searchedPath = _normalizePromptPath(prep.args?.path || "");
+          if (searchedPath) {
+            _sessionLastGrepResultByPath.set(searchedPath, res.slice(0, 4000));
+          }
           if (
             _boundedBacklogPlanActive &&
             _phaseEnabled &&
@@ -10925,20 +14155,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls — model not heeding BLOCKED messages${C.reset}`,
             );
-            if (_blockedAfterImplementationRead()) {
-              const stalledMsg =
-                "Implementation stalled before edits.\n\n" +
-                "The planned implementation file was already in context, but the model kept calling blocked read/search/git tools instead of editing. Stopping without commit or push so the workflow does not falsely report success.";
-              const stalledAssistantMsg = {
-                role: "assistant",
-                content: stalledMsg,
-              };
-              conversationMessages.push(stalledAssistantMsg);
-              apiMessages.push(stalledAssistantMsg);
-              console.log(`\n${stalledMsg}`);
-              saveNow(conversationMessages);
-              _scoreAndPrint(conversationMessages);
-            }
+            const stalledMsg = _buildBlockedLoopStallMessage();
+            const stalledAssistantMsg = {
+              role: "assistant",
+              content: stalledMsg,
+            };
+            conversationMessages.push(stalledAssistantMsg);
+            apiMessages.push(stalledAssistantMsg);
+            console.log(`\n${stalledMsg}`);
+            saveNow(conversationMessages);
+            _scoreAndPrint(conversationMessages);
             if (taskProgress) {
               taskProgress.stop();
               taskProgress = null;
@@ -11003,12 +14229,33 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               _freshlyWrittenFiles.has(prep.args.path) ||
               _editedFilesNotReread.has(prep.args.path)
             ) {
-              verificationReadsRun.push(prep.args.path);
-              _postEditVerifyPending = false;
-              _postEditVerifyNudges = 0;
+              const expectedSnippets =
+                _editedFileExpectedSnippets.get(prep.args.path) || [];
+              if (
+                _readbackContainsExpectedSnippet(
+                  toolMessages[j]?.content || "",
+                  expectedSnippets,
+                )
+              ) {
+                verificationReadsRun.push(prep.args.path);
+                _verificationAtEditSeq = _scopedEditCounter;
+                _postEditVerifyPending = false;
+                _postEditVerifyNudges = 0;
+                _editedFileExpectedSnippets.delete(prep.args.path);
+                _freshlyWrittenFiles.delete(prep.args.path);
+                _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
+              } else {
+                _needsPostEditVerifyPrompt = true;
+                const readbackMsg = {
+                  role: "user",
+                  content:
+                    `[SYSTEM] The readback of "${prep.args.path}" did not include text introduced by your last edit. ` +
+                    "Read the exact edited section or run a narrow verification command before doing any more exploration.",
+                };
+                conversationMessages.push(readbackMsg);
+                apiMessages.push(readbackMsg);
+              }
             }
-            _freshlyWrittenFiles.delete(prep.args.path);
-            _editedFilesNotReread.delete(prep.args.path); // map-first: re-read clears stale flag
             const readCount = _incLoopCount(fileReadCounts, prep.args.path);
             // Record the read range so overlap detection can catch duplicate reads.
             // Unbounded reads (no line_start) are stored as [1, 350] — the tool
@@ -11239,7 +14486,16 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           _isUnmodifiedBoundedBacklogImplementation(
             filesModified,
             _bashModifiedFiles,
-          )
+          ) ||
+          (getAutoConfirm() &&
+            filesModified.size === 0 &&
+            _bashModifiedFiles === 0 &&
+            conversationMessages.some(
+              (m) =>
+                m.role === "assistant" &&
+                typeof m.content === "string" &&
+                _looksLikeBoundedBacklogDecision(m.content),
+            ))
         ) {
           const stalledMsg =
             "Implementation stalled before edits.\n\n" +
@@ -11404,10 +14660,53 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const _allToolsPost = getAllToolDefinitions();
         const _postCtx = getUsage(apiMessages, _allToolsPost);
         if (_postCtx.percentage >= 78) {
+          const _postResumeTarget = _buildCompressionResumeTarget(
+            filesRead,
+            filesModified,
+            userInput,
+          );
+          const _postResumeTargetWithContext = _withLocatedTargetContext(
+            _postResumeTarget,
+            apiMessages,
+            userInput,
+          );
+          if (
+            filesModified.size > 0 ||
+            (_phaseEnabled && _currentPhase !== "plan") ||
+            _postResumeTargetWithContext
+          ) {
+            const _postSnap = buildProgressSnapshot(conversationMessages, {
+              filesModified,
+              currentPhase: _phaseEnabled ? _currentPhase : null,
+              locatedTarget: _postResumeTargetWithContext,
+            });
+            if (_postSnap) {
+              const _existingPostIdx = apiMessages.findIndex(
+                (m) => m._progressSnapshot,
+              );
+              if (_existingPostIdx !== -1) {
+                apiMessages.splice(_existingPostIdx, 1);
+              }
+              const _sysPostIdx = apiMessages.findIndex(
+                (m) => m.role === "system",
+              );
+              apiMessages.splice(_sysPostIdx + 1, 0, _postSnap);
+            }
+          }
           const { messages: _compressed, tokensRemoved: _freed } =
             forceCompress(apiMessages, _allToolsPost);
           if (_freed > 0) {
             apiMessages = _compressed;
+            _grantPostCompressionReadRecovery(_postResumeTargetWithContext);
+            if (_postResumeTargetWithContext) {
+              apiMessages.push({
+                role: "user",
+                content:
+                  `[RESUME AFTER COMPRESSION] Continue from the preserved progress state. ` +
+                  `Target: ${_shortSessionPath(_postResumeTargetWithContext.targetFile)}. ` +
+                  `Next action: ${_postResumeTargetWithContext.nextAction}`,
+              });
+            }
             console.log(
               `${C.dim}  [auto-compressed — ~${_freed} tokens freed, now ${Math.round(getUsage(apiMessages, _allToolsPost).percentage)}%]${C.reset}`,
             );
@@ -11782,14 +15081,18 @@ module.exports = {
   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
   getProjectContextHash,
   _inferVerificationCommands,
+  _extractRequiredVerificationCommands,
+  _extractExactRequiredVerificationCommands,
   _inferRelevantTests,
   _inferSymbolTargets,
+  _extractExactVerificationOnlyCommand,
   _buildSymbolHintBlock,
   _detectResponseLanguage,
   _isSimpleDirectAnswerPrompt,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _hasForcedModelOverride,
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,
@@ -11797,6 +15100,22 @@ module.exports = {
   _buildBoundedBacklogPlanInstruction,
   _looksLikeBoundedBacklogDecision,
   _looksLikeGatedAutomationFinalSummary,
+  _isToolResultError,
+  _pathMatchesScope,
+  _isDependencyMutationCommand,
+  _masksCommandFailure,
+  _scopeAllowsDependencyMutation,
+  _isSourceLikePath,
+  _isMarkupLikePath,
+  _looksLikeCommentedOutCode,
+  _detectAddedCommentedOutCode,
+  _buildCommentedOutCodeNudge,
+  _looksLikeMalformedDuplicateOpeningTag,
+  _detectAddedMalformedMarkup,
+  _buildMalformedMarkupNudge,
+  _extractRemovedImportSymbols,
+  _buildCompressionResumeTarget,
+  _blockRepeatedSmallInsertionAfterEdit,
   // Export for testing
   buildUserContent,
   _detectImageURLs,

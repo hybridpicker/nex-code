@@ -650,7 +650,10 @@ function extractActiveFiles(messages, recentCount = 10) {
  * @param {{ filesModified?: Set<string>, currentPhase?: string }} opts
  * @returns {object|null}
  */
-function buildProgressSnapshot(messages, { filesModified = new Set(), currentPhase = null } = {}) {
+function buildProgressSnapshot(
+  messages,
+  { filesModified = new Set(), currentPhase = null, locatedTarget = null } = {},
+) {
   const parts = [];
 
   if (filesModified.size > 0) {
@@ -662,6 +665,23 @@ function buildProgressSnapshot(messages, { filesModified = new Set(), currentPha
 
   if (currentPhase) {
     parts.push(`Current phase: ${currentPhase}`);
+  }
+
+  if (locatedTarget?.targetFile || locatedTarget?.nextAction) {
+    const compactTarget = {};
+    if (locatedTarget.targetFile)
+      compactTarget.targetFile = locatedTarget.targetFile;
+    if (locatedTarget.targetRange)
+      compactTarget.targetRange = locatedTarget.targetRange;
+    if (locatedTarget.locatedEvidence)
+      compactTarget.locatedEvidence = locatedTarget.locatedEvidence;
+    if (locatedTarget.completedSteps)
+      compactTarget.completedSteps = locatedTarget.completedSteps;
+    if (locatedTarget.nextAction)
+      compactTarget.nextAction = locatedTarget.nextAction;
+    parts.push(
+      "Located target state:\n" + JSON.stringify(compactTarget, null, 2),
+    );
   }
 
   // Last 3 assistant texts with actual content (skip pure tool-call turns)
@@ -916,6 +936,77 @@ function truncateFileContent(content, maxTokens) {
 // ─── Force Compression (Context-Too-Long Recovery) ─────────────
 
 const FORCE_COMPRESS_KEEP_RECENT = 6;
+const FORCE_TASK_ANCHOR_MAX_CHARS = 3000;
+
+function _messageText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content == null) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function _isSyntheticUserMessage(message) {
+  const text = _messageText(message).trim();
+  return (
+    text.startsWith("[SYSTEM WARNING]") ||
+    text.startsWith("[SYSTEM:") ||
+    text.startsWith("[SYSTEM]") ||
+    text.startsWith("[RESUME AFTER COMPRESSION]") ||
+    text.startsWith("[FRAMEWORK") ||
+    text.startsWith("BLOCKED:")
+  );
+}
+
+function _truncateTaskAnchor(text, maxChars = FORCE_TASK_ANCHOR_MAX_CHARS) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n[... original task truncated after ${maxChars} chars ...]`;
+}
+
+function buildTaskAnchorSnapshot(messages) {
+  const realUsers = messages.filter(
+    (m) => m?.role === "user" && !_isSyntheticUserMessage(m),
+  );
+  if (realUsers.length === 0) return null;
+
+  const originalTask = _truncateTaskAnchor(_messageText(realUsers[0]));
+  const latestUser = realUsers[realUsers.length - 1];
+  const latestDirection =
+    latestUser === realUsers[0]
+      ? ""
+      : _truncateTaskAnchor(_messageText(latestUser), 1500);
+  const parts = [
+    "## Current Task Anchor (preserved through compression)",
+    "Continue this task exactly. Do not switch to a different bug, crash, route, file, or project unless the user explicitly requested it after this anchor.",
+    "",
+    "Original user request:",
+    originalTask,
+  ];
+  if (latestDirection) {
+    parts.push("", "Most recent real user direction:", latestDirection);
+  }
+
+  return {
+    role: "system",
+    content: parts.join("\n"),
+    _pinned: true,
+    _taskAnchor: true,
+  };
+}
 
 /**
  * Emergency compression when the API rejects with "context too long".
@@ -953,12 +1044,33 @@ function forceCompress(messages, tools, nuclear = false) {
   const recentStart = Math.max(startIdx, messages.length - keepRecent);
   let oldMessages = messages.slice(startIdx, recentStart);
   let recentMessages = messages.slice(recentStart);
+  const taskAnchor = buildTaskAnchorSnapshot(messages);
+  const pinnedMessages = [
+    ...oldMessages.filter((m) => m && m._pinned),
+    ...recentMessages.filter((m) => m && m._pinned),
+  ];
+  if (
+    taskAnchor &&
+    !pinnedMessages.some((m) => m?._taskAnchor) &&
+    !(system && system._taskAnchor)
+  ) {
+    pinnedMessages.unshift(taskAnchor);
+  }
+  oldMessages = oldMessages.filter((m) => !(m && m._pinned));
+  recentMessages = recentMessages.filter((m) => !(m && m._pinned));
 
   // Prefer dropping old messages over mutating them. Mutating message content
   // breaks prefix caching on cache-aware providers — each mutation invalidates
   // the ~90% cost discount. Keep messages as-is and rely on the drop loop.
   // Only truncate individual messages if dropping alone is insufficient.
   let compressed = oldMessages; // no per-message mutation — preserve cache
+
+  const buildForceResult = () => {
+    const result = [];
+    if (system) result.push(system);
+    result.push(...pinnedMessages, ...compressed, ...recentMessages);
+    return result;
+  };
 
   // Nuclear: compress recent messages aggressively (last resort only)
   if (nuclear) {
@@ -968,7 +1080,7 @@ function forceCompress(messages, tools, nuclear = false) {
   }
 
   // Remove oldest messages until we fit
-  let result = buildResult(system, compressed, recentMessages);
+  let result = buildForceResult();
   let tokens = estimateMessagesTokens(result);
 
   while (compressed.length > 0 && tokens > targetMax) {
@@ -979,7 +1091,7 @@ function forceCompress(messages, tools, nuclear = false) {
   // If dropping wasn't enough and this is non-nuclear, compress remaining old messages
   if (!nuclear && tokens > targetMax && compressed.length > 0) {
     compressed = compressed.map((msg) => compressMessage(msg, "aggressive"));
-    result = buildResult(system, compressed, recentMessages);
+    result = buildForceResult();
     tokens = estimateMessagesTokens(result);
     while (compressed.length > 0 && tokens > targetMax) {
       const removed = compressed.shift();
@@ -991,11 +1103,12 @@ function forceCompress(messages, tools, nuclear = false) {
   if (nuclear && tokens > targetMax) {
     const lastUser = recentMessages.filter((m) => m.role === "user").slice(-1);
     recentMessages = lastUser;
-    result = buildResult(system, [], recentMessages);
+    compressed = [];
+    result = buildForceResult();
     tokens = estimateMessagesTokens(result);
   }
 
-  result = buildResult(system, compressed, recentMessages);
+  result = buildForceResult();
 
   // Preserve task context across nuclear compression.
   // The "last user message" is often a system-injected warning (BLOCKED:, SYSTEM WARNING:)
@@ -1053,6 +1166,7 @@ module.exports = {
   scoreMessageRelevance,
   extractActiveFiles,
   buildProgressSnapshot,
+  buildTaskAnchorSnapshot,
   fitToContext,
   forceCompress,
   truncateFileContent,

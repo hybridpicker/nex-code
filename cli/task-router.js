@@ -56,6 +56,14 @@ const CATEGORIES = {
     pattern:
       /\b(react|vue|angular|svelte|jsx|tsx|html|css|scss|sass|tailwind|bootstrap|component|dom\b|ui\s|button|modal|navbar|sidebar|stylesheet|responsive|flexbox|grid|animation|frontend|front.end|onclick|hover|transition|web\s+design|landing\s+page|browser\s+event)\b/i,
   },
+  "scoped-edit": {
+    id: "scoped-edit",
+    label: "Scoped Edit",
+    icon: "✂",
+    envVar: "NEX_ROUTE_SCOPED_EDIT",
+    pattern:
+      /\b(edit_file|scoped\s+(?:change|edit)|add\s+a\s+(?:new\s+)?(?:field|line|div|button|section)\s+(?:to|in)\b|inside\s+the\s+\S+\s+div|around\s+line\s+\d+|modify\s+(?:the\s+)?template|insert\s+(?:a\s+)?\S+\s+(?:before|after|between)|change\s+(?:this|the)\s+(?:line|div|section|field)|update\s+(?:the\s+)?\S+\s+(?:in|inside)\b)\b/i,
+  },
   sysadmin: {
     id: "sysadmin",
     label: "Sysadmin",
@@ -93,7 +101,7 @@ const CATEGORIES = {
 // Priority order: more precise patterns first, then general ones, coding last.
 // bug-fix/feature-add/refactor come after domain categories so "fix Docker container"
 // matches "sysadmin" not "bug-fix", and "add chart component" matches "frontend" not "feature-add".
-const DETECTION_ORDER = ["agentic", "frontend", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
+const DETECTION_ORDER = ["agentic", "frontend", "scoped-edit", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -137,13 +145,72 @@ function getModelForCategory(categoryId) {
   // 0. Hard override (e.g. --gemini): always use the forced model
   if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
 
-  // 1. Per-session env override
+  // 1. Per-session env override. Stale benchmark-written env routes still go
+  //    through the scoped-edit context guard below.
   const cat = CATEGORIES[categoryId];
-  if (cat?.envVar && process.env[cat.envVar]) return process.env[cat.envVar];
+  const envModel = cat?.envVar ? process.env[cat.envVar] || null : null;
+  if (envModel && !_configModelNeedsContextUpgrade(envModel, categoryId)) {
+    return envModel;
+  }
 
   // 2. Persistent routing config
   const config = loadRoutingConfig();
-  return config[categoryId] || null;
+  const configModel = config[categoryId] || null;
+  const configuredModel = envModel || configModel;
+
+  // 3. Fitness-weighted routing: if historical data shows the default model
+  //    underperforms for this category, switch to a proven alternative.
+  if (configuredModel) {
+    try {
+      const { getFitnessRecommendedModel } = require("./model-fitness");
+      const fitnessPick = getFitnessRecommendedModel(categoryId, configuredModel);
+      if (fitnessPick) return fitnessPick;
+    } catch { /* model-fitness not available or no data yet */ }
+  }
+
+  // 4. Scoped-edit needs a large-context model. If no scoped-edit route exists,
+  //    or an env/config route points at a 128K model, fall back to Ollama
+  //    USE_CASES for a safer recommendation.
+  if (_configModelNeedsContextUpgrade(configuredModel, categoryId)) {
+    try {
+      const { getOllamaRecommendations } = require("./providers/ollama");
+      const useCase = USECASE_FOR_CATEGORY[categoryId] || "coding";
+      const recs = getOllamaRecommendations(useCase, 3);
+      if (recs.length > 0) {
+        const better = recs.find((r) => r.id !== configuredModel) || recs[0];
+        return better.id;
+      }
+    } catch { /* ollama provider not available */ }
+  }
+
+  return configuredModel;
+}
+
+// Category → USE_CASE mapping for fallback model selection
+const USECASE_FOR_CATEGORY = {
+  coding: "coding",
+  frontend: "frontend",
+  sysadmin: "sysadmin",
+  data: "coding",
+  agentic: "agentic",
+  "bug-fix": "quick-fix",
+  "feature-add": "coding",
+  refactor: "coding",
+  "scoped-edit": "scoped-edit",
+};
+
+// Missing scoped-edit routes and 128K models both need upgrade. On real projects
+// the context window overflows and the compactor/deadlock cycle kills reliability.
+const SCOPED_EDIT_MIN_CONTEXT = 256000;
+function _configModelNeedsContextUpgrade(modelId, categoryId) {
+  if (categoryId !== "scoped-edit") return false;
+  try {
+    const { OLLAMA_MODELS } = require("./providers/ollama");
+    const info = OLLAMA_MODELS[modelId];
+    return !info || (info.contextWindow || 131072) < SCOPED_EDIT_MIN_CONTEXT;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Phase-Based Routing ─────────────────────────────────────────────────────
@@ -281,6 +348,10 @@ function saveRoutingConfig(routing) {
     if (merged.sysadmin) updateEnv("NEX_ROUTE_SYSADMIN", merged.sysadmin);
     if (merged.data) updateEnv("NEX_ROUTE_DATA", merged.data);
     if (merged.agentic) updateEnv("NEX_ROUTE_AGENTIC", merged.agentic);
+    if (merged["scoped-edit"]) updateEnv("NEX_ROUTE_SCOPED_EDIT", merged["scoped-edit"]);
+    if (merged["bug-fix"]) updateEnv("NEX_ROUTE_BUG_FIX", merged["bug-fix"]);
+    if (merged["feature-add"]) updateEnv("NEX_ROUTE_FEATURE", merged["feature-add"]);
+    if (merged.refactor) updateEnv("NEX_ROUTE_REFACTOR", merged.refactor);
 
     if (merged.phases) {
       if (merged.phases.plan) updateEnv("NEX_PHASE_PLAN_MODEL", merged.phases.plan);

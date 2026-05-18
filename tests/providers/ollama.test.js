@@ -420,6 +420,51 @@ describe("providers/ollama.js", () => {
       axios.get = origGet;
     });
 
+    it("prefers discovered num_ctx metadata over hardcoded context windows", async () => {
+      const origGet = axios.get;
+      const origPost = axios.post;
+      axios.get = jest.fn().mockResolvedValueOnce({
+        data: {
+          models: [{ name: "qwen3-coder:480b", model: "qwen3-coder:480b" }],
+        },
+      });
+      axios.post = jest.fn().mockResolvedValueOnce({
+        data: {
+          model_info: {},
+          modelfile: "FROM qwen3-coder\nPARAMETER num_ctx 262144\n",
+        },
+      });
+
+      provider._discovered = false;
+      await provider.discoverModels();
+
+      expect(provider.getModel("qwen3-coder:480b").contextWindow).toBe(262144);
+
+      axios.get = origGet;
+      axios.post = origPost;
+    });
+
+    it("falls back to hardcoded metadata when discovery has no context window", async () => {
+      const origGet = axios.get;
+      const origPost = axios.post;
+      axios.get = jest.fn().mockResolvedValueOnce({
+        data: {
+          models: [{ name: "deepseek-v3.2", model: "deepseek-v3.2" }],
+        },
+      });
+      axios.post = jest.fn().mockResolvedValueOnce({
+        data: { model_info: {} },
+      });
+
+      provider._discovered = false;
+      await provider.discoverModels();
+
+      expect(provider.getModel("deepseek-v3.2").contextWindow).toBe(131072);
+
+      axios.get = origGet;
+      axios.post = origPost;
+    });
+
     it("caches after first call", async () => {
       const origGet = axios.get;
       const mockGet = jest.fn().mockResolvedValue({ data: { models: [] } });
@@ -461,6 +506,13 @@ describe("providers/ollama.js", () => {
     it("handles empty message", () => {
       const result = provider.normalizeResponse({ message: {} });
       expect(result).toEqual({ content: "", tool_calls: [] });
+    });
+
+    it("preserves thinking/reasoning fields", () => {
+      const result = provider.normalizeResponse({
+        message: { content: "", thinking: "step 1" },
+      });
+      expect(result.reasoning_content).toBe("step 1");
     });
 
     it("handles missing message", () => {

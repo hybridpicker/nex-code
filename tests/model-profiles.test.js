@@ -18,25 +18,46 @@ describe("model-profiles.js", () => {
       const p = getModelProfile("devstral-2:123b");
       expect(p.staleWarn).toBe(60000);
       expect(p.staleAbort).toBe(180000);
-      expect(p.investigationCap).toBe(18);
+      expect(p.investigationCap).toBe(14);
       expect(p.postEditCap).toBe(10);
     });
 
     it("returns devstral-small profile", () => {
       const p = getModelProfile("devstral-small-2:24b");
       expect(p.staleWarn).toBe(40000);
-      expect(p.investigationCap).toBe(10);
+      expect(p.investigationCap).toBe(8);
     });
 
     it("returns qwen3-coder profile", () => {
       const p = getModelProfile("qwen3-coder:480b");
-      expect(p.staleWarn).toBe(120000);
-      expect(p.investigationCap).toBe(15);
+      expect(p.staleWarn).toBe(150000);
+      expect(p.investigationCap).toBe(18);
+      expect(p.targetedReadHardCap).toBe(12);
     });
 
     it("returns kimi-k2 profile", () => {
       const p = getModelProfile("kimi-k2:1t");
-      expect(p.staleWarn).toBe(90000);
+      expect(p.staleWarn).toBe(120000);
+      expect(p.investigationGrace).toBe(7);
+    });
+
+    it("distinguishes kimi-k2-thinking from base kimi-k2", () => {
+      const p = getModelProfile("kimi-k2-thinking");
+      expect(p.staleWarn).toBe(150000);
+      expect(p.investigationCap).toBe(18);
+    });
+
+    it("returns deepseek-r1 profile for ollama reasoning variants", () => {
+      const p = getModelProfile("deepseek-r1:70b");
+      expect(p.staleAbort).toBe(300000);
+      expect(p.targetedReadHardCap).toBe(10);
+    });
+
+    it("returns smaller-model reread limits for ministral", () => {
+      const p = getModelProfile("ministral-3:8b");
+      expect(p.investigationCap).toBe(7);
+      expect(p.targetedReadHardCap).toBe(6);
+      expect(p.scrollBlockSections).toBe(2);
     });
 
     it("returns defaults for unknown model", () => {
@@ -63,7 +84,7 @@ describe("model-profiles.js", () => {
       expect(p.staleWarn).toBe(5000);
       expect(p.staleAbort).toBe(15000);
       // Non-stale values still come from profile
-      expect(p.investigationCap).toBe(18);
+      expect(p.investigationCap).toBe(14);
     });
 
     it("rejects invalid ENV values (NaN)", () => {
@@ -105,12 +126,17 @@ describe("model-profiles.js", () => {
 
     it("returns briefing for qwen3-coder", () => {
       const b = getModelBriefing("qwen3-coder:480b");
-      expect(b).toContain("qwen3-coder");
+      expect(b).toContain("qwen3-coder:480b");
     });
 
     it("returns briefing for kimi-k2", () => {
       const b = getModelBriefing("kimi-k2:1t");
       expect(b).toContain("kimi-k2");
+    });
+
+    it("returns briefing for deepseek-r1 ollama variants", () => {
+      const b = getModelBriefing("deepseek-r1:32b");
+      expect(b).toContain("DeepSeek R1-style Ollama reasoning model");
     });
 
     it("returns briefing for ministral-3", () => {

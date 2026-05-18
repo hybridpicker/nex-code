@@ -12,6 +12,24 @@ let _indexedCwd = null;
 let _isIndexing = false;
 let _lastIndexTime = 0;
 const INDEX_TTL_MS = 60000; // Index valid for 60 seconds
+const IGNORED_PROJECT_DIRS = [
+  "node_modules",
+  ".git",
+  "coverage",
+  "dist",
+  "build",
+  ".next",
+  ".cache",
+  ".nex",
+  "venv",
+  ".venv",
+  "__pycache__",
+  ".pytest_cache",
+];
+
+function isIgnoredProjectDir(name) {
+  return IGNORED_PROJECT_DIRS.includes(name);
+}
 
 /**
  * Check if index is still valid (not expired)
@@ -35,7 +53,13 @@ async function refreshIndex(cwd) {
   try {
     // Strategy 1: Use ripgrep if available (very fast)
     try {
-      const { stdout } = await exec("rg --files", { cwd, timeout: 5000 });
+      const ignoreGlobs = IGNORED_PROJECT_DIRS
+        .map((dir) => `--glob '!${dir}/**'`)
+        .join(" ");
+      const { stdout } = await exec(`rg --files ${ignoreGlobs}`, {
+        cwd,
+        timeout: 5000,
+      });
       _fileIndex = stdout.split("\n").filter(Boolean);
       _lastIndexTime = Date.now();
       _isIndexing = false;
@@ -54,12 +78,7 @@ async function refreshIndex(cwd) {
         return;
       }
       for (const e of entries) {
-        if (
-          e.name === "node_modules" ||
-          e.name === ".git" ||
-          e.name.startsWith(".")
-        )
-          continue;
+        if (e.name.startsWith(".") || isIgnoredProjectDir(e.name)) continue;
         const relPath = rel ? `${rel}/${e.name}` : e.name;
         if (e.isDirectory()) {
           await walk(path.join(dir, e.name), relPath);
@@ -625,6 +644,8 @@ async function findSymbolReferences(symbolName, cwd, opts = {}) {
 
 module.exports = {
   refreshIndex,
+  IGNORED_PROJECT_DIRS,
+  isIgnoredProjectDir,
   getFileIndex,
   getIndexedCwd,
   findFileInIndex,

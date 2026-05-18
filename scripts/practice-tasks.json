@@ -177,5 +177,32 @@
       "description": "Write Django tests for the contact form — valid submission, invalid email, missing required fields.",
       "hints": "grep -rn 'contact\\|ContactForm\\|contact_view' */forms.py */views.py */urls.py | head -10. Use django.test.TestCase + self.client.post('/contact/', data)."
     }
+  ],
+
+  "nex-desktop": [
+    {
+      "category": "bugfix",
+      "difficulty": "easy",
+      "description": "In the desktop/ directory: Fix inconsistent padding in the main sidebar or header components in the Electron renderer.",
+      "hints": "Look in desktop/renderer/ or desktop/src/components/ for CSS/SCSS files. Search for 'sidebar' or 'header' classes. Adjust padding values to match the design system (e.g., 16px)."
+    },
+    {
+      "category": "test",
+      "difficulty": "medium",
+      "description": "In the desktop/ directory: Write a unit test for a React component in the desktop app using Jest and React Testing Library.",
+      "hints": "Find a component in desktop/src/components/. Create a .test.js file next to it. Test: initial render, state changes on click, or prop updates."
+    },
+    {
+      "category": "feature",
+      "difficulty": "medium",
+      "description": "In the desktop/ directory: Add a new menu item to the Electron main menu in main.js with a corresponding IPC listener.",
+      "hints": "Open desktop/main.js. Find Menu.buildFromTemplate. Add a new item with a label and a click handler that sends an IPC message to the renderer."
+    },
+    {
+      "category": "refactor",
+      "difficulty": "easy",
+      "description": "In the desktop/ directory: Consolidate multiple inline styles into a separate CSS/SCSS module for better maintainability.",
+      "hints": "Search for style={{...}} in desktop/src//**/*.jsx files. Create a .css file, move the styles there, and import it into the component."
+    }
   ]
 }

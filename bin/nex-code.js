@@ -71,6 +71,17 @@ if (args.includes("-v") || args.includes("--version")) {
   process.exit(0);
 }
 
+// ─── --server (Desktop / VS Code extension IPC mode) ─────────
+// Must run before any interactive/headless startup side effects. Desktop
+// expects stdout to contain only JSON-lines protocol messages.
+if (args.includes("--server")) {
+  process.env.NEX_SERVER = "1";
+  const { setAutoConfirm } = require("../cli/safety");
+  setAutoConfirm(true); // non-critical tools auto-confirm in server mode
+  require("../cli/server-mode").startServerMode();
+  return; // event loop keeps process alive — no further code should run
+}
+
 // ─── --yolo / -yolo ──────────────────────────────────────────
 const yoloMode = args.includes("--yolo") || args.includes("-yolo");
 if (yoloMode) {
@@ -318,6 +329,11 @@ function emitJsonLine(obj, write = process.stdout.write.bind(process.stdout)) {
   write(JSON.stringify(obj) + "\n");
 }
 
+function emitJsonLineSync(obj) {
+  const fs = require("fs");
+  fs.writeSync(1, JSON.stringify(obj) + "\n");
+}
+
 function stripAnsi(text) {
   const { stripAnsiControlSequences } = require("../cli/format");
   return stripAnsiControlSequences(text);
@@ -335,6 +351,25 @@ function getAssistantText(content) {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function hasAssistantToolCalls(message) {
+  if (!message || message.role !== "assistant") return false;
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    return true;
+  }
+  return Array.isArray(message.content) &&
+    message.content.some((block) => block && block.type === "tool_use");
+}
+
+function looksLikeFailedHeadlessConclusion(text) {
+  const sample = String(text || "").trim();
+  if (!sample) return false;
+  return (
+    /stopping without reporting success/i.test(sample) ||
+    /^verification incomplete\./i.test(sample) ||
+    /^implementation incomplete\./i.test(sample)
+  );
 }
 
 function cleanToolSummary(summary) {
@@ -364,9 +399,117 @@ function countToolCalls(messages) {
   }, 0);
 }
 
+function countWriteToolCalls(messages) {
+  if (!Array.isArray(messages)) return 0;
+  const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+  return messages.reduce((total, msg) => {
+    if (!msg || msg.role !== "assistant") return total;
+    const toolCalls =
+      msg.tool_calls ||
+      (Array.isArray(msg.content)
+        ? msg.content.filter((block) => block && block.type === "tool_use")
+        : []);
+    return (
+      total +
+      toolCalls.filter((tc) => {
+        const name = tc?.function?.name || tc?.name || "";
+        return writeTools.has(name);
+      }).length
+    );
+  }, 0);
+}
+
+function getVerifiedHeadlessEditSummary(messages) {
+  if (!Array.isArray(messages)) return null;
+  const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
+  const callMeta = new Map();
+  const writtenPaths = new Set();
+  const verifiedPaths = new Set();
+
+  for (const msg of messages) {
+    if (!msg) continue;
+    if (msg.role === "assistant") {
+      const toolCalls =
+        msg.tool_calls ||
+        (Array.isArray(msg.content)
+          ? msg.content.filter((block) => block && block.type === "tool_use")
+          : []);
+      for (const tc of toolCalls) {
+        const id = tc?.id || tc?.tool_call_id;
+        const name = tc?.function?.name || tc?.name || "";
+        let args = tc?.function?.arguments || tc?.input || {};
+        if (typeof args === "string") {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            args = {};
+          }
+        }
+        const filePath = args?.path || args?.file_path || "";
+        if (id) callMeta.set(id, { name, path: filePath });
+      }
+      continue;
+    }
+
+    if (msg.role !== "tool") continue;
+    const meta = callMeta.get(msg.tool_call_id);
+    if (!meta) continue;
+    const content = String(msg.content || "");
+    if (/^(?:ERROR|BLOCKED):/i.test(content.trim())) continue;
+    if (writeTools.has(meta.name) && meta.path) {
+      writtenPaths.add(meta.path);
+    }
+    if (meta.name === "read_file" && writtenPaths.has(meta.path)) {
+      verifiedPaths.add(meta.path);
+    }
+    if (
+      meta.name === "bash" &&
+      writtenPaths.size > 0 &&
+      /\b(?:PASS|passed|ok|success|done)\b/i.test(content)
+    ) {
+      for (const p of writtenPaths) verifiedPaths.add(p);
+    }
+  }
+
+  if (writtenPaths.size === 0 || verifiedPaths.size === 0) return null;
+  return {
+    changedFiles: [...writtenPaths],
+    verification:
+      verifiedPaths.size > 0
+        ? `post-edit readback: ${[...verifiedPaths].slice(0, 8).join(", ")}`
+        : "post-edit verification completed",
+  };
+}
+
+function looksLikeConfusedPostEditQuestion(text) {
+  if (!text || typeof text !== "string") return false;
+  const value = text.trim();
+  if (!value.includes("?")) return false;
+  return /\b(?:what would you like me to do|what fix, change, or feature|please tell me what|haven't stated the actual task|have not stated the actual task|share the real issue)\b/i.test(
+    value,
+  );
+}
+
+function buildRecoveredHeadlessFinal(verifiedEditSummary, note) {
+  return [
+    "Completed the requested edit and verified the updated state.",
+    `Changed files: ${verifiedEditSummary.changedFiles.slice(0, 12).join(", ")}.`,
+    `Verification: ${verifiedEditSummary.verification}.`,
+    `Finalization note: ${note}`,
+  ].join("\n");
+}
+
 function createJsonModeHooks() {
   process.env.NEX_SERVER = "1";
   let streamedText = "";
+  // Track pending tool calls with per-call sequence numbers so
+  // onToolEnd can remove the exact entry, not the last match.
+  let _toolSeq = 0;
+  const _toolIds = new Map(); // callId → pendingTools index
+  const pendingTools = [];
+  let terminalEventEmitted = false;
+  let lastJsonEventType = "";
+  let restored = false;
 
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalConsole = {
@@ -375,6 +518,7 @@ function createJsonModeHooks() {
     info: console.info,
     error: console.error,
   };
+  const originalExit = process.exit.bind(process);
   const passthroughStdout = process.stdout.write;
   const passthroughStderr = process.stderr.write;
 
@@ -387,29 +531,265 @@ function createJsonModeHooks() {
 
   process.stdout.write = swallowWrite;
   process.stderr.write = swallowWrite;
+  process.exit = (code = 0) => {
+    // Intercept ALL exit codes. If no terminal event has been emitted,
+    // tools are still pending, OR the last event was a dangling tool_start,
+    // force a fail-closed error so JSON consumers never see an incomplete
+    // stream without a terminal done/error event.
+    if (
+      !isTerminalJsonEvent() ||
+      pendingTools.length > 0 ||
+      lastJsonEventType === "tool_start"
+    ) {
+      emitFailClosedLifecycleError(
+        lastJsonEventType === "tool_start" && pendingTools.length === 0
+          ? `Last event was a dangling tool_start with no matching tool_end.`
+          : "",
+      );
+      return originalExit(process.exitCode || 1);
+    }
+    return originalExit(code);
+  };
 
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};
   console.error = () => {};
 
+  function restore() {
+    if (restored) return;
+    restored = true;
+    process.stdout.write = passthroughStdout;
+    process.stderr.write = passthroughStderr;
+    console.log = originalConsole.log;
+    console.warn = originalConsole.warn;
+    console.info = originalConsole.info;
+    console.error = originalConsole.error;
+    // Keep the process.exit override active — it is the
+    // authoritative gate for terminal JSON events. Without it,
+    // process.exit(0) from finishSuccess/finishError can bypass
+    // the pending-tool check and leave a dangling tool_start.
+    process.removeListener("beforeExit", failClosedBeforeExit);
+    process.removeListener("uncaughtException", failClosedOnFatal);
+    process.removeListener("unhandledRejection", failClosedOnFatal);
+  }
+
+  function buildFailClosedError(detail = "") {
+    const names = pendingTools.map((entry) => entry.tool).join(", ");
+    if (names) {
+      return (
+        `Headless run ended with unfinished tool call(s): ${names}. ` +
+        "Stopping to avoid a false success." +
+        (detail ? ` ${detail}` : "")
+      );
+    }
+    return (
+      "Headless JSON run ended before emitting a final done/error event. " +
+      "Stopping to avoid a false success." +
+      (detail ? ` ${detail}` : "")
+    );
+  }
+
+  function isTerminalJsonEvent() {
+    return lastJsonEventType === "done" || lastJsonEventType === "error";
+  }
+
+  function emitTerminalJsonEventSync(event) {
+    if (terminalEventEmitted) return;
+    terminalEventEmitted = true;
+    lastJsonEventType = event?.type || "";
+    process.exitCode =
+      event?.type === "done" && event.success !== false ? 0 : 1;
+    emitJsonLineSync(event);
+  }
+
+  // ─── Pending-tools watchdog ────────────────────────────────────
+  // If the agent loop exits or stalls while tools are still pending,
+  // this timer forces a fail-closed terminal error so JSON consumers
+  // never see a dangling tool_start without a matching done/error.
+  // Default 60s — generous enough for slow npm install/lint runs in
+  // sandboxes, but still catches genuinely stalled tool executions.
+  const PENDING_TOOLS_WATCHDOG_MS = Math.max(
+    5000,
+    parseInt(process.env.NEX_PENDING_TOOLS_WATCHDOG_MS, 10) || 60000,
+  );
+  let _pendingWatchdogTimer = null;
+  const _pendingToolStartTimes = new Map(); // callId → Date.now()
+
+  function _startPendingWatchdog() {
+    if (_pendingWatchdogTimer) return;
+    _pendingWatchdogTimer = setInterval(() => {
+      if (terminalEventEmitted || restored) {
+        _stopPendingWatchdog();
+        return;
+      }
+      if (pendingTools.length === 0) {
+        // No pending tools — nothing to watchdog.
+        return;
+      }
+      // Only fire when at least one pending tool has been stuck for
+      // the full watchdog duration. Tools that were just started
+      // (e.g. a slow npm command) get their full timeout before we
+      // sound the alarm.
+      const now = Date.now();
+      let oldestStuckMs = 0;
+      for (const entry of pendingTools) {
+        const started = _pendingToolStartTimes.get(entry.callId);
+        if (started != null) {
+          const stuck = now - started;
+          if (stuck > oldestStuckMs) oldestStuckMs = stuck;
+        }
+      }
+      if (oldestStuckMs < PENDING_TOOLS_WATCHDOG_MS) return;
+      // Force-stop: emit terminal error and kill the process.
+      // After this the agent loop must not continue.
+      emitFailClosedLifecycleError(
+        `Pending tool call(s) unresolved for >${PENDING_TOOLS_WATCHDOG_MS / 1000}s: ` +
+          pendingTools.map((e) => e.tool).join(", "),
+      );
+      // emitFailClosedLifecycleError restores process.exit to
+      // the real exit. Call it now so the process stops.
+      originalExit(process.exitCode || 1);
+    }, 2000);
+  }
+
+  function _stopPendingWatchdog() {
+    if (_pendingWatchdogTimer) {
+      clearInterval(_pendingWatchdogTimer);
+      _pendingWatchdogTimer = null;
+    }
+  }
+
+  function emitFailClosedLifecycleError(detail = "") {
+    if (terminalEventEmitted) return;
+    const error = buildFailClosedError(detail);
+    restore();
+    emitTerminalJsonEventSync({
+      type: "error",
+      success: false,
+      error,
+    });
+  }
+
+  function failClosedBeforeExit() {
+    // beforeExit fires when the event loop empties — which can happen
+    // between API calls in the agent loop. Do NOT force-fail here;
+    // the exit listener, process.exit override, and watchdog timer
+    // are the authoritative fail-closed paths. Only clean up timer
+    // resources.
+    _stopPendingWatchdog();
+  }
+
+  function failClosedOnExit(code) {
+    if (isTerminalJsonEvent()) return;
+    // Emit terminal error synchronously — the exit handler runs in a
+    // sync-only context, so use the sync emit path.
+    emitTerminalJsonEventSync({
+      type: "error",
+      success: false,
+      error: buildFailClosedError(
+        code ? `Process exited with code ${code}.` : "",
+      ),
+      pendingTools: pendingTools.length > 0 ? pendingTools.map((e) => e.tool) : undefined,
+    });
+  }
+
+  function failClosedOnFatal(err) {
+    const message = err?.message || String(err || "");
+    _stopPendingWatchdog();
+    emitFailClosedLifecycleError(message ? `Fatal error: ${message}` : "");
+    originalExit(1);
+  }
+
+  process.once("beforeExit", failClosedBeforeExit);
+  process.prependListener("exit", failClosedOnExit);
+  process.once("uncaughtException", failClosedOnFatal);
+  process.once("unhandledRejection", failClosedOnFatal);
+
+  // ─── Last-resort JSON health gate ───────────────────────────
+  // Registered with process.on (not prependListener) so it fires AFTER
+  // all other exit handlers. This is the authoritative check: if any
+  // earlier handler failed to enforce the correct exit code, this one
+  // inspects the JSON stream health directly and overrides.
+  process.on("exit", () => {
+    // If a terminal event was already emitted, trust its exit code
+    // (emitTerminalJsonEventSync sets process.exitCode accordingly).
+    if (terminalEventEmitted) return;
+
+    // No terminal event emitted — JSON stream is incomplete.
+    const danglingCount = pendingTools.length;
+
+    if (danglingCount > 0 || lastJsonEventType === "tool_start" || _toolSeq === 0) {
+      process.exitCode = 1;
+      // Write the terminal error event using originalStdoutWrite (bound
+      // reference to real stdout.write, captured before swallowing).
+      // passthroughStdout is unbound — would fail with wrong 'this'.
+      try {
+        originalStdoutWrite(
+          JSON.stringify({
+            type: "error",
+            success: false,
+            error: buildFailClosedError(
+              danglingCount > 0
+                ? `Stream ended with ${danglingCount} unfinished tool call(s)` +
+                  (lastJsonEventType === "tool_start"
+                    ? " and a dangling tool_start with no matching tool_end."
+                    : ".")
+                : "Stream ended without a terminal done/error event — JSON is unhealthy.",
+            ),
+            pendingTools:
+              danglingCount > 0
+                ? pendingTools.map((e) => e.tool)
+                : undefined,
+          }) + "\n",
+        );
+      } catch {
+        /* best effort — exit code is the authoritative signal */
+      }
+    }
+  });
+
   return {
+    _startPendingWatchdog: () => _startPendingWatchdog(),
     hooks: {
       onToken(text) {
         streamedText += text || "";
+        lastJsonEventType = "token";
         emitJsonLine({ type: "token", text }, originalStdoutWrite);
       },
       onThinkingToken() {
+        lastJsonEventType = "thinking";
         emitJsonLine({ type: "thinking" }, originalStdoutWrite);
       },
       onToolStart(toolName, args) {
+        process.exitCode = 1;
+        const callId = ++_toolSeq;
+        const entry = { tool: toolName, args: args || {}, callId };
+        pendingTools.push(entry);
+        _toolIds.set(callId, pendingTools.length - 1);
+        _pendingToolStartTimes.set(callId, Date.now());
+        _startPendingWatchdog();
+        lastJsonEventType = "tool_start";
         emitJsonLine({
           type: "tool_start",
           tool: toolName,
           args: args || {},
+          callId,
         }, originalStdoutWrite);
       },
       onToolEnd(toolName, summary, ok) {
+        // Remove the FIRST matching tool entry (FIFO — tools complete in order).
+        const idx = pendingTools
+          .map((entry) => entry.tool)
+          .lastIndexOf(toolName);
+        if (idx !== -1) {
+          const removed = pendingTools.splice(idx, 1)[0];
+          if (removed && removed.callId != null) {
+            _pendingToolStartTimes.delete(removed.callId);
+          }
+        }
+        if (pendingTools.length === 0) _stopPendingWatchdog();
+        lastJsonEventType = "tool_end";
         emitJsonLine({
           type: "tool_end",
           tool: toolName,
@@ -421,13 +801,18 @@ function createJsonModeHooks() {
     getStreamedText() {
       return streamedText;
     },
+    getPendingTools() {
+      return pendingTools.slice();
+    },
+    hasTerminalEvent() {
+      return terminalEventEmitted || isTerminalJsonEvent();
+    },
+    emitTerminal(event) {
+      emitTerminalJsonEventSync(event);
+    },
     restore() {
-      process.stdout.write = passthroughStdout;
-      process.stderr.write = passthroughStderr;
-      console.log = originalConsole.log;
-      console.warn = originalConsole.warn;
-      console.info = originalConsole.info;
-      console.error = originalConsole.error;
+      restore();
+      _stopPendingWatchdog();
     },
   };
 }
@@ -540,74 +925,40 @@ async function runHeadlessTask(task) {
   let plainModeState = null;
   let agentHooks = jsonModeState ? jsonModeState.hooks : null;
 
+  // ─── Outer exit safety net ────────────────────────────────────
+  // The inner createJsonModeHooks registers its own exit listener,
+  // but to guard against edge cases (listener removal, premature
+  // beforeExit, silent crashes) we add one more last-resort exit
+  // handler here. It fires only if no terminal event was emitted
+  // by any other path.
+  if (jsonModeState) {
+    const outerExitHandler = (code) => {
+      const pending = jsonModeState.getPendingTools();
+      if (!jsonModeState.hasTerminalEvent() || pending.length > 0) {
+        const names = pending.map((e) => e.tool).join(", ");
+        jsonModeState.emitTerminal({
+          type: "error",
+          success: false,
+          error: pending.length > 0
+            ? `Headless run ended with unfinished tool call(s): ${names}. Stopping to avoid a false success.`
+            : "Headless JSON run ended before emitting a final done/error event. Stopping to avoid a false success.",
+          exitCode: code,
+        });
+        process.exitCode = 1;
+      }
+    };
+    process.prependListener("exit", outerExitHandler);
+  }
+
   function finishSuccess(getMessages) {
     const { sanitizeFinalAnswer } = require("../cli/format");
     const msgs = getMessages();
-    // Walk backwards through assistant messages to find one with text content.
-    // When the model makes edits and verifies but its last turn produces only
-    // tool calls (read-back, lint), the headless runner would previously fail
-    // with "no final assistant response" even though the task was completed.
-    let response = "";
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role === "assistant") {
-        const text = sanitizeFinalAnswer(getAssistantText(m.content));
-        if (text && text.trim().length > 0) {
-          response = text;
-          break;
-        }
-      }
-    }
-    const streamedResponse = String(
-      jsonModeState?.getStreamedText?.() || plainModeState?.getStreamedText?.() || "",
-    ).trim();
-    const finalResponse =
-      typeof response === "string" && response.trim().length > 0
-        ? response
-        : streamedResponse;
-    const hasFinalResponse =
-      typeof finalResponse === "string" && finalResponse.trim().length > 0;
-
-    if (!hasFinalResponse) {
-      // Check if any write/edit tool calls were made — indicates the task was
-      // actively worked on, even though the model produced no final summary.
-      const writeTools = new Set(["write_file", "edit_file", "patch_file"]);
-      let hadWrites = false;
-      for (const m of msgs) {
-        if (m.role !== "assistant") continue;
-        const tcs = m.tool_calls || (Array.isArray(m.content) ? m.content.filter(b => b && b.type === "tool_use") : []);
-        for (const tc of tcs) {
-          const name = tc.function?.name || tc.name || "";
-          if (writeTools.has(name)) { hadWrites = true; break; }
-        }
-        if (hadWrites) break;
-      }
-
-      if (hadWrites) {
-        const warnMsg = "Headless run: files were modified but no final summary was produced. Exiting cleanly (writes detected).";
-        if (!jsonModeState) {
-          if (plainModeState) plainModeState.restore();
-          console.error(warnMsg);
-          process.exit(0);
-          return;
-        }
-        const { getSessionCosts } = require("../cli/costs");
-        const costs = getSessionCosts();
-        jsonModeState.restore();
-        emitJsonLine({
-          type: "result",
-          success: true,
-          warning: warnMsg,
-          response: "(files modified, no text summary)",
-          usage: { input: costs.totalInput || 0, output: costs.totalOutput || 0, cacheRead: costs.totalCacheRead || 0 },
-          toolCalls: countToolCalls(msgs),
-        });
-        process.exit(0);
-        return;
-      }
-
+    const pendingTools = jsonModeState?.getPendingTools?.() || [];
+    if (pendingTools.length > 0) {
+      const names = pendingTools.map((entry) => entry.tool).join(", ");
       const errorMessage =
-        "Headless run ended without a final assistant response. Stopping to avoid a false success.";
+        `Headless run ended with unfinished tool call(s): ${names}. ` +
+        "Stopping to avoid a false success.";
 
       if (!jsonModeState) {
         if (plainModeState) plainModeState.restore();
@@ -619,7 +970,7 @@ async function runHeadlessTask(task) {
       const { getSessionCosts } = require("../cli/costs");
       const costs = getSessionCosts();
       jsonModeState.restore();
-      emitJsonLine({
+      jsonModeState.emitTerminal({
         type: "error",
         success: false,
         error: errorMessage,
@@ -634,19 +985,162 @@ async function runHeadlessTask(task) {
       return;
     }
 
+    // Walk backwards through assistant messages to find one with text content.
+    // When the model makes edits and verifies but its last turn produces only
+    // tool calls (read-back, lint), the headless runner would previously fail
+    // with "no final assistant response" even though the task was completed.
+    let response = "";
+    let hasTerminalAssistantMessage = false;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === "assistant") {
+        if (hasAssistantToolCalls(m)) continue;
+        hasTerminalAssistantMessage = true;
+        const text = sanitizeFinalAnswer(getAssistantText(m.content));
+        if (text && text.trim().length > 0) {
+          response = text;
+          break;
+        }
+      }
+    }
+    const streamedResponse = String(
+      jsonModeState?.getStreamedText?.() || plainModeState?.getStreamedText?.() || "",
+    ).trim();
+    const finalResponse =
+      typeof response === "string" && response.trim().length > 0
+        ? response
+        : hasTerminalAssistantMessage
+          ? streamedResponse
+          : "";
+    const hasFinalResponse =
+      typeof finalResponse === "string" && finalResponse.trim().length > 0;
+    const verifiedEditSummary = getVerifiedHeadlessEditSummary(msgs);
+
+    if (!hasFinalResponse) {
+      if (verifiedEditSummary) {
+        const recoveredResponse = buildRecoveredHeadlessFinal(
+          verifiedEditSummary,
+          "the model stream ended without a normal final assistant message after verified work, so headless mode preserved the completed state and emitted this summary.",
+        );
+        const { getSessionCosts } = require("../cli/costs");
+        const costs = getSessionCosts();
+
+        if (!jsonModeState) {
+          if (plainModeState) {
+            plainModeState.restore();
+            process.stdout.write(recoveredResponse + "\n");
+          }
+          process.exit(0);
+          return;
+        }
+
+        jsonModeState.restore();
+        jsonModeState.emitTerminal({
+          type: "done",
+          success: true,
+          response: recoveredResponse,
+          usage: {
+            input: costs.totalInput || 0,
+            output: costs.totalOutput || 0,
+            cacheRead: costs.totalCacheRead || 0,
+          },
+          toolCalls: countToolCalls(msgs),
+        });
+        process.exit(0);
+        return;
+      }
+      const writeCount = countWriteToolCalls(msgs);
+      const errorMessage = writeCount > 0
+        ? "Headless run modified files but ended without a final assistant response. Stopping to avoid a false success."
+        : "Headless run ended without a final assistant response. Stopping to avoid a false success.";
+
+      if (!jsonModeState) {
+        if (plainModeState) plainModeState.restore();
+        console.error(errorMessage);
+        process.exit(1);
+        return;
+      }
+
+      const { getSessionCosts } = require("../cli/costs");
+      const costs = getSessionCosts();
+      jsonModeState.restore();
+      jsonModeState.emitTerminal({
+        type: "error",
+        success: false,
+        error: errorMessage,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(1);
+      return;
+    }
+
+    if (
+      verifiedEditSummary &&
+      looksLikeConfusedPostEditQuestion(finalResponse)
+    ) {
+      const recoveredResponse = buildRecoveredHeadlessFinal(
+        verifiedEditSummary,
+        "the model produced a confused follow-up question after verified work, so headless mode emitted the verified-work summary instead.",
+      );
+      const { getSessionCosts } = require("../cli/costs");
+      const costs = getSessionCosts();
+      if (!jsonModeState) {
+        if (plainModeState) {
+          plainModeState.restore();
+          process.stdout.write(recoveredResponse + "\n");
+        }
+        process.exit(0);
+        return;
+      }
+      jsonModeState.restore();
+      jsonModeState.emitTerminal({
+        type: "done",
+        success: true,
+        response: recoveredResponse,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(0);
+      return;
+    }
+
     if (!jsonModeState) {
       if (plainModeState) {
         plainModeState.restore();
         if (finalResponse) process.stdout.write(finalResponse + "\n");
       }
-      process.exit(0);
+      process.exit(looksLikeFailedHeadlessConclusion(finalResponse) ? 1 : 0);
       return;
     }
 
     const { getSessionCosts } = require("../cli/costs");
     const costs = getSessionCosts();
     jsonModeState.restore();
-    emitJsonLine({
+    if (looksLikeFailedHeadlessConclusion(finalResponse)) {
+      jsonModeState.emitTerminal({
+        type: "error",
+        success: false,
+        error: finalResponse,
+        usage: {
+          input: costs.totalInput || 0,
+          output: costs.totalOutput || 0,
+          cacheRead: costs.totalCacheRead || 0,
+        },
+        toolCalls: countToolCalls(msgs),
+      });
+      process.exit(1);
+      return;
+    }
+    jsonModeState.emitTerminal({
       type: "done",
       success: true,
       response: finalResponse,
@@ -669,7 +1163,7 @@ async function runHeadlessTask(task) {
     }
 
     jsonModeState.restore();
-    emitJsonLine({
+    jsonModeState.emitTerminal({
       type: "error",
       success: false,
       error: err?.message || String(err),
@@ -699,7 +1193,7 @@ async function runHeadlessTask(task) {
       .then(() => {
         if (jsonModeState) {
           jsonModeState.restore();
-          emitJsonLine({ type: "done", success: true, response: "" });
+          jsonModeState.emitTerminal({ type: "done", success: true, response: "" });
         }
         process.exit(0);
       })
@@ -722,14 +1216,6 @@ async function runHeadlessTask(task) {
       finishSuccess(getConversationMessages);
     })
     .catch((err) => finishError(err));
-}
-
-// ─── --server (VS Code extension IPC mode) ───────────────────
-if (args.includes("--server")) {
-  const { setAutoConfirm } = require("../cli/safety");
-  setAutoConfirm(true); // non-critical tools auto-confirm in server mode
-  require("../cli/server-mode").startServerMode();
-  return; // event loop keeps process alive — no further code should run
 }
 
 // ─── --daemon / --watch (background watcher mode) ────────────

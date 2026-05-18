@@ -4,336 +4,242 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>nex-code</title>
-<style>
-/* ═══════════════ DESIGN TOKENS ═══════════════ */
-:root {
-  --bg-deep:#0D1117; --bg-panel:#111820; --bg-surface:#161B24; --bg-elevated:#1C2330; --bg-hover:#1E2634;
-  --accent-emerald:#39FF14; --accent-cyan:#00FFFF; --accent-teal:#00E5FF; --accent-coral:#FF6B6B; --accent-gold:#FFD700;
-  --text-primary:#E6EDF3; --text-secondary:#A0AEC0; --text-tertiary:#6B7280;
-  --border:rgba(48,54,61,0.7); --border-thin:rgba(255,255,255,0.05); --border-active:rgba(0,255,255,0.35);
-  --glass-bg:rgba(17,24,32,0.72); --glass-blur:15px;
-  --font-mono:'JetBrains Mono','Fira Code',monospace; --font-sans:'Inter',system-ui,sans-serif;
-  --topbar-h:52px; --sidebar-w:230px; --rightbar-w:310px; --cmd-h:72px;
-  --radius-sm:6px; --radius-md:10px;
-}
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden;background:var(--bg-deep);color:var(--text-primary);font-family:var(--font-sans);font-size:13px;line-height:1.5}
-body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(57,255,20,0.02)1px,transparent 1px),linear-gradient(90deg,rgba(57,255,20,0.02)1px,transparent 1px);background-size:32px 32px;pointer-events:none;z-index:0}
-::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-
-/* ═══════════════ LAYOUT ═══════════════ */
-.app{display:flex;flex-direction:column;height:100vh;position:relative;z-index:1}
-.glass{background:var(--glass-bg);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border-thin)}
-.glass-heavy{backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);background:rgba(17,24,32,0.90)}
-.main-content{display:flex;flex:1;overflow:hidden}
-.hidden{display:none!important}
-
-/* ═══════════════ TOPBAR ═══════════════ */
-.topbar{display:flex;align-items:center;height:var(--topbar-h);padding:0 20px;flex-shrink:0;z-index:100}
-.tb-left{display:flex;align-items:center;flex:1;gap:10px;font-family:var(--font-mono);font-size:13px;color:var(--text-primary);font-weight:700}
-.tb-icon{font-size:18px;color:var(--accent-emerald)}
-.tb-sep{color:var(--text-tertiary);margin:0 2px}
-.tb-branch{display:flex;align-items:center;gap:5px;color:var(--accent-cyan);font-size:12px;padding:3px 10px;background:rgba(0,255,255,0.06);border:1px solid rgba(0,255,255,0.18);border-radius:5px}
-.tb-center{display:flex;align-items:center;flex:0 0 auto}
-.model-rtr{display:flex;align-items:center;gap:9px;padding:6px 16px;background:rgba(0,255,255,0.04);border:1px solid rgba(0,255,255,0.16);border-radius:var(--radius-sm);cursor:pointer;transition:all .25s}
-.model-rtr:hover{background:rgba(0,255,255,0.08);border-color:rgba(0,255,255,0.30)}
-.model-rtr-label{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-transform:uppercase}
-.model-rtr-val{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--accent-cyan)}
-.tb-right{display:flex;align-items:center;gap:24px;flex:1;justify-content:flex-end}
-.health{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)}
-.budget{display:flex;align-items:center;gap:9px}
-.budget-val{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent-emerald)}
-.budget-bar{width:64px;height:3px;background:var(--bg-active);border-radius:2px;overflow:hidden}
-.budget-fill{height:100%;background:linear-gradient(90deg,var(--accent-emerald),var(--accent-cyan));border-radius:2px;transition:width .6s}
-
-/* ═══════════════ LEFT SIDEBAR ═══════════════ */
-.sidebar-l{width:var(--sidebar-w);min-width:var(--sidebar-w);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
-.sidebar-nav{display:flex;flex-direction:column;padding:12px 0;flex:1}
-.side-sec{margin-bottom:6px}
-.side-sec-hdr{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;padding:10px 18px 6px}
-.side-item{display:flex;align-items:center;gap:11px;padding:8px 18px;margin:0 8px;border-radius:var(--radius-sm);cursor:pointer;color:var(--text-primary);font-size:12px;font-weight:500;transition:all .18s}
-.side-item:hover{background:var(--bg-hover)}
-.side-item.active{background:rgba(57,255,20,0.05);color:var(--accent-emerald);border:1px solid rgba(57,255,20,0.12)}
-.side-badge{font-family:var(--font-mono);font-size:10px;padding:2px 7px;border-radius:8px;background:var(--bg-elevated);color:var(--text-secondary)}
-.side-profile{display:flex;align-items:center;gap:11px;padding:14px 18px;border-top:1px solid var(--border-thin);margin-top:auto}
-.prof-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--accent-emerald),var(--accent-cyan));display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--bg-deep)}
-.prof-name{font-size:12px;font-weight:600;color:var(--text-primary)}
-.prof-plan{font-size:10px;color:var(--accent-gold)}
-
-/* ═══════════════ CENTER ═══════════════ */
-.center{flex:1;overflow-y:auto;padding:28px 32px;position:relative}
-.center::after{content:'';position:absolute;top:30%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;background:radial-gradient(ellipse,rgba(57,255,20,0.03)0%,transparent 70%);pointer-events:none;z-index:0}
-.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;opacity:.5}
-.welcome h1{font-family:var(--font-mono);font-size:30px;font-weight:700;background:linear-gradient(135deg,var(--accent-emerald),var(--accent-cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.timeline{max-width:840px;margin:0 auto}
-.tl-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
-.tl-header h2{font-family:var(--font-mono);font-size:22px;font-weight:700;letter-spacing:-0.5px}
-.tl-status-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;background:rgba(57,255,20,0.08);border:1px solid rgba(57,255,20,0.2);border-radius:12px;color:var(--accent-emerald);font-family:var(--font-mono);font-size:11px;font-weight:700;text-transform:uppercase}
-.tl-track{position:relative;padding-left:48px}
-.tl-track::before{content:'';position:absolute;left:18px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,rgba(0,255,255,0.4),rgba(57,255,20,0.35),rgba(0,229,255,0.3))}
-.tl-node{position:relative;margin-bottom:32px;animation:nodeIn .5s ease-out}
-.tl-dot{position:absolute;left:-34px;top:10px;width:10px;height:10px;border-radius:50%;border:2px solid;background:var(--bg-deep);z-index:1}
-.tl-dot.cyan{border-color:var(--accent-cyan);box-shadow:0 0 14px rgba(0,255,255,.55)}
-.tl-dot.emerald{border-color:var(--accent-emerald);box-shadow:0 0 14px rgba(57,255,20,.55)}
-.tl-dot.teal{border-color:var(--accent-teal);box-shadow:0 0 14px rgba(0,229,255,.55)}
-.tl-card{background:var(--bg-panel);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-md);padding:24px;transition:all .3s;position:relative;box-shadow:0 10px 30px rgba(0,0,0,0.2)}
-.tl-card:hover{border-color:var(--border-active)}
-.tl-card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.tl-phase{font-family:var(--font-mono);font-size:11px;font-weight:800;letter-spacing:1px;padding:4px 12px;border-radius:4px;text-transform:uppercase}
-.tl-phase.cyan{background:rgba(0,255,255,.15);color:var(--accent-cyan)}
-.tl-phase.emerald{background:rgba(57,255,20,.15);color:var(--accent-emerald)}
-.tl-stop{width:14px;height:14px;background:var(--accent-emerald);border-radius:2px;cursor:pointer;transition:opacity .2s}
-.tl-stop:hover{opacity:0.8}
-.tl-content-box{background:rgba(107,114,128,0.12);border-radius:6px;padding:16px;border:1px solid rgba(255,255,255,0.05)}
-.tl-detail{font-size:13px;color:var(--text-secondary);line-height:1.6;font-weight:500;white-space:pre-wrap}
-
-/* ═══════════════ CINEMATIC RESPONSE ═══════════════ */
-.tl-node.response{margin-top:40px;margin-bottom:60px;padding-left:0}
-.tl-node.response .tl-dot{display:none}
-.tl-node.response .tl-card{
-  width:100%;max-width:900px;margin:0 auto;
-  background:rgba(22,27,36,0.8);
-  border:1px solid var(--accent-cyan);
-  box-shadow:0 0 40px rgba(0,255,255,0.08);
-  padding:40px;
-}
-.tl-node.response .tl-card-hdr{display:none}
-.tl-node.response .tl-content-box{background:transparent;border:none;padding:0}
-.tl-node.response .tl-detail{
-  font-size:15px;color:var(--text-primary);line-height:1.8;
-  font-family:var(--font-sans);
-}
-
-/* Markdown Styles */
-.md h3{color:var(--accent-cyan);margin:24px 0 12px;font-family:var(--font-mono);font-size:16px;letter-spacing:1px;text-transform:uppercase}
-.md p{margin-bottom:16px}
-.md ul{margin:0 0 20px 20px;list-style:none}
-.md li{position:relative;margin-bottom:8px}
-.md li::before{content:'*';position:absolute;left:-15px;color:var(--accent-emerald);font-weight:bold}
-.md b, .md strong{color:var(--text-primary);font-weight:700}
-.md code{background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:13px;color:var(--accent-gold)}
-
-/* ═══════════════ SERVER OUTPUT ═══════════════ */
-.server-output{border-top:1px solid var(--border-thin);margin-top:auto}
-.log-line{padding:4px 16px;font-family:var(--font-mono);font-size:12px;color:rgba(0,255,255,0.7)}
-.cmd-line{padding:6px 16px;background:rgba(0,255,255,0.1);color:var(--accent-cyan);font-family:var(--font-mono);font-size:13px;font-weight:700;margin-top:4px}
-
-
-/* ═══════════════ RIGHT SIDEBAR ═══════════════ */
-.sidebar-r{width:var(--rightbar-w);min-width:var(--rightbar-w);display:flex;flex-direction:column;gap:14px;padding:16px;overflow-y:auto;flex-shrink:0}
-.widget{border-radius:var(--radius-md);padding:16px}
-.w-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-.w-title{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.6px}
-.w-status{font-family:var(--font-mono);font-size:10px;padding:3px 10px;border-radius:4px;background:rgba(57,255,20,.08);color:var(--accent-emerald);border:1px solid rgba(57,255,20,.12)}
-.gauge-wrap{display:flex;flex-direction:column;align-items:center;padding:10px 0;position:relative}
-.gauge-val{position:absolute;font-family:var(--font-mono);font-size:34px;font-weight:700;color:var(--accent-emerald);top:48px;left:50%;transform:translateX(-50%)}
-.gauge-lbl{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-transform:uppercase;margin-top:6px}
-.donut-wrap{display:flex;flex-direction:column;align-items:center;padding:6px 0;position:relative}
-.donut-center{position:absolute;top:38px;left:50%;transform:translateX(-50%);text-align:center}
-.donut-val{font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--accent-emerald)}
-.donut-lbl{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary)}
-.test-stats{display:flex;gap:20px;margin-top:12px;justify-content:center}
-.ts-item{display:flex;align-items:center;gap:7px}
-.ts-dot{width:7px;height:7px;border-radius:50%}.ts-dot.em{background:var(--accent-emerald)}.ts-dot.co{background:var(--accent-coral)}
-.ts-label{font-size:11px;color:var(--text-secondary)}
-.ts-val{font-family:var(--font-mono);font-size:13px;font-weight:600}
-.cost-sum{display:flex;gap:24px;margin-bottom:12px}
-.cost-val{font-family:var(--font-mono);font-size:19px;font-weight:700;color:var(--accent-cyan)}
-.cost-lbl{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-transform:uppercase}
-.spark-box{height:56px;margin-top:6px}
-.spark-box svg{width:100%;height:100%}
-.cost-glow{stroke:var(--accent-cyan);stroke-width:1.5;fill:none;filter:drop-shadow(0 0 5px rgba(0,255,255,.3))}
-.cost-area{fill:url(#cGrad);opacity:.18}
-.tool-log{display:flex;flex-direction:column;gap:5px}
-.tl-entry{display:flex;align-items:center;gap:9px;padding:5px 7px;border-radius:4px;font-family:var(--font-mono);font-size:10px}
-.tl-entry:hover{background:var(--bg-hover)}
-.tl-tool{color:var(--accent-cyan);width:72px;flex-shrink:0}
-.tl-dtl{color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tl-time{color:var(--text-tertiary);font-size:9px;flex-shrink:0}
-
-/* ═══════════════ COMMAND CENTER ═══════════════ */
-.cmd-ctr{height:var(--cmd-h);display:flex;align-items:center;padding:0 20px;gap:14px;flex-shrink:0;z-index:100}
-.cmd-wrap{display:flex;align-items:center;flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:0 14px;transition:border-color .25s,box-shadow .25s}
-.cmd-wrap:focus-within{border-color:rgba(57,255,20,.25);box-shadow:0 0 0 3px rgba(57,255,20,.06)}
-.cmd-prompt{font-family:var(--font-mono);font-size:20px;color:var(--accent-emerald);margin-right:10px}
-.cmd-input{flex:1;background:transparent;border:none;outline:none;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;padding:12px 0}
-.cmd-input::placeholder{color:var(--text-tertiary)}
-.cmd-submit{width:34px;height:34px;border:none;border-radius:var(--radius-sm);background:rgba(57,255,20,.08);color:var(--accent-emerald);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .25s;flex-shrink:0;margin-left:8px}
-.cmd-submit:hover{background:rgba(57,255,20,.18);box-shadow:0 0 16px rgba(57,255,20,.18)}
-.chips{display:flex;gap:7px;flex-shrink:0}
-.chip{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:18px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-secondary);font-family:var(--font-mono);font-size:10px;cursor:pointer;transition:all .25s;white-space:nowrap}
-.chip:hover{border-color:rgba(57,255,20,.40);color:var(--accent-emerald);background:rgba(57,255,20,.06);box-shadow:0 0 14px rgba(57,255,20,.12)}
-.chip:active{transform:scale(.95)}
-.chip-icon{font-size:10px}
-
-/* ═══════════════ ANIMATIONS ═══════════════ */
-@keyframes nodeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-@keyframes bannerIn{from{opacity:0;transform:scale(.94);filter:blur(6px)}to{opacity:1;transform:scale(1);filter:blur(0)}}
-@keyframes shimmer{0%{background-position:-240px 0}100%{background-position:calc(240px + 100%)0}}
-.shimmer-bar{background:linear-gradient(90deg,var(--accent-emerald)0%,rgba(57,255,20,.55)40%,var(--accent-emerald)60%,rgba(57,255,20,.55)80%,var(--accent-emerald)100%);background-size:240px 100%;animation:shimmer 2s linear infinite}
-</style>
+<link rel="stylesheet" href="styles/main.css">
+<link rel="stylesheet" href="styles/components.css">
+<link rel="stylesheet" href="styles/animations.css">
 </head>
 <body>
-<div class="app">
 
-<!-- ═══ TOPBAR ═══ -->
-<header class="topbar glass">
-  <div class="tb-left">
-    <span class="tb-icon">⚡</span>
-    <span id="tb-project">nex-code</span>
-    <span class="tb-sep">›</span>
-    <span class="tb-branch" id="tb-branch">main</span>
-  </div>
-  <div class="tb-center">
-    <div class="model-rtr" id="model-rtr">
-      <span class="model-rtr-label">Model Router</span>
-      <span class="model-rtr-val" id="model-val">qwen3-coder:480b</span>
+<div class="app-shell">
+
+  <!-- ═══════════════ TOP NAVIGATION BAR ═══════════════ -->
+  <header class="topbar glass-panel">
+    <div class="topbar-platform-spacer" aria-hidden="true"></div>
+
+    <!-- Active project context -->
+    <div class="topbar-context" id="topbar-context">
+      <span class="topbar-context-label">Active Project</span>
+      <span class="topbar-context-project" id="tb-project">—</span>
+      <span class="topbar-context-sep">/</span>
+      <span class="topbar-context-branch" id="tb-branch-container">
+        <span class="git-icon">⎇</span>
+        <span id="tb-branch">—</span>
+      </span>
     </div>
-  </div>
-  <div class="tb-right">
-    <div class="health" id="health-text">Session Health: Excellent</div>
-    <div class="budget">
-      <span class="budget-val" id="budget-val">$0.00 / $10.00</span>
-      <div class="budget-bar"><div class="budget-fill" id="budget-fill" style="width:0%"></div></div>
-    </div>
-  </div>
-</header>
 
-<div class="main-content">
+    <!-- Right: model router + session -->
+    <div class="topbar-right">
+      <div class="model-router" id="model-router">
+        <span class="model-router-icon">◈</span>
+        <span class="model-router-label">Active Model</span>
+        <span class="model-router-value" id="model-val">—</span>
+        <span class="model-router-chevron">▾</span>
+      </div>
 
-<!-- ═══ LEFT SIDEBAR ═══ -->
-<aside class="sidebar-l glass">
-  <nav class="sidebar-nav" id="sidebar-nav">
-    <!-- Populated by sidebar.js -->
-  </nav>
-  <div class="side-profile">
-    <div class="prof-avatar">LX</div>
-    <div class="prof-info">
-      <div class="prof-name">Developer</div>
-      <div class="prof-plan">Pro Plan</div>
-    </div>
-  </div>
-</aside>
-
-<!-- ═══ CENTER ═══ -->
-<main class="center" id="center">
-  <div class="welcome" id="welcome">
-    <h1>⚡ nex-code</h1>
-    <p style="color:var(--text-secondary);margin-top:12px">Open-model-first CLI coding assistant</p>
-    <p style="color:var(--text-tertiary);margin-top:6px;font-size:12px">Open a project to start</p>
-    <button class="btn btn-p" style="margin-top:16px" onclick="window.nexAPI.openProject()">📂 Open Project…</button>
-  </div>
-  
-  <div class="timeline hidden" id="timeline">
-    <div class="tl-header">
-      <h2 id="timeline-title">Active Investigation</h2>
-      <div class="tl-status-pill" id="timeline-status-pill" style="display:none">
-        <span style="color:var(--accent-emerald)">●</span>
-        <span id="timeline-status-text">THINK...</span>
+      <div class="session-indicator">
+        <span class="session-dot idle" id="session-dot"></span>
+        <span id="session-label">Idle</span>
       </div>
     </div>
-    <div class="tl-track" id="tl-track">
-      <!-- Nodes added dynamically -->
-    </div>
-    
-    <div class="success hidden" id="success">
-      <div class="success-inner">
-        <div class="success-icon">✓</div>
-        <div class="success-content">
-          <div class="success-title">TASK COMPLETE</div>
-          <div class="success-detail">All phases completed successfully.</div>
-        </div>
-        <div class="success-acts">
-          <button class="btn btn-p" id="btn-open-pr">Wrap up PR</button>
-          <button class="btn btn-s" id="btn-keep-iterating">Keep Iterating</button>
+  </header>
+
+  <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+  <div class="main-content">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar-left glass-panel" id="sidebar-left">
+      <!-- Identity block -->
+      <div class="sidebar-identity">
+        <span class="nex-icon"><img src="assets/app-icon.svg" alt="" aria-hidden="true"></span>
+        <div class="sidebar-identity-text">
+          <span class="sidebar-identity-name">nex-code</span>
+          <span class="sidebar-identity-tagline">CLI-powered development workspace</span>
         </div>
       </div>
-    </div>
-  </div>
 
-  <div class="server-output hidden" id="server-output">
-    <div id="server-header" style="padding:12px 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);border-bottom:1px solid var(--border-thin)"></div>
-    <div id="server-stream" style="flex:1;overflow-y:auto;padding:12px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.7;white-space:pre-wrap"></div>
-    <div id="server-confirm" class="hidden" style="padding:12px 16px;border-top:1px solid var(--border-thin);background:var(--bg-elevated)">
-      <div id="confirm-question" style="color:var(--text-primary);margin-bottom:8px"></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-p" id="confirm-allow">✓ Allow</button>
-        <button class="btn btn-s" id="confirm-deny">✗ Deny</button>
+      <!-- Sections populated by sidebar.js -->
+      <nav class="sidebar-nav" id="sidebar-nav">
+        <!-- Filled by initSidebarComponents -->
+      </nav>
+    </aside>
+
+    <!-- CENTER STAGE -->
+    <main class="center-stage" id="center-stage">
+
+      <!-- Welcome Screen -->
+      <div class="welcome" id="welcome">
+        <div class="welcome-title">nex-code</div>
+        <div class="welcome-subtitle">CLI-powered AI development workspace</div>
+        <div class="welcome-message">
+          Open a repository to start a nex-code session. You can inspect code, create plans,
+          implement changes, run verification, use Git workflows, benchmark behavior, and deploy
+          from this workspace.
+        </div>
+        <div class="capability-grid" aria-label="nex-code workflow capabilities">
+          <span>Inspect</span>
+          <span>Plan</span>
+          <span>Implement</span>
+          <span>Verify</span>
+          <span>Benchmark</span>
+          <span>Git</span>
+          <span>Deploy</span>
+        </div>
+        <div class="welcome-status" id="welcome-status">
+          <span class="session-dot idle" style="width:7px;height:7px"></span>
+          <span>Ready — open a project to begin</span>
+        </div>
+        <div class="welcome-actions">
+          <button class="btn btn-primary" onclick="App.openProject()">Open Project</button>
+          <button class="btn btn-secondary" onclick="App.focusCommandInput()" title="Focus the command input below">Focus Terminal</button>
+        </div>
+        <div class="recent-projects" id="recent-projects">
+          <!-- Populated by sidebar.js when project history is available -->
+        </div>
       </div>
-    </div>
-  </div>
-</main>
 
-<!-- ═══ RIGHT SIDEBAR ═══ -->
-<aside class="sidebar-r">
-  <div class="widget glass">
-    <div class="w-header"><span class="w-title">Project Status</span><span class="w-status" id="safety-status">Unknown</span></div>
-    <div class="gauge-wrap">
-      <svg viewBox="0 0 120 120" width="120" height="120">
-        <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="2"/>
-        <circle cx="60" cy="60" r="52" fill="none" stroke="url(#gGrad)" stroke-width="2" stroke-linecap="round"
-          stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)" id="gauge-arc"/>
-        <defs><linearGradient id="gGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="var(--accent-coral)"/><stop offset="50%" stop-color="var(--accent-teal)"/><stop offset="100%" stop-color="var(--accent-emerald)"/>
-        </linearGradient></defs>
-      </svg>
-      <div class="gauge-val" id="gauge-val">--</div>
-      <div class="gauge-lbl">Score</div>
-    </div>
+      <!-- Task Complete Banner -->
+      <div class="task-complete hidden" id="task-complete">
+        <div class="task-complete-header">
+          <div class="task-complete-icon">✓</div>
+          <div class="task-complete-title" id="complete-title">Task Complete</div>
+        </div>
+        <div class="task-complete-body" id="complete-body"></div>
+        <div class="task-complete-actions" id="complete-actions"></div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline hidden" id="timeline">
+        <div class="timeline-status-pill" id="timeline-status-pill" style="display:none">
+          <span class="session-dot active" style="width:6px;height:6px"></span>
+          <span id="timeline-status-text"></span>
+        </div>
+        <div class="timeline-track" id="timeline-track"></div>
+      </div>
+
+      <!-- Server Output -->
+      <div class="server-output collapsed" id="server-output">
+        <button class="server-output-header" id="server-output-toggle" type="button" aria-expanded="false" aria-controls="server-output-body">
+          <span>Server Log</span>
+          <span class="server-output-chevron" aria-hidden="true">›</span>
+        </button>
+        <div class="server-output-body" id="server-output-body">
+          <div class="server-output-stream" id="server-stream"></div>
+          <div class="server-confirm hidden" id="server-confirm">
+            <div class="confirm-question" id="confirm-question"></div>
+            <div class="confirm-actions">
+              <button class="btn btn-success btn-sm" id="confirm-allow">Allow</button>
+              <button class="btn btn-danger btn-sm" id="confirm-deny">Deny</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside class="sidebar-right glass-panel" id="sidebar-right">
+
+      <!-- Session Status Widget -->
+      <div class="widget">
+        <div class="widget-header">
+          <span class="widget-title">Session Status</span>
+          <span class="widget-badge info" id="session-state-badge">Idle</span>
+        </div>
+        <div class="session-status-row">
+          <span class="status-icon">◈</span>
+          <span class="status-label">State</span>
+          <span class="status-value" id="ss-state">Idle</span>
+        </div>
+        <div class="session-status-row">
+          <span class="status-icon">⚡</span>
+          <span class="status-label">Confidence</span>
+          <span class="status-value" id="ss-confidence">—</span>
+        </div>
+        <div class="session-status-row">
+          <span class="status-icon">⌛</span>
+          <span class="status-label">Last Action</span>
+          <span class="status-value" id="ss-last-action">—</span>
+        </div>
+      </div>
+
+      <!-- Model Activity Widget -->
+      <div class="widget">
+        <div class="widget-header">
+          <span class="widget-title">Model Activity</span>
+        </div>
+        <div id="model-activity-container">
+          <!-- Populated by right-panel.js -->
+        </div>
+      </div>
+
+      <!-- Verification Widget -->
+      <div class="widget">
+        <div class="widget-header">
+          <span class="widget-title">Verification</span>
+          <span class="widget-badge" id="verify-badge">Not Run</span>
+        </div>
+        <div class="verification-row">
+          <span class="vr-label">Tests run</span>
+          <span class="vr-value not-run" id="vr-tests-run">No</span>
+        </div>
+        <div class="verification-row">
+          <span class="vr-label">Passed</span>
+          <span class="vr-value" id="vr-passed">0</span>
+        </div>
+        <div class="verification-row">
+          <span class="vr-label">Failed</span>
+          <span class="vr-value" id="vr-failed">0</span>
+        </div>
+        <div class="verification-row">
+          <span class="vr-label">Changes</span>
+          <span class="vr-value" id="vr-changes">None</span>
+        </div>
+        <div class="verification-row">
+          <span class="vr-label">Status</span>
+          <span class="vr-value not-run" id="vr-status">Not verified</span>
+        </div>
+      </div>
+
+      <!-- Tool Actions Widget -->
+      <div class="widget">
+        <div class="widget-header">
+          <span class="widget-title">Tool Actions</span>
+        </div>
+        <div id="tool-actions-container">
+          <!-- Populated by right-panel.js -->
+        </div>
+      </div>
+
+    </aside>
   </div>
 
-  <div class="widget glass">
-    <div class="w-header"><span class="w-title">Test Summary</span></div>
-    <div class="donut-wrap">
-      <svg viewBox="0 0 100 100" width="100" height="100">
-        <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="2"/>
-        <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent-emerald)" stroke-width="2"
-          stroke-dasharray="251.3" stroke-dashoffset="251.3" stroke-linecap="round" id="donut-arc"/>
-      </svg>
-      <div class="donut-center"><div class="donut-val" id="donut-passed">0</div><div class="donut-lbl">passed</div></div>
+  <!-- ═══════════════ COMMAND CENTER ═══════════════ -->
+  <footer class="command-center glass-heavy">
+    <div class="command-input-wrap">
+      <span class="command-prompt-icon">
+        <span class="command-prompt-symbol">›</span>
+      </span>
+      <input type="text" class="command-input" id="cmd-input"
+        placeholder="Ask nex-code or enter a command…" autofocus>
+      <button class="command-submit-btn" id="cmd-submit" title="Send command" aria-label="Send command">
+        <span class="command-submit-label">Run</span>
+        <span class="command-submit-symbol">↵</span>
+      </button>
     </div>
-    <div class="test-stats">
-      <div class="ts-item"><div class="ts-dot em"></div><span class="ts-label">Passed</span><span class="ts-val" id="stat-passed">0</span></div>
-      <div class="ts-item"><div class="ts-dot co"></div><span class="ts-label">Failed</span><span class="ts-val" id="stat-failed">0</span></div>
+    <div class="shortcut-chips" id="command-chips">
+      <!-- Populated by command-palette.js -->
     </div>
-  </div>
-
-  <div class="widget glass">
-    <div class="w-header"><span class="w-title">Cost &amp; Usage</span></div>
-    <div class="cost-sum">
-      <div><div class="cost-val" id="cost-tokens">0</div><div class="cost-lbl">tokens</div></div>
-      <div><div class="cost-val" id="cost-requests">0</div><div class="cost-lbl">requests</div></div>
-    </div>
-    <div class="spark-box" id="spark-box"></div>
-  </div>
-
-  <div class="widget glass">
-    <div class="w-header"><span class="w-title">Recent Tool Actions</span></div>
-    <div class="tool-log" id="tool-log"></div>
-  </div>
-</aside>
+  </footer>
 
 </div>
 
-<!-- ═══ COMMAND CENTER ═══ -->
-<footer class="cmd-ctr glass-heavy">
-  <div class="cmd-wrap">
-    <span class="cmd-prompt">❯</span>
-    <input type="text" class="cmd-input" id="cmd-input" placeholder="Ask nex-code anything..." autofocus>
-    <button class="cmd-submit" id="cmd-submit">➤</button>
-  </div>
-  <div class="chips" id="command-chips">
-    <!-- Populated by app.js -->
-  </div>
-</footer>
-
-</div>
-
+<!-- ═══════════════ SCRIPTS ═══════════════ -->
 <script src="js/components/topbar.js"></script>
 <script src="js/components/sidebar.js"></script>
 <script src="js/components/agentic-timeline.js"></script>
 <script src="js/components/right-panel.js"></script>
 <script src="js/components/command-palette.js"></script>
 <script src="js/app.js"></script>
+
 </body>
 </html>

@@ -299,8 +299,12 @@ function invalidateCaches() {
     // Ignore if agent module not loaded yet
   }
   try {
-    const { invalidateTokenRatioCache } = require("../context-engine");
+    const {
+      invalidateTokenRatioCache,
+      invalidateFitToContextCache,
+    } = require("../context-engine");
     invalidateTokenRatioCache();
+    invalidateFitToContextCache();
   } catch {
     // Ignore if context-engine not loaded yet
   }

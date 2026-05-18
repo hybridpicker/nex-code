@@ -12,6 +12,7 @@ const {
   compactMessages,
   formatMessagesForSummary,
   resetCompactionFailures,
+  buildTaskAnchor,
   COMPACTION_ENABLED,
   COMPACTION_MIN_MESSAGES,
   COMPACTION_SUMMARY_BUDGET,
@@ -47,8 +48,30 @@ describe("compactor.js", () => {
     it("truncates long content to 500 chars", () => {
       const messages = [{ role: "user", content: "x".repeat(1000) }];
       const result = formatMessagesForSummary(messages);
-      // [user] prefix + 500 chars
-      expect(result.length).toBeLessThan(600);
+      // User messages are task-critical and get a larger budget.
+      expect(result).toContain("x".repeat(1000));
+    });
+
+    it("keeps the original user task when later tool output mentions another bug", () => {
+      const task =
+        "Please make a minor HTML/frontend change: add remaining kcal to the nutrition ring. " +
+        "Do not work on backend routes. " +
+        "x".repeat(900);
+      const messages = [
+        { role: "user", content: task },
+        { role: "assistant", content: "I'll inspect the frontend." },
+        {
+          role: "tool",
+          content:
+            "Large log noise: TypeError crash in routes/ask.js " +
+            "y".repeat(2000),
+        },
+      ];
+
+      const result = formatMessagesForSummary(messages);
+      expect(result).toContain("add remaining kcal to the nutrition ring");
+      expect(result).toContain("Do not work on backend routes");
+      expect(result).toContain("routes/ask.js");
     });
 
     it("includes tool_calls names", () => {
@@ -211,6 +234,48 @@ describe("compactor.js", () => {
       const result = await compactMessages(messages);
       expect(result).not.toBeNull();
       expect(result.tokensRemoved).toBeGreaterThan(0);
+    });
+
+    it("prepends deterministic task anchor to compacted summaries", async () => {
+      callChat.mockResolvedValueOnce({
+        content:
+          "<summary>Investigated noisy logs mentioning routes/ask.js.</summary>",
+      });
+
+      const messages = [
+        {
+          role: "user",
+          content:
+            "Add remaining kcal to the nutrition ring in workflow.html. Do not fix routes/ask.js.",
+        },
+        ...Array.from({ length: 7 }, (_, i) => ({
+          role: i % 2 === 0 ? "assistant" : "tool",
+          content: `routes/ask.js crash noise ${i}: ${"z".repeat(200)}`,
+        })),
+      ];
+
+      const result = await compactMessages(messages);
+      expect(result.message.content).toContain("Current Task Anchor");
+      expect(result.message.content).toContain(
+        "Add remaining kcal to the nutrition ring",
+      );
+      expect(result.message.content).toContain("Do not fix routes/ask.js");
+    });
+  });
+
+  describe("buildTaskAnchor()", () => {
+    it("ignores synthetic user messages when choosing the active task", () => {
+      const anchor = buildTaskAnchor([
+        { role: "user", content: "Add remaining kcal to the nutrition ring" },
+        { role: "user", content: "[SYSTEM] Context warning" },
+        {
+          role: "user",
+          content: "[RESUME AFTER COMPRESSION] Continue in routes/ask.js",
+        },
+      ]);
+
+      expect(anchor).toContain("Add remaining kcal to the nutrition ring");
+      expect(anchor).not.toContain("Continue in routes/ask.js");
     });
   });
 

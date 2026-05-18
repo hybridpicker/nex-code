@@ -59,6 +59,100 @@ function allUserText(messages) {
     .join("\n\n");
 }
 
+function buildWriteReadThenNullResponse(messages) {
+  if (hasToolResult(messages, "recover-read-1")) return null;
+  if (hasToolResult(messages, "recover-write-1")) {
+    return {
+      content:
+        "Reading back the edited file before simulating a missing final response.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "headless-recovered.txt" },
+          "recover-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Writing a file for the headless recovery scenario.",
+    tool_calls: [
+      toolCall(
+        "write_file",
+        { path: "headless-recovered.txt", content: "stable edit\n" },
+        "recover-write-1",
+      ),
+    ],
+  };
+}
+
+function buildFailedWriteReadAbortResponse(messages) {
+  if (hasToolResult(messages, "failed-read-1")) {
+    return {
+      content: "Ending after failed edit and readback.",
+      tool_calls: [],
+    };
+  }
+  if (hasToolResult(messages, "failed-edit-1")) {
+    return {
+      content: "Reading the file after a failed edit attempt.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "headless-failed.txt" },
+          "failed-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Attempting an edit that will fail before readback.",
+    tool_calls: [
+      toolCall(
+        "edit_file",
+        {
+          path: "headless-failed.txt",
+          old_text: "missing old text",
+          new_text: "changed\n",
+        },
+        "failed-edit-1",
+      ),
+    ],
+  };
+}
+
+function buildWriteReadThenQuestionResponse(messages) {
+  if (hasToolResult(messages, "question-read-1")) {
+    return {
+      content:
+        "What would you like me to do with src/lib/request-handler.js?",
+      tool_calls: [],
+    };
+  }
+  if (hasToolResult(messages, "question-write-1")) {
+    return {
+      content: "Reading back the edited file before asking a confused question.",
+      tool_calls: [
+        toolCall(
+          "read_file",
+          { path: "question-recovered.txt" },
+          "question-read-1",
+        ),
+      ],
+    };
+  }
+  return {
+    content: "Writing a file for the confused-question recovery scenario.",
+    tool_calls: [
+      toolCall(
+        "write_file",
+        { path: "question-recovered.txt", content: "stable edit\n" },
+        "question-write-1",
+      ),
+    ],
+  };
+}
+
 // Process-local state for deterministic multi-turn flows.
 // Headless CLI runs are single-task/single-session per process.
 let _mockSessionState = null;
@@ -252,6 +346,7 @@ function detectScenario(promptText) {
   if (/Scenario E|legacy callback processor|nested callback/i.test(text))
     return "e";
   if (/mocked server environment|nginx/i.test(text)) return "c";
+  if (/desktop verification ok/i.test(text)) return "desktop-verification";
   if (/discount|node\s+src\/main\.js/i.test(text)) return "b";
   if (/async\s*\/\s*await|Refactor\s+app\.js/i.test(text)) return "a";
   if (/tool budget|budget stop/i.test(text)) return "d";
@@ -292,6 +387,39 @@ function buildDeterministicResponse(messages) {
       content:
         "Final report: the CLI handled a malformed tool call without hanging. " +
         "The tool arguments were not valid JSON, so execution was blocked and the session concluded safely.",
+      tool_calls: [],
+    };
+  }
+
+  if (stableScenario === "desktop-verification") {
+    const stepFromMessages = hasToolResult(messages, "dv1") ? 1 : 0;
+    state.lastStep = Math.max(state.lastStep, stepFromMessages);
+    if (/exact verification command has now run successfully/i.test(userHistory)) {
+      return {
+        content:
+          "Created src/main.js. Verification: node src/main.js (passed).",
+        tool_calls: [],
+      };
+    }
+    if (state.lastStep < 1) {
+      state.lastStep = 1;
+      return {
+        content: "Creating the requested tiny verification file.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            {
+              path: "src/main.js",
+              content: 'console.log("desktop verification ok");\n',
+            },
+            "dv1",
+          ),
+        ],
+      };
+    }
+    return {
+      content:
+        "Created src/main.js and am ready to report the exact verification result.",
       tool_calls: [],
     };
   }
@@ -957,14 +1085,158 @@ class MockProvider extends BaseProvider {
 
   async chat(messages, _tools, _options = {}) {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
+    if (process.env.NEX_MOCK_EXIT_ZERO_NO_TERMINAL === "1") process.exit(0);
+    if (process.env.NEX_MOCK_THINKING_NO_CONTENT === "1") return null;
+    if (process.env.NEX_MOCK_INCOMPLETE_VERIFY_RESPONSE === "1") {
+      return {
+        content:
+          "Verification incomplete.\n\nThe task explicitly required npm run lint, but that successful verification evidence was not collected before finalization. Stopping without reporting success.",
+        tool_calls: [],
+      };
+    }
+    if (process.env.NEX_MOCK_WRITE_THEN_NULL === "1") {
+      if (hasToolResult(messages, "write-null-1")) return null;
+      return {
+        content: "Writing a file before simulating a missing final response.",
+        tool_calls: [
+          toolCall(
+            "write_file",
+            { path: "write-null.txt", content: "changed\n" },
+            "write-null-1",
+          ),
+        ],
+      };
+    }
+    if (process.env.NEX_MOCK_WRITE_READ_THEN_NULL === "1") {
+      return buildWriteReadThenNullResponse(messages);
+    }
+    if (process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1") {
+      return buildFailedWriteReadAbortResponse(messages);
+    }
+    if (process.env.NEX_MOCK_WRITE_READ_THEN_QUESTION === "1") {
+      return buildWriteReadThenQuestionResponse(messages);
+    }
     return buildDeterministicResponse(messages);
   }
 
   async stream(messages, _tools, options = {}) {
     if (process.env.NEX_MOCK_NULL_RESPONSE === "1") return null;
+    if (process.env.NEX_MOCK_EXIT_ZERO_NO_TERMINAL === "1") process.exit(0);
+    if (process.env.NEX_MOCK_INCOMPLETE_VERIFY_RESPONSE === "1") {
+      const onToken =
+        typeof options.onToken === "function" ? options.onToken : () => {};
+      const content =
+        "Verification incomplete.\n\nThe task explicitly required npm run lint, but that successful verification evidence was not collected before finalization. Stopping without reporting success.";
+      onToken(content);
+      return { content, tool_calls: [] };
+    }
+    if (process.env.NEX_MOCK_THINKING_NO_CONTENT === "1") {
+      const onThinkingToken =
+        typeof options.onThinkingToken === "function"
+          ? options.onThinkingToken
+          : () => {};
+      const signal = options.signal;
+
+      // Simulate thinking tokens flowing without any text content.
+      // The stream stays open until aborted or a safety timeout fires.
+      const thinkInterval = setInterval(() => {
+        onThinkingToken();
+      }, 50);
+
+      try {
+        await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            clearInterval(thinkInterval);
+          };
+
+          const makeAbortError = () => {
+            const err = new Error("The operation was aborted");
+            err.name = "AbortError";
+            return err;
+          };
+
+          if (signal?.aborted) {
+            cleanup();
+            reject(makeAbortError());
+            return;
+          }
+
+          const onAbort = () => {
+            cleanup();
+            signal?.removeEventListener?.("abort", onAbort);
+            reject(makeAbortError());
+          };
+
+          if (signal?.addEventListener) {
+            signal.addEventListener("abort", onAbort);
+          }
+
+          // Safety timeout: 30 seconds
+          setTimeout(() => {
+            cleanup();
+            if (signal?.removeEventListener) {
+              try {
+                signal.removeEventListener("abort", onAbort);
+              } catch {
+                /* ignore */
+              }
+            }
+            resolve(null);
+          }, 30000);
+        });
+      } finally {
+        clearInterval(thinkInterval);
+      }
+      return null;
+    }
     const onToken =
       typeof options.onToken === "function" ? options.onToken : () => {};
-    const res = buildDeterministicResponse(messages);
+    const onThinkingToken =
+      typeof options.onThinkingToken === "function"
+        ? options.onThinkingToken
+        : () => {};
+    if (
+      process.env.NEX_MOCK_WRITE_READ_THEN_ABORT_STREAM === "1" &&
+      hasToolResult(messages, "recover-read-1")
+    ) {
+      onToken("Continuing after verified readback without committing a final message.");
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    if (
+      process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1" &&
+      hasToolResult(messages, "failed-read-1")
+    ) {
+      onToken("Continuing after failed edit readback without a final message.");
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    let res;
+    if (process.env.NEX_MOCK_WRITE_THEN_NULL === "1") {
+      res = hasToolResult(messages, "write-null-1")
+        ? null
+        : {
+            content: "Writing a file before simulating a missing final response.",
+            tool_calls: [
+              toolCall(
+                "write_file",
+                { path: "write-null.txt", content: "changed\n" },
+                "write-null-1",
+              ),
+            ],
+          };
+    } else if (process.env.NEX_MOCK_WRITE_READ_THEN_NULL === "1") {
+      res = buildWriteReadThenNullResponse(messages);
+    } else if (process.env.NEX_MOCK_FAILED_WRITE_READ_ABORT_STREAM === "1") {
+      res = buildFailedWriteReadAbortResponse(messages);
+    } else if (process.env.NEX_MOCK_WRITE_READ_THEN_QUESTION === "1") {
+      res = buildWriteReadThenQuestionResponse(messages);
+    } else {
+      res = buildDeterministicResponse(messages);
+    }
+    if (!res) return null;
 
     // Simulate streaming: emit content in a couple chunks for realism.
     const content = String(res.content || "");
@@ -972,6 +1244,10 @@ class MockProvider extends BaseProvider {
       content.length,
       Math.max(1, Math.floor(content.length / 2)),
     );
+    if (process.env.NEX_MOCK_THINKING_BEFORE_CONTENT === "1") {
+      onThinkingToken("thinking...");
+      onThinkingToken("still thinking...");
+    }
     if (content) {
       onToken(content.slice(0, mid));
       onToken(content.slice(mid));

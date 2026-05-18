@@ -1,138 +1,357 @@
 /**
- * desktop/renderer/js/components/agentic-timeline.js — Center Main Stage (Incremental Rendering)
+ * desktop/renderer/js/components/agentic-timeline.js — Center Stage Conversation
+ *
+ * Renders the chat-first center pane while preserving inline agent workflow
+ * details for each user turn.
  */
 
 "use strict";
 
 function initTimelineComponents(data) {
-  if (!data || !data.agenticNodes) return;
+  if (!data) return;
 
-  const track = document.getElementById("tl-track");
+  const track = document.getElementById("timeline-track");
   if (!track) return;
 
-  // Sync nodes: Add missing ones, update existing ones
-  data.agenticNodes.forEach((node) => {
-    let nodeEl = document.getElementById(`node-${node.id}`);
-    if (!nodeEl) {
-      nodeEl = document.createElement("div");
-      nodeEl.className = "tl-node";
-      nodeEl.id = `node-${node.id}`;
-      track.appendChild(nodeEl);
-      renderNodeContent(nodeEl, node);
-    } else {
-      // Only update if status or tokens changed significantly
-      // (For now, we trust app.js to update the detail text directly for tokens)
-      const currentStatus = nodeEl.dataset.status;
-      if (currentStatus !== node.status) {
-        renderNodeContent(nodeEl, node);
+  const items = data.conversationItems || [];
+  track.innerHTML = items.length > 0
+    ? items.map(renderConversationItem).join("")
+    : renderEmptyConversation();
+  scrollTimelineToBottom();
+
+  track.querySelectorAll("[data-inline-answer]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (window.App && typeof window.App.answerInlinePrompt === "function") {
+        window.App.answerInlinePrompt(decodeURIComponent(button.dataset.inlineAnswer || ""));
       }
-    }
+    });
   });
 
-  // Handle Success Banner
-  const banner = document.getElementById("success");
+  const banner = document.getElementById("task-complete");
   if (banner) {
-    const allDone = data.agenticNodes.length > 0 && data.agenticNodes.every(n => n.status === "complete");
+    const allDone =
+      data.sessionState === "complete" &&
+      data.agenticNodes &&
+      data.agenticNodes.length > 0 &&
+      data.agenticNodes.every((n) => n.status === "complete");
     if (allDone) {
       banner.classList.remove("hidden");
-    } else {
+    } else if (data.sessionState !== "complete") {
       banner.classList.add("hidden");
     }
   }
 
-  // Update Status Pill
   const pill = document.getElementById("timeline-status-pill");
   const pillText = document.getElementById("timeline-status-text");
   if (pill && pillText) {
-    const active = data.agenticNodes.find(n => n.status === "active");
+    const active = (data.agenticNodes || []).find((n) => n.status === "active");
     if (active) {
       pill.style.display = "flex";
-      pillText.textContent = `${active.phase}...`;
+      pillText.textContent = `${active.phase} phase in progress...`;
+    } else if (data.sessionState === "complete" && items.length > 0) {
+      pill.style.display = "flex";
+      pillText.textContent = "Conversation complete";
+    } else if (data.sessionState === "stalled" && items.length > 0) {
+      pill.style.display = "flex";
+      pillText.textContent = "Conversation stopped";
+    } else if (data.sessionState === "cancelled" && items.length > 0) {
+      pill.style.display = "flex";
+      pillText.textContent = "Conversation cancelled";
     } else {
       pill.style.display = "none";
     }
   }
 }
 
-function renderNodeContent(nodeEl, node) {
-  nodeEl.dataset.status = node.status;
-  const colorClass = node.color || "cyan";
-  const e = node.extras || {};
-
-  if (node.phase === "RESPONSE") {
-    nodeEl.className = "tl-node response animate-node-enter";
-    nodeEl.innerHTML = `
-      <div class="tl-card">
-        <div class="tl-content-box">
-          <div class="tl-detail">${typeof parseMarkdown === "function" ? parseMarkdown(node.tokens) : node.tokens}</div>
-        </div>
+function renderEmptyConversation() {
+  return `
+    <div class="conversation-empty-state">
+      <div class="conversation-empty-title">Start a conversation</div>
+      <div class="conversation-empty-copy">
+        Your prompt will stay visible here as the session unfolds, with
+        clarifications and progress attached to the same thread.
       </div>
-    `;
-    return;
-  }
-
-  let extraHTML = "";
-  if (node.phase === "PLAN") extraHTML = buildPlanExtrasOriginal(e);
-  else if (node.phase === "IMPLEMENT") extraHTML = buildImplementExtrasOriginal(e);
-  else if (node.phase === "VERIFY") extraHTML = buildVerifyExtrasOriginal(e);
-
-  nodeEl.innerHTML = `
-    <div class="tl-dot ${colorClass}"></div>
-    <div class="tl-card">
-      <div class="tl-card-hdr">
-        <span class="tl-phase ${colorClass}">${node.phase}</span>
-        ${node.status === "active" ? '<div class="tl-stop" onclick="window.nexAPI.sendCancel()"></div>' : '<span class="tl-check">✓</span>'}
-      </div>
-      <div class="tl-content-box">
-        <div class="tl-detail">${node.detail || ""}${node.tokens ? '\n' + node.tokens : ""}</div>
-      </div>
-      ${extraHTML}
     </div>
   `;
 }
 
-function buildPlanExtrasOriginal(e) {
+function renderConversationItem(item) {
+  if (item.kind === "assistant") return renderAssistantConversationItem(item);
+
+  const kindClass = item.kind === "assistant" ? "assistant" : "user";
+  const statusClass = item.status || "running";
+  return `
+    <div class="conversation-turn ${kindClass} ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
+      <div class="conversation-bubble-wrap">
+        <div class="conversation-turn-meta">
+          <span class="conversation-turn-role">${item.kind === "assistant" ? "Nex Code" : "You"}</span>
+          <span class="conversation-turn-time">${escapeConversationHtml(item.timestamp || "")}</span>
+          <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
+        </div>
+        <div class="conversation-turn-card">
+          <div class="conversation-turn-text">${formatConversationText(item.text)}</div>
+        </div>
+        ${renderAskUserCard(item.query)}
+        ${renderPhaseStack(item.phases || [])}
+        ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderAssistantConversationItem(item) {
+  const statusClass = item.status || "running";
+  const phases = Array.isArray(item.phases) ? item.phases : [];
+  const hasText = String(item.text || "").trim().length > 0;
+  const showFinalText = hasText && (statusClass !== "running" || phases.length === 0);
+
+  return `
+    <div class="conversation-turn assistant ${statusClass}" data-conversation-id="${escapeConversationHtml(item.id || "")}">
+      <div class="conversation-bubble-wrap">
+        <div class="conversation-turn-meta">
+          <span class="conversation-turn-role">Nex Code</span>
+          <span class="conversation-turn-time">${escapeConversationHtml(item.timestamp || "")}</span>
+          <span class="conversation-turn-state">${formatConversationState(item.status)}</span>
+        </div>
+        ${phases.length > 0 ? renderAssistantStepMessages(phases) : (!showFinalText ? renderAssistantStartingMessage() : "")}
+        ${showFinalText ? `
+          <div class="conversation-turn-card conversation-final-card">
+            <div class="conversation-turn-text conversation-final-text">${formatConversationText(item.text)}</div>
+          </div>
+        ` : ""}
+        ${renderAskUserCard(item.query)}
+        ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function updateTimelineConversationItem(item) {
+  if (!item || !item.id) return false;
+
+  const track = document.getElementById("timeline-track");
+  if (!track || typeof track.querySelectorAll !== "function") return false;
+
+  const turns = Array.from(track.querySelectorAll(".conversation-turn[data-conversation-id]"));
+  const turn = turns.find((node) => node.dataset && node.dataset.conversationId === item.id);
+  if (!turn) return false;
+
+  turn.classList.remove("running", "complete", "stopped", "error");
+  turn.classList.add(item.status || "running");
+
+  const state = turn.querySelector(".conversation-turn-state");
+  if (state) state.textContent = formatConversationState(item.status);
+
+  const text = turn.querySelector(".conversation-turn-text");
+  if (text) {
+    const html = formatConversationText(item.text);
+    if (text.innerHTML !== html) text.innerHTML = html;
+  } else if (item.text) {
+    return false;
+  }
+
+  scrollTimelineToBottom();
+  return true;
+}
+
+function scrollTimelineToBottom() {
+  const timeline = document.getElementById("timeline");
+  if (!timeline) return;
+
+  const run = () => {
+    timeline.scrollTop = timeline.scrollHeight;
+  };
+
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
+}
+
+function renderAskUserCard(query) {
+  if (!query || (query.status !== "pending" && query.status !== "answered")) return "";
+
+  const options = Array.isArray(query.options) ? query.options : [];
+  const buttons = query.status === "pending"
+    ? options.map((option) => `
+      <button
+        type="button"
+        class="conversation-option-btn"
+        data-inline-answer="${encodeURIComponent(option)}"
+      >${escapeConversationHtml(option)}</button>
+    `).join("")
+    : "";
+
+  return `
+    <div class="conversation-assistant-card">
+      <div class="conversation-assistant-label">nex-code needs clarification</div>
+      <div class="conversation-assistant-text">${formatConversationText(query.question)}</div>
+      ${query.answer ? `<div class="conversation-assistant-answer">Answered: ${escapeConversationHtml(query.answer)}</div>` : ""}
+      ${buttons ? `<div class="conversation-option-row">${buttons}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderPhaseStack(phases) {
+  if (!Array.isArray(phases) || phases.length === 0) return "";
+  return `
+    <div class="conversation-activity-stack">
+      ${phases.map(renderPhaseCard).join("")}
+    </div>
+  `;
+}
+
+function renderAssistantStartingMessage() {
+  return `
+    <div class="conversation-step-message active">
+      <div class="conversation-step-card">I am getting started...</div>
+    </div>
+  `;
+}
+
+function renderAssistantStepMessages(phases) {
+  return `
+    <div class="conversation-step-list">
+      ${phases.map(renderAssistantStepMessage).join("")}
+    </div>
+  `;
+}
+
+function renderAssistantStepMessage(node) {
+  const colorClass = node.color || "cyan";
+  const statusClass = node.status === "active" ? "active" : "complete";
+  return `
+    <div class="conversation-step-message ${statusClass} ${colorClass}">
+      <div class="conversation-step-card">
+        <span class="conversation-step-text">${escapeConversationHtml(formatStepMessage(node))}</span>
+        <span class="conversation-step-status">${node.status === "active" ? "now" : "done"}</span>
+      </div>
+      ${renderPhaseCard(node)}
+    </div>
+  `;
+}
+
+function formatStepMessage(node) {
+  const phase = String(node && node.phase || "WORK").toUpperCase();
+  const active = node && node.status === "active";
+  const messages = {
+    THINK: active ? "I am understanding the request..." : "I understood the request.",
+    PLAN: active ? "I am finding the right files..." : "I found the relevant files.",
+    IMPLEMENT: active ? "I am applying the change..." : "I applied the change.",
+    VERIFY: active ? "I am checking the result..." : "I checked the result.",
+    RESPONSE: active ? "I am writing the answer..." : "I prepared the answer.",
+    WORK: active ? "I am working through the next step..." : "I finished a work step.",
+  };
+  return messages[phase] || messages.WORK;
+}
+
+function renderPhaseCard(node) {
+  const colorClass = node.color || "cyan";
+  const statusText = node.status === "active" ? "running" : "complete";
+  const extras = renderPhaseExtras(node.phase, node.extras || {});
+  const content = node.tokens || "";
+  const detail = node.detail || "";
+  const hasBody = detail || content || extras;
+
+  return `
+    <details class="conversation-activity-item ${colorClass}">
+      <summary class="conversation-activity-summary">
+        <span class="conversation-activity-dot ${colorClass}" aria-hidden="true"></span>
+        <span class="conversation-activity-label">${escapeConversationHtml(formatActivityLabel(node.phase, detail))}</span>
+        <span class="conversation-activity-status">${statusText}</span>
+      </summary>
+      ${hasBody ? `
+        <div class="conversation-activity-body">
+          ${detail ? `<div class="conversation-phase-detail">${formatConversationText(detail)}</div>` : ""}
+          ${content ? `<div class="conversation-phase-output">${formatConversationText(content)}</div>` : ""}
+          ${extras}
+        </div>
+      ` : ""}
+    </details>
+  `;
+}
+
+function formatActivityLabel(phase, detail) {
+  const phaseText = String(phase || "WORK").toLowerCase();
+  const cleanDetail = String(detail || "").replace(/\s+/g, " ").trim();
+  if (!cleanDetail) return `${phaseText} activity`;
+  if (cleanDetail.length <= 80) return cleanDetail;
+  return `${cleanDetail.slice(0, 77)}...`;
+}
+
+function renderPhaseExtras(phase, extras) {
+  if (phase === "PLAN") return buildPlanExtras(extras);
+  if (phase === "IMPLEMENT") return buildImplementExtras(extras);
+  if (phase === "VERIFY") return buildVerifyExtras(extras);
+  return "";
+}
+
+function buildPlanExtras(e) {
   if (!e) return "";
   const diff = e.diff || {};
-  const totalDiff = (diff.added || 0) + (diff.modified || 0) + (diff.removed || 0);
-  let html = `<div class="term" style="margin-bottom:10px; margin-top:12px">${e.filesScanned || 0} files scanned</div>`;
+  const totalDiff =
+    (diff.added || 0) + (diff.modified || 0) + (diff.removed || 0);
+  let html = `<div class="conversation-phase-mini">${e.filesScanned || 0} files scanned</div>`;
   if (totalDiff > 0) {
-    html += '<div class="diff-sum">';
-    html += `<span class="add">+${diff.added || 0}</span>`;
-    html += `<span class="mod">~${diff.modified || 0}</span>`;
-    html += `<span class="rem">-${diff.removed || 0}</span>`;
-    html += "</div>";
-    const addPct = ((diff.added || 0) / totalDiff * 100).toFixed(0);
-    const modPct = ((diff.modified || 0) / totalDiff * 100).toFixed(0);
-    const remPct = ((diff.removed || 0) / totalDiff * 100).toFixed(0);
-    html += '<div class="diff-bar">';
-    html += `<div class="diff-bar-s add" style="width:${addPct}%"></div>`;
-    html += `<div class="diff-bar-s mod" style="width:${modPct}%"></div>`;
-    html += `<div class="diff-bar-s rem" style="width:${remPct}%"></div>`;
-    html += "</div>";
+    html += `<div class="diff-summary">`;
+    html += `<span class="diff-add">+${diff.added || 0}</span>`;
+    html += `<span class="diff-mod">~${diff.modified || 0}</span>`;
+    html += `<span class="diff-rem">-${diff.removed || 0}</span>`;
+    html += `</div>`;
   }
   return html;
 }
 
-function buildImplementExtrasOriginal(e) {
+function buildImplementExtras(e) {
   if (!e || !e.files) return "";
-  let html = '<div class="fp-list" style="margin-top:12px">';
+  let html = `<div class="fp-list">`;
   e.files.forEach((f) => {
     const pct = f.progress || 100;
     html += `
       <div class="fp-item">
-        <span class="fp-name">${f.name}</span>
+        <span class="fp-name">${escapeConversationHtml(f.name)}</span>
         <div class="fp-bar">
           <div class="fp-fill ${pct === 100 ? "shimmer-bar" : ""}" style="width:${pct}%"></div>
         </div>
         <span class="fp-pct">${pct}%</span>
       </div>`;
   });
-  html += "</div>";
+  html += `</div>`;
   return html;
 }
 
-function buildVerifyExtrasOriginal(e) {
+function buildVerifyExtras(e) {
   if (!e || !e.tests) return "";
-  return `<div class="test-mini" style="margin-top:12px"><span class="pass">${e.tests.passed} passed</span><span class="sep">|</span><span class="fail">${e.tests.failed} failed</span></div>`;
+  return `<div class="test-mini">
+    <span class="t-pass">${e.tests.passed} passed</span>
+    <span class="t-sep">|</span>
+    <span class="t-fail">${e.tests.failed} failed</span>
+  </div>`;
+}
+
+function formatConversationState(status) {
+  const map = {
+    running: "active",
+    complete: "complete",
+    stopped: "stopped",
+    error: "error",
+  };
+  return map[status] || "active";
+}
+
+function formatConversationText(text) {
+  if (!text) return "";
+  if (typeof parseMarkdown === "function") return parseMarkdown(text);
+  return escapeConversationHtml(text);
+}
+
+function escapeConversationHtml(text) {
+  if (typeof escapeHtml === "function") return escapeHtml(text);
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

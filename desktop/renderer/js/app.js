@@ -1,5 +1,5 @@
 /**
- * desktop/renderer/js/app.js — Main Application Controller (Restored & Modular)
+ * desktop/renderer/js/app.js — nex-code Main Application Controller
  *
  * Coordinates all UI components, manages state, and handles IPC
  * communication with the Electron main process.
@@ -9,48 +9,142 @@
 
 const AppState = {
   data: {
-    project: "nex-code",
-    branch: "main",
+    // nex-code identity
+    project: null,
+    branch: null,
+    workspace: null,
+    isGitRepository: false,
+    isDeployable: false,
+
+    // Session
+    sessionState: "idle",       // idle | running | complete | stalled | cancelled | error
+    sessionConfidence: null,    // High | Medium | Low
+    lastAction: null,
+
+    // Model
     model: "qwen3-coder:480b",
-    sessionHealth: "Excellent",
-    budget: { used: 0.0, limit: 10.0 },
-    tokens: { used: 0, limit: 1000000 },
-    requests: 0,
+    routerMode: "Phase routing",
+    availableModels: ["qwen3-coder:480b"],
+    modelState: null,
+    modelHistory: [],           // [{model, phase, purpose, requests, tokens, status, startTime, endTime}]
+    gitState: null,
+
+    // Agentic nodes (timeline)
     agenticNodes: [],
-    testResults: { passed: 0, failed: 0, total: 0 },
-    branchSafety: { score: 100, status: "Clean" },
+    conversationItems: [],
+
+    // Verification
+    testsRun: false,
+    testPassed: 0,
+    testFailed: 0,
+    verificationCommand: null,
+    verificationStatus: "not-run",
+    fileChanges: 0,
+
+    // Tool actions
     toolActions: [],
-    costHistory: [],
+
+    // Usage
+    tokens: { used: 0 },
+    requests: 0,
+
+    // Shortcuts
     shortcutChips: ["/plan", "/impl", "/verify", "/bench", "/git", "/deploy"],
+
+    // Project history
+    recentProjects: [],
   },
   activeNodeId: null,
 };
 
+window.AppState = AppState;
+
+let pendingServerConfirm = null;
+
+const ANSI_ESCAPE_RE = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+const SECRET_VALUE_RE = /\b([A-Z][A-Z0-9_]{2,}(?:TOKEN|SECRET|KEY|PASSWORD|PASS|AUTH|CREDENTIAL)[A-Z0-9_]*)\s*=\s*([^\s'"`]{8,})/g;
+const SECRET_BEARER_RE = /\b(Bearer|token|api[_-]?key)\s+([A-Za-z0-9._~+/=-]{16,})/gi;
+
+function stripAnsiSequences(text) {
+  return String(text || "").replace(ANSI_ESCAPE_RE, "");
+}
+
+function redactSensitiveDisplayText(text) {
+  return String(text || "")
+    .replace(SECRET_VALUE_RE, "$1=[REDACTED]")
+    .replace(SECRET_BEARER_RE, "$1 [REDACTED]");
+}
+
+function sanitizeDisplayText(text) {
+  return redactSensitiveDisplayText(stripAnsiSequences(text));
+}
+
+function getLatestConversationItemByKind(kind) {
+  for (let i = AppState.data.conversationItems.length - 1; i >= 0; i -= 1) {
+    const item = AppState.data.conversationItems[i];
+    if (item && item.kind === kind) return item;
+  }
+  return null;
+}
+
+function getActiveAssistantConversation() {
+  const activeConversation = getActiveConversation();
+  if (activeConversation && activeConversation.kind === "assistant") {
+    return activeConversation;
+  }
+  return getLatestConversationItemByKind("assistant");
+}
+
+function settleRunningUserConversations(status, message) {
+  AppState.data.conversationItems.forEach((item) => {
+    if (!item || item.kind !== "user" || item.status !== "running") return;
+    item.status = status;
+    if (message && (status === "error" || status === "stopped")) {
+      item.error = message;
+    }
+  });
+}
+
 // ─── Initialization ──────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Initial state fetch
+  AppState.data.recentProjects = loadRecentProjects();
+  setupServerLogToggle();
+
+  // Fetch initial state from main process
   try {
     const liveState = await window.nexAPI.getState();
     if (liveState) {
-      AppState.data.project = liveState.project || AppState.data.project;
-      AppState.data.branch = liveState.branch || AppState.data.branch;
+      if (liveState.project) {
+        AppState.data.project = liveState.project;
+        AppState.data.branch = liveState.branch || "unknown";
+        AppState.data.workspace = liveState.path || null;
+        AppState.data.isGitRepository = !!liveState.isGitRepository;
+        AppState.data.isDeployable = !!liveState.isDeployable;
+        if (liveState.gitState) applyGitState(liveState.gitState);
+        rememberRecentProject(liveState.path, liveState.project);
+        showProjectView();
+      }
+      if (liveState.modelState) applyModelState(liveState.modelState);
     }
   } catch (err) {
     console.warn("Failed to load initial state:", err.message);
   }
 
+  refreshModelState();
+
   // Initialize all components
   refreshAllComponents();
 
-  // Subscribe to events from main process
+  // Subscribe to IPC events
   subscribeToEvents();
   setupCommandInput();
+  setupGlobalShortcuts();
 });
 
 let refreshTimer = null;
 function refreshAllComponents() {
-  if (refreshTimer) return;
+  if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     if (typeof initTopBarComponents === "function") initTopBarComponents(AppState.data);
     if (typeof initSidebarComponents === "function") initSidebarComponents(AppState.data);
@@ -58,22 +152,29 @@ function refreshAllComponents() {
     if (typeof initRightPanelComponents === "function") initRightPanelComponents(AppState.data);
     if (typeof initCommandPaletteComponents === "function") initCommandPaletteComponents(AppState.data);
     refreshTimer = null;
-  }, 100); // 10fps is enough for UI state
+  }, 50);
 }
 
-// Separate high-frequency token update
-function refreshTokens() {
-  const tokensEl = document.getElementById("cost-tokens");
-  if (tokensEl && AppState.data.tokens) {
-    // Direct DOM update for token counter
-    tokensEl.textContent = formatTokenCountOriginal(AppState.data.tokens.used);
-  }
-}
+let conversationTextFrame = null;
+let pendingConversationTextItem = null;
+function refreshConversationText(item) {
+  if (!item) return;
+  pendingConversationTextItem = item;
 
-function formatTokenCountOriginal(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
-  return n.toString();
+  const scheduleFrame = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : function (callback) { return setTimeout(callback, 16); };
+
+  if (conversationTextFrame) return;
+  conversationTextFrame = scheduleFrame(() => {
+    const target = pendingConversationTextItem;
+    pendingConversationTextItem = null;
+    conversationTextFrame = null;
+
+    const updated = typeof updateTimelineConversationItem === "function"
+      && updateTimelineConversationItem(target);
+    if (!updated) refreshAllComponents();
+  });
 }
 
 // ─── Event Subscriptions ────────────────────────────────────────────────────
@@ -81,160 +182,163 @@ function formatTokenCountOriginal(n) {
 function subscribeToEvents() {
   if (!window.nexAPI) return;
 
-  // CLI Ready
+  if (window.nexAPI.onPlatform) {
+    window.nexAPI.onPlatform((d) => {
+      document.body.classList.toggle("platform-macos", d.platform === "darwin");
+      document.body.classList.toggle("platform-windows", d.platform === "win32");
+      document.body.classList.toggle("platform-linux", d.platform === "linux");
+    });
+  }
+
+  // Server ready
   window.nexAPI.onServerReady(() => {
-    addServerLog("nex-code ready — type a prompt below");
+    addServerLog("nex-code ready");
   });
 
-  // Project Opened
+  // Project opened
   window.nexAPI.onProjectOpened((d) => {
     AppState.data.project = d.project;
     AppState.data.branch = d.branch;
-    
-    // Switch from welcome to timeline
-    document.getElementById("welcome").classList.add("hidden");
-    document.getElementById("timeline").classList.remove("hidden");
-    
+    AppState.data.workspace = d.path || null;
+    AppState.data.isGitRepository = !!d.isGitRepository;
+    AppState.data.isDeployable = !!d.isDeployable;
+    if (d.gitState) applyGitState(d.gitState);
+    AppState.data.sessionState = "idle";
+    AppState.data.lastAction = "Project opened";
+    resetSessionActivity();
+    rememberRecentProject(d.path, d.project);
+
+    showProjectView();
     refreshAllComponents();
-    addServerLog(`Project opened: ${d.project} (branch: ${d.branch})`);
+    addServerLog(`Project opened: ${d.project} (branch: ${d.branch || "unknown"})`);
   });
 
-  // Token Streaming
+  if (window.nexAPI.onModelState) {
+    window.nexAPI.onModelState((d) => {
+      applyModelState(d);
+      refreshAllComponents();
+    });
+  }
+
+  if (window.nexAPI.onGitState) {
+    window.nexAPI.onGitState((d) => {
+      applyGitState(d);
+      refreshAllComponents();
+    });
+  }
+
+  // Token streaming
   window.nexAPI.onServerToken((d) => {
-    if (AppState.activeNodeId) {
-      updateActiveNode(d.text);
+    const text = sanitizeDisplayText(d.text);
+    const activeAssistant = getActiveAssistantConversation();
+    if (activeAssistant) {
+      activeAssistant.text = mergeAssistantStreamText(
+        activeAssistant.text || "",
+        text,
+        d && d.id,
+      );
+      if (d && d.id) activeAssistant.streamId = d.id;
+      activeAssistant.status = "running";
+      refreshConversationText(activeAssistant);
     } else {
-      // Fallback to server output if no active agentic node
-      const stream = document.getElementById("server-stream");
-      if (stream) {
-        stream.textContent += d.text;
-        stream.scrollTop = stream.scrollHeight;
-      }
+      addServerLog(text);
     }
-    // Update token count
-    AppState.data.tokens.used += d.text.length;
-    refreshTokens();
+    AppState.data.tokens.used += text.length;
   });
 
-  // Tool Start
+  // Tool start
   window.nexAPI.onServerToolStart((d) => {
-    const action = { tool: d.tool, detail: "started", time: "now" };
-    AppState.data.toolActions.unshift(action);
-    if (AppState.data.toolActions.length > 20) AppState.data.toolActions.pop();
-    
+    AppState.data.sessionState = "running";
+    const action = upsertToolActionStart(d);
+    applyVerificationFromToolStart(d, action);
     AppState.data.requests += 1;
-    
-    // Add a node to timeline if it looks like a new phase
-    if (["grep_search", "glob", "read_file"].includes(d.tool) && !AppState.activeNodeId) {
-       startAgenticPhase("RESEARCH", "Exploring codebase...", "cyan");
-    }
+    AppState.data.lastAction = `${d.tool} started`;
 
+    ensureActivePhaseForTool(d.tool, action.detail);
+    addServerLog(`Tool: ${d.tool}`);
     refreshAllComponents();
   });
 
-  // Tool End
+  // Tool end
   window.nexAPI.onServerToolEnd((d) => {
-    const entry = AppState.data.toolActions.find(a => a.tool === d.tool && a.detail === "started");
-    if (entry) entry.detail = d.summary || (d.ok ? "completed" : "failed");
+    const action = completeToolAction(d);
+    applyVerificationFromToolEnd(d, action);
+    AppState.data.lastAction = `${d.tool} completed`;
+
+    updateActiveNodeWithToolResult(d.tool, action.detail, d.ok !== false);
     refreshAllComponents();
   });
 
-  // Confirm Request
   window.nexAPI.onServerConfirm((d) => {
-    const panel = document.getElementById("server-confirm");
+    if (d.tool === "ask_user") {
+      pendingServerConfirm = d;
+      attachAskUserPrompt(d);
+      refreshCommandInputState();
+      refreshAllComponents();
+      return;
+    }
+
+    const confirmBox = document.getElementById("server-confirm");
     const question = document.getElementById("confirm-question");
-    const output = document.getElementById("server-output");
-    
-    if (panel && question && output) {
-      output.classList.remove("hidden");
-      panel.classList.remove("hidden");
-      question.textContent = d.question;
-      
-      const actions = panel.querySelector(".confirm-actions") || panel;
-      // Clear old buttons except the template ones if any
-      actions.innerHTML = "";
-      
-      if (d.options && d.options.length > 0) {
-        // Render options as buttons
-        d.options.forEach(opt => {
-          const btn = document.createElement("button");
-          btn.className = "btn btn-p";
-          btn.style.marginRight = "8px";
-          btn.style.marginBottom = "8px";
-          btn.textContent = opt;
-          btn.onclick = () => {
-            window.nexAPI.sendConfirm(d.id, opt);
-            panel.classList.add("hidden");
-          };
-          actions.appendChild(btn);
-        });
-        
-        // Add custom answer input
-        const customWrap = document.createElement("div");
-        customWrap.style.marginTop = "12px";
-        customWrap.style.display = "flex";
-        customWrap.style.gap = "8px";
-        
-        const input = document.createElement("input");
-        input.type = "text";
-        input.className = "cmd-input";
-        input.style.background = "var(--bg-surface)";
-        input.style.border = "1px solid var(--border)";
-        input.placeholder = "Custom answer...";
-        
-        const sendBtn = document.createElement("button");
-        sendBtn.className = "btn btn-s";
-        sendBtn.textContent = "Send";
-        sendBtn.onclick = () => {
-          window.nexAPI.sendConfirm(d.id, input.value.trim() || "Yes");
-          panel.classList.add("hidden");
-        };
-        
-        customWrap.appendChild(input);
-        customWrap.appendChild(sendBtn);
-        actions.appendChild(customWrap);
-        input.focus();
-      } else {
-        // Standard Yes/No
-        const allowBtn = document.createElement("button");
-        allowBtn.className = "btn btn-p";
-        allowBtn.textContent = "✓ Allow";
-        allowBtn.onclick = () => { window.nexAPI.sendConfirm(d.id, true); panel.classList.add("hidden"); };
-        
-        const denyBtn = document.createElement("button");
-        denyBtn.className = "btn btn-s";
-        denyBtn.textContent = "✗ Deny";
-        denyBtn.onclick = () => { window.nexAPI.sendConfirm(d.id, false); panel.classList.add("hidden"); };
-        
-        actions.appendChild(allowBtn);
-        actions.appendChild(denyBtn);
-      }
-    }
+    const allow = document.getElementById("confirm-allow");
+    const deny = document.getElementById("confirm-deny");
+    if (!confirmBox || !question || !allow || !deny) return;
+
+    question.textContent = d.question || "Allow this action?";
+    confirmBox.classList.remove("hidden");
+    setServerLogExpanded(true);
+    allow.onclick = () => {
+      confirmBox.classList.add("hidden");
+      window.nexAPI.sendConfirm(d.id, true);
+    };
+    deny.onclick = () => {
+      confirmBox.classList.add("hidden");
+      window.nexAPI.sendConfirm(d.id, false);
+    };
   });
 
-  // Done / Error
-  window.nexAPI.onServerDone(() => {
-    if (AppState.activeNodeId) {
-      const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
-      if (node && node.tokens && node.tokens.length > 50) {
-        // If it's a substantive response, transform it into a beautiful RESPONSE node
-        node.phase = "RESPONSE";
-        node.status = "complete";
-        node.isMarkdown = true;
-      } else {
-        completeActiveNode();
-      }
+  // Server done
+  window.nexAPI.onServerDone((d) => {
+    completeActiveNode();
+    const success = d && d.success !== false && d.status !== "stalled";
+    const terminalState = getTerminalSessionState(d, success);
+    const activeAssistant = getActiveAssistantConversation();
+    const finalText = resolveFinalAssistantText(d, activeAssistant);
+    if (activeAssistant) {
+      activeAssistant.text = finalText;
+      activeAssistant.status = success ? "complete" : "stopped";
+      if (!success && d && d.summary) activeAssistant.error = d.summary;
     }
-    addServerLog("✓ Done");
+    AppState.data.sessionState = terminalState;
+    AppState.data.sessionConfidence = success ? "High" : "Low";
+    AppState.data.lastAction = success
+      ? "Task complete"
+      : (d.summary || (terminalState === "cancelled" ? "Run cancelled" : "Stopped without completing the task"));
+
+    if (success) {
+      showTaskComplete();
+      completeActiveConversation();
+      settleRunningUserConversations("complete");
+    } else {
+      hideTaskComplete();
+      const stopMessage = d.summary || AppState.data.lastAction;
+      markActiveConversationStopped(stopMessage);
+      settleRunningUserConversations("stopped", stopMessage);
+      markRunningToolsInterrupted(terminalState, stopMessage);
+    }
+    pendingServerConfirm = null;
+    refreshCommandInputState();
+    refreshGitState();
+    refreshModelState();
+
     refreshAllComponents();
-    
-    // Smooth scroll to bottom
-    const center = document.getElementById("center");
-    if (center) center.scrollTo({ top: center.scrollHeight, behavior: "smooth" });
+    addServerLog(success ? "Task complete" : (d.summary || "Run stopped"));
   });
 
+  // Server error
   window.nexAPI.onServerError((d) => {
-    addServerLog(`✗ Error: ${d.message}`);
+    AppState.data.sessionState = "error";
+    AppState.data.lastAction = `Error: ${d.message}`;
     if (AppState.activeNodeId) {
       const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
       if (node) {
@@ -242,50 +346,631 @@ function subscribeToEvents() {
         node.detail += `\nError: ${d.message}`;
       }
       AppState.activeNodeId = null;
-      refreshAllComponents();
     }
+    markActiveConversationError(d.message);
+    settleRunningUserConversations("error", d.message);
+    pendingServerConfirm = null;
+    refreshCommandInputState();
+    refreshAllComponents();
+    addServerLog(`Error: ${d.message}`);
   });
+
+  if (window.nexAPI.onServerClosed) {
+    window.nexAPI.onServerClosed((d) => {
+      if (AppState.data.sessionState !== "running") return;
+      const code = d && typeof d.code === "number" ? d.code : null;
+      AppState.data.sessionState = code === 0 ? "stalled" : "error";
+      AppState.data.lastAction = code === 0
+        ? "Server closed before the run completed"
+        : `Server exited before the run completed${code === null ? "" : ` (code ${code})`}`;
+      markActiveConversationStopped(AppState.data.lastAction);
+      settleRunningUserConversations(AppState.data.sessionState === "error" ? "error" : "stopped", AppState.data.lastAction);
+      pendingServerConfirm = null;
+      markRunningToolsInterrupted(AppState.data.sessionState === "error" ? "error" : "stalled", AppState.data.lastAction);
+      refreshCommandInputState();
+      refreshAllComponents();
+    });
+  }
+
+  // Agentic node event
+  window.nexAPI.onAgenticNode((d) => {
+    const id = "node-" + Date.now();
+    const node = {
+      id: id,
+      phase: d.phase || "THINK",
+      detail: d.detail || "",
+      color: d.color || "cyan",
+      status: "active",
+      tokens: "",
+      extras: d.extras || {}
+    };
+    AppState.data.agenticNodes.push(node);
+    attachNodeToActiveConversation(node);
+    AppState.activeNodeId = id;
+    AppState.data.sessionState = "running";
+    AppState.data.lastAction = `${node.phase} phase started`;
+
+    // Record model activity
+    if (AppState.data.model) {
+      AppState.data.modelHistory.push({
+        model: AppState.data.model,
+        phase: node.phase,
+        purpose: getPhasePurpose(node.phase),
+        requests: AppState.data.requests || 1,
+        tokens: 0,
+        status: "active",
+        startTime: new Date().toISOString(),
+        endTime: null,
+      });
+    }
+
+    showProjectView();
+    refreshAllComponents();
+  });
+
+  // State updated
+  window.nexAPI.onStateUpdated((d) => {
+    if (d.sessionState) AppState.data.sessionState = d.sessionState;
+    if (d.model) AppState.data.model = d.model;
+    if (d.modelState) applyModelState(d.modelState);
+    if (d.branch) AppState.data.branch = d.branch;
+    if (d.isGitRepository !== undefined) AppState.data.isGitRepository = !!d.isGitRepository;
+    if (d.gitState) applyGitState(d.gitState);
+    refreshAllComponents();
+  });
+}
+
+function applyModelState(modelState) {
+  if (!modelState) return;
+  AppState.data.modelState = modelState;
+  AppState.data.routerMode = modelState.routerMode || "Phase routing";
+  AppState.data.availableModels = (modelState.readyModels || []).map((model) => model.spec);
+  if (modelState.activeModel) {
+    AppState.data.model = modelState.activeModel.id || modelState.activeModel.spec;
+  } else if (!modelState.hasConfiguredModel) {
+    AppState.data.model = "No model configured";
+  }
+}
+
+function applyGitState(gitState) {
+  if (!gitState) return;
+  AppState.data.gitState = gitState;
+  AppState.data.isGitRepository = !!gitState.isGitRepository;
+  AppState.data.branch = gitState.branch || AppState.data.branch;
+}
+
+function getTerminalSessionState(donePayload, success) {
+  if (success) return "complete";
+  if (donePayload && donePayload.status === "cancelled") return "cancelled";
+  if (donePayload && donePayload.status === "error") return "error";
+  return "stalled";
+}
+
+async function refreshModelState() {
+  if (!window.nexAPI || !window.nexAPI.getModelState) return;
+  try {
+    const modelState = await window.nexAPI.getModelState();
+    applyModelState(modelState);
+    refreshAllComponents();
+  } catch (err) {
+    console.warn("Failed to load model state:", err.message);
+  }
+}
+
+async function refreshGitState() {
+  if (!window.nexAPI || !window.nexAPI.getGitState) return;
+  try {
+    const gitState = await window.nexAPI.getGitState();
+    applyGitState(gitState);
+    refreshAllComponents();
+  } catch (err) {
+    console.warn("Failed to load Git state:", err.message);
+  }
+}
+
+function getPhasePurpose(phase) {
+  const map = {
+    "THINK": "Understanding request",
+    "PLAN": "Architectural planning",
+    "IMPLEMENT": "Code implementation",
+    "VERIFY": "Verification & testing",
+    "RESPONSE": "Generating response",
+  };
+  return map[phase] || "General processing";
+}
+
+// ─── View Transitions ───────────────────────────────────────────────────────
+
+function showProjectView() {
+  document.getElementById("welcome").classList.add("hidden");
+  document.getElementById("timeline").classList.remove("hidden");
+}
+
+function focusCommandInput(prefill) {
+  const input = document.getElementById("cmd-input");
+  if (!input) return;
+  if (prefill) input.value = prefill;
+  input.focus();
+}
+
+function logUiMessage(text) {
+  const output = document.getElementById("server-output");
+  const stream = document.getElementById("server-stream");
+  if (!output || !stream) return;
+  output.classList.remove("hidden");
+  const div = document.createElement("div");
+  div.className = "log-line";
+  div.textContent = text;
+  stream.appendChild(div);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function resetSessionActivity() {
+  AppState.data.agenticNodes = [];
+  AppState.data.conversationItems = [];
+  AppState.data.toolActions = [];
+  AppState.data.modelHistory = [];
+  AppState.data.testsRun = false;
+  AppState.data.testPassed = 0;
+  AppState.data.testFailed = 0;
+  AppState.data.verificationCommand = null;
+  AppState.data.verificationStatus = "not-run";
+  AppState.data.fileChanges = 0;
+  AppState.activeNodeId = null;
+  AppState.activeConversationId = null;
+  pendingServerConfirm = null;
+  refreshCommandInputState();
+}
+
+function summarizeToolArgs(args) {
+  if (!args || typeof args !== "object") return "started";
+  const entries = Object.entries(args)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .slice(0, 2)
+    .map(([key, value]) => `${key}=${formatToolArgValue(value)}`);
+  return entries.length > 0 ? entries.join(" ") : "started";
+}
+
+function formatToolArgValue(value) {
+  if (typeof value === "string") {
+    const compact = sanitizeDisplayText(value).replace(/\s+/g, " ").trim();
+    return compact.length > 48 ? `${compact.slice(0, 45)}...` : compact;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.length
+      ? `[${formatToolArgValue(value[0])}${value.length > 1 ? ", ..." : ""}]`
+      : "[]";
+  }
+  return "{...}";
+}
+
+function normalizeToolCommand(command) {
+  return sanitizeDisplayText(command)
+    .replace(/\s+/g, " ")
+    .replace(/\s*&&\s*/g, " && ")
+    .trim();
+}
+
+function getToolCommand(toolPayload) {
+  const args = toolPayload && toolPayload.args;
+  if (!args || typeof args !== "object") return "";
+  return normalizeToolCommand(args.command || args.cmd || args.script || "");
+}
+
+function isVerificationCommand(command) {
+  const normalized = normalizeToolCommand(command);
+  if (!normalized) return false;
+  return /^(?:npm\s+(?:test|run\s+test(?::[\w.-]+)?)|pytest(?:\s|$)|cargo\s+test(?:\s|$)|go\s+test(?:\s|$)|node\s+src\/main\.js(?:\s|$))/i.test(normalized);
+}
+
+function getVerificationCommandFromTool(toolPayload) {
+  const tool = String(toolPayload && toolPayload.tool || "").toLowerCase();
+  if (!["bash", "shell", "terminal", "exec", "run_command"].includes(tool)) return "";
+  const command = getToolCommand(toolPayload);
+  return isVerificationCommand(command) ? command : "";
+}
+
+function parseVerificationCounts(summary, ok) {
+  const text = sanitizeDisplayText(summary);
+  let passed = ok === false ? 0 : 1;
+  let failed = ok === false ? 1 : 0;
+  const testsLine = text.match(/Tests?:[^\n]*(?:(\d+)\s+failed)?[^\n]*(?:(\d+)\s+passed)?/i);
+  const passedOnly = text.match(/\b(\d+)\s+(?:tests?\s+)?passed\b/i);
+  const failedOnly = text.match(/\b(\d+)\s+(?:tests?\s+)?failed\b/i);
+  if (testsLine || passedOnly || failedOnly) {
+    passed = passedOnly ? Number(passedOnly[1]) : 0;
+    failed = failedOnly ? Number(failedOnly[1]) : 0;
+  }
+  return { passed: passed, failed: failed };
+}
+
+function getToolActionMatchIndex(payload) {
+  const callId = payload && (payload.callId || payload.toolCallId || payload.invocationId);
+  if (callId) {
+    const exact = AppState.data.toolActions.findIndex((action) => action.callId === callId);
+    if (exact >= 0) return exact;
+  }
+
+  const messageId = payload && payload.id;
+  const tool = payload && payload.tool;
+  return AppState.data.toolActions.findIndex((action) => {
+    return action.status === "running"
+      && action.tool === tool
+      && (!messageId || action.messageId === messageId);
+  });
+}
+
+function upsertToolActionStart(payload) {
+  const callId = payload && (payload.callId || payload.toolCallId || payload.invocationId || null);
+  const action = {
+    callId: callId,
+    messageId: payload && payload.id,
+    tool: sanitizeDisplayText(payload && payload.tool),
+    detail: summarizeToolArgs(payload && payload.args),
+    command: getToolCommand(payload),
+    status: "running",
+    ok: null,
+    time: new Date().toLocaleTimeString(),
+  };
+
+  const existingIndex = getToolActionMatchIndex(payload);
+  if (existingIndex >= 0) {
+    AppState.data.toolActions[existingIndex] = Object.assign({}, AppState.data.toolActions[existingIndex], action);
+    return AppState.data.toolActions[existingIndex];
+  }
+
+  AppState.data.toolActions.unshift(action);
+  if (AppState.data.toolActions.length > 20) AppState.data.toolActions.pop();
+  return action;
+}
+
+function completeToolAction(payload) {
+  const existingIndex = getToolActionMatchIndex(payload);
+  const detail = sanitizeDisplayText(payload && payload.summary)
+    || ((payload && payload.ok === false) ? "failed" : "completed");
+  const update = {
+    callId: payload && (payload.callId || payload.toolCallId || payload.invocationId || null),
+    messageId: payload && payload.id,
+    tool: sanitizeDisplayText(payload && payload.tool),
+    detail: detail,
+    status: payload && payload.ok === false ? "error" : "complete",
+    ok: !(payload && payload.ok === false),
+    time: new Date().toLocaleTimeString(),
+  };
+
+  if (existingIndex >= 0) {
+    AppState.data.toolActions[existingIndex] = Object.assign({}, AppState.data.toolActions[existingIndex], update);
+    return AppState.data.toolActions[existingIndex];
+  }
+
+  AppState.data.toolActions.unshift(update);
+  if (AppState.data.toolActions.length > 20) AppState.data.toolActions.pop();
+  return update;
+}
+
+function markRunningToolsInterrupted(status, detail) {
+  AppState.data.toolActions.forEach((action) => {
+    if (!action || action.status !== "running") return;
+    action.status = status;
+    action.ok = false;
+    action.detail = sanitizeDisplayText(detail || "interrupted");
+  });
+}
+
+function applyVerificationFromToolStart(payload, action) {
+  const command = getVerificationCommandFromTool(payload);
+  if (!command) return;
+  AppState.data.testsRun = true;
+  AppState.data.verificationCommand = command;
+  AppState.data.verificationStatus = "running";
+  if (action) action.verification = true;
+}
+
+function applyVerificationFromToolEnd(payload, action) {
+  const command = (action && action.verification && action.command)
+    || getVerificationCommandFromTool(payload);
+  if (!command) return;
+  const ok = !(payload && payload.ok === false);
+  const counts = parseVerificationCounts(payload && payload.summary, ok);
+  AppState.data.testsRun = true;
+  AppState.data.testPassed = counts.passed;
+  AppState.data.testFailed = counts.failed;
+  AppState.data.verificationCommand = command;
+  AppState.data.verificationStatus = ok ? "passed" : "failed";
+}
+
+function mergeAssistantStreamText(currentText, incomingText, streamId) {
+  const current = String(currentText || "");
+  const incoming = String(incomingText || "");
+  if (!incoming) return current;
+
+  if (current && incoming === current) return collapseRepeatedAssistantText(current);
+  if (current && current.endsWith(incoming)) return collapseRepeatedAssistantText(current);
+  if (current && incoming.startsWith(current)) return collapseRepeatedAssistantText(incoming);
+
+  if (
+    streamId &&
+    current &&
+    incoming.length > current.length &&
+    incoming.includes(current)
+  ) {
+    return collapseRepeatedAssistantText(incoming);
+  }
+
+  return collapseRepeatedAssistantText(current + incoming);
+}
+
+function collapseRepeatedAssistantText(text) {
+  let value = String(text || "");
+
+  for (let i = 0; i < 3; i += 1) {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    if (trimmed.length % 2 !== 0) break;
+    const half = trimmed.length / 2;
+    const left = trimmed.slice(0, half).trim();
+    const right = trimmed.slice(half).trim();
+    if (!left || left !== right) break;
+    value = left;
+  }
+
+  return value;
+}
+
+function resolveFinalAssistantText(donePayload, activeAssistant) {
+  const streamed = activeAssistant && activeAssistant.text
+    ? collapseRepeatedAssistantText(activeAssistant.text.trim())
+    : "";
+
+  const response = donePayload && typeof donePayload.response === "string"
+    ? collapseRepeatedAssistantText(donePayload.response.trim())
+    : "";
+  if (response) {
+    if (!streamed) return response;
+    if (response === streamed) return streamed;
+    if (response.includes(streamed)) return collapseRepeatedAssistantText(response);
+    if (streamed.includes(response)) return streamed;
+    return response;
+  }
+
+  const summary = donePayload && typeof donePayload.summary === "string"
+    ? donePayload.summary.trim()
+    : "";
+  if (summary && shouldUseCompletionSummary(summary, streamed)) return summary;
+  if (streamed) return streamed;
+  if (summary) return summary;
+
+  return activeAssistant && activeAssistant.text ? activeAssistant.text : "";
+}
+
+function extractFinalAssistantText(donePayload, activeAssistant) {
+  return resolveFinalAssistantText(donePayload, activeAssistant);
+}
+
+function shouldUseCompletionSummary(summary, streamed) {
+  if (!summary || !streamed) return false;
+  if (summary === streamed || streamed.includes(summary) || summary.includes(streamed)) {
+    return false;
+  }
+  return /\b(completed|changed|fixed|updated|implemented|created|added|removed|verified)\b/i.test(summary);
+}
+
+function showTaskComplete() {
+  const banner = document.getElementById("task-complete");
+  const body = document.getElementById("complete-body");
+  const actions = document.getElementById("complete-actions");
+  if (!banner || !body || !actions) return;
+
+  banner.classList.remove("hidden");
+
+  const project = AppState.data.project || "this project";
+  const branch = AppState.data.branch || "unknown";
+
+  let summary = `<b>Active project:</b> ${escapeHtml(project)}<br>`;
+  summary += `<b>Branch:</b> ${escapeHtml(branch)}<br><br>`;
+
+  const nodes = AppState.data.agenticNodes;
+  if (nodes.length > 0) {
+    summary += `<b>Actions performed:</b><br>`;
+    nodes.forEach(n => {
+      summary += `&bull; ${escapeHtml(n.phase)}: ${escapeHtml(n.detail || "completed")}<br>`;
+    });
+  }
+
+  body.innerHTML = summary;
+
+  actions.innerHTML = `
+    <button class="btn btn-primary" onclick="App.continueIteration()">Continue Iteration</button>
+    <button class="btn btn-success" onclick="App.runVerification()">Run Verification</button>
+    <button class="btn btn-ghost" onclick="App.wrapUp()">Wrap Up</button>
+  `;
+}
+
+function hideTaskComplete() {
+  const banner = document.getElementById("task-complete");
+  if (banner) banner.classList.add("hidden");
+}
+
+function formatTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(0) + "k";
+  return String(n);
 }
 
 // ─── Markdown Parser ────────────────────────────────────────────────────────
 
 function parseMarkdown(text) {
   if (!text) return "";
-  let html = text
+  let html = escapeHtml(text)
     .replace(/^### (.*$)/gim, "<h3>$1</h3>")
     .replace(/^\* (.*$)/gim, "<li>$1</li>")
     .replace(/\*\*(.*)\*\*/gim, "<b>$1</b>")
-    .replace(/`(.*)`/gim, "<code>$1</code>")
+    .replace(/`([^`\n]+)`/gim, "<code>$1</code>")
     .replace(/\n\n/gim, "</p><p>");
-  
-  // Wrap li in ul
+
   html = html.replace(/(<li>.*<\/li>)/gim, "<ul>$1</ul>");
-  // Clean up adjacent uls
   html = html.replace(/<\/ul>\s*<ul>/gim, "");
-  
+
   return `<div class="md"><p>${html}</p></div>`;
 }
 
-// ─── UI Orchestration ───────────────────────────────────────────────────────
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function createConversationItem(kind, text, extra) {
+  return Object.assign({
+    id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: kind,
+    text: text || "",
+    status: "running",
+    timestamp: new Date().toLocaleTimeString(),
+    phases: [],
+    query: null,
+    error: null,
+  }, extra || {});
+}
+
+function appendConversationItem(item) {
+  AppState.data.conversationItems.push(item);
+  AppState.activeConversationId = item.id;
+  showProjectView();
+  refreshAllComponents();
+  return item;
+}
+
+function getActiveConversation() {
+  return AppState.data.conversationItems.find((item) => item.id === AppState.activeConversationId) || null;
+}
+
+function createUserConversationTurn(text, extra) {
+  return appendConversationItem(createConversationItem("user", text, extra));
+}
+
+function attachNodeToActiveConversation(node) {
+  const activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.phases.push(node);
+  activeConversation.status = "running";
+}
+
+function attachAskUserPrompt(confirmRequest) {
+  const activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) {
+    appendConversationItem(createConversationItem("assistant", confirmRequest.question, {
+      query: {
+        id: confirmRequest.id,
+        question: confirmRequest.question,
+        options: confirmRequest.options || [],
+        status: "pending",
+      },
+    }));
+    return;
+  }
+
+  activeConversation.query = {
+    id: confirmRequest.id,
+    question: confirmRequest.question,
+    options: confirmRequest.options || [],
+    status: "pending",
+  };
+}
+
+function markActiveConversationError(message) {
+  const activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "error";
+  activeConversation.error = message;
+}
+
+function completeActiveConversation() {
+  const activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "complete";
+  if (activeConversation.query && activeConversation.query.status === "pending") {
+    activeConversation.query.status = "dismissed";
+  }
+}
+
+function markActiveConversationStopped(message) {
+  const activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) return;
+  activeConversation.status = "stopped";
+  if (message) activeConversation.error = message;
+  if (activeConversation.query && activeConversation.query.status === "pending") {
+    activeConversation.query.status = "dismissed";
+  }
+}
+
+function refreshCommandInputState() {
+  const input = document.getElementById("cmd-input");
+  const submit = document.getElementById("cmd-submit");
+  const submitLabel = submit ? submit.querySelector(".command-submit-label") : null;
+  if (!input) return;
+
+  if (pendingServerConfirm && pendingServerConfirm.tool === "ask_user") {
+    input.placeholder = "Reply to nex-code…";
+    if (submitLabel) submitLabel.textContent = "Reply";
+  } else {
+    input.placeholder = "Ask nex-code or enter a command…";
+    if (submitLabel) submitLabel.textContent = "Run";
+  }
+}
+
+function submitAskUserAnswer(answer) {
+  if (!pendingServerConfirm || !window.nexAPI) return;
+
+  const trimmed = String(answer || "").trim();
+  if (!trimmed) return;
+
+  const activeConversation = getActiveConversation();
+  if (activeConversation && activeConversation.query) {
+    activeConversation.query.status = "answered";
+    activeConversation.query.answer = trimmed;
+  }
+
+  createUserConversationTurn(trimmed, { replyTo: pendingServerConfirm.id });
+  appendConversationItem(createConversationItem("assistant", "", {
+    status: "running",
+    replyTo: pendingServerConfirm.id,
+  }));
+  window.nexAPI.sendConfirm(pendingServerConfirm.id, trimmed);
+  pendingServerConfirm = null;
+  AppState.data.sessionState = "running";
+  AppState.data.lastAction = "Clarification answered";
+  refreshCommandInputState();
+  refreshAllComponents();
+}
+
+// ─── Agentic Phase Management ───────────────────────────────────────────────
 
 function startAgenticPhase(phase, detail, color) {
+  hideTaskComplete();
   const id = "node-" + Date.now();
   const node = {
     id: id,
     phase: phase,
     detail: detail,
-    color: color,
+    color: color || "cyan",
     status: "active",
     tokens: "",
     extras: {}
   };
   AppState.data.agenticNodes.push(node);
+  attachNodeToActiveConversation(node);
   AppState.activeNodeId = id;
-  
-  // Hide welcome, show timeline
-  document.getElementById("welcome").classList.add("hidden");
-  document.getElementById("timeline").classList.remove("hidden");
-  
+  AppState.data.sessionState = "running";
+  AppState.data.lastAction = `${phase} phase started`;
+
+  showProjectView();
   refreshAllComponents();
 }
 
@@ -293,36 +978,101 @@ function updateActiveNode(text) {
   const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
   if (node) {
     node.tokens = (node.tokens || "") + text;
-    // Update the DOM directly for performance
-    const nodeEl = document.querySelector(`#node-${node.id} .tl-detail`);
+    // Update DOM directly for performance
+    const nodeEl = document.getElementById(`node-${node.id}`);
     if (nodeEl) {
-      nodeEl.textContent = node.detail + "\n" + node.tokens;
-      const card = nodeEl.closest(".tl-card");
-      if (card) card.scrollTop = card.scrollHeight;
+      const detailEl = nodeEl.querySelector(".timeline-node-detail");
+      if (detailEl) {
+        detailEl.textContent = node.detail + "\n" + node.tokens;
+      }
     }
   }
+}
+
+function updateActiveNodeWithToolResult(toolName, detail, ok) {
+  const node = AppState.data.agenticNodes.find((n) => n.id === AppState.activeNodeId);
+  if (!node) return;
+  const summary = detail ? String(detail).trim() : (ok ? "completed" : "failed");
+  node.detail = `${toolName}: ${summary}`;
+  if (!ok) node.status = "error";
 }
 
 function completeActiveNode() {
   const node = AppState.data.agenticNodes.find(n => n.id === AppState.activeNodeId);
   if (node) {
     node.status = "complete";
+    // Update model history entry
+    const historyEntry = AppState.data.modelHistory.find(
+      h => h.phase === node.phase && h.status === "active"
+    );
+    if (historyEntry) {
+      historyEntry.status = "complete";
+      historyEntry.tokens = node.tokens ? node.tokens.length : 0;
+      historyEntry.endTime = new Date().toISOString();
+    }
   }
   AppState.activeNodeId = null;
   refreshAllComponents();
 }
 
+// ─── Server Log ─────────────────────────────────────────────────────────────
+
+function setupServerLogToggle() {
+  const output = document.getElementById("server-output");
+  const toggle = document.getElementById("server-output-toggle");
+  if (!output || !toggle) return;
+
+  toggle.addEventListener("click", () => {
+    setServerLogExpanded(output.classList.contains("collapsed"));
+  });
+
+  syncServerLogExpandedState();
+}
+
+function setServerLogExpanded(expanded) {
+  const output = document.getElementById("server-output");
+  if (!output) return;
+  output.classList.toggle("collapsed", !expanded);
+  syncServerLogExpandedState();
+}
+
+function syncServerLogExpandedState() {
+  const output = document.getElementById("server-output");
+  const toggle = document.getElementById("server-output-toggle");
+  if (!output || !toggle) return;
+  const expanded = !output.classList.contains("collapsed");
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
 function addServerLog(text) {
+  const output = document.getElementById("server-output");
   const stream = document.getElementById("server-stream");
-  if (stream) {
-    const output = document.getElementById("server-output");
-    output.classList.remove("hidden");
-    const div = document.createElement("div");
-    div.className = "log-line";
-    div.textContent = text;
-    stream.appendChild(div);
-    stream.scrollTop = stream.scrollHeight;
+  if (!output || !stream) return;
+  const div = document.createElement("div");
+  div.className = "log-line";
+  div.textContent = text;
+  stream.appendChild(div);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function loadRecentProjects() {
+  try {
+    return JSON.parse(localStorage.getItem("nex-code:recent-projects") || "[]");
+  } catch (_err) {
+    return [];
   }
+}
+
+function rememberRecentProject(projectPath, projectName) {
+  if (!projectPath) return;
+  const entry = { name: projectName || projectPath.split(/[\\/]/).pop(), path: projectPath };
+  const next = [entry]
+    .concat(loadRecentProjects().filter((p) => p.path !== projectPath))
+    .slice(0, 4);
+  AppState.data.recentProjects = next;
+  try {
+    localStorage.setItem("nex-code:recent-projects", JSON.stringify(next));
+  } catch (_err) {}
 }
 
 // ─── Command Input ──────────────────────────────────────────────────────────
@@ -339,30 +1089,272 @@ function setupCommandInput() {
   if (submit) {
     submit.addEventListener("click", executeCommand);
   }
+  window.__nexCommandInputReady = !!(input && submit);
 }
 
-function executeCommand() {
+function setupGlobalShortcuts() {
+  document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented) return;
+    if (event.altKey || event.shiftKey) return;
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+
+    const target = event.target;
+    const isEditable = target instanceof HTMLElement
+      && (target.isContentEditable
+        || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+    if (isEditable && target.id !== "cmd-input") return;
+
+    event.preventDefault();
+    focusCommandInput();
+  });
+}
+
+function classifyToolPhase(toolName) {
+  const name = String(toolName || "").toLowerCase();
+  if (/test|bench|lint|verify|jest|npm/.test(name)) return "VERIFY";
+  if (/edit|write|patch|apply|create/.test(name)) return "IMPLEMENT";
+  if (/read|grep|find|search|list/.test(name)) return "PLAN";
+  return "WORK";
+}
+
+function ensureActivePhaseForTool(toolName, detail) {
+  if (AppState.activeNodeId) return;
+  const phase = classifyToolPhase(toolName);
+  const label = detail && detail !== "started"
+    ? `${toolName} — ${detail}`
+    : `${toolName} in progress`;
+  startAgenticPhase(
+    phase,
+    label,
+    phase === "VERIFY" ? "teal" : phase === "IMPLEMENT" ? "emerald" : "cyan",
+  );
+}
+
+async function executeCommand() {
   const input = document.getElementById("cmd-input");
   const cmd = input.value.trim();
   if (!cmd) return;
 
-  // UI Feedback
+  if (pendingServerConfirm && pendingServerConfirm.tool === "ask_user") {
+    submitAskUserAnswer(cmd);
+    input.value = "";
+    return;
+  }
+
+  if (!AppState.data.project && !cmd.startsWith("/setup")) {
+    logUiMessage("Open a project before starting work.");
+    await window.App.openProject();
+    input.focus();
+    return;
+  }
+
+  const disabledReason = getCommandDisabledReason(cmd);
+  if (disabledReason) {
+    logUiMessage(`${cmd.split(/\s+/)[0]} is ${disabledReason}`);
+    input.focus();
+    return;
+  }
+
+  createUserConversationTurn(cmd);
+  appendConversationItem(createConversationItem("assistant", "", {
+    status: "running",
+    sourceCommand: cmd,
+  }));
+
+  // Log command
+  const output = document.getElementById("server-output");
   const stream = document.getElementById("server-stream");
-  if (stream) {
-    document.getElementById("server-output").classList.remove("hidden");
+  if (output && stream) {
+    output.classList.remove("hidden");
     const cmdDiv = document.createElement("div");
     cmdDiv.className = "cmd-line";
-    cmdDiv.textContent = `❯ ${cmd}`;
+    cmdDiv.textContent = `nex-code › ${cmd}`;
     stream.appendChild(cmdDiv);
     stream.scrollTop = stream.scrollHeight;
   }
 
-  // Determine if we should start a specific timeline phase
+  // Handle slash commands
   if (cmd.startsWith("/plan")) startAgenticPhase("PLAN", "Generating implementation strategy...", "cyan");
   else if (cmd.startsWith("/impl")) startAgenticPhase("IMPLEMENT", "Applying changes to codebase...", "emerald");
-  else if (cmd.startsWith("/verify")) startAgenticPhase("VERIFY", "Running tests and benchmarks...", "teal");
-  else if (!cmd.startsWith("/")) startAgenticPhase("THINK", "Analyzing request...", "cyan");
+  else if (cmd.startsWith("/verify")) startAgenticPhase("VERIFY", "Running tests and verification...", "teal");
+  else if (cmd.startsWith("/bench")) startAgenticPhase("VERIFY", "Running benchmarks...", "teal");
+  else if (cmd.startsWith("/git")) addServerLog("Git actions — use terminal or open project to access version control.");
+  else if (cmd.startsWith("/deploy")) addServerLog("Deploy — deployment workflows require a configured project.");
+  else if (!cmd.startsWith("/")) startAgenticPhase("THINK", `Analyzing: ${cmd.substring(0, 60)}...`, "cyan");
 
-  window.nexAPI.sendCommand(cmd);
+  if (window.nexAPI) window.nexAPI.sendCommand(cmd);
   input.value = "";
+  refreshCommandInputState();
 }
+
+function commandRequiresProject(cmd) {
+  return !!getCommandDisabledReason(cmd);
+}
+
+function getCommandDisabledReason(cmd) {
+  if (!AppState.data.project) {
+    if (["/plan", "/impl", "/verify", "/bench"].some((prefix) => cmd.startsWith(prefix))) {
+      return "disabled until a project is opened.";
+    }
+    if (cmd.startsWith("/git")) return "disabled until a Git repository is opened.";
+    if (cmd.startsWith("/deploy")) return "disabled until a deployable project is opened.";
+  }
+  if (cmd.startsWith("/git") && !AppState.data.isGitRepository) {
+    return "disabled because the open project is not a Git repository.";
+  }
+  if (cmd.startsWith("/deploy") && !AppState.data.isDeployable) {
+    return "disabled until a deployable project is opened.";
+  }
+  return "";
+}
+
+// ─── Public API (called from HTML onclick handlers) ─────────────────────────
+
+window.App = {
+  openProject: async function () {
+    if (!window.nexAPI || !window.nexAPI.openProject) {
+      logUiMessage("Project picker is not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProject();
+      if (result && result.ok === false) {
+        logUiMessage(result.message || "Project picker failed.");
+      }
+    } catch (err) {
+      logUiMessage(`Project picker failed: ${err.message}`);
+    }
+  },
+
+  openProjectPath: async function (projectPath) {
+    if (!window.nexAPI || !window.nexAPI.openProjectPath) {
+      logUiMessage("Recent projects are not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProjectPath(projectPath);
+      if (result && result.ok === false) {
+        logUiMessage(result.message || "Project could not be opened.");
+      }
+    } catch (err) {
+      logUiMessage(`Project could not be opened: ${err.message}`);
+    }
+  },
+
+  openProjectFolder: async function () {
+    if (!window.nexAPI || !window.nexAPI.openProjectFolder) {
+      logUiMessage("Project folder opening is not available in this desktop session.");
+      return;
+    }
+    try {
+      const result = await window.nexAPI.openProjectFolder();
+      if (!result || result.ok === false) {
+        logUiMessage(result && result.message ? result.message : "Project folder could not be opened.");
+      }
+    } catch (err) {
+      logUiMessage(`Project folder could not be opened: ${err.message}`);
+    }
+  },
+
+  sendCommand: function (cmd) {
+    if (!cmd) return;
+    const input = document.getElementById("cmd-input");
+    if (input) input.value = cmd;
+    executeCommand();
+  },
+
+  focusCommandInput: function () {
+    focusCommandInput();
+  },
+
+  answerInlinePrompt: function (answer) {
+    submitAskUserAnswer(answer);
+  },
+
+  continueIteration: function () {
+    focusCommandInput("/plan ");
+    addServerLog("Starting next iteration...");
+  },
+
+  runVerification: function () {
+    startAgenticPhase("VERIFY", "Running verification checks...", "teal");
+    if (window.nexAPI) window.nexAPI.sendCommand("/verify");
+  },
+
+  wrapUp: function () {
+    addServerLog("Wrapping up session. Task complete.");
+    AppState.data.sessionState = "complete";
+    refreshAllComponents();
+  },
+
+  selectModel: async function (spec) {
+    if (!window.nexAPI || !window.nexAPI.setActiveModel) return;
+    try {
+      const result = await window.nexAPI.setActiveModel(spec);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Model switch failed.");
+        return;
+      }
+      applyModelState(result.modelState);
+      addServerLog(`Active model: ${spec}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Model switch failed: ${err.message}`);
+    }
+  },
+
+  refreshModelState: refreshModelState,
+
+  runModelSetup: function (provider) {
+    const providerLabel = provider ? ` for ${provider}` : "";
+    if (!AppState.data.project) {
+      focusCommandInput("/setup ");
+      logUiMessage(`Open a project to run provider setup${providerLabel}.`);
+      return;
+    }
+    addServerLog(`Starting provider setup${providerLabel}...`);
+    if (window.nexAPI) window.nexAPI.sendCommand("/setup");
+  },
+
+  openLocalModelInstall: function () {
+    if (window.nexAPI && window.nexAPI.openExternal) {
+      window.nexAPI.openExternal("https://ollama.com/download");
+    }
+  },
+
+  checkoutBranch: async function (branchName) {
+    if (!window.nexAPI || !window.nexAPI.checkoutBranch) return;
+    try {
+      const result = await window.nexAPI.checkoutBranch(branchName);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Branch checkout failed.");
+        return;
+      }
+      applyGitState(result.gitState);
+      addServerLog(`Checked out branch: ${branchName}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Branch checkout failed: ${err.message}`);
+    }
+  },
+
+  createBranch: async function (branchName) {
+    if (!window.nexAPI || !window.nexAPI.createBranch) return;
+    const cleanName = String(branchName || "").trim();
+    if (!cleanName) return;
+    try {
+      const result = await window.nexAPI.createBranch(cleanName);
+      if (!result || !result.ok) {
+        logUiMessage(result && result.message ? result.message : "Branch creation failed.");
+        return;
+      }
+      applyGitState(result.gitState);
+      addServerLog(`Created branch: ${cleanName}`);
+      refreshAllComponents();
+    } catch (err) {
+      logUiMessage(`Branch creation failed: ${err.message}`);
+    }
+  },
+
+  refreshGitState: refreshGitState,
+};

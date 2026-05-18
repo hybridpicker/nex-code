@@ -11,6 +11,7 @@ const { estimateTokens } = require("./context-engine");
 const COMPACTION_ENABLED = process.env.NEX_COMPACTION !== "false";
 const COMPACTION_MIN_MESSAGES = 6;
 const COMPACTION_SUMMARY_BUDGET = 2000;
+const TASK_ANCHOR_MAX_CHARS = 4000;
 
 // Circuit breaker: stop retrying after this many consecutive failures
 // (e.g., context irrecoverably over the limit)
@@ -50,6 +51,71 @@ Format your output as:
 [Sections 1-9 above]
 </summary>`;
 
+function messageText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content == null) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function isSyntheticUserMessage(message) {
+  const text = messageText(message).trim();
+  return (
+    text.startsWith("[SYSTEM WARNING]") ||
+    text.startsWith("[SYSTEM:") ||
+    text.startsWith("[SYSTEM]") ||
+    text.startsWith("[RESUME AFTER COMPRESSION]") ||
+    text.startsWith("[FRAMEWORK") ||
+    text.startsWith("BLOCKED:")
+  );
+}
+
+function truncateAnchorText(text, maxChars = TASK_ANCHOR_MAX_CHARS) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n[... original task truncated after ${maxChars} chars ...]`;
+}
+
+function buildTaskAnchor(messages) {
+  const realUsers = messages.filter(
+    (m) => m?.role === "user" && !isSyntheticUserMessage(m),
+  );
+  if (realUsers.length === 0) return "";
+
+  const original = truncateAnchorText(messageText(realUsers[0]));
+  const latest = realUsers[realUsers.length - 1];
+  const latestText =
+    latest === realUsers[0]
+      ? ""
+      : truncateAnchorText(messageText(latest), 2000);
+
+  const parts = [
+    "## Current Task Anchor (must survive compression)",
+    "The active task is still the original user request below. Do not invent or switch to a different task after compression.",
+    "",
+    "Original user request:",
+    original,
+  ];
+  if (latestText) {
+    parts.push("", "Most recent real user direction:", latestText);
+  }
+  return parts.join("\n");
+}
+
 // Circuit breaker state: consecutive compact failures this session
 let _consecutiveFailures = 0;
 
@@ -65,9 +131,15 @@ async function compactMessages(messages) {
   // Circuit breaker: stop retrying when compaction keeps failing
   if (_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return null;
 
+  const taskAnchor = buildTaskAnchor(messages);
   const summaryMessages = [
     { role: "system", content: COMPACT_PROMPT },
-    { role: "user", content: formatMessagesForSummary(messages) },
+    {
+      role: "user",
+      content: [taskAnchor, formatMessagesForSummary(messages)]
+        .filter(Boolean)
+        .join("\n\n"),
+    },
   ];
 
   try {
@@ -115,7 +187,7 @@ async function compactMessages(messages) {
     return {
       message: {
         role: "system",
-        content: `[Conversation Summary — ${messages.length} messages compacted]\n${summary}`,
+        content: `[Conversation Summary — ${messages.length} messages compacted]\n${[taskAnchor, summary].filter(Boolean).join("\n\n")}`,
         _compacted: true,
         _originalCount: messages.length,
       },
@@ -138,9 +210,12 @@ function resetCompactionFailures() {
  */
 function formatMessagesForSummary(messages) {
   return messages
-    .map((m) => {
+    .map((m, index) => {
       const role = m.role === "tool" ? "tool_result" : m.role;
-      const content = (m.content || "").substring(0, 500);
+      const rawContent = messageText(m);
+      const maxChars =
+        m.role === "user" ? (index === 0 ? TASK_ANCHOR_MAX_CHARS : 2000) : 500;
+      const content = rawContent.substring(0, maxChars);
       if (m.tool_calls) {
         const tools = m.tool_calls.map((tc) => tc.function?.name).join(", ");
         return `[${role}] ${content}\n  tools: ${tools}`;
@@ -154,6 +229,7 @@ module.exports = {
   compactMessages,
   formatMessagesForSummary,
   resetCompactionFailures,
+  buildTaskAnchor,
   COMPACTION_ENABLED,
   COMPACTION_MIN_MESSAGES,
   COMPACTION_SUMMARY_BUDGET,

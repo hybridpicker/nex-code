@@ -220,6 +220,14 @@ jest.mock("../cli/context-engine", () => ({
   forceCompress: jest
     .fn()
     .mockImplementation((messages) => ({ messages, tokensRemoved: 0 })),
+  buildProgressSnapshot: jest.fn((_messages, opts = {}) => ({
+    role: "system",
+    content:
+      "## Progress State (preserved through compression)\n" +
+      JSON.stringify(opts.locatedTarget || {}, null, 2),
+    _pinned: true,
+    _progressSnapshot: true,
+  })),
 }));
 jest.mock("../cli/session", () => ({
   autoSave: jest.fn(),
@@ -331,16 +339,34 @@ const {
   _inferVerificationCommands,
   _inferRelevantTests,
   _inferSymbolTargets,
+  _extractExactVerificationOnlyCommand,
+  _extractRequiredVerificationCommands,
+  _extractExactRequiredVerificationCommands,
   _buildSymbolHintBlock,
   _claimsVerificationOrCompletion,
   _statesVerificationGap,
   _shouldAutoOrchestrate,
+  _hasForcedModelOverride,
   _shouldSkipPlanPhaseForDirectCreation,
   _hasAutomationOrPreflightGate,
   _extractDirectTaskPaths,
   _isBoundedBacklogPlanningPrompt,
   _buildBoundedBacklogPlanInstruction,
   _looksLikeBoundedBacklogDecision,
+  _isToolResultError,
+  _pathMatchesScope,
+  _isDependencyMutationCommand,
+  _masksCommandFailure,
+  _scopeAllowsDependencyMutation,
+  _looksLikeCommentedOutCode,
+  _detectAddedCommentedOutCode,
+  _buildCommentedOutCodeNudge,
+  _looksLikeMalformedDuplicateOpeningTag,
+  _detectAddedMalformedMarkup,
+  _buildMalformedMarkupNudge,
+  _extractRemovedImportSymbols,
+  _buildCompressionResumeTarget,
+  _blockRepeatedSmallInsertionAfterEdit,
 } = require("../cli/agent");
 const {
   callStream,
@@ -353,7 +379,11 @@ const { routeSkillCall } = require("../cli/skills");
 const { routeMCPCall } = require("../cli/mcp");
 const { checkPermission } = require("../cli/permissions");
 const { confirm, getAutoConfirm } = require("../cli/safety");
-const { fitToContext, getUsage } = require("../cli/context-engine");
+const {
+  fitToContext,
+  getUsage,
+  forceCompress,
+} = require("../cli/context-engine");
 const { trackUsage } = require("../cli/costs");
 const { autoSave } = require("../cli/session");
 const { isPlanMode, getPlanModePrompt } = require("../cli/planner");
@@ -386,6 +416,17 @@ describe("agent.js", () => {
     callStream.mockReset();
     executeTool.mockReset();
     jest.clearAllMocks();
+    fitToContext.mockImplementation(async (messages) => ({
+      messages,
+      compressed: false,
+      compacted: false,
+      tokensRemoved: 0,
+    }));
+    getUsage.mockReturnValue({ used: 100, limit: 128000, percentage: 0.1 });
+    forceCompress.mockImplementation((messages) => ({
+      messages,
+      tokensRemoved: 0,
+    }));
     getAutoConfirm.mockReturnValue(false);
     setAbortSignalGetter(() => null);
     restoreTimeout(); // ensure clean timer state
@@ -399,6 +440,9 @@ describe("agent.js", () => {
     restoreTimeout();
     delete process.env.NEX_MAX_TOOL_CALLS;
     delete process.env.NEX_DISABLE_TOOL_BUDGET;
+    delete process.env.NEX_FORCE_MODEL;
+    isPlanMode.mockReturnValue(false);
+    getPlanModePrompt.mockReturnValue("");
     logSpy.mockRestore();
   });
 
@@ -421,6 +465,247 @@ describe("agent.js", () => {
   function logOutput() {
     return logSpy.mock.calls.map((c) => c[0]).join("\n");
   }
+
+  test("detects forced model override from environment", () => {
+    expect(_hasForcedModelOverride()).toBe(false);
+
+    process.env.NEX_FORCE_MODEL = "ollama:devstral-2:123b-cloud";
+
+    expect(_hasForcedModelOverride()).toBe(true);
+  });
+
+  describe("_buildCompressionResumeTarget()", () => {
+    it("does not resume a frontend task by targeting package.json", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["package.json"]),
+        new Set(),
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+      );
+
+      expect(target).toBeNull();
+    });
+
+    it("does not resume a frontend task by targeting VERSION", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["VERSION"]),
+        new Set(),
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+      );
+
+      expect(target).toBeNull();
+    });
+
+    it("allows package.json when the task is about package scripts", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["package.json"]),
+        new Set(),
+        "Add an npm test script to package.json.",
+      );
+
+      expect(target).toEqual(
+        expect.objectContaining({ targetFile: "package.json" }),
+      );
+    });
+
+    it("allows VERSION when the task is about a version bump", () => {
+      const target = _buildCompressionResumeTarget(
+        new Set(["VERSION"]),
+        new Set(),
+        "Bump the version for the next release.",
+      );
+
+      expect(target).toEqual(
+        expect.objectContaining({ targetFile: "VERSION" }),
+      );
+    });
+  });
+
+  describe("single-line insertion whitespace guard", () => {
+    it("normalizes transcript-derived blank-line insertions for scoped edits", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Reading the located target.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "src/pages/FitnessSummary.jsx",
+              line_start: 20,
+              line_end: 28,
+            },
+          },
+          id: "read-fitness",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "20: <div className=\"metric\">Calories remaining</div>\n" +
+          "21: <div className=\"ring\" />",
+      );
+      mockStream("Applying the focused insertion.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/pages/FitnessSummary.jsx",
+              old_text: '<div className="metric">Calories remaining</div>',
+              new_text:
+                '<div className="metric">Calories remaining</div>\n' +
+                '<div className="value">Remaining kcal</div>\n',
+            },
+          },
+          id: "edit-fitness",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("PASS: inserted the requested line.", []);
+
+      await processInput(
+        "In src/pages/FitnessSummary.jsx, add the remaining kcal value after the Calories remaining line.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 5 },
+      );
+
+      const editCall = executeTool.mock.calls.find(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCall).toBeDefined();
+      expect(editCall[1].new_text).toBe(
+        '<div className="metric">Calories remaining</div>\n' +
+          '<div className="value">Remaining kcal</div>',
+      );
+    });
+
+    it("normalizes neutral scoped insertion patches with incidental blank lines", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Reading ProfileCard.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              line_start: 8,
+              line_end: 16,
+            },
+          },
+          id: "read-profile",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "8:   const displayName = user.name;\n" +
+          "9:   return <section>{displayName}</section>;",
+      );
+      mockStream("Applying one status line.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              patches: [
+                {
+                  old_text: "  const displayName = user.name;",
+                  new_text:
+                    "  const displayName = user.name;\n" +
+                    "  const statusText = user.status || 'Active';\n",
+                },
+              ],
+            },
+          },
+          id: "patch-profile",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("PASS: inserted the requested line.", []);
+
+      await processInput(
+        "In src/components/ProfileCard.jsx, insert one status line after the displayName line.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 5 },
+      );
+
+      const patchCall = executeTool.mock.calls.find(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCall).toBeDefined();
+      expect(patchCall[1].patches[0].new_text).toBe(
+        "  const displayName = user.name;\n" +
+          "  const statusText = user.status || 'Active';",
+      );
+    });
+  });
+
+  describe("_blockRepeatedSmallInsertionAfterEdit()", () => {
+    function repeatedInsertionPrep(path, oldText, newText) {
+      return {
+        canExecute: true,
+        fnName: "patch_file",
+        callId: "patch-repeat",
+        args: {
+          path,
+          patches: [{ old_text: oldText, new_text: newText }],
+        },
+      };
+    }
+
+    it("blocks transcript-derived repeated kcal field insertions", () => {
+      const prep = repeatedInsertionPrep(
+        "web/templates/fitness/index.html",
+        '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+        '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>\n' +
+          '<div class="text-[11px]" x-text="\'Noch benötigt \' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + \' kcal\'"></div>',
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "web/templates/fitness/index.html" },
+        "User asks for a remaining kcal field near: <div class=\"nutrition-ring-content\"><div x-text=\"Math.round(totals.kcal)\"></div></div>",
+        new Set(["web/templates/fitness/index.html"]),
+      );
+
+      expect(blocked).toBe(true);
+      expect(prep.canExecute).toBe(false);
+      expect(prep.errorResult.content).toContain(
+        "Do not add a second synonymous field",
+      );
+    });
+
+    it("blocks neutral repeated insertions after the target file was edited", () => {
+      const prep = repeatedInsertionPrep(
+        "src/components/ProfileCard.jsx",
+        "        <p>{profile.role}</p>",
+        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "src/components/ProfileCard.jsx" },
+        "Add a status field to src/components/ProfileCard.jsx.",
+        new Set(["src/components/ProfileCard.jsx"]),
+      );
+
+      expect(blocked).toBe(true);
+      expect(prep.canExecute).toBe(false);
+      expect(prep.errorResult.content).toContain(
+        "Inspect the diff/readback and finalize",
+      );
+    });
+
+    it("allows replacement fixes after an earlier insertion was wrong", () => {
+      const prep = repeatedInsertionPrep(
+        "src/components/ProfileCard.jsx",
+        "        <p>Status: active</p>",
+        "        <p>Status: {profile.status}</p>",
+      );
+
+      const blocked = _blockRepeatedSmallInsertionAfterEdit(
+        prep,
+        { targetFile: "src/components/ProfileCard.jsx" },
+        "Add a status field to src/components/ProfileCard.jsx.",
+        new Set(["src/components/ProfileCard.jsx"]),
+      );
+
+      expect(blocked).toBe(false);
+      expect(prep.canExecute).toBe(true);
+    });
+  });
 
   function spinnerLabels() {
     // Section headers are written to stdout via process.stdout.write (strip ANSI codes)
@@ -1090,6 +1375,147 @@ describe("agent.js", () => {
       await processInput("test");
       expect(callStream).not.toHaveBeenCalled();
     });
+
+    it("runs exact verification-only commands without model drift", async () => {
+      executeTool.mockResolvedValueOnce("verification ok");
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+
+      const result = await processInput(
+        "Verification only: run exactly `node src/main.js` and report whether that command passed or failed. Do not edit files and do not run other commands first.",
+        { onToolStart, onToolEnd },
+      );
+
+      expect(callStream).not.toHaveBeenCalled();
+      expect(executeTool).toHaveBeenCalledTimes(1);
+      expect(executeTool).toHaveBeenCalledWith(
+        "bash",
+        { command: "node src/main.js" },
+        expect.objectContaining({ autoConfirm: true, silent: true }),
+      );
+      expect(onToolStart).toHaveBeenCalledWith("bash", {
+        command: "node src/main.js",
+      });
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("verification ok"),
+        true,
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          command: "node src/main.js",
+        }),
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            m.content === "Verification passed: node src/main.js",
+        ),
+      ).toBe(true);
+    });
+
+    it("runs missing exact verification once after implementation", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("Creating the requested file.", [
+        {
+          function: {
+            name: "write_file",
+            arguments: {
+              path: "src/main.js",
+              content: 'console.log("desktop verification ok");\n',
+            },
+          },
+          id: "write-main",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("created");
+      mockStream("Created src/main.js.");
+      executeTool.mockResolvedValueOnce("desktop verification ok\n");
+      mockStream(
+        "Created src/main.js. Verification: node src/main.js (passed).",
+      );
+
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+
+      await processInput(
+        "Create a tiny `src/main.js` that prints `desktop verification ok`, then run exactly `node src/main.js` and report whether it passed or failed. Do not run other commands after verification.",
+        { onToolStart, onToolEnd },
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[1]).toEqual([
+        "bash",
+        { command: "node src/main.js" },
+        expect.objectContaining({ autoConfirm: true, silent: true }),
+      ]);
+      expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) =>
+            tool === "bash" && args.command === "node src/main.js",
+        ),
+      ).toHaveLength(1);
+      expect(onToolStart).toHaveBeenCalledWith("bash", {
+        command: "node src/main.js",
+      });
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("desktop verification ok"),
+        true,
+      );
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification: node src/main.js (passed)"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("exact verification command extraction", () => {
+    it("extracts safe exact verification-only commands", () => {
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Verification only: run exactly `npm test` and report pass/fail.",
+        ),
+      ).toBe("npm test");
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Run exactly: node src/main.js. Do not edit files and do not run other commands first.",
+        ),
+      ).toBe("node src/main.js");
+    });
+
+    it("does not extract implementation or non-verification commands", () => {
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Create src/main.js, then verify by running exactly: node src/main.js.",
+        ),
+      ).toBe("");
+      expect(
+        _extractExactVerificationOnlyCommand(
+          "Verification only: run exactly `rm -rf /tmp/demo`.",
+        ),
+      ).toBe("");
+    });
+
+    it("extracts exact required verification commands from implementation prompts", () => {
+      expect(
+        _extractRequiredVerificationCommands(
+          "Create src/main.js, then run exactly `node src/main.js` and report pass or fail.",
+        ),
+      ).toEqual(["node src/main.js"]);
+      expect(
+        _extractExactRequiredVerificationCommands(
+          "Create src/main.js, then run exactly: node src/main.js. Do not run other commands after verification.",
+        ),
+      ).toEqual(["node src/main.js"]);
+    });
   });
 
   // ─── retry logic (rate limit + network) ───────────────────
@@ -1182,6 +1608,2131 @@ describe("agent.js", () => {
       expect(logOutput()).toContain("context compressed");
       expect(logOutput()).toContain("5000");
       delete process.env.NEX_DEBUG;
+    });
+
+    it("preserves located target state after auto-compress before edits", async () => {
+      getUsage.mockReturnValue({ used: 90000, limit: 100000, percentage: 90 });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit next.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 3 },
+      );
+
+      const resumeCall = callStream.mock.calls.find(([messages]) =>
+        JSON.stringify(messages).includes("RESUME AFTER COMPRESSION"),
+      );
+      expect(resumeCall).toBeDefined();
+      const resumeCallText = JSON.stringify(resumeCall[0]);
+      expect(resumeCallText).toContain("Progress State");
+      expect(resumeCallText).toContain("web/templates/fitness/index.html");
+      expect(resumeCallText).toContain("lineStart");
+      expect(resumeCallText).toContain("nextAction");
+      expect(resumeCallText).toContain("do not restart with broad search");
+    });
+
+    it("preserves located target state after post-tool auto-compress", async () => {
+      getUsage.mockImplementation((messages = []) => {
+        const text = JSON.stringify(messages);
+        if (
+          text.includes("nutrition-ring-content") &&
+          !text.includes("RESUME AFTER COMPRESSION")
+        ) {
+          return { used: 90000, limit: 100000, percentage: 90 };
+        }
+        return { used: 50000, limit: 100000, percentage: 50 };
+      });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped edit next.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 2 },
+      );
+
+      const resumeCall = callStream.mock.calls.find(([messages]) =>
+        JSON.stringify(messages).includes("RESUME AFTER COMPRESSION"),
+      );
+      expect(resumeCall).toBeDefined();
+      const resumeCallText = JSON.stringify(resumeCall[0]);
+      expect(resumeCallText).toContain("Progress State");
+      expect(resumeCallText).toContain("web/templates/fitness/index.html");
+      expect(resumeCallText).toContain("lineStart");
+      expect(resumeCallText).toContain("do not restart with broad search");
+    });
+
+    it("allows one targeted re-read of the located range after compression", async () => {
+      const targetRead = {
+        id: "read-target",
+        function: {
+          name: "read_file",
+          arguments: {
+            path: "web/templates/fitness/index.html",
+            line_start: 1860,
+            line_end: 1890,
+          },
+        },
+      };
+      getUsage.mockReturnValue({ used: 90000, limit: 100000, percentage: 90 });
+      forceCompress.mockImplementation((messages) => ({
+        messages,
+        tokensRemoved: 1000,
+      }));
+      callStream
+        .mockResolvedValueOnce({
+          content: "Located the nutrition ring target range.",
+          tool_calls: [targetRead],
+        })
+        .mockResolvedValueOnce({
+          content: "Compression removed the exact snippet; re-reading target.",
+          tool_calls: [{ ...targetRead, id: "read-target-after-compression" }],
+        })
+        .mockResolvedValueOnce({
+          content: "Ready to edit the scoped kcal display.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValue(
+        '<div class="nutrition-ring"><div class="nutrition-ring-content">kcal</div></div>',
+      );
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 3 },
+      );
+
+      expect(executeTool).toHaveBeenCalledTimes(2);
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain(
+        'BLOCKED: read_file("web/templates/fitness/index.html", lines 1860-1890) is a duplicate',
+      );
+    });
+
+    it("blocks transcript-derived adjacent-line rewrites for kcal insertions", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located nutrition ring section.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1890,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal line.",
+          tool_calls: [
+            {
+              id: "patch-bad",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>',
+                      new_text:
+                        '        <p class="text-sm text-muted">Daily goal</p>\n        <p class="text-xs text-muted">Remaining kcal</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Retrying with an insertion-only patch.",
+          tool_calls: [
+            {
+              id: "patch-good",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>',
+                      new_text:
+                        '        <p class="text-xs text-muted">Daily goal</p>\n        <p class="text-xs text-muted">Remaining kcal</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="nutrition-ring-content">\n        <p class="text-xs text-muted">Daily goal</p>\n      </div>',
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      const patchCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCalls).toHaveLength(1);
+      expect(patchCalls[0][1].patches[0].new_text).toContain(
+        'class="text-xs text-muted">Daily goal',
+      );
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("rewrites an existing anchor line");
+    });
+
+    it("blocks insertions that ignore a prompt-specified anchor line", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located target section.",
+          tool_calls: [
+            {
+              id: "read-target",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying the insertion from the wrong existing line.",
+          tool_calls: [
+            {
+              id: "wrong-anchor",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>',
+                  new_text:
+                    '      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>\n      <div class="text-xs text-muted">Remaining kcal</div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Using the requested anchor line.",
+          tool_calls: [
+            {
+              id: "right-anchor",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>',
+                  new_text:
+                    '      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>\n      <div class="text-xs text-muted">Remaining kcal</div>',
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="nutrition-ring-content">\n      <div class="text-2xl font-semibold" x-text="totals.kcal"></div>\n      <div class="text-xs text-muted" x-text="\'Daily goal \' + targets.kcal"></div>\n    </div>',
+        )
+        .mockResolvedValueOnce("Edited");
+
+      await processInput(
+        "Add remaining kcal display below the Daily goal line in web/templates/fitness/index.html.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      const editCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "edit_file",
+      );
+      expect(editCalls).toHaveLength(1);
+      expect(editCalls[0][1].old_text).toContain("Daily goal");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("prompt specifies inserting below/after");
+    });
+
+    it("allows neutral insertion-only patches near a located target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card status area.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line without changing adjacent text.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "File: src/components/ProfileCard.jsx (lines 20-42)\n20: <article>\n21:         <h2>{profile.name}</h2>\n22:         <p>{profile.role}</p>\n23:       </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      const patchCalls = executeTool.mock.calls.filter(
+        ([name]) => name === "patch_file",
+      );
+      expect(patchCalls).toHaveLength(1);
+      expect(patchCalls[0][1].path).toBe("src/components/ProfileCard.jsx");
+    });
+
+    it("allows insertion before a closing line inside a preserved block", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card block.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding a status line before the closing tag.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text:
+                        "      <article>\n        <p>{profile.role}</p>\n      </article>",
+                      new_text:
+                        "      <article>\n        <p>{profile.role}</p>\n        <p>Status: active</p>\n      </article>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "20:       <article>\n21:         <p>{profile.role}</p>\n22:       </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line below the role line in src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
+    it("blocks neutral patches that rewrite an adjacent line instead of inserting", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-rewrite",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        '        <p className="text-xs">{profile.role}</p>\n        <p>Status: active</p>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the insertion guard.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+      );
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(0);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not edit adjacent existing lines");
+    });
+
+    it("blocks small insertions when old_text was not in the located context", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line from a guessed nearby block.",
+          tool_calls: [
+            {
+              id: "patch-guessed",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text:
+                        "        <section className=\"profile-summary\">\n          <span>{profile.title}</span>\n        </section>",
+                      new_text:
+                        "        <section className=\"profile-summary\">\n          <span>{profile.title}</span>\n        </section>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the unknown-anchor guard.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce(
+        "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+      );
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 3 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(0);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("was not found in the located target context");
+    });
+
+    it("nudges prose-only responses to edit after locating a scoped target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "The target is located and I should add the status line below the role.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the insertion.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not continue in prose");
+    });
+
+    it("nudges Desktop server runs to edit after locating the kcal target", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located nutrition ring section.",
+          tool_calls: [
+            {
+              id: "read-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1855,
+                  line_end: 1875,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "The remaining kcal display is already complete and working correctly.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the missing remaining kcal line.",
+          tool_calls: [
+            {
+              id: "patch-kcal",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>',
+                      new_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>\n' +
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Verbleibend \' + Math.max(0, targets.kcal - totals.kcal) + \' kcal\'"></div>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "1855: <div class=\"nutrition-ring-content\">\n" +
+            "1856: <div class=\"text-3xl\" x-text=\"Math.round(totals.kcal)\">0</div>\n" +
+            "1857: <div class=\"text-xs\">kcal</div>\n" +
+            "1858: <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div>\n" +
+            "1859: </div>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "bei /fitness bzw ernährung hätte ich gern hier ein feld dass mir anzeigt wieviele kcal ich noch zu mir nehmen muss: <div class=\"nutrition-ring-content\"> <div class=\"text-3xl font-black text-gray-900 leading-none\" x-text=\"Math.round(totals.kcal)\">0</div> <div class=\"text-xs font-semibold text-gray-500 mt-1\">kcal</div> <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div> </div>",
+        null,
+        { serverMode: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not continue in prose");
+    });
+
+    it("nudges Desktop server runs to edit after locating a neutral target", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "The status line is already present.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the missing status line.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "20:       <article>\n21:         <h2>{profile.name}</h2>\n22:         <p>{profile.role}</p>\n23:       </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx below the role.",
+        null,
+        { serverMode: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
+    it("recovers from empty headless responses after locating the kcal target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the located nutrition ring section.",
+          tool_calls: [
+            {
+              id: "read-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1863,
+                  line_end: 1870,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the missing remaining kcal line.",
+          tool_calls: [
+            {
+              id: "patch-kcal",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  patches: [
+                    {
+                      old_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>',
+                      new_text:
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal">Ziel 2500</div>\n' +
+                        '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Verbleibend \' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + \' kcal\'"></div>',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "1863: <div class=\"nutrition-ring-content\">\n" +
+            "1864: <div x-text=\"Math.round(totals.kcal)\">0</div>\n" +
+            "1865: <div>kcal</div>\n" +
+            "1866: <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div>\n" +
+            "1867: </div>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "bei /fitness bzw ernährung hätte ich gern hier ein feld dass mir anzeigt wieviele kcal ich noch zu mir nehmen muss: <div class=\"nutrition-ring-content\"> <div class=\"text-3xl font-black text-gray-900 leading-none\" x-text=\"Math.round(totals.kcal)\">0</div> <div class=\"text-xs font-semibold text-gray-500 mt-1\">kcal</div> <div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Ziel ' + targets.kcal\">Ziel 2500</div> </div>",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your previous response was empty");
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
+    it("recovers from empty headless responses after locating a neutral target", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "20: <article>\n21:   <h2>{profile.name}</h2>\n22:   <p>{profile.role}</p>\n23: </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your previous response was empty");
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+    });
+
+    it("corrects transcript-derived summaries that call new edits pre-existing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the nutrition ring.",
+          tool_calls: [
+            {
+              id: "read-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1875,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal line.",
+          tool_calls: [
+            {
+              id: "edit-fitness",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text:
+                    '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+                  new_text:
+                    '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>\n' +
+                    '<div class="text-[11px]" x-text="Math.round(targets.kcal - totals.kcal) + \' kcal\'"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited line.",
+          tool_calls: [
+            {
+              id: "readback-fitness",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 1860,
+                  line_end: 1878,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "The remaining kcal field is already present and was added in a previous session.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed web/templates/fitness/index.html in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          '<div class="text-[11px]" x-text="\'Ziel \' + targets.kcal"></div>',
+        )
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce(
+          '<div class="text-[11px]" x-text="Math.round(targets.kcal - totals.kcal) + \' kcal\'"></div>',
+        );
+
+      await processInput(
+        "Add a remaining kcal display to the nutrition ring.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "did not accurately describe this run",
+      );
+      expect(conversationText).toContain("Changed web/templates/fitness/index.html");
+    });
+
+    it("corrects neutral summaries that call new edits pre-existing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edited component.",
+          tool_calls: [
+            {
+              id: "readback-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "The status line already exists.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed src/components/ProfileCard.jsx in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<p>{profile.role}</p>")
+        .mockResolvedValueOnce("Patched")
+        .mockResolvedValueOnce("<p>Status: active</p>");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "did not accurately describe this run",
+      );
+      expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
+    });
+
+    it("corrects summaries that call new edits already in place", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edited component.",
+          tool_calls: [
+            {
+              id: "readback-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "The requested status line is already in place.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed src/components/ProfileCard.jsx in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<p>{profile.role}</p>")
+        .mockResolvedValueOnce("Patched")
+        .mockResolvedValueOnce("<p>Status: active</p>");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "did not accurately describe this run",
+      );
+      expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
+    });
+
+    it("corrects summaries that claim edits cannot be made after editing", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status line.",
+          tool_calls: [
+            {
+              id: "patch-profile",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edited component.",
+          tool_calls: [
+            {
+              id: "readback-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "I cannot make further file edits because the tool-call budget is exhausted. Apply this edit manually.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "Changed src/components/ProfileCard.jsx in this run and verified it with a post-edit readback.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<p>{profile.role}</p>")
+        .mockResolvedValueOnce("Patched")
+        .mockResolvedValueOnce("<p>Status: active</p>");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      const conversationText = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(conversationText).toContain(
+        "did not accurately describe this run",
+      );
+      expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
+    });
+
+    it("blocks repeated reads of the same located target range before edits", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the profile card.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the same range again before editing.",
+          tool_calls: [
+            {
+              id: "read-profile-again",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the insertion after the duplicate read block.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "read_file"),
+      ).toHaveLength(1);
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Do not re-read the same target range");
+    });
+
+    it("blocks ask_user after the prompt and target range are sufficient", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target profile card section.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 20,
+                  line_end: 42,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Asking even though the target is located.",
+          tool_calls: [
+            {
+              id: "ask-unneeded",
+              function: {
+                name: "ask_user",
+                arguments: {
+                  question: "Where should the status line go?",
+                  options: ["Above role", "Below role"],
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Proceeding with the obvious insertion.",
+          tool_calls: [
+            {
+              id: "patch-status",
+              function: {
+                name: "patch_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  patches: [
+                    {
+                      old_text: "        <p>{profile.role}</p>",
+                      new_text:
+                        "        <p>{profile.role}</p>\n        <p>Status: active</p>",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      executeTool
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
+        .mockResolvedValueOnce("Patched");
+
+      await processInput(
+        "Add a status line to src/components/ProfileCard.jsx.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(executeTool.mock.calls.some(([name]) => name === "ask_user")).toBe(
+        false,
+      );
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "patch_file"),
+      ).toHaveLength(1);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("ask_user is unnecessary");
+    });
+
+    it("requires editing when read scrolling and grep are both exhausted", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the first relevant section.",
+          tool_calls: [
+            {
+              id: "read-1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the second relevant section.",
+          tool_calls: [
+            {
+              id: "read-2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 40,
+                  line_end: 60,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading the third relevant section.",
+          tool_calls: [
+            {
+              id: "read-3",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 80,
+                  line_end: 100,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for target markup.",
+          tool_calls: [
+            {
+              id: "grep-1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "dashboard-ring-content",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for current value.",
+          tool_calls: [
+            {
+              id: "grep-2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "totals.value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Searching for target value.",
+          tool_calls: [
+            {
+              id: "grep-3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "targets.value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying another search.",
+          tool_calls: [
+            {
+              id: "grep-4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  pattern: "remaining value",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the deadlock nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<section>one</section>")
+        .mockResolvedValueOnce("<section>two</section>")
+        .mockResolvedValueOnce("<section>three</section>")
+        .mockResolvedValueOnce("web/templates/dashboard.html:90:dashboard-ring-content")
+        .mockResolvedValueOnce("web/templates/dashboard.html:91:totals.value")
+        .mockResolvedValueOnce("web/templates/dashboard.html:92:targets.value");
+
+      await processInput("Add a remaining value to the dashboard template.");
+
+      expect(executeTool).toHaveBeenCalledTimes(6);
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Your next tool call must be edit_file or patch_file");
+    });
+
+    it("injects deadlock-break message with exact file reference from varied path structures", async () => {
+      // Regression for Desktop/E2E read/grep deadlock loop with small models.
+      // Verifies the deadlock-break message references the exact file, not a
+      // hardcoded path, and works with deeply nested project structures.
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading section 1 of the config file.",
+          tool_calls: [
+            {
+              id: "read-a1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  line_start: 1,
+                  line_end: 25,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading section 2.",
+          tool_calls: [
+            {
+              id: "read-a2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  line_start: 50,
+                  line_end: 75,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying grep for the config key.",
+          tool_calls: [
+            {
+              id: "grep-b1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "DEFAULT_TIMEOUT",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying another grep pattern.",
+          tool_calls: [
+            {
+              id: "grep-b2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "timeoutMs",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Trying yet another grep.",
+          tool_calls: [
+            {
+              id: "grep-b3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "setTimeout",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "One more grep attempt.",
+          tool_calls: [
+            {
+              id: "grep-b4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "src/modules/config/SettingsManager.ts",
+                  pattern: "timeout config",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after deadlock message.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("// SettingsManager — section 1 content")
+        .mockResolvedValueOnce("// SettingsManager — section 2 content")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:42:DEFAULT_TIMEOUT = 5000")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:99:timeoutMs: number")
+        .mockResolvedValueOnce("src/modules/config/SettingsManager.ts:156:setTimeout(() => {")
+        .mockResolvedValueOnce("(no matches)");
+
+      await processInput("Change the default timeout value in the settings manager.");
+
+      expect(executeTool).toHaveBeenCalledTimes(5);
+      const allMessages = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(allMessages).toContain("edit_file or patch_file");
+      // Verify the deadlock message references the actual file, not a hardcoded path
+      expect(allMessages).toContain("SettingsManager.ts");
+    });
+
+    it("detects read/grep deadlock on completely general file paths (anti-special-case)", async () => {
+      // Ensures the deadlock detection and escape valve work with generic,
+      // non-fitness, non-dashboard file paths. Uses a Python backend file
+      // in a deeply nested structure to prove the fix is not tied to any
+      // specific project pattern from the Desktop/E2E debug log.
+      callStream
+        .mockResolvedValueOnce({
+          content: "Read section one.",
+          tool_calls: [
+            {
+              id: "r1",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 1,
+                  line_end: 30,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Read section two.",
+          tool_calls: [
+            {
+              id: "r2",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 45,
+                  line_end: 70,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Read section three.",
+          tool_calls: [
+            {
+              id: "r3",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  line_start: 100,
+                  line_end: 130,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 1.",
+          tool_calls: [
+            {
+              id: "g1",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "process_payment",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 2.",
+          tool_calls: [
+            {
+              id: "g2",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "handle_refund",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 3.",
+          tool_calls: [
+            {
+              id: "g3",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "stripe.api_key",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Grep attempt 4.",
+          tool_calls: [
+            {
+              id: "g4",
+              function: {
+                name: "grep",
+                arguments: {
+                  path: "backend/services/payment_gateway.py",
+                  pattern: "charge",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Done after deadlock.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("# Payment Gateway — imports")
+        .mockResolvedValueOnce("# Payment Gateway — class definition")
+        .mockResolvedValueOnce("# Payment Gateway — helper methods")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:78:def process_payment(")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:134:def handle_refund(")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:12:stripe.api_key")
+        .mockResolvedValueOnce("backend/services/payment_gateway.py:45:charge =");
+
+      await processInput("Add Stripe webhook verification to payment gateway.");
+
+      expect(executeTool).toHaveBeenCalledTimes(6);
+      const allMessages = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(allMessages).toContain("edit_file or patch_file");
+      // Verify no hardcoded reference to fitness, dashboard, or jarvis-specific paths
+      expect(allMessages).not.toMatch(/fitness|dashboard\.html|jarvis/i);
+    });
+
+    it("nudges empty post-tool edit tasks toward editing instead of summarizing", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target template section.",
+          tool_calls: [
+            {
+              id: "read-template",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  line_start: 20,
+                  line_end: 30,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the edit nudge.",
+          tool_calls: [],
+        });
+      executeTool.mockResolvedValueOnce("<div>target value</div>");
+
+      await processInput("Add a remaining value to the dashboard template.");
+
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("Empty response after locating web/templates/dashboard.html");
+    });
+
+    it("allows one post-edit verification read of a previously read file", async () => {
+      callStream
+        .mockResolvedValueOnce({
+          content: "Reading the target file.",
+          tool_calls: [
+            {
+              id: "read-before-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the requested field.",
+          tool_calls: [
+            {
+              id: "edit-target",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: "</div>",
+                  new_text: "<div>remaining kcal</div></div>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verifying the edit on disk.",
+          tool_calls: [
+            {
+              id: "read-after-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Verification passed after reading the edited file.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("<div>kcal</div>")
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce("<div>remaining kcal</div>");
+
+      await processInput(
+        "Add remaining kcal display to the nutrition ring on the fitness page.",
+        null,
+        { maxIterations: 4 },
+      );
+
+      expect(executeTool.mock.calls[2][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain(
+        'BLOCKED: read_file("web/templates/fitness/index.html") denied',
+      );
+    });
+
+    it("allows phase-mode readback of an edited fitness template instead of blocking verification", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update web/templates/fitness/index.html.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the kcal remaining field.",
+          tool_calls: [
+            {
+              id: "edit-target",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div>',
+                  new_text:
+                    '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div><div x-text="Math.max(0, targets.kcal - totals.kcal)"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited template section.",
+          tool_calls: [
+            {
+              id: "read-after-edit",
+              function: {
+                name: "read_file",
+                arguments: { path: "web/templates/fitness/index.html" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "PASS: I re-read web/templates/fitness/index.html after the edit and confirmed the remaining kcal field is present.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce(
+          '<div class="text-[11px] text-gray-400 mt-1" x-text="\'Ziel \' + targets.kcal"></div><div x-text="Math.max(0, targets.kcal - totals.kcal)"></div>',
+        );
+
+      await processInput(
+        "Add a remaining kcal field to the fitness nutrition ring template.",
+      );
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("keeps verification pending when a fitness template readback misses the edited markup", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update web/templates/fitness/index.html.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the remaining kcal field.",
+          tool_calls: [
+            {
+              id: "edit-fitness",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  old_text: '<div class="text-xs">kcal</div>',
+                  new_text:
+                    '<div class="text-xs">kcal</div><div class="text-[11px]" x-text="Math.max(0, targets.kcal - totals.kcal) + \' kcal remaining\'"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the same file, but at the style block.",
+          tool_calls: [
+            {
+              id: "read-css",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "web/templates/fitness/index.html",
+                  line_start: 680,
+                  line_end: 690,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the verification nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: web/templates/fitness/index.html")
+        .mockResolvedValueOnce(
+          ".nutrition-ring-content { z-index: 1; text-align: center; }",
+        );
+
+      await processInput("Add a remaining kcal field to the fitness nutrition ring.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("did not include text introduced by your last edit");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("allows phase-mode readback of a neutral edited component file", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update src/components/ProfileCard.jsx.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Applying the scoped component edit.",
+          tool_calls: [
+            {
+              id: "edit-profile",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  old_text: "<span>{name}</span>",
+                  new_text: "<span>{name}</span><span>{status}</span>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading back the edited component.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: { path: "src/components/ProfileCard.jsx" },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "PASS: I re-read src/components/ProfileCard.jsx after the edit and confirmed the status field is present.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: src/components/ProfileCard.jsx")
+        .mockResolvedValueOnce("<span>{name}</span><span>{status}</span>");
+
+      await processInput("Add a status field to the profile card component.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).not.toContain("BLOCKED: code was already edited");
+      delete process.env.NEX_PHASE_ROUTING;
+    });
+
+    it("keeps verification pending when a neutral component readback misses the edited text", async () => {
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Plan: update src/components/ProfileCard.jsx.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Adding the status field.",
+          tool_calls: [
+            {
+              id: "edit-profile",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  old_text: "<span>{name}</span>",
+                  new_text: "<span>{name}</span><span>{status}</span>",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Reading an unrelated section of the edited file.",
+          tool_calls: [
+            {
+              id: "read-profile",
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "src/components/ProfileCard.jsx",
+                  line_start: 1,
+                  line_end: 20,
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "Stopping after the verification nudge.",
+          tool_calls: [],
+        });
+      executeTool
+        .mockResolvedValueOnce("Edited: src/components/ProfileCard.jsx")
+        .mockResolvedValueOnce("export function ProfileCard() { return null; }");
+
+      await processInput("Add a status field to the profile card component.");
+
+      expect(executeTool.mock.calls[1][0]).toBe("read_file");
+      expect(
+        getConversationMessages()
+          .map((m) => m.content)
+          .join("\n"),
+      ).toContain("did not include text introduced by your last edit");
+      delete process.env.NEX_PHASE_ROUTING;
     });
 
     it("warns when context usage > 85%", async () => {
@@ -1300,6 +3851,98 @@ describe("agent.js", () => {
           }),
         ]),
       );
+    });
+
+    it("blocks final success until the task-required verification command has passed", async () => {
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running build", [
+        {
+          function: { name: "bash", arguments: { command: "npm run build" } },
+          id: "build-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("build ok");
+      mockStream(
+        "PASS: The fix is complete and verification passed.",
+      );
+      mockStream("Running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+      mockStream(
+        "PASS: Updated /fix.js and ran npm run lint successfully before finishing.",
+      );
+
+      await processInput(
+        "Fix the bug in fix.js. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("explicitly requires these verification commands") &&
+            m.content.includes("npm run lint"),
+        ),
+      ).toBe(true);
+    });
+
+    it("requires final summaries to report the exact verification command result", async () => {
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "/fix.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+      mockStream("The ESLint failures are fixed and npm run lint should now pass.");
+      mockStream(
+        "Changed files: /fix.js. Verification: npm run lint (passed). Remaining risk: none.",
+      );
+
+      await processInput(
+        "Fix the bug in fix.js. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("npm run lint (passed)") &&
+            (m.content.includes("final summary must report the exact verification command and result") ||
+              m.content.includes("Write a closing summary")),
+        ),
+      ).toBe(true);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification: npm run lint (passed)"),
+        ),
+      ).toBe(true);
     });
   });
 
@@ -1522,6 +4165,27 @@ describe("agent.js", () => {
       );
     });
 
+    it("marks few-shot examples without telling the model to wait", async () => {
+      let firstMessages = null;
+      callStream.mockImplementationOnce(async (messages) => {
+        firstMessages = messages;
+        return { content: "OK", tool_calls: [] };
+      });
+
+      await processInput(
+        "Add a rate limiter middleware to the Express server",
+        null,
+        { silent: true },
+      );
+
+      const joined = firstMessages
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n");
+      expect(joined).toContain("[EXAMPLE");
+      expect(joined).toContain("the next user message is the real task");
+      expect(joined).not.toContain("wait for the real user request");
+    });
+
     it("omits routing guide when < 2 models", async () => {
       getConfiguredProviders.mockReturnValueOnce([
         { name: "ollama", models: [{ id: "x", name: "X" }] },
@@ -1545,6 +4209,1021 @@ describe("agent.js", () => {
 
   // ─── tool result detection ────────────────────────────────
   describe("tool result detection", () => {
+    it("treats non-zero bash exits as tool errors", () => {
+      expect(_isToolResultError("bash", "EXIT 1\nlint failed")).toBe(true);
+      expect(_isToolResultError("bash", "EXIT 127\nnot found")).toBe(true);
+      expect(_isToolResultError("bash", "ok")).toBe(false);
+    });
+
+    it("detects scoped dependency mutations", () => {
+      const sourceScope = "src/components/GameControls.jsx,src/utils/sound.js";
+      expect(_isDependencyMutationCommand("npm install")).toBe(true);
+      expect(_isDependencyMutationCommand("npm i baseline-browser-mapping@latest -D")).toBe(true);
+      expect(_scopeAllowsDependencyMutation(sourceScope)).toBe(false);
+      expect(_scopeAllowsDependencyMutation("package.json,package-lock.json")).toBe(true);
+      expect(_pathMatchesScope("src/utils/sound.js", sourceScope)).toBe(true);
+    });
+
+    it("detects commands that mask verification failures", () => {
+      expect(_masksCommandFailure("npm run lint || true")).toBe(true);
+      expect(_masksCommandFailure("npm test || exit 0")).toBe(true);
+      expect(_masksCommandFailure("set +e; npm run lint")).toBe(true);
+      expect(_masksCommandFailure("npm run lint")).toBe(false);
+    });
+
+    it("detects newly added commented-out code in source diffs", () => {
+      const diff = [
+        "diff --git a/src/utils/sound.js b/src/utils/sound.js",
+        "--- a/src/utils/sound.js",
+        "+++ b/src/utils/sound.js",
+        "@@ -10,0 +11,3 @@",
+        "+// const unusedAudio = new Audio('/click.mp3');",
+        "+// Explains why sound is optional in tests.",
+        "+const enabled = true;",
+      ].join("\n");
+
+      expect(_looksLikeCommentedOutCode("// const stale = 1;")).toBe(true);
+      expect(_looksLikeCommentedOutCode("// Explains behavior.")).toBe(false);
+      expect(_detectAddedCommentedOutCode(diff)).toEqual([
+        {
+          path: "src/utils/sound.js",
+          line: 11,
+          text: "// const unusedAudio = new Audio('/click.mp3');",
+        },
+      ]);
+    });
+
+    it("builds a guard nudge for commented-out code findings", () => {
+      const message = _buildCommentedOutCodeNudge([
+        {
+          path: "src/utils/sound.js",
+          line: 42,
+          text: "// return false;",
+        },
+      ]);
+      expect(message).toContain("SYSTEM QUALITY GUARD");
+      expect(message).toContain("src/utils/sound.js:42");
+      expect(message).toContain("Remove dead/commented-out code");
+    });
+
+    it("detects malformed duplicate opening tags in transcript-derived markup diffs", () => {
+      const diff = [
+        "diff --git a/web/templates/fitness/index.html b/web/templates/fitness/index.html",
+        "--- a/web/templates/fitness/index.html",
+        "+++ b/web/templates/fitness/index.html",
+        "@@ -1866,0 +1867,1 @@",
+        "+<div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + ' kcal'\"><div>",
+      ].join("\n");
+
+      expect(
+        _looksLikeMalformedDuplicateOpeningTag("<div class=\"text-xs\"><div>"),
+      ).toBe(true);
+      expect(_detectAddedMalformedMarkup(diff)).toEqual([
+        {
+          path: "web/templates/fitness/index.html",
+          line: 1867,
+          text: "<div class=\"text-[11px] text-gray-400 mt-1\" x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal)) + ' kcal'\"><div>",
+        },
+      ]);
+    });
+
+    it("detects malformed duplicate opening tags in neutral template diffs", () => {
+      const diff = [
+        "diff --git a/web/templates/dashboard.html b/web/templates/dashboard.html",
+        "--- a/web/templates/dashboard.html",
+        "+++ b/web/templates/dashboard.html",
+        "@@ -22,0 +23,2 @@",
+        "+<section><div></div></section>",
+        "+<span class=\"metric\" data-value=\"remaining\"><span>",
+      ].join("\n");
+
+      expect(_detectAddedMalformedMarkup(diff)).toEqual([
+        {
+          path: "web/templates/dashboard.html",
+          line: 24,
+          text: "<span class=\"metric\" data-value=\"remaining\"><span>",
+        },
+      ]);
+    });
+
+    it("builds a guard nudge for malformed markup findings", () => {
+      const message = _buildMalformedMarkupNudge([
+        {
+          path: "web/templates/dashboard.html",
+          line: 24,
+          text: '<span class="metric"><span>',
+        },
+      ]);
+      expect(message).toContain("SYSTEM QUALITY GUARD");
+      expect(message).toContain("web/templates/dashboard.html:24");
+      expect(message).toContain("appears to leave an element unclosed");
+    });
+
+    it("blocks final success when no-git lint-fix edits leave commented-out dead code", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-comment-"));
+      const sourceDir = path.join(fixtureDir, "src", "utils");
+      const sourcePath = path.join(sourceDir, "sound.js");
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.writeFileSync(
+        sourcePath,
+        [
+          "export function playWin() {",
+          "  const now = 0;",
+          "  return now + 1;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "write_file") {
+          fs.writeFileSync(path.join(fixtureDir, args.path), args.content);
+          return "ok";
+        }
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Applying the lint fix.",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: {
+                  path: "src/utils/sound.js",
+                  content: [
+                    "export function playWin() {",
+                    "  // const now = 0; // removed unused variable",
+                    "  return 1;",
+                    "}",
+                    "",
+                  ].join("\n"),
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nAll ESLint failures have been fixed without changing behavior.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Removing the dead commented-out line.",
+          tool_calls: [
+            {
+              id: "c2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/utils/sound.js",
+                  old_text: "  // const now = 0; // removed unused variable\n",
+                  new_text: "",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nAll ESLint failures have been fixed without changing behavior.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior in src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(callStream.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Do not finish with PASS/verified language") &&
+            m.content.includes("src/utils/sound.js"),
+        ),
+      ).toBe(true);
+    });
+
+    it("blocks final success when an edited template has malformed markup", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-markup-"));
+      const templateDir = path.join(fixtureDir, "web", "templates");
+      const templatePath = path.join(templateDir, "dashboard.html");
+      fs.mkdirSync(templateDir, { recursive: true });
+      fs.writeFileSync(
+        templatePath,
+        [
+          '<div class="nutrition-ring-content">',
+          '  <div class="text-xs">kcal</div>',
+          "</div>",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      process.chdir(fixtureDir);
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Adding the remaining calories label.",
+          tool_calls: [
+            {
+              id: "m1",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  old_text: '  <div class="text-xs">kcal</div>',
+                  new_text:
+                    '  <div class="text-xs">kcal</div>\n  <div class="text-[11px]" x-text="remaining"><div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "**PASS**\n\nThe dashboard template update is complete.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Fixing the malformed closing tag.",
+          tool_calls: [
+            {
+              id: "m2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "web/templates/dashboard.html",
+                  old_text: '  <div class="text-[11px]" x-text="remaining"><div>',
+                  new_text:
+                    '  <div class="text-[11px]" x-text="remaining"></div>',
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content:
+            "**PASS**\n\nThe dashboard template update is complete after fixing the malformed markup.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput("Add a remaining value to the dashboard template.", null, {
+          autoConfirm: true,
+          silent: true,
+          maxIterations: 6,
+        });
+      } finally {
+        process.chdir(originalCwd);
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes(
+              "Do not report success while the edited markup appears malformed",
+            ) &&
+            m.content.includes("web/templates/dashboard.html"),
+        ),
+      ).toBe(true);
+    });
+
+    it("blocks undeclared package imports when manifests are out of scope", async () => {
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-import-"));
+      const sourceDir = path.join(fixtureDir, "src", "components");
+      const sourcePath = path.join(sourceDir, "GameControls.jsx");
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(fixtureDir, "package.json"),
+        JSON.stringify({ name: "fixture", version: "1.0.0" }, null, 2),
+      );
+      fs.writeFileSync(
+        sourcePath,
+        [
+          "import React from 'react';",
+          "export default function GameControls() {",
+          "  return null;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const originalCwd = process.cwd();
+      const originalScope = process.env.NEX_SCOPE;
+      process.chdir(fixtureDir);
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      executeTool.mockImplementation(async (name, args) => {
+        if (name === "write_file") {
+          fs.writeFileSync(path.join(fixtureDir, args.path), args.content);
+          return "ok";
+        }
+        if (name === "edit_file") {
+          const target = path.join(fixtureDir, args.path);
+          const current = fs.readFileSync(target, "utf8");
+          fs.writeFileSync(target, current.replace(args.old_text, args.new_text));
+          return "ok";
+        }
+        return "ok";
+      });
+
+      callStream
+        .mockResolvedValueOnce({
+          content: "Trying a lint fix.",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: {
+                  path: "src/components/GameControls.jsx",
+                  content: [
+                    "import React from 'react';",
+                    "import PropTypes from 'prop-types';",
+                    "export default function GameControls() {",
+                    "  return null;",
+                    "}",
+                    "",
+                  ].join("\n"),
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "PASS: lint fix complete.",
+          tool_calls: [],
+        })
+        .mockResolvedValueOnce({
+          content: "Removing the undeclared import.",
+          tool_calls: [
+            {
+              id: "c2",
+              type: "function",
+              function: {
+                name: "edit_file",
+                arguments: {
+                  path: "src/components/GameControls.jsx",
+                  old_text: "import PropTypes from 'prop-types';\n",
+                  new_text: "",
+                },
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          content: "PASS: fix complete without undeclared imports.",
+          tool_calls: [],
+        });
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        process.chdir(originalCwd);
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("imports from packages that are not declared or resolvable") &&
+            m.content.includes("prop-types"),
+        ),
+      ).toBe(true);
+    });
+
+    it("nudges toward the remaining scoped file after lint verification fails", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      mockStream("fixing first file", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 1",
+          "src/utils/sound.js",
+          "  46:15  error  'now' is assigned a value but never used  no-unused-vars",
+          "",
+          "✖ 1 problem (1 error, 0 warnings)",
+        ].join("\n"),
+      );
+      mockStream("Fixing the remaining scoped file.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 6 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification failed in these remaining scoped files") &&
+            m.content.includes("src/utils/sound.js"),
+        ),
+      ).toBe(true);
+    });
+
+    it("forces exact scoped no-unused-vars follow-up before finalizing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+
+      mockStream("fixing sound first", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/utils/sound.js" } },
+          id: "edit-sound",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("running lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 1",
+          "src/components/GameControls.jsx",
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+          "",
+          "✖ 1 problem (1 error, 0 warnings)",
+        ].join("\n"),
+      );
+
+      mockStream("PASS: lint fix complete.", []);
+      mockStream("Removing currentPlayer from the scoped file.", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-controls",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("rerunning lint", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+
+      mockStream("PASS: lint fix complete.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      const userMessages = getConversationMessages().filter(
+        (m) => m.role === "user" && typeof m.content === "string",
+      );
+      expect(
+        userMessages.some(
+          (m) =>
+            m.content.includes("npm run lint failed in scoped file src/components/GameControls.jsx") &&
+            m.content.includes("currentPlayer") &&
+            m.content.includes("Do not finalize") &&
+            m.content.includes("rerun npm run lint"),
+        ),
+      ).toBe(true);
+
+      expect(
+        executeTool.mock.calls.some(
+          ([name, args]) =>
+            name === "edit_file" && args?.path === "src/components/GameControls.jsx",
+        ),
+      ).toBe(true);
+      expect(
+        executeTool.mock.calls.filter(
+          ([name, args]) =>
+            name === "bash" && args?.command === "npm run lint",
+        ),
+      ).toHaveLength(2);
+    });
+
+    it("fails cleanly in headless auto mode when verification dependencies are missing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Applying the scoped fix.", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/components/GameControls.jsx" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Running lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        [
+          "EXIT 2",
+          "Error: Cannot find module '/tmp/sandbox/node_modules/eslint/lib/api.js'",
+          "Require stack:",
+          "- /tmp/sandbox/node_modules/vite/dist/node/chunks/dep.js",
+        ].join("\n"),
+      );
+
+      mockStream("SHOULD NOT ASK", [
+        {
+          function: {
+            name: "ask_user",
+            arguments: {
+              question: "May I run npm install?",
+              options: ["Yes", "No"],
+            },
+          },
+          id: "ask-1",
+        },
+      ]);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete.") &&
+            m.content.includes("npm run lint") &&
+            m.content.includes("dependencies are missing or broken"),
+        ),
+      ).toBe(true);
+      expect(
+        executeTool.mock.calls.some(([name]) => name === "ask_user"),
+      ).toBe(false);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("SHOULD NOT ASK"),
+        ),
+      ).toBe(false);
+    });
+
+    it("finishes after readback when optional verification dependencies are missing", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE = "src/components/GameControls.jsx";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Applying the scoped fix.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              patches: [
+                {
+                  old_text: "<button>Save</button>",
+                  new_text: "<button>Save</button>\n<span>Status: active</span>",
+                },
+              ],
+            },
+          },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Reading the edited component.", [
+        {
+          function: {
+            name: "read_file",
+            arguments: { path: "src/components/GameControls.jsx" },
+          },
+          id: "read-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "<button>Save</button>\n<span>Status: active</span>",
+      );
+
+      mockStream("Running lint as an extra check.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("EXIT 127\nsh: eslint: command not found");
+
+      try {
+        await processInput(
+          "Add a status line to src/components/GameControls.jsx.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 8 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      const messages = getConversationMessages();
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Completed the requested edit.") &&
+            m.content.includes("post-edit readback") &&
+            m.content.includes("Additional verification skipped") &&
+            m.content.includes("npm run lint"),
+        ),
+      ).toBe(true);
+      expect(
+        messages.some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete."),
+        ),
+      ).toBe(false);
+    });
+
+    it("fails closed after repeated verification stalls without edit progress", async () => {
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Running lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint" } },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\nerror  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      mockStream("Retrying lint.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run lint --silent" } },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\nerror  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      mockStream("Trying build.", [
+        {
+          function: { name: "bash", arguments: { command: "npm run build" } },
+          id: "build-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nbuild failed",
+      );
+
+      mockStream("SHOULD NOT CONTINUE", []);
+
+      await processInput(
+        "Fix the ESLint failures without changing behavior. Run npm run lint before finishing and report the result.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "assistant" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification incomplete.") &&
+            m.content.includes("Three consecutive verification commands failed without edit progress"),
+        ),
+      ).toBe(true);
+      expect(callStream).toHaveBeenCalledTimes(3);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("SHOULD NOT CONTINUE"),
+        ),
+      ).toBe(false);
+    });
+
+    // ─── Patch 1 regression: blocks unrelated import removal ──────────
+    it("blocks edits that remove unrelated imports during scoped no-unused-vars follow-up", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE =
+        "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      // Step 1: lint fails, pinpointing currentPlayer in GameControls.jsx
+      mockStream("Running lint first.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\n" +
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      // Step 2: model attempts a patch_file that removes BOTH currentPlayer
+      // and import React (unrelated). The guard should block this.
+      mockStream("Removing both currentPlayer and the React import.", [
+        {
+          function: {
+            name: "patch_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              patches: [
+                {
+                  old_text: "import React from 'react';\n    currentPlayer,",
+                  new_text: "    // removed",
+                },
+              ],
+            },
+          },
+          id: "patch-bad",
+        },
+      ]);
+
+      // Step 3: if the guard blocks, the model gets a BLOCKED message back
+      // and must retry with only currentPlayer removed
+      mockStream("OK, removing only currentPlayer.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              old_text: "    currentPlayer,",
+              new_text: "",
+            },
+          },
+          id: "edit-good",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      mockStream("Rerunning lint.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("lint ok");
+
+      mockStream("PASS: lint fix complete.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      // The first patch_file should have been blocked with a BLOCKED message
+      const toolMessages = getConversationMessages().filter(
+        (m) => m.role === "tool",
+      );
+      const blockedMsg = toolMessages.find(
+        (m) =>
+          typeof m.content === "string" &&
+          m.content.includes("BLOCKED") &&
+          m.content.includes("import") &&
+          m.content.includes("React"),
+      );
+      // Either the tool was blocked (BLOCKED in tool result) OR it was
+      // blocked pre-execution (the mock never called executeTool for it).
+      // In both cases the model receives a blocking message.
+      const hadBlockedMessage =
+        !!blockedMsg ||
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("BLOCKED") &&
+            m.content.includes("import") &&
+            m.content.includes("React"),
+        );
+      expect(hadBlockedMessage).toBe(true);
+
+      // The model should NOT have executed both the bad patch and the good edit
+      // for the same file without an intervening lint rerun.
+      const gameControlsEdits = executeTool.mock.calls.filter(
+        ([name, args]) =>
+          name === "edit_file" && args?.path === "src/components/GameControls.jsx",
+      );
+      // Expect at most 1 successful edit on GameControls.jsx (the good one)
+      expect(gameControlsEdits.length).toBeLessThanOrEqual(1);
+    });
+
+    // ─── Patch 2 regression: verification freshness ──────────────────
+    it("requires fresh verification after a post-verification edit", async () => {
+      const originalScope = process.env.NEX_SCOPE;
+      process.env.NEX_SCOPE =
+        "src/components/GameControls.jsx,src/utils/sound.js";
+      getAutoConfirm.mockReturnValue(true);
+
+      // Step 1: edit sound.js
+      mockStream("Fixing sound.js.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/utils/sound.js",
+              old_text: "const now = 0;",
+              new_text: "",
+            },
+          },
+          id: "edit-sound",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      // Step 2: run lint — passes for sound.js but fails for GameControls.jsx
+      mockStream("Running lint.", [
+        {
+          function: {
+            name: "bash",
+            arguments: { command: "npm run lint" },
+          },
+          id: "lint-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nsrc/components/GameControls.jsx\n" +
+          "  12:5  error  'currentPlayer' is defined but never used  no-unused-vars",
+      );
+
+      // Step 3: edit GameControls.jsx (AFTER lint was run — makes lint stale)
+      mockStream("Removing currentPlayer.", [
+        {
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/GameControls.jsx",
+              old_text: "    currentPlayer,",
+              new_text: "",
+            },
+          },
+          id: "edit-controls",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+
+      // Step 4: model tries to finalize without rerunning lint.
+      // The verification freshness guard should require a rerun.
+      mockStream("PASS: all lint errors fixed.", []);
+
+      try {
+        await processInput(
+          "Fix the ESLint failures without changing behavior. Scope: src/components/GameControls.jsx and src/utils/sound.js. Run npm run lint before finishing and report the result.",
+          null,
+          { autoConfirm: true, silent: true, maxIterations: 10 },
+        );
+      } finally {
+        if (originalScope === undefined) delete process.env.NEX_SCOPE;
+        else process.env.NEX_SCOPE = originalScope;
+      }
+
+      // After editing GameControls.jsx post-lint, the model should be nudged
+      // to rerun lint before finalizing. Check for the nudge message.
+      const lastMessages = getConversationMessages().slice(-10);
+      const hasVerificationNudge = lastMessages.some(
+        (m) =>
+          typeof m.content === "string" &&
+          (m.content.includes("verification required") ||
+            m.content.includes("Run npm run lint") ||
+            m.content.includes("rerun") ||
+            m.content.includes("verification is stale")),
+      );
+      // The exact nudge wording varies, but some post-edit verification
+      // prompt should have been injected.
+      expect(hasVerificationNudge).toBe(true);
+    });
+
+    // ─── Unit test: _extractRemovedImportSymbols ─────────────────────
+    it("_extractRemovedImportSymbols detects unrelated import removals", () => {
+      const oldText = [
+        "import React from 'react';",
+        "import { useState } from 'react';",
+        "import './GameControls.css';",
+        "",
+        "export default function GameControls({ currentPlayer }) {",
+        "  const { currentPlayer } = props;",
+        "  return null;",
+        "}",
+      ].join("\n");
+
+      const newText = [
+        "import { useState } from 'react';",
+        "import './GameControls.css';",
+        "",
+        "export default function GameControls({ currentPlayer }) {",
+        "  return null;",
+        "}",
+      ].join("\n");
+
+      const removed = _extractRemovedImportSymbols(oldText, newText);
+      expect(removed).toHaveLength(1);
+      expect(removed[0].symbol).toBe("React");
+    });
+
     it("ERROR result detected in summary", async () => {
       mockStream("", [
         {
@@ -2106,6 +5785,16 @@ describe("agent.js", () => {
       ).toBe(true);
       expect(
         agent._isSimpleDirectAnswerPrompt(
+          'bei /fitness hätte ich gern hier ein Feld für verbleibende kcal: <div class="nutrition-ring-content"><div x-text="Math.round(totals.kcal)"></div></div>',
+        ),
+      ).toBe(false);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
+          'In /dashboard add a status label near this markup: <section class="summary"><span>{status}</span></section>',
+        ),
+      ).toBe(false);
+      expect(
+        agent._isSimpleDirectAnswerPrompt(
           "Identify and fix the memory leak in this Node.js code:\nconst emitter = new EventEmitter();",
         ),
       ).toBe(true);
@@ -2203,7 +5892,7 @@ describe("agent.js", () => {
       mockStream("Blocked");
       await processInput("execute plan");
       expect(executeTool).not.toHaveBeenCalled();
-      expect(logOutput()).toContain("blocked");
+      expect(logOutput()).toContain("deferred");
       isPlanMode.mockReturnValue(false);
       getPlanModePrompt.mockReturnValue("");
     });
@@ -2274,6 +5963,41 @@ describe("agent.js", () => {
       executeTool.mockResolvedValue("ok");
       await processInput("keep editing");
       expect(logOutput()).toContain("Loop abort");
+      delete process.env.NEX_DEBUG;
+    });
+
+    it("records a stalled final message when repeated reads are blocked", async () => {
+      process.env.NEX_DEBUG = "true";
+      for (let i = 0; i < 8; i++) {
+        mockStream(i === 0 ? "I will inspect the profile card first." : "", [
+          {
+            function: {
+              name: "read_file",
+              arguments: {
+                path: "src/components/ProfileCard.jsx",
+                line_start: 1,
+                line_end: 40,
+              },
+            },
+            id: `profile-read-${i}`,
+          },
+        ]);
+      }
+      mockStream("Done"); // fallback — should not be reached after loop abort
+      executeTool.mockResolvedValue(
+        "1: export function ProfileCard() { return <section />; }",
+      );
+
+      await processInput(
+        "In src/components/ProfileCard.jsx add a status field near the summary section.",
+      );
+
+      const lastAssistant = getConversationMessages()
+        .filter((m) => m.role === "assistant")
+        .at(-1);
+      expect(logOutput()).toContain("Loop abort");
+      expect(lastAssistant.content).toContain("Implementation stalled before edits");
+      expect(lastAssistant.content).toContain("blocked by loop guards");
       delete process.env.NEX_DEBUG;
     });
 
@@ -2806,6 +6530,7 @@ describe("agent.js", () => {
       expect(staticPart).toContain("# Core Behavior");
       expect(staticPart).toContain("# Tool Strategy");
       expect(staticPart).toContain("# Edit Protocol");
+      expect(staticPart).toContain("Do not leave commented-out code");
     });
 
     it("dynamic part contains session-specific content", async () => {
@@ -2904,6 +6629,29 @@ describe("agent.js", () => {
       await processInput("test", { onToolStart, onToolEnd });
       expect(onToolStart).toHaveBeenCalledWith("bash", expect.any(Object));
       expect(onToolEnd).toHaveBeenCalledWith("bash", expect.any(String), true);
+    });
+
+    it("emits a failed tool_end event when tool execution throws", async () => {
+      const onToolStart = jest.fn();
+      const onToolEnd = jest.fn();
+      mockStream("", [
+        {
+          function: { name: "bash", arguments: { command: "echo x" } },
+          id: "c1",
+        },
+      ]);
+      executeTool.mockRejectedValueOnce(new Error("tool crashed"));
+
+      await expect(
+        processInput("test", { onToolStart, onToolEnd }),
+      ).rejects.toThrow("tool crashed");
+
+      expect(onToolStart).toHaveBeenCalledWith("bash", expect.any(Object));
+      expect(onToolEnd).toHaveBeenCalledWith(
+        "bash",
+        expect.stringContaining("tool crashed"),
+        false,
+      );
     });
 
     it("calls onThinkingToken hook", async () => {

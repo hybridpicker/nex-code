@@ -384,7 +384,7 @@ Bullet list of potential issues and mitigations.
 
 # Important
 - Order steps by dependency (later steps may depend on earlier ones).
-- After presenting the plan, tell the user to type \`/plan approve\` to proceed.
+- After presenting the plan, stop. The CLI will show the approval prompt or tell the user the exact next command.
 - Do NOT make any file changes — your role is analysis and planning only.
 - Do NOT call ask_user. If anything is ambiguous, add an "## Assumptions" section to the plan and state your assumption. The user approves or rejects the whole plan — that is the only gate.`;
 }
