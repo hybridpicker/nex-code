@@ -55,6 +55,18 @@ function looksLikeUnfinishedInvestigation(text) {
   );
 }
 
+function looksLikeCompletedWork(text) {
+  const normalized = String(text || "").trim().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  if (/\b(not verified|not run|could not|failed|stalled|stopping without)\b/i.test(normalized)) {
+    return false;
+  }
+  return (
+    /\b(updated|changed|added|created|implemented|fixed|wrote|includes|contains)\b/i.test(normalized) &&
+    /\b(verified|passed|complete|completed|done|successfully|now includes|now contains)\b/i.test(normalized)
+  );
+}
+
 function classifyTurnOutcome(turnMessages) {
   const assistantMessages = Array.isArray(turnMessages)
     ? turnMessages
@@ -74,11 +86,22 @@ function classifyTurnOutcome(turnMessages) {
     };
   }
 
-  if (
+  const explicitStall =
     /\b(implementation stalled before edits|stopping without|no safe task found|not verified|could not find the target|no actionable items|nothing actionable found)\b/i.test(
       lastAssistant,
-    )
-  ) {
+    );
+  if (explicitStall) {
+    const priorCompletion = assistantMessages
+      .slice(0, -1)
+      .reverse()
+      .find(looksLikeCompletedWork);
+    if (priorCompletion) {
+      return {
+        status: "complete",
+        success: true,
+        summary: summarizeAssistantText(priorCompletion),
+      };
+    }
     return {
       status: "stalled",
       success: false,

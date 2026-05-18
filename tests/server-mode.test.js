@@ -183,6 +183,34 @@ describe("startServerMode", () => {
     });
   });
 
+  test("keeps completed work as success when redundant readbacks stall later", async () => {
+    startFresh();
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([
+        {
+          role: "assistant",
+          content:
+            "The src/settings.js file now includes desktopVerification and npm test passed.",
+        },
+        {
+          role: "assistant",
+          content:
+            "Implementation stalled before edits.\n\nThe model kept calling tools that were blocked by loop guards instead of changing files or producing a valid final answer. Stopping without commit or push so the workflow does not falsely report success.",
+        },
+      ]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-complete-then-blocked","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-complete-then-blocked"'));
+    expect(JSON.parse(doneMsg)).toMatchObject({
+      id: "msg-complete-then-blocked",
+      status: "complete",
+      success: true,
+      summary: expect.stringContaining("desktopVerification"),
+    });
+  });
+
   test("marks unfinished transcript-derived investigation text as non-success", async () => {
     startFresh();
     getConversationMessages
