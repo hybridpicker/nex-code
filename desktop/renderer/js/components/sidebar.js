@@ -110,6 +110,21 @@ function initSidebarComponents(data) {
     </div>
   `;
 
+  if (hasProject) {
+    nav.innerHTML += `
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          Project Files
+          <button type="button" class="file-tree-refresh-btn" title="Refresh file tree" data-file-tree-refresh>↻</button>
+        </div>
+        <div class="file-tree" id="file-tree">
+          <div class="file-tree-loading">Loading files...</div>
+        </div>
+      </div>
+    `;
+    setTimeout(loadFileTree, 0);
+  }
+
   bindSidebarActions(nav);
   initRecentProjects(data);
 }
@@ -189,3 +204,183 @@ function escapeAttr(value) {
     .replace(/"/g, "&quot;")
     .replace(/\n/g, "");
 }
+
+let fileTreeData = null;
+let fileTreeExpanded = {};
+
+async function loadFileTree() {
+  const container = document.getElementById("file-tree");
+  if (!container) return;
+  if (!window.nexAPI || !window.nexAPI.getFileTree) {
+    container.innerHTML = '<div class="file-tree-empty">File tree unavailable.</div>';
+    return;
+  }
+
+  try {
+    const result = await window.nexAPI.getFileTree();
+    if (!result || !result.ok || !result.tree) {
+      container.innerHTML = `<div class="file-tree-empty">${escapeHtml(result && result.message ? result.message : "Could not load files.")}</div>`;
+      return;
+    }
+    fileTreeData = result.tree;
+    fileTreeExpanded[fileTreeData.path || ""] = true;
+    renderFileTree(container);
+  } catch (err) {
+    container.innerHTML = `<div class="file-tree-empty">${escapeHtml(err.message || "Could not load files.")}</div>`;
+  }
+}
+
+function refreshFileTree() {
+  fileTreeExpanded = {};
+  if (fileTreeData) fileTreeExpanded[fileTreeData.path || ""] = true;
+  loadFileTree();
+}
+
+window.refreshFileTree = refreshFileTree;
+
+function renderFileTree(container) {
+  if (!fileTreeData) {
+    container.innerHTML = '<div class="file-tree-empty">No files.</div>';
+    return;
+  }
+  container.innerHTML = renderFileTreeNode(fileTreeData, 0);
+  bindFileTreeEvents(container);
+}
+
+function renderFileTreeNode(node, depth) {
+  const nodePath = node.path || "";
+  if (node.kind === "directory") {
+    const children = Array.isArray(node.children) ? node.children : [];
+    const expanded = fileTreeExpanded[nodePath] === true;
+    return [
+      '<div class="file-tree-dir">',
+      `<button type="button" class="file-tree-row" data-ft-kind="dir" data-ft-path="${escapeAttr(nodePath)}" style="padding-left:${12 + depth * 14}px" title="${escapeAttr(nodePath || node.name)}">`,
+      `<span class="file-tree-chevron${expanded ? " expanded" : ""}${children.length ? "" : " file-tree-chevron-empty"}">▸</span>`,
+      '<span class="file-tree-icon dir">📁</span>',
+      `<span class="file-tree-name">${escapeHtml(node.name)}</span>`,
+      "</button>",
+      expanded ? `<div class="file-tree-children">${children.map((child) => renderFileTreeNode(child, depth + 1)).join("")}</div>` : "",
+      "</div>",
+    ].join("");
+  }
+
+  return [
+    `<button type="button" class="file-tree-row file-tree-file" data-ft-kind="file" data-ft-path="${escapeAttr(nodePath)}" style="padding-left:${12 + depth * 14}px" title="${escapeAttr(nodePath)}">`,
+    '<span class="file-tree-chevron file-tree-chevron-empty"></span>',
+    `<span class="file-tree-icon">${escapeHtml(getFileIcon(node.name, node.ext))}</span>`,
+    `<span class="file-tree-name">${escapeHtml(node.name)}</span>`,
+    node.size > 0 ? `<span class="file-tree-size">${formatFileSize(node.size)}</span>` : "",
+    "</button>",
+  ].join("");
+}
+
+function bindFileTreeEvents(container) {
+  const refreshButton = document.querySelector("[data-file-tree-refresh]");
+  if (refreshButton) refreshButton.addEventListener("click", refreshFileTree);
+  container.querySelectorAll(".file-tree-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const nodePath = row.getAttribute("data-ft-path") || "";
+      const kind = row.getAttribute("data-ft-kind");
+      if (kind === "dir") {
+        fileTreeExpanded[nodePath] = fileTreeExpanded[nodePath] !== true;
+        renderFileTree(container);
+      } else {
+        openFileViewer(nodePath);
+      }
+    });
+    row.addEventListener("dblclick", () => {
+      const nodePath = row.getAttribute("data-ft-path") || "";
+      if (row.getAttribute("data-ft-kind") === "file" && window.nexAPI && window.nexAPI.selectFile) {
+        window.nexAPI.selectFile(nodePath);
+      }
+    });
+  });
+}
+
+function getFileIcon(name, ext) {
+  const value = ext || "";
+  if (["js", "jsx", "ts", "tsx"].includes(value)) return "{}";
+  if (["json", "yaml", "yml", "toml"].includes(value)) return "cfg";
+  if (["md", "txt", "log"].includes(value)) return "txt";
+  if (["html", "css", "scss"].includes(value)) return "<>";
+  if (["png", "jpg", "jpeg", "gif", "svg", "ico"].includes(value)) return "img";
+  if (name === "Dockerfile") return "dk";
+  return "--";
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function openFileViewer(filePath) {
+  if (!window.nexAPI || !window.nexAPI.getFileContent) return;
+  window.nexAPI.getFileContent(filePath).then((result) => {
+    if (!result || !result.ok) {
+      if (typeof addServerLog === "function") addServerLog(`Could not open file: ${result && result.message ? result.message : "Unknown error"}`);
+      return;
+    }
+    showFileViewer(result);
+  }).catch((err) => {
+    if (typeof addServerLog === "function") addServerLog(`Could not open file: ${err.message}`);
+  });
+}
+
+function showFileViewer(fileData) {
+  let overlay = document.getElementById("file-viewer-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "file-viewer-overlay";
+    overlay.className = "file-viewer-overlay";
+    overlay.innerHTML = [
+      '<div class="file-viewer-panel">',
+      '<div class="file-viewer-header">',
+      '<span class="file-viewer-title" id="file-viewer-title"></span>',
+      '<div class="file-viewer-actions">',
+      '<button type="button" class="file-viewer-btn" onclick="openFileExternally()">Open</button>',
+      '<button type="button" class="file-viewer-btn file-viewer-close-btn" onclick="closeFileViewer()">x</button>',
+      "</div>",
+      "</div>",
+      '<div class="file-viewer-body">',
+      '<div class="file-viewer-gutter" id="file-viewer-gutter"></div>',
+      '<pre class="file-viewer-content" id="file-viewer-content"></pre>',
+      "</div>",
+      "</div>",
+    ].join("");
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeFileViewer();
+    });
+  }
+
+  document.getElementById("file-viewer-title").textContent = fileData.path || "File";
+  const lines = String(fileData.content || "").split("\n");
+  document.getElementById("file-viewer-gutter").innerHTML = lines
+    .map((_, index) => `<span class="file-viewer-line-no">${index + 1}</span>`)
+    .join("");
+
+  const contentEl = document.getElementById("file-viewer-content");
+  if (typeof highlightCode === "function") {
+    contentEl.innerHTML = highlightCode(fileData.content || "", fileData.language || "text");
+  } else {
+    contentEl.textContent = fileData.content || "";
+  }
+  overlay._filePath = fileData.path;
+  overlay.classList.add("open");
+}
+
+function closeFileViewer() {
+  const overlay = document.getElementById("file-viewer-overlay");
+  if (overlay) overlay.classList.remove("open");
+}
+
+function openFileExternally() {
+  const overlay = document.getElementById("file-viewer-overlay");
+  if (overlay && overlay._filePath && window.nexAPI && window.nexAPI.selectFile) {
+    window.nexAPI.selectFile(overlay._filePath);
+  }
+}
+
+window.closeFileViewer = closeFileViewer;
+window.openFileExternally = openFileExternally;

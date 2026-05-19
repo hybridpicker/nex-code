@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld("nexAPI", {
   openProjectPath: (projectPath) => ipcRenderer.invoke("nex:open-project-path", projectPath),
   openProjectFolder: () => ipcRenderer.invoke("nex:open-project-folder"),
   openExternal: (url) => ipcRenderer.send("nex:open-external", url),
+  getFileTree: () => ipcRenderer.invoke("nex:get-file-tree"),
+  getFileContent: (filePath) => ipcRenderer.invoke("nex:get-file-content", filePath),
+  getGitDiff: () => ipcRenderer.invoke("nex:get-git-diff"),
+  selectFile: (filePath) => ipcRenderer.invoke("nex:select-file", filePath),
   minimizeWindow: function () { ipcRenderer.send("nex:window-minimize"); },
   maximizeWindow: function () { ipcRenderer.send("nex:window-maximize"); },
   closeWindow: function () { ipcRenderer.send("nex:window-close"); },
@@ -39,4 +43,6 @@ contextBridge.exposeInMainWorld("nexAPI", {
   onStateUpdated: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:state-updated", h); return function () { ipcRenderer.removeListener("nex:state-updated", h); }; },
   onAgenticNode: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:agentic-node", h); return function () { ipcRenderer.removeListener("nex:agentic-node", h); }; },
   onAgentThinking: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:agent-thinking", h); return function () { ipcRenderer.removeListener("nex:agent-thinking", h); }; },
+  onServerDiff: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-diff", h); return function () { ipcRenderer.removeListener("nex:server-diff", h); }; },
+  onServerFileChanged: function (cb) { var h = function (e, d) { cb(d); }; ipcRenderer.on("nex:server-file-changed", h); return function () { ipcRenderer.removeListener("nex:server-file-changed", h); }; },
 });

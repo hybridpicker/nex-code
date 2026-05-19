@@ -269,6 +269,20 @@ function subscribeToEvents() {
     refreshAllComponents();
   });
 
+  if (window.nexAPI.onServerDiff) {
+    window.nexAPI.onServerDiff((d) => {
+      addInlineDiffToConversation(d);
+    });
+  }
+
+  if (window.nexAPI.onServerFileChanged) {
+    window.nexAPI.onServerFileChanged(() => {
+      AppState.data.fileChanges = (AppState.data.fileChanges || 0) + 1;
+      if (typeof refreshFileTree === "function") setTimeout(refreshFileTree, 200);
+      refreshAllComponents();
+    });
+  }
+
   window.nexAPI.onServerConfirm((d) => {
     if (d.tool === "ask_user") {
       pendingServerConfirm = d;
@@ -800,10 +814,43 @@ function formatTokens(n) {
   return String(n);
 }
 
+function addInlineDiffToConversation(diffPayload) {
+  if (!diffPayload || !diffPayload.diff) return null;
+  let activeConversation = getActiveAssistantConversation() || getActiveConversation();
+  if (!activeConversation) {
+    activeConversation = appendConversationItem(createConversationItem("assistant", "", {
+      status: "running",
+    }));
+  }
+
+  if (!Array.isArray(activeConversation.diffs)) activeConversation.diffs = [];
+  if (
+    diffPayload.diffHash &&
+    activeConversation.diffs.some((diff) => diff.diffHash === diffPayload.diffHash)
+  ) {
+    return null;
+  }
+
+  const entry = {
+    tool: sanitizeDisplayText(diffPayload.tool || "tool"),
+    summary: sanitizeDisplayText(diffPayload.summary || ""),
+    stat: sanitizeDisplayText(diffPayload.stat || ""),
+    diff: String(diffPayload.diff || ""),
+    diffHash: diffPayload.diffHash || "",
+    timestamp: new Date().toLocaleTimeString(),
+  };
+  activeConversation.diffs.push(entry);
+  refreshAllComponents();
+  return entry;
+}
+
 // ─── Markdown Parser ────────────────────────────────────────────────────────
 
 function parseMarkdown(text) {
   if (!text) return "";
+  if (typeof parseMarkdownEnhanced === "function" && typeof needsEnhancedMarkdown === "function" && needsEnhancedMarkdown(text)) {
+    return parseMarkdownEnhanced(text);
+  }
   let html = escapeHtml(text)
     .replace(/^### (.*$)/gim, "<h3>$1</h3>")
     .replace(/^\* (.*$)/gim, "<li>$1</li>")

@@ -93,6 +93,7 @@ function renderConversationItem(item) {
         </div>
         ${renderAskUserCard(item.query)}
         ${renderPhaseStack(item.phases || [])}
+        ${renderDiffBlocks(item.diffs)}
         ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
       </div>
     </div>
@@ -120,10 +121,30 @@ function renderAssistantConversationItem(item) {
           </div>
         ` : ""}
         ${renderAskUserCard(item.query)}
+        ${renderDiffBlocks(item.diffs)}
         ${item.error ? `<div class="conversation-inline-error">${escapeConversationHtml(item.error)}</div>` : ""}
       </div>
     </div>
   `;
+}
+
+function renderDiffBlocks(diffs) {
+  if (!Array.isArray(diffs) || diffs.length === 0) return "";
+  return diffs.map((diff) => {
+    const highlighted = typeof highlightCode === "function"
+      ? highlightCode(diff.diff || "", "diff")
+      : escapeConversationHtml(diff.diff || "");
+    return `
+      <div class="inline-diff-wrap">
+        <div class="inline-diff-header">
+          <span>Changes from ${escapeConversationHtml(diff.tool || "tool")}</span>
+          <span>${escapeConversationHtml(diff.timestamp || "")}</span>
+        </div>
+        ${diff.stat ? `<div class="inline-diff-stat">${escapeConversationHtml(diff.stat)}</div>` : ""}
+        <pre class="inline-diff-content">${highlighted}</pre>
+      </div>
+    `;
+  }).join("");
 }
 
 function updateTimelineConversationItem(item) {

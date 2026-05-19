@@ -18,6 +18,46 @@ const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["https:", "http:"]);
+const EMPTY_GIT_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const FILE_MODIFYING_TOOLS = new Set([
+  "write_file",
+  "edit_file",
+  "patch_file",
+  "str_replace",
+  "create_file",
+  "delete_file",
+  "move_file",
+  "rename_file",
+  "apply_patch",
+  "write",
+  "edit",
+]);
+const SHELL_TOOLS = new Set(["bash", "shell", "terminal", "exec", "run_command"]);
+const FILE_TREE_IGNORE = new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  "dist",
+  "build",
+  "target",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".env",
+  ".cache",
+  ".idea",
+  ".vscode",
+  "coverage",
+  ".nyc_output",
+  ".terraform",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".tox",
+  ".eggs",
+  ".DS_Store",
+]);
+const FILE_TREE_MAX_SIZE = 200;
+const FILE_VIEW_MAX_BYTES = 512 * 1024;
 
 let mainWindow = null;
 let serverProcess = null;
@@ -254,9 +294,14 @@ function getAppBuildInfo() {
 }
 
 function execFileSyncSafe(command, args, cwd) {
+  return execFileSyncSafeWithEnv(command, args, cwd, process.env);
+}
+
+function execFileSyncSafeWithEnv(command, args, cwd, env) {
   try {
     const result = require("child_process").execFileSync(command, args, {
       cwd: cwd,
+      env: env || process.env,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -268,6 +313,10 @@ function execFileSyncSafe(command, args, cwd) {
       stderr: error.stderr ? String(error.stderr) : (error.message || String(error)),
     };
   }
+}
+
+function hashText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
 }
 
 function readGitStatusSync(dirPath) {
@@ -358,6 +407,32 @@ function normalizeProjectPath(dirPath) {
   try {
     const realPath = fs.realpathSync(resolved);
     if (!fs.statSync(realPath).isDirectory()) return null;
+    return realPath;
+  } catch (e) {
+    return null;
+  }
+}
+
+function resolveProjectRelativePath(rootPath, requestedPath, options) {
+  if (!rootPath || typeof requestedPath !== "string" || requestedPath.includes("\0")) return null;
+  if (path.isAbsolute(requestedPath)) return null;
+
+  const rootRealPath = normalizeProjectPath(rootPath);
+  if (!rootRealPath) return null;
+
+  const allowRoot = options && options.allowRoot === true;
+  const resolvedPath = path.resolve(rootRealPath, requestedPath || ".");
+  if (resolvedPath !== rootRealPath && !resolvedPath.startsWith(rootRealPath + path.sep)) {
+    return null;
+  }
+  if (resolvedPath === rootRealPath && !allowRoot) return null;
+
+  try {
+    const realPath = fs.realpathSync(resolvedPath);
+    if (realPath !== rootRealPath && !realPath.startsWith(rootRealPath + path.sep)) {
+      return null;
+    }
+    if (realPath === rootRealPath && !allowRoot) return null;
     return realPath;
   } catch (e) {
     return null;
@@ -595,12 +670,231 @@ function killServer() {
   }
 }
 
+function shouldCaptureToolDiff(toolName) {
+  const tool = String(toolName || "").toLowerCase();
+  return FILE_MODIFYING_TOOLS.has(tool) || SHELL_TOOLS.has(tool);
+}
+
+function getToolDiffKey(msg) {
+  if (!msg) return "";
+  return String(msg.callId || msg.toolCallId || msg.invocationId || msg.id || msg.tool || "");
+}
+
+function isGitWorkTree(dirPath) {
+  if (!dirPath) return false;
+  const result = execFileSyncSafe("git", ["rev-parse", "--is-inside-work-tree"], dirPath);
+  return result.ok && result.stdout.trim() === "true";
+}
+
+function createTemporaryGitIndexPath() {
+  return path.join(
+    os.tmpdir(),
+    `nex-desktop-index-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`,
+  );
+}
+
+function captureGitWorktreeSnapshot(dirPath) {
+  if (!isGitWorkTree(dirPath)) {
+    return { ok: false, tree: null, error: "The open project is not a Git repository." };
+  }
+
+  const indexPath = createTemporaryGitIndexPath();
+  const env = Object.assign({}, process.env, { GIT_INDEX_FILE: indexPath });
+  try {
+    const readHead = execFileSyncSafeWithEnv("git", ["read-tree", "HEAD"], dirPath, env);
+    if (!readHead.ok) {
+      const readEmpty = execFileSyncSafeWithEnv("git", ["read-tree", "--empty"], dirPath, env);
+      if (!readEmpty.ok) return { ok: false, tree: null, error: readEmpty.stderr.trim() };
+    }
+
+    const addAll = execFileSyncSafeWithEnv("git", ["add", "-A", "--", "."], dirPath, env);
+    if (!addAll.ok) return { ok: false, tree: null, error: addAll.stderr.trim() };
+
+    const tree = execFileSyncSafeWithEnv("git", ["write-tree"], dirPath, env);
+    if (!tree.ok) return { ok: false, tree: null, error: tree.stderr.trim() };
+
+    const treeHash = tree.stdout.trim() || EMPTY_GIT_TREE;
+    return {
+      ok: true,
+      tree: treeHash,
+      hash: hashText(treeHash),
+      dirty: readGitStatusSync(dirPath).dirty === true,
+      error: null,
+    };
+  } finally {
+    try { fs.rmSync(indexPath, { force: true }); } catch (e) {}
+    try { fs.rmSync(`${indexPath}.lock`, { force: true }); } catch (e) {}
+  }
+}
+
+function readGitDiffBetweenTrees(dirPath, beforeTree, afterTree) {
+  if (!beforeTree || !afterTree || beforeTree === afterTree) {
+    return { ok: true, diff: "", stat: "", hash: hashText("") };
+  }
+
+  const diff = execFileSyncSafe("git", ["diff", "--no-ext-diff", beforeTree, afterTree, "--", "."], dirPath);
+  if (!diff.ok) return { ok: false, diff: "", stat: "", hash: "", error: diff.stderr.trim() };
+
+  const stat = execFileSyncSafe("git", ["diff", "--stat", beforeTree, afterTree, "--", "."], dirPath);
+  const diffText = diff.stdout.trim();
+  return {
+    ok: true,
+    diff: diffText,
+    stat: stat.ok ? stat.stdout.trim() : "",
+    hash: hashText(diffText),
+  };
+}
+
+function truncateDiffForDisplay(diffText, maxLines) {
+  const lines = String(diffText || "").split("\n");
+  const limit = maxLines || 200;
+  if (lines.length <= limit) return String(diffText || "");
+  return `${lines.slice(0, limit).join("\n")}\n... (truncated)`;
+}
+
+function createDiffEmissionTracker(options) {
+  const opts = options || {};
+  const sendFn = typeof opts.send === "function" ? opts.send : send;
+  const snapshotFn = opts.captureSnapshot || captureGitWorktreeSnapshot;
+  const diffFn = opts.readDiff || readGitDiffBetweenTrees;
+  const snapshots = new Map();
+  let lastEmittedHash = "";
+
+  function captureStart(msg, dirPath) {
+    if (!dirPath || !shouldCaptureToolDiff(msg && msg.tool)) return null;
+    const snapshot = snapshotFn(dirPath);
+    if (!snapshot || !snapshot.ok) return null;
+    const key = getToolDiffKey(msg);
+    if (key) snapshots.set(key, snapshot);
+    return snapshot;
+  }
+
+  function emitAfterTool(msg, dirPath) {
+    if (!dirPath || !msg || msg.ok === false || !shouldCaptureToolDiff(msg.tool)) return null;
+    const key = getToolDiffKey(msg);
+    const before = key ? snapshots.get(key) : null;
+    if (key) snapshots.delete(key);
+    if (!before || !before.ok || !before.tree) return null;
+
+    const after = snapshotFn(dirPath);
+    if (!after || !after.ok || !after.tree || before.tree === after.tree) return null;
+
+    const result = diffFn(dirPath, before.tree, after.tree);
+    if (!result || !result.ok || !result.diff) return null;
+    if (result.hash === lastEmittedHash) return null;
+    lastEmittedHash = result.hash;
+
+    const payload = {
+      tool: msg.tool,
+      summary: msg.summary || "",
+      stat: result.stat || "",
+      diff: truncateDiffForDisplay(result.diff, opts.maxLines || 200),
+      diffHash: result.hash,
+      beforeTree: before.tree,
+      afterTree: after.tree,
+    };
+
+    sendFn("nex:server-diff", payload);
+    sendFn("nex:server-file-changed", {
+      tool: msg.tool,
+      stat: result.stat || "",
+      diffHash: result.hash,
+    });
+    return payload;
+  }
+
+  return {
+    captureStart: captureStart,
+    emitAfterTool: emitAfterTool,
+    _snapshots: snapshots,
+  };
+}
+
+const toolDiffTracker = createDiffEmissionTracker();
+
+function buildFileTree(rootPath, maxFiles, maxDepth) {
+  const rootRealPath = normalizeProjectPath(rootPath);
+  if (!rootRealPath) throw new Error("Project path is not available.");
+
+  const limit = maxFiles || FILE_TREE_MAX_SIZE;
+  const depthLimit = maxDepth === undefined ? 3 : maxDepth;
+  const result = { name: path.basename(rootRealPath), path: "", kind: "directory", children: [] };
+  let count = 0;
+
+  function walk(dirPath, node, depth) {
+    if (count >= limit || depth > depthLimit) return;
+
+    let entries;
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+
+    entries.sort((a, b) => {
+      if (a.isDirectory() && !b.isDirectory()) return -1;
+      if (!a.isDirectory() && b.isDirectory()) return 1;
+      return a.name.localeCompare(b.name, "en");
+    });
+
+    entries.forEach((entry) => {
+      if (count >= limit) return;
+      const name = entry.name;
+      if (name.startsWith(".") && name !== ".gitignore" && name !== ".env.example") return;
+      if (FILE_TREE_IGNORE.has(name)) return;
+
+      const childPath = path.join(dirPath, name);
+      const relativePath = path.relative(rootRealPath, childPath);
+      if (entry.isDirectory()) {
+        const child = { name: name, path: relativePath, kind: "directory", children: [] };
+        node.children.push(child);
+        count += 1;
+        walk(childPath, child, depth + 1);
+      } else if (entry.isFile()) {
+        let size = 0;
+        try { size = fs.statSync(childPath).size; } catch (e) {}
+        node.children.push({
+          name: name,
+          path: relativePath,
+          kind: "file",
+          ext: path.extname(name).slice(1).toLowerCase(),
+          size: size,
+        });
+        count += 1;
+      }
+    });
+  }
+
+  walk(rootRealPath, result, 0);
+  return result;
+}
+
+function readProjectFileContent(rootPath, filePath) {
+  const resolved = resolveProjectRelativePath(rootPath, filePath);
+  if (!resolved) return { ok: false, message: "Access denied." };
+
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return { ok: false, message: "Not a file." };
+    if (stat.size > FILE_VIEW_MAX_BYTES) return { ok: false, message: "File too large (>512KB)." };
+    return {
+      ok: true,
+      content: fs.readFileSync(resolved, "utf8"),
+      path: path.relative(normalizeProjectPath(rootPath), resolved),
+      language: path.extname(resolved).slice(1).toLowerCase(),
+      size: stat.size,
+    };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+}
+
 function handleMsg(msg) {
   recordDesktopE2EServerEvent(msg);
   if (msg.type === "ready") { serverReady = true; addDesktopE2EMilestone("server-ready"); send("nex:server-ready", {}); return; }
   if (msg.type === "token") { send("nex:server-token", msg); return; }
-  if (msg.type === "tool_start") { send("nex:server-tool-start", msg); return; }
-  if (msg.type === "tool_end") { send("nex:server-tool-end", msg); return; }
+  if (msg.type === "tool_start") { toolDiffTracker.captureStart(msg, projectPath); send("nex:server-tool-start", msg); return; }
+  if (msg.type === "tool_end") { send("nex:server-tool-end", msg); toolDiffTracker.emitAfterTool(msg, projectPath); return; }
   if (msg.type === "confirm_request") { send("nex:server-confirm", msg); return; }
   if (msg.type === "done") { send("nex:server-done", msg); return; }
   if (msg.type === "error") { send("nex:server-error", msg); return; }
@@ -868,6 +1162,14 @@ async function refreshProjectGitState() {
     isGitRepository: projectIsGit,
   });
   return state;
+}
+
+function setDesktopProjectStateForTests(nextState) {
+  if (!nextState || process.env.NODE_ENV !== "test") return;
+  if (Object.prototype.hasOwnProperty.call(nextState, "projectPath")) projectPath = nextState.projectPath;
+  if (Object.prototype.hasOwnProperty.call(nextState, "projectName")) projectName = nextState.projectName;
+  if (Object.prototype.hasOwnProperty.call(nextState, "projectBranch")) projectBranch = nextState.projectBranch;
+  if (Object.prototype.hasOwnProperty.call(nextState, "projectIsGit")) projectIsGit = nextState.projectIsGit;
 }
 
 async function openProject(dirPath) {
@@ -1291,6 +1593,36 @@ function registerIpcHandlers() {
     send("nex:state-updated", { model: modelState.activeModel ? modelState.activeModel.id : null, modelState: modelState });
     return { ok: true, modelState: modelState };
   });
+  ipcMain.handle("nex:get-file-tree", async function () {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    try {
+      return { ok: true, tree: buildFileTree(projectPath, 64, 3), path: projectPath };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  });
+  ipcMain.handle("nex:get-file-content", async function (_e, filePath) {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    return readProjectFileContent(projectPath, filePath);
+  });
+  ipcMain.handle("nex:get-git-diff", async function () {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    if (!projectIsGit) return { ok: false, message: "Not a git repository." };
+    try {
+      const result = await execFileAsync("git", ["diff", "--", "."], { cwd: projectPath, maxBuffer: 1024 * 1024 });
+      return { ok: true, diff: result.stdout };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  });
+  ipcMain.handle("nex:select-file", async function (_e, filePath) {
+    if (!projectPath) return { ok: false, message: "No project is open." };
+    const resolved = resolveProjectRelativePath(projectPath, filePath);
+    if (!resolved) return { ok: false, message: "Access denied." };
+    const error = await shell.openPath(resolved);
+    if (error) return { ok: false, message: error };
+    return { ok: true };
+  });
   ipcMain.handle("nex:get-git-state", async function () {
     return await readGitState(projectPath);
   });
@@ -1385,16 +1717,24 @@ if (process.versions && process.versions.electron) {
 module.exports = {
   buildDesktopE2EOutput,
   buildActiveModelEnv,
+  buildFileTree,
+  captureGitWorktreeSnapshot,
   classifyDesktopRunStatus,
+  createDiffEmissionTracker,
   evaluateExpectations,
   isDesktopE2EPromptAccepted,
   isDesktopE2ERendererReady,
+  readGitDiffBetweenTrees,
+  readProjectFileContent,
   parseDesktopE2EOptions,
   parseDesktopE2EConfirmMode,
   isSafeExternalUrl,
   isValidProjectPathInput,
   normalizeProjectPath,
+  resolveProjectRelativePath,
   resolveDebugSessionDir,
   selectDesktopE2EFinalAssistantText,
+  setDesktopProjectStateForTests,
+  shouldCaptureToolDiff,
   registerIpcHandlers,
 };
