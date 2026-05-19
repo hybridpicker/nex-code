@@ -727,15 +727,33 @@ function captureGitWorktreeSnapshot(dirPath) {
   }
 }
 
-function readGitDiffBetweenTrees(dirPath, beforeTree, afterTree) {
+function normalizeGitPathspec(dirPath, candidatePath) {
+  if (!candidatePath) return null;
+  const rawPath = String(candidatePath);
+  const absolutePath = path.isAbsolute(rawPath)
+    ? rawPath
+    : path.resolve(dirPath, rawPath);
+  const relativePath = path.relative(dirPath, absolutePath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return relativePath.split(path.sep).join("/");
+}
+
+function readGitDiffBetweenTrees(dirPath, beforeTree, afterTree, pathspecs) {
   if (!beforeTree || !afterTree || beforeTree === afterTree) {
     return { ok: true, diff: "", stat: "", hash: hashText("") };
   }
 
-  const diff = execFileSyncSafe("git", ["diff", "--no-ext-diff", beforeTree, afterTree, "--", "."], dirPath);
+  const normalizedPathspecs = Array.isArray(pathspecs)
+    ? pathspecs.map((p) => normalizeGitPathspec(dirPath, p)).filter(Boolean)
+    : [];
+  const gitPathspecs = normalizedPathspecs.length > 0 ? normalizedPathspecs : ["."];
+
+  const diff = execFileSyncSafe("git", ["diff", "--no-ext-diff", beforeTree, afterTree, "--", ...gitPathspecs], dirPath);
   if (!diff.ok) return { ok: false, diff: "", stat: "", hash: "", error: diff.stderr.trim() };
 
-  const stat = execFileSyncSafe("git", ["diff", "--stat", beforeTree, afterTree, "--", "."], dirPath);
+  const stat = execFileSyncSafe("git", ["diff", "--stat", beforeTree, afterTree, "--", ...gitPathspecs], dirPath);
   const diffText = diff.stdout.trim();
   return {
     ok: true,
@@ -750,6 +768,14 @@ function truncateDiffForDisplay(diffText, maxLines) {
   const limit = maxLines || 200;
   if (lines.length <= limit) return String(diffText || "");
   return `${lines.slice(0, limit).join("\n")}\n... (truncated)`;
+}
+
+function getToolDiffPathspecs(msg, dirPath) {
+  if (!msg || !FILE_MODIFYING_TOOLS.has(String(msg.tool || "").toLowerCase())) {
+    return [];
+  }
+  const normalized = normalizeGitPathspec(dirPath, msg.args && msg.args.path);
+  return normalized ? [normalized] : [];
 }
 
 function createDiffEmissionTracker(options) {
@@ -779,7 +805,8 @@ function createDiffEmissionTracker(options) {
     const after = snapshotFn(dirPath);
     if (!after || !after.ok || !after.tree || before.tree === after.tree) return null;
 
-    const result = diffFn(dirPath, before.tree, after.tree);
+    const pathspecs = getToolDiffPathspecs(msg, dirPath);
+    const result = diffFn(dirPath, before.tree, after.tree, pathspecs);
     if (!result || !result.ok || !result.diff) return null;
     if (result.hash === lastEmittedHash) return null;
     lastEmittedHash = result.hash;

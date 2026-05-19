@@ -583,4 +583,91 @@ describe("desktop main process IPC hardening", () => {
     expect(diffEvents[0].payload.diffHash).toBe("hash-one");
     expect(diffEvents[1].payload.diffHash).toBe("hash-two");
   });
+
+  test("scopes Desktop edit diffs to the requested fitness template path", () => {
+    const projectDir = path.join(tmpRoot, "jarvis-agent");
+    const templatePath = path.join(projectDir, "web", "templates", "fitness");
+    const logsPath = path.join(projectDir, "logs");
+    fs.mkdirSync(templatePath, { recursive: true });
+    fs.mkdirSync(logsPath, { recursive: true });
+    execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: projectDir });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: projectDir });
+    fs.writeFileSync(
+      path.join(templatePath, "index.html"),
+      '<div class="nutrition-ring-content">kcal</div>\n',
+    );
+    fs.writeFileSync(path.join(logsPath, ".audit.json"), '{"files":["old"]}\n');
+    execFileSync("git", ["add", "."], { cwd: projectDir });
+    execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: projectDir, stdio: "ignore" });
+
+    const sent = [];
+    const tracker = createDiffEmissionTracker({
+      send: (channel, payload) => sent.push({ channel, payload }),
+    });
+    tracker.captureStart({
+      id: "edit-template",
+      tool: "edit_file",
+      args: { path: "web/templates/fitness/index.html" },
+    }, projectDir);
+    fs.writeFileSync(
+      path.join(templatePath, "index.html"),
+      '<div class="nutrition-ring-content">Remaining 850 kcal</div>\n',
+    );
+    fs.writeFileSync(path.join(logsPath, ".audit.json"), '{"files":["new"]}\n');
+
+    tracker.emitAfterTool({
+      id: "edit-template",
+      tool: "edit_file",
+      ok: true,
+      args: { path: "web/templates/fitness/index.html" },
+    }, projectDir);
+
+    const diffEvent = sent.find((entry) => entry.channel === "nex:server-diff");
+    expect(diffEvent.payload.diff).toContain("web/templates/fitness/index.html");
+    expect(diffEvent.payload.diff).toContain("Remaining 850 kcal");
+    expect(diffEvent.payload.diff).not.toContain("logs/.audit.json");
+  });
+
+  test("scopes Desktop edit diffs to a neutral component path", () => {
+    const projectDir = path.join(tmpRoot, "neutral-repo");
+    const componentDir = path.join(projectDir, "src", "components");
+    const historyDir = path.join(projectDir, ".nex", "history");
+    fs.mkdirSync(componentDir, { recursive: true });
+    fs.mkdirSync(historyDir, { recursive: true });
+    execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: projectDir });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: projectDir });
+    fs.writeFileSync(path.join(componentDir, "ProfileCard.jsx"), "export default function ProfileCard() {}\n");
+    fs.writeFileSync(path.join(historyDir, "entry.json"), '{"tool":"edit_file"}\n');
+    execFileSync("git", ["add", "."], { cwd: projectDir });
+    execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: projectDir, stdio: "ignore" });
+
+    const sent = [];
+    const tracker = createDiffEmissionTracker({
+      send: (channel, payload) => sent.push({ channel, payload }),
+    });
+    tracker.captureStart({
+      id: "edit-component",
+      tool: "edit_file",
+      args: { path: "src/components/ProfileCard.jsx" },
+    }, projectDir);
+    fs.writeFileSync(
+      path.join(componentDir, "ProfileCard.jsx"),
+      "export default function ProfileCard() { return <section>Ready</section>; }\n",
+    );
+    fs.writeFileSync(path.join(historyDir, "entry.json"), '{"tool":"edit_file","changed":true}\n');
+
+    tracker.emitAfterTool({
+      id: "edit-component",
+      tool: "edit_file",
+      ok: true,
+      args: { path: "src/components/ProfileCard.jsx" },
+    }, projectDir);
+
+    const diffEvent = sent.find((entry) => entry.channel === "nex:server-diff");
+    expect(diffEvent.payload.diff).toContain("src/components/ProfileCard.jsx");
+    expect(diffEvent.payload.diff).toContain("Ready");
+    expect(diffEvent.payload.diff).not.toContain(".nex/history/entry.json");
+  });
 });
