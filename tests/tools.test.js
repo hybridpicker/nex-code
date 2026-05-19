@@ -482,6 +482,32 @@ describe("tools.js", () => {
       expect(result).toContain(".js");
     });
 
+    it("returns full relative paths for duplicate basenames", async () => {
+      fs.mkdirSync(path.join(tmpDir, "web", "templates", "dashboard"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(tmpDir, "web", "templates", "reports"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "web", "templates", "dashboard", "index.html"),
+        '<div class="panel-content">Dashboard</div>\n',
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "web", "templates", "reports", "index.html"),
+        '<div class="panel-content">Reports</div>\n',
+      );
+
+      const result = await executeTool("search_files", {
+        path: tmpDir,
+        pattern: "panel-content",
+        file_pattern: "*.html",
+      });
+
+      expect(result).toContain("web/templates/dashboard/index.html");
+      expect(result).toContain("web/templates/reports/index.html");
+    });
+
     it("does not search private agent state or virtualenv directories", async () => {
       fs.mkdirSync(path.join(tmpDir, ".nex", "audit"), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, "venv", "lib"), { recursive: true });

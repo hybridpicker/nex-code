@@ -914,7 +914,7 @@ function formatToolSummary(name, args, result, isError) {
           const lineNumM = rest.match(/^(\d+)[:-](.*)/s);
           const lineNum = lineNumM ? `:${lineNumM[1]}` : "";
           const content = (lineNumM ? lineNumM[2] : rest).trim();
-          const label = `${T.subtle}${path.basename(file)}${lineNum}${T.reset}`;
+          const label = `${T.subtle}${_shortPath(file)}${lineNum}${T.reset}`;
           const snippet = `${T.muted}${content.substring(0, 80)}${content.length > 80 ? "…" : ""}${T.reset}`;
           return `${label}  ${snippet}`;
         }

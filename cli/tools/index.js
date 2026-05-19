@@ -82,6 +82,14 @@ const NODE_BUILTIN_MODULES = new Set([
   "zlib",
 ]);
 const GREP_EXCLUDE_DIR_ARGS = IGNORED_PROJECT_DIRS.map((dir) => `--exclude-dir=${dir}`);
+const RG_EXCLUDE_GLOB_ARGS = IGNORED_PROJECT_DIRS.flatMap((dir) => [
+  "--glob",
+  `!${dir}`,
+  "--glob",
+  `!${dir}/**`,
+  "--glob",
+  `!**/${dir}/**`,
+]);
 
 function getNodeBuiltinInstallAttempt(command) {
   const cmd = String(command || "");
@@ -392,6 +400,18 @@ function parseGrepStdout(stdout, outputMode) {
     return trimmed.split("\n").filter((line) => line.trim());
   }
   return trimmed.split("\n").filter((line) => line.trim());
+}
+
+function normalizeGrepLinePaths(lines, basePath) {
+  if (!Array.isArray(lines)) return [];
+  return lines.map((line) => {
+    const first = String(line || "").indexOf(":");
+    if (first === -1) return line;
+    const filePart = line.slice(0, first);
+    if (!path.isAbsolute(filePart)) return line;
+    const rel = normalizeRelativePath(filePart, basePath);
+    return `${rel}${line.slice(first)}`;
+  });
 }
 
 function rankPathCandidates(paths, { query, basePath, definitionScores = new Map(), mtimeByPath = new Map() } = {}) {
@@ -2999,24 +3019,55 @@ async function _executeToolInner(name, args, options = {}) {
       const dp = resolvePath(args.path);
       if (!dp)
         return `ERROR: Access denied — path outside project: ${args.path}`;
-      const grepArgs = ["-rn", "-H"];
-      if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
-      grepArgs.push(...GREP_EXCLUDE_DIR_ARGS);
-      grepArgs.push(args.pattern, dp);
+      const rgArgs = [
+        "--line-number",
+        "--with-filename",
+        "--color",
+        "never",
+        "--hidden",
+        ...RG_EXCLUDE_GLOB_ARGS,
+      ];
+      if (args.file_pattern) rgArgs.push("--glob", args.file_pattern);
+      rgArgs.push(args.pattern, dp);
       try {
-        const { stdout } = await execFile("grep", grepArgs, {
+        const { stdout } = await execFile("rg", rgArgs, {
           cwd: process.cwd(),
-          timeout: 30000,
+          timeout: 10000,
           maxBuffer: 2 * 1024 * 1024,
         });
-        const results = parseGrepStdout(stdout).slice(0, 50);
+        const results = normalizeGrepLinePaths(
+          parseGrepStdout(stdout),
+          dp,
+        ).slice(0, 50);
         const ranked = await rankLineResults(results, {
           query: args.pattern,
           basePath: dp,
         });
         return ranked.join("\n") || "(no matches)";
-      } catch {
-        return "(no matches)";
+      } catch (err) {
+        if (err && err.code !== "ENOENT") return "(no matches)";
+        const grepArgs = ["-rn", "-H"];
+        if (args.file_pattern) grepArgs.push(`--include=${args.file_pattern}`);
+        grepArgs.push(...GREP_EXCLUDE_DIR_ARGS);
+        grepArgs.push(args.pattern, dp);
+        try {
+          const { stdout } = await execFile("grep", grepArgs, {
+            cwd: process.cwd(),
+            timeout: 30000,
+            maxBuffer: 2 * 1024 * 1024,
+          });
+          const results = normalizeGrepLinePaths(
+            parseGrepStdout(stdout),
+            dp,
+          ).slice(0, 50);
+          const ranked = await rankLineResults(results, {
+            query: args.pattern,
+            basePath: dp,
+          });
+          return ranked.join("\n") || "(no matches)";
+        } catch {
+          return "(no matches)";
+        }
       }
     }
 

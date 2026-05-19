@@ -590,6 +590,21 @@ describe("formatToolSummary()", () => {
     expect(out).toContain("a.js:10");
   });
 
+  it("keeps enough path context for duplicate search basenames", () => {
+    const out = formatToolSummary(
+      "search_files",
+      { path: ".", pattern: "panel-content" },
+      [
+        "web/templates/dashboard/index.html:90:panel-content",
+        "web/templates/reports/index.html:120:panel-content",
+      ].join("\n"),
+      false,
+    );
+
+    expect(out).toContain("dashboard/index.html:90");
+    expect(out).toContain("reports/index.html:120");
+  });
+
   it("formats grep with matches in single file", () => {
     const out = formatToolSummary(
       "grep",
