@@ -1044,8 +1044,20 @@ function send(ch, data) {
 
 function sendToServer(obj) {
   if (!serverProcess) {
-    send("nex:server-error", { message: "No project open. Use File → Open Project." });
-    return;
+    if (!projectPath) {
+      send("nex:server-error", { message: "No project open. Use File → Open Project." });
+      return;
+    }
+    recordDebugEvent("server-restart-for-command", {
+      projectPath: projectPath,
+      branch: projectBranch,
+      commandType: obj && obj.type ? obj.type : null,
+    });
+    spawnServer(projectPath);
+    if (!serverProcess) {
+      send("nex:server-error", { message: "Project server is not running. Reopen the project and try again." });
+      return;
+    }
   }
   appendDebugJsonl("commands.jsonl", {
     type: "send-to-server",
@@ -1197,6 +1209,8 @@ function setDesktopProjectStateForTests(nextState) {
   if (Object.prototype.hasOwnProperty.call(nextState, "projectName")) projectName = nextState.projectName;
   if (Object.prototype.hasOwnProperty.call(nextState, "projectBranch")) projectBranch = nextState.projectBranch;
   if (Object.prototype.hasOwnProperty.call(nextState, "projectIsGit")) projectIsGit = nextState.projectIsGit;
+  if (Object.prototype.hasOwnProperty.call(nextState, "serverProcess")) serverProcess = nextState.serverProcess;
+  if (Object.prototype.hasOwnProperty.call(nextState, "serverReady")) serverReady = nextState.serverReady;
 }
 
 async function openProject(dirPath) {
@@ -1763,5 +1777,6 @@ module.exports = {
   selectDesktopE2EFinalAssistantText,
   setDesktopProjectStateForTests,
   shouldCaptureToolDiff,
+  sendToServer,
   registerIpcHandlers,
 };
