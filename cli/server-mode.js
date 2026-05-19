@@ -31,8 +31,7 @@ function emit(obj) {
 function summarizeAssistantText(text) {
   const normalized = String(text || "").trim();
   if (!normalized) return "";
-  const firstParagraph = normalized.split(/\n\s*\n/)[0].trim();
-  return firstParagraph.slice(0, 2000);
+  return normalized.slice(0, 2000);
 }
 
 function looksLikeUnfinishedInvestigation(text) {

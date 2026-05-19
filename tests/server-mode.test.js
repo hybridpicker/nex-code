@@ -283,6 +283,7 @@ describe("startServerMode", () => {
       "Completed the requested edit.",
       "Changed files: web/templates/fitness/index.html.",
       "Verification: post-edit readback: web/templates/fitness/index.html.",
+      "",
       "Additional verification skipped: The verification command npm test --silent could not run because project dependencies are missing or broken in this workspace.",
       "The module '/tmp/example/node_modules/better-sqlite3/build/Release/better_sqlite3.node' was built for a different Node.js version.",
     ].join("\n");
