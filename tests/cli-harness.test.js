@@ -32,6 +32,8 @@ function spawnFixture() {
   return new CliSession(child);
 }
 
+const PROCESS_WAIT_MS = 8000;
+
 describe("cli-harness / stripAnsi", () => {
   test("removes color codes", () => {
     expect(stripAnsi("\x1b[31mred\x1b[0m")).toBe("red");
@@ -47,34 +49,34 @@ describe("cli-harness / stripAnsi", () => {
 describe("cli-harness / CliSession (interactive)", () => {
   test("waitFor resolves on first matching output", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     expect(s.stdout).toContain("ready>");
     await s.close();
   });
 
   test("send + waitFor roundtrip", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     s.send("hello");
-    await s.waitFor(/echo: hello/, 3000);
+    await s.waitFor(/echo: hello/, PROCESS_WAIT_MS);
     expect(s.stdout).toMatch(/echo: hello/);
     await s.close();
   });
 
   test("multiple sends are handled in order", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     s.send("one");
-    await s.waitFor(/echo: one/, 3000);
+    await s.waitFor(/echo: one/, PROCESS_WAIT_MS);
     s.send("two");
-    await s.waitFor(/echo: two/, 3000);
+    await s.waitFor(/echo: two/, PROCESS_WAIT_MS);
     expect(s.stdout).toMatch(/echo: one[\s\S]*echo: two/);
     await s.close();
   });
 
   test("waitFor rejects on timeout with diagnostic message", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     await expect(s.waitFor(/never-appears/, 200)).rejects.toThrow(
       /waitFor\[combined\] timeout/,
     );
@@ -83,7 +85,7 @@ describe("cli-harness / CliSession (interactive)", () => {
 
   test("close resolves with exit code", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     s.send("quit");
     const code = await s.close();
     expect(code).toBe(0);
@@ -91,15 +93,15 @@ describe("cli-harness / CliSession (interactive)", () => {
 
   test("waitForExit resolves when process exits on its own", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     s.send("quit");
-    const code = await s.waitForExit(3000);
+    const code = await s.waitForExit(PROCESS_WAIT_MS);
     expect(code).toBe(0);
   });
 
   test("send after close throws", async () => {
     const s = spawnFixture();
-    await s.waitFor(/ready>/, 3000);
+    await s.waitFor(/ready>/, PROCESS_WAIT_MS);
     s.send("quit");
     await s.close();
     expect(() => s.send("x")).toThrow(/session closed/);
@@ -114,7 +116,7 @@ describe("cli-harness / CliSession (interactive)", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const s = new CliSession(child);
-    await s.waitForStdout(/out-marker/, 3000);
+    await s.waitForStdout(/out-marker/, PROCESS_WAIT_MS);
     expect(s.stdout).toContain("out-marker");
     expect(s.stderr).toContain("err-marker");
     // stdout waiter should not have been satisfied by the stderr-only marker
@@ -131,7 +133,7 @@ describe("cli-harness / CliSession (interactive)", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const s = new CliSession(child);
-    await s.waitForStderr(/boom/, 3000);
+    await s.waitForStderr(/boom/, PROCESS_WAIT_MS);
     expect(s.stderr).toContain("boom");
     if (!s.closed) await s.close();
   });

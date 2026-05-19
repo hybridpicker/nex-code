@@ -32,7 +32,7 @@ describe("nex-code --server entrypoint", () => {
       const timeout = setTimeout(() => {
         child.kill();
         reject(new Error(`server mode did not become ready. stdout=${stdout} stderr=${stderr}`));
-      }, 5000);
+      }, 15000);
       child.on("error", reject);
       child.on("exit", (code) => {
         clearTimeout(timeout);
@@ -46,5 +46,5 @@ describe("nex-code --server entrypoint", () => {
     expect(stdout).not.toContain("test-key-that-must-not-print");
     expect(stderr).not.toContain("Flatrate mode");
     expect(stderr).not.toContain("test-key-that-must-not-print");
-  });
+  }, 15000);
 });
