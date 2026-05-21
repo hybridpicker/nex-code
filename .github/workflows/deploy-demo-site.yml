@@ -3,7 +3,6 @@ name: Deploy Demo Site
 on:
   push:
     branches:
-      - devel
       - main
     paths:
       - ".github/workflows/deploy-demo-site.yml"
