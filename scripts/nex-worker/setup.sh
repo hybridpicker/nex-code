@@ -55,7 +55,6 @@ echo "[setup] Installing systemd user units..."
 cp "$JARVIS_DIR/nex-improve.service" "$USER_SYSTEMD/"
 cp "$JARVIS_DIR/nex-improve.timer" "$USER_SYSTEMD/"
 cp "$JARVIS_DIR/nex-weekly-bench.service" "$USER_SYSTEMD/"
-cp "$JARVIS_DIR/nex-weekly-bench.timer" "$USER_SYSTEMD/"
 systemctl --user daemon-reload
 
 # Enable lingering so timers run without login
@@ -64,7 +63,7 @@ loginctl enable-linger "$(whoami)" 2>/dev/null || true
 # Enable and start timers
 echo "[setup] Enabling timers..."
 systemctl --user enable --now nex-improve.timer
-systemctl --user enable --now nex-weekly-bench.timer
+systemctl --user disable --now nex-weekly-bench.timer 2>/dev/null || true
 
 # Setup auto-pull (keep repo in sync with devel)
 CRON_LINE="*/30 * * * * cd $REPO_DIR && git fetch origin devel --quiet && git merge --ff-only origin/devel --quiet 2>/dev/null || true"
@@ -76,7 +75,7 @@ echo "  Setup complete!"
 echo ""
 echo "  Timers installed:"
 echo "    nex-improve.timer     — nightly at 02:00"
-echo "    nex-weekly-bench.timer — Saturday at 04:00"
+echo "    nex-weekly-bench.timer — disabled"
 echo "    cron: auto-pull devel  — every 30 min"
 echo ""
 echo "  Useful commands:"
