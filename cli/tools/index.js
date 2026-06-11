@@ -683,25 +683,54 @@ function setAskUserHandler(fn) {
 async function ensureCheckpoint() {
   if (_checkpointCreated) return;
   _checkpointCreated = true;
+  const cwd = process.cwd();
+  let idx = null;
   try {
-    // Only in git repos with changes
+    // Only in git repos
     const { stdout } = await exec("git rev-parse --is-inside-work-tree", {
-      cwd: process.cwd(),
+      cwd,
       timeout: 5000,
     });
     const isGit = stdout.trim() === "true";
     if (!isGit) return;
-    await exec('git stash push -m "nex-code-checkpoint" --include-untracked', {
-      cwd: process.cwd(),
+    // Snapshot the working tree (tracked + untracked) WITHOUT touching it:
+    // build a tree in a temporary index and tag a dangling commit. Never
+    // stash push/pop here — between push and pop the user's uncommitted
+    // work is gone from disk, and a failed pop strands it in a stash.
+    const { stdout: gitDir } = await exec("git rev-parse --git-dir", {
+      cwd,
+      timeout: 5000,
+    });
+    idx = path.join(
+      path.resolve(cwd, gitDir.trim()),
+      `nex-checkpoint-index-${process.pid}`,
+    );
+    const env = { ...process.env, GIT_INDEX_FILE: idx };
+    await exec("git read-tree HEAD", { cwd, env, timeout: 10000 });
+    await exec("git add -A", { cwd, env, timeout: 30000 });
+    const { stdout: tree } = await exec("git write-tree", {
+      cwd,
+      env,
       timeout: 10000,
     });
-    await exec("git stash pop", { cwd: process.cwd(), timeout: 10000 });
-    await exec("git tag -f nex-checkpoint", {
-      cwd: process.cwd(),
+    const { stdout: commit } = await exec(
+      `git commit-tree ${tree.trim()} -p HEAD -m "nex-code-checkpoint"`,
+      { cwd, env, timeout: 10000 },
+    );
+    await exec(`git tag -f nex-checkpoint ${commit.trim()}`, {
+      cwd,
       timeout: 5000,
     });
   } catch {
     /* not critical */
+  } finally {
+    if (idx) {
+      try {
+        fsSync.unlinkSync(idx);
+      } catch {
+        /* already gone */
+      }
+    }
   }
 }
 
