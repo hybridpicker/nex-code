@@ -1761,6 +1761,11 @@ const TOOL_DEFINITIONS = [
                   type: "string",
                   description: "Additional context (optional)",
                 },
+                type: {
+                  type: "string",
+                  description:
+                    "Agent type: 'explore' (read-only code exploration), 'review' (read-only code review with severity-ordered findings), 'implement' (full tool access; default). Projects can define custom types in .nex/agents/*.md — unknown types fail with the list of available ones.",
+                },
                 max_iterations: {
                   type: "number",
                   description: "Max iterations (default: 10, max: 15)",
