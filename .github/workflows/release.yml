@@ -28,6 +28,10 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
 
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 20 ships npm 10.
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@11
+
       - run: npm ci
 
       - run: npm run build
@@ -47,16 +51,12 @@ jobs:
             echo "VERSION_EXISTS=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Verify npm authentication
-        run: npm whoami
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+      # Auth via npm Trusted Publishing (OIDC): the job's id-token permission
+      # is exchanged for a short-lived publish credential — no NPM_TOKEN
+      # secret, nothing to expire, no 2FA/OTP prompt.
       - name: Publish to npm
         if: steps.version_check.outputs.VERSION_EXISTS == 'false'
         run: npm publish --provenance --access public --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Generate release notes
         if: always() && steps.version_check.outputs.VERSION_EXISTS == 'false'
@@ -91,7 +91,7 @@ jobs:
         if: failure()
         run: |
           echo "::error::npm publish failed for version ${{ steps.current_version.outputs.VERSION }}"
-          echo "Check NPM_TOKEN secret validity: npm token list"
+          echo "Check the Trusted Publisher config on npmjs.com (package nex-code -> Settings): repo hybridpicker/nex-code, workflow release.yml"
 
   publish-vscode:
     name: Build and attach VS Code Extension
