@@ -55,6 +55,9 @@ The goal is not provider abstraction for its own sake. The goal is to make model
 - **Tool-integrated execution** across files, shell commands, Git, SSH, Docker, and Kubernetes
 - **Background shells** — dev servers, watchers, and long builds run without timeout via `run_in_background`, polled with `bash_output` and stopped with `kill_shell` while the agent keeps working
 - **Safe targeted edits** — `edit_file` rejects ambiguous matches (with the conflicting line numbers) instead of silently changing every occurrence; `replace_all` opts into bulk renames
+- **Instant syntax feedback** — every JS/JSON write is parse-checked (`node --check`) and a broken file is flagged in the tool result itself, before the next test run
+- **Custom agent types** — define project-specific sub-agents in `.nex/agents/*.md` (tool allowlist, model, system prompt) and spawn them via `spawn_agents` alongside the built-in explore/review/implement types
+- **Persistent task lists** — multi-step task state survives a CLI restart via `.nex/tasks.json`; finished lists are discarded automatically
 - **Headless and interactive modes** for both conversational use and automated task runs
 - **Sub-agent orchestration** for decomposing larger tasks into parallel workstreams
 - **Inline file preloading** — referenced files ≤8KB are pre-loaded into context, eliminating re-read loops for reasoning models like DeepSeek V4
