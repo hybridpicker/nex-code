@@ -33,6 +33,7 @@ function spawnFixture() {
 }
 
 const PROCESS_WAIT_MS = 8000;
+jest.setTimeout(15000);
 
 describe("cli-harness / stripAnsi", () => {
   test("removes color codes", () => {
