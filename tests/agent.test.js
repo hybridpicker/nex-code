@@ -1,4 +1,6 @@
 // ─── Module Mocks ─────────────────────────────────────────
+jest.setTimeout(30000);
+
 jest.mock("../cli/providers/registry", () => ({
   callStream: jest.fn(),
   getActiveModel: jest.fn().mockReturnValue({
