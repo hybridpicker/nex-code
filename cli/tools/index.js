@@ -872,6 +872,46 @@ function matchLineNumbers(content, needle, max = 5) {
   return lines;
 }
 
+/**
+ * Fast post-write syntax validation. Returns "" or a warning appended to
+ * the tool result so the model immediately sees that it broke the file
+ * instead of discovering it at the next test run. JS/CJS/MJS files are
+ * parsed with `node --check` (no execution); JSON via JSON.parse. Files
+ * that look like JSX are skipped — node cannot parse JSX.
+ */
+async function checkSyntaxAfterWrite(fp, content) {
+  try {
+    if (/\.json$/i.test(fp)) {
+      try {
+        JSON.parse(content);
+        return "";
+      } catch (e) {
+        return `\nWARNING: ${path.basename(fp)} is not valid JSON — fix before proceeding: ${e.message}`;
+      }
+    }
+    if (/\.(c|m)?js$/i.test(fp)) {
+      if (/['"]react['"]|<[A-Z][A-Za-z]*[\s/>]/.test(content)) return "";
+      try {
+        await exec(
+          `${JSON.stringify(process.execPath)} --check ${JSON.stringify(fp)}`,
+          { timeout: 5000, maxBuffer: 1024 * 1024 },
+        );
+      } catch (e) {
+        const msg = (e.stderr || e.message || "")
+          .toString()
+          .split("\n")
+          .slice(0, 6)
+          .join("\n")
+          .trim();
+        return `\nWARNING: syntax error in ${path.basename(fp)} — fix before proceeding:\n${msg}`;
+      }
+    }
+  } catch {
+    /* syntax check is best-effort */
+  }
+  return "";
+}
+
 const TOOL_DEFINITIONS = [
   {
     type: "function",
@@ -2941,7 +2981,8 @@ async function _executeToolInner(name, args, options = {}) {
         }
         recordChange("write_file", fp, oldContent, args.content);
         const execNote = needsExec ? " [chmod +x applied]" : "";
-        return `Written: ${fp} (${args.content.length} chars)${execNote}`;
+        const syntaxWarn = await checkSyntaxAfterWrite(fp, args.content);
+        return `Written: ${fp} (${args.content.length} chars)${execNote}${syntaxWarn}`;
       } finally {
         writeProgress.stop();
       }
@@ -3038,7 +3079,11 @@ async function _executeToolInner(name, args, options = {}) {
               console.log(
                 `${C.dim}  ✓ auto-fixed edit: line ${fix.line}, distance ${fix.distance}${C.reset}`,
               );
-              return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")`;
+              const autoFixSyntaxWarn = await checkSyntaxAfterWrite(
+                fp,
+                fix.content,
+              );
+              return `Edited: ${fp} (auto-fixed, line ${fix.line}, distance ${fix.distance}, matched: "${matchPreview}")${autoFixSyntaxWarn}`;
             }
             // Provide helpful error with surrounding context so LLM can fix old_text without re-reading.
             // Include ±10 lines around the most similar match — this is often enough to correct the edit
@@ -3110,9 +3155,10 @@ async function _executeToolInner(name, args, options = {}) {
         recordChange("edit_file", fp, content, updated);
         const occurrenceNote =
           occurrences > 1 ? ` (replaced ${occurrences} occurrences)` : "";
+        const editSyntaxWarn = await checkSyntaxAfterWrite(fp, updated);
         return fuzzyMatched
-          ? `Edited: ${fp} (fuzzy match)${occurrenceNote}`
-          : `Edited: ${fp}${occurrenceNote}`;
+          ? `Edited: ${fp} (fuzzy match)${occurrenceNote}${editSyntaxWarn}`
+          : `Edited: ${fp}${occurrenceNote}${editSyntaxWarn}`;
       } finally {
         editProgress.stop();
       }
@@ -3633,7 +3679,8 @@ async function _executeToolInner(name, args, options = {}) {
             ? " (fuzzy match)"
             : "";
         const execNoteP = needsExecP ? " [chmod +x applied]" : "";
-        return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}`;
+        const patchSyntaxWarn = await checkSyntaxAfterWrite(fp, preview);
+        return `Patched: ${fp} (${patches.length} replacements)${suffix}${execNoteP}${patchSyntaxWarn}`;
       } finally {
         patchProgress.stop();
       }
