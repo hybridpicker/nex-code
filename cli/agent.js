@@ -4522,6 +4522,19 @@ function _extractRequiredVerificationCommands(taskText) {
   return [...new Set(commands)];
 }
 
+function _cleanExtractedVerificationCommand(value) {
+  let command = String(value || "").trim();
+  if (!command) return "";
+  command = command.replace(/^["'`]+|["'`]+$/g, "").replace(/\s+/g, " ");
+  command = command
+    .replace(/\s+(?:and|then)\s+(?:report|confirm|verify|do not|don't|stop)\b[\s\S]*$/i, "")
+    .replace(/\s+(?:before finishing|before finali[sz]ing|to verify|for verification)\b[\s\S]*$/i, "")
+    .replace(/\s+(?:do not|don't)\b[\s\S]*$/i, "")
+    .trim();
+  command = command.replace(/[.;:,]+$/g, "").trim();
+  return command;
+}
+
 function _extractExactRequiredVerificationCommands(taskText) {
   const text = String(taskText || "");
   if (!text) return [];
@@ -4529,12 +4542,13 @@ function _extractExactRequiredVerificationCommands(taskText) {
   const patterns = [
     /\brun\s+exactly\s*`([^`\n]+)`/gi,
     /\brun\s+exactly\s*:\s*([^\n.]+(?:\.[cm]?js|\.mjs)?[^\n.]*)/gi,
+    /\bverify(?:\s+your\s+work)?\s+by\s+running\s*:?\s*`?([^`\n]+)`?/gi,
   ];
 
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(text)) !== null) {
-      const command = String(match[1] || "").trim().replace(/\s+/g, " ");
+      const command = _cleanExtractedVerificationCommand(match[1]);
       if (
         command &&
         _isVerificationCommandCall({ fnName: "bash", args: { command } })
@@ -4544,11 +4558,41 @@ function _extractExactRequiredVerificationCommands(taskText) {
     }
   }
 
+  const commandMentions =
+    text.match(
+      /\b(?:npx|npm|node)\s+[A-Za-z0-9_@./:=+-]+(?:\s+[A-Za-z0-9_@./:=+-]+){0,12}/gi,
+    ) || [];
+  for (const mention of commandMentions.slice(-1)) {
+    const command = _cleanExtractedVerificationCommand(mention);
+    if (
+      command &&
+      _isVerificationCommandCall({ fnName: "bash", args: { command } })
+    ) {
+      commands.push(command);
+    }
+  }
+
   return [...new Set(commands)];
 }
 
 function _normalizeVerificationCommand(command) {
   return String(command || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function _buildRequiredVerificationFailureReport(command, verificationResult) {
+  const output = String(verificationResult?.content || "").trim();
+  const firstLine = output.split("\n")[0] || "";
+  const exitMatch = firstLine.match(/^EXIT\s+([^\s]+)/i);
+  const exitCode = exitMatch ? exitMatch[1] : "unknown";
+  const tail = output
+    ? output.split("\n").slice(-24).join("\n").slice(-2000)
+    : "(no output)";
+  return (
+    `Verification failed: ${command}\n\n` +
+    `Exit code: ${exitCode}\n` +
+    `Output tail:\n${tail}\n\n` +
+    "Stopping without reporting success."
+  );
 }
 
 function _formatSuccessfulVerificationEvidence(commands) {
@@ -9638,11 +9682,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _postEditVerifyNudges = 0;
 
             if (!verificationResult.success) {
+              const failureReport = _buildRequiredVerificationFailureReport(
+                missingRequiredCommand,
+                verificationResult,
+              );
               const failedAssistantMsg = {
                 role: "assistant",
-                content:
-                  `Verification failed: ${missingRequiredCommand}\n\n` +
-                  "The requested verification command ran once and failed. No further commands were run after verification.",
+                content: failureReport,
               };
               conversationMessages.push(failedAssistantMsg);
               apiMessages.push(failedAssistantMsg);

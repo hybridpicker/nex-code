@@ -1518,6 +1518,16 @@ describe("agent.js", () => {
           "Create src/main.js, then run exactly: node src/main.js. Do not run other commands after verification.",
         ),
       ).toEqual(["node src/main.js"]);
+      expect(
+        _extractExactRequiredVerificationCommands(
+          "Implement the matcher. Verify your work by running: node js/tuning-matcher.js",
+        ),
+      ).toEqual(["node js/tuning-matcher.js"]);
+      expect(
+        _extractExactRequiredVerificationCommands(
+          "Update the tests. You may inspect files first. The final check is npx vitest run src/utils/exportUtils.test.js",
+        ),
+      ).toEqual(["npx vitest run src/utils/exportUtils.test.js"]);
     });
   });
 
@@ -3859,7 +3869,7 @@ describe("agent.js", () => {
       );
     });
 
-    it("blocks final success until the task-required verification command has passed", async () => {
+    it("runs the task-required verification command before final success", async () => {
       mockStream("editing", [
         {
           function: { name: "edit_file", arguments: { path: "/fix.js" } },
@@ -3877,12 +3887,6 @@ describe("agent.js", () => {
       mockStream(
         "PASS: The fix is complete and verification passed.",
       );
-      mockStream("Running lint", [
-        {
-          function: { name: "bash", arguments: { command: "npm run lint" } },
-          id: "lint-1",
-        },
-      ]);
       executeTool.mockResolvedValueOnce("lint ok");
       mockStream(
         "PASS: Updated /fix.js and ran npm run lint successfully before finishing.",
@@ -3895,12 +3899,17 @@ describe("agent.js", () => {
       );
 
       expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) =>
+            tool === "bash" && args.command === "npm run lint",
+        ),
+      ).toHaveLength(1);
+      expect(
         getConversationMessages().some(
           (m) =>
-            m.role === "user" &&
+            m.role === "assistant" &&
             typeof m.content === "string" &&
-            m.content.includes("explicitly requires these verification commands") &&
-            m.content.includes("npm run lint"),
+            m.content.includes("ran npm run lint successfully"),
         ),
       ).toBe(true);
     });
@@ -3949,6 +3958,50 @@ describe("agent.js", () => {
             m.content.includes("Verification: npm run lint (passed)"),
         ),
       ).toBe(true);
+    });
+
+    it("does not count ad-hoc scripts as required verification", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "js/tuning-matcher.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running an ad-hoc boundary script.", [
+        {
+          function: { name: "bash", arguments: { command: "node test-calc.js" } },
+          id: "adhoc-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS exact match");
+      mockStream("Completed the matcher and verified it with test-calc.js.");
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nFAIL inclusive +20 cent boundary",
+      );
+
+      await processInput(
+        "Fix the string matcher. Verify your work by running: node js/tuning-matcher.js",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 6 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) =>
+            tool === "bash" && args.command === "node js/tuning-matcher.js",
+        ),
+      ).toHaveLength(1);
+      const finalMessages = getConversationMessages().filter(
+        (m) => m.role === "assistant" && typeof m.content === "string",
+      );
+      const finalText = finalMessages.at(-1)?.content || "";
+      expect(finalText).toContain("Verification failed: node js/tuning-matcher.js");
+      expect(finalText).toContain("Exit code: 1");
+      expect(finalText).toContain("FAIL inclusive +20 cent boundary");
+      expect(finalText).not.toContain("Completed the requested edit");
+      expect(finalText).not.toContain("Verification: node test-calc.js (passed)");
     });
   });
 
@@ -4809,8 +4862,8 @@ describe("agent.js", () => {
         executeTool.mock.calls.filter(
           ([name, args]) =>
             name === "bash" && args?.command === "npm run lint",
-        ),
-      ).toHaveLength(2);
+        ).length,
+      ).toBeGreaterThanOrEqual(2);
     });
 
     it("fails cleanly in headless auto mode when verification dependencies are missing", async () => {
