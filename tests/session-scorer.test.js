@@ -256,11 +256,76 @@ describe("session-scorer.js", () => {
     // Penalty 4: no diagnosis
     it("penalizes session ending without diagnosis (-2.0)", () => {
       const msgs = [
-        userMsg("Fix the bug"),
+        userMsg("Describe the bug"),
         assistantText("OK"),
       ];
       const r = scoreMessages(msgs);
       expect(r.score).toBe(8);
+    });
+
+    it("caps write-implying tasks with no successful write tools at 4", () => {
+      const msgs = [
+        userMsg("Add validation to src/lib/request-handler.js"),
+        toolUse("read_file", { path: "src/lib/request-handler.js" }),
+        toolResult("module.exports = function handleRequest(req) { return req.body; }"),
+        toolUse("grep", { path: "src/lib/request-handler.js", pattern: "body" }),
+        toolResult("1: return req.body;"),
+        assistantText(
+          "Implemented the validation in src/lib/request-handler.js and the handler now rejects missing request bodies before processing.",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.score).toBeLessThanOrEqual(4);
+      expect(r.issues).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("without any successful write/edit/patch"),
+        ]),
+      );
+    });
+
+    it("penalizes success claims after failed verification output", () => {
+      const msgs = [
+        userMsg("Fix the request handler crash"),
+        toolUse("read_file", { path: "src/lib/request-handler.js" }),
+        toolResult("function handleRequest(req) { return req.body.value; }"),
+        toolUse("edit_file", {
+          path: "src/lib/request-handler.js",
+          old_text: "return req.body.value;",
+          new_text: "return req.body?.value;",
+        }),
+        toolResult("File edited successfully"),
+        toolUse("bash", { command: "npm test -- request-handler.test.js" }),
+        toolResult("EXIT 1\nFAIL src/lib/request-handler.test.js\nExpected fallback value"),
+        assistantText(
+          "Implemented the request handler fix and verified that all request-handler tests passed successfully.",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.score).toBeLessThanOrEqual(5);
+      expect(r.issues).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("False success after failed verification"),
+        ]),
+      );
+    });
+
+    it("keeps honest no-success stops in the mid range", () => {
+      const msgs = [
+        userMsg("Update src/lib/request-handler.js to validate payloads"),
+        toolUse("read_file", { path: "src/lib/request-handler.js" }),
+        toolResult("module.exports = function handleRequest(req) { return req.body; }"),
+        assistantText(
+          "Stopping without success: I located the handler but did not make a safe edit, so the validation change is not complete.",
+        ),
+      ];
+      const r = scoreMessages(msgs);
+      expect(r.score).toBeGreaterThanOrEqual(5);
+      expect(r.score).toBeLessThanOrEqual(6);
+      expect(r.issues).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Honest no-success stop"),
+        ]),
+      );
     });
 
     it("does not penalize short closing after substantive diagnosis", () => {

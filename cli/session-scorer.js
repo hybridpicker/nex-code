@@ -121,7 +121,11 @@ function extractToolResults(messages) {
                     .map((b) => (typeof b === "string" ? b : b.text || ""))
                     .join("")
                 : JSON.stringify(block.content || "");
-          results.push({ content, index: msgIndex });
+          results.push({
+            content,
+            index: msgIndex,
+            id: block.tool_use_id || block.tool_call_id || null,
+          });
         }
       });
     }
@@ -131,7 +135,11 @@ function extractToolResults(messages) {
         typeof msg.content === "string"
           ? msg.content
           : JSON.stringify(msg.content || "");
-      results.push({ content, index: msgIndex });
+      results.push({
+        content,
+        index: msgIndex,
+        id: msg.tool_call_id || msg.tool_use_id || null,
+      });
     }
   });
   return results;
@@ -213,6 +221,115 @@ function countDuplicateToolCalls(toolCalls) {
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
+}
+
+function isWriteImplyingTask(messages) {
+  const userText = messages
+    .filter((msg) => msg.role === "user" && typeof msg.content === "string")
+    .map((msg) => msg.content)
+    .filter((text) => !/^\s*\[SYSTEM/i.test(text))
+    .join("\n");
+  if (!userText.trim()) return false;
+  if (
+    /\b(what|why|how|explain|summari[sz]e|describe|review|inspect|analy[sz]e)\b/i.test(
+      userText,
+    ) &&
+    !/\b(add|create|implement|fix|patch|update|change|modify|edit|refactor|write|build|remove|rename|replace|migrate|wire|integrate)\b/i.test(
+      userText,
+    )
+  ) {
+    return false;
+  }
+  return /\b(add|create|implement|fix|patch|update|change|modify|edit|refactor|write|build|remove|rename|replace|migrate|wire|integrate)\b/i.test(
+    userText,
+  );
+}
+
+function isWriteToolCall(toolCall) {
+  const name = String(toolCall?.name || "").toLowerCase();
+  return new Set([
+    "write_file",
+    "edit_file",
+    "patch_file",
+    "write",
+    "edit",
+    "multiedit",
+    "multi_edit",
+    "apply_patch",
+  ]).has(name);
+}
+
+function resultForToolCall(toolCall, toolResults) {
+  if (toolCall.id) {
+    const byId = toolResults.find((result) => result.id === toolCall.id);
+    if (byId) return byId;
+  }
+  return toolResults.find((result) => result.index > toolCall.index) || null;
+}
+
+function isSuccessfulWriteResult(result) {
+  if (!result) return false;
+  const text = String(result.content || "").trim();
+  if (/^(ERROR|BLOCKED|CANCELLED|EXIT\s+[1-9]|FAIL(?:ED)?[:\s])/i.test(text)) {
+    return false;
+  }
+  return !/\b(old_text not found|ambiguous|multiple matches|no changes made|failed to edit|patch failed|could not (?:find|apply|edit))\b/i.test(
+    text,
+  );
+}
+
+function countSuccessfulWriteCalls(toolCalls, toolResults) {
+  return toolCalls.filter((toolCall) => {
+    if (!isWriteToolCall(toolCall)) return false;
+    return isSuccessfulWriteResult(resultForToolCall(toolCall, toolResults));
+  }).length;
+}
+
+function isVerificationToolCall(toolCall) {
+  const name = String(toolCall?.name || "").toLowerCase();
+  if (name !== "bash" && name !== "ssh_exec") return false;
+  const command = String(toolCall.input?.command || toolCall.input?.cmd || "");
+  return /\b(npm|pnpm|yarn)\s+(?:run\s+)?(?:test|lint|typecheck|build|check)\b|\b(npx\s+)?(?:jest|vitest|tsc|eslint)\b|\b(pytest|ruff|flake8|mypy|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|make\s+test)\b/i.test(
+    command,
+  );
+}
+
+function verificationResultFailed(result) {
+  if (!result) return false;
+  const text = String(result.content || "");
+  return (
+    /^\s*EXIT\s+[1-9]\b/i.test(text) ||
+    /\b(FAIL|FAILED|AssertionError|npm ERR!|error TS\d+|Compilation failed|Tests?:.*failed|Test Suites?:.*failed)\b/i.test(
+      text,
+    )
+  );
+}
+
+function getLastFailedVerification(toolCalls, toolResults) {
+  let latest = null;
+  for (const toolCall of toolCalls) {
+    if (!isVerificationToolCall(toolCall)) continue;
+    const result = resultForToolCall(toolCall, toolResults);
+    if (!verificationResultFailed(result)) continue;
+    if (!latest || result.index >= latest.result.index) {
+      latest = { toolCall, result };
+    }
+  }
+  return latest;
+}
+
+function isHonestNoSuccess(text) {
+  return /\b(stopping without success|without reporting success|not complete|incomplete|could not complete|unable to complete|cannot complete|verification failed|tests? failed|build failed|no successful verification|not fixed)\b/i.test(
+    String(text || ""),
+  );
+}
+
+function claimsSuccess(text) {
+  const value = String(text || "");
+  if (isHonestNoSuccess(value)) return false;
+  return /\b(done|complete|completed|fixed|implemented|ready|verified|verification (?:is )?complete|tests? pass(?:ed)?|build pass(?:ed)?|all checks pass(?:ed)?|all good|successfully)\b/i.test(
+    value,
+  );
 }
 
 // ─── Core Scorer ─────────────────────────────────────────────────────────────
@@ -1101,6 +1218,51 @@ function scoreMessages(messages) {
       score -= 0.75;
       issues.push(
         `Post-commit verification waste: ${maxPostCommitGitCalls} git status/diff/log calls after commit`,
+      );
+    }
+  }
+
+  // ── 24. Outcome consistency caps ─────────────────────────────────────────
+  // A tidy transcript can still be a failed coding session. These caps score
+  // against the requested outcome: edits made, verification read honestly, and
+  // final summary aligned with the last verification result.
+  {
+    const writeImplyingTask = isWriteImplyingTask(messages);
+    const successfulWriteCount = countSuccessfulWriteCalls(
+      toolCalls,
+      toolResults,
+    );
+    const honestStop = isHonestNoSuccess(lastAssistantText);
+    const failedVerification = getLastFailedVerification(toolCalls, toolResults);
+
+    if (writeImplyingTask && successfulWriteCount === 0) {
+      if (honestStop) {
+        score = Math.min(score, 6.0);
+        issues.push(
+          "Honest no-success stop: write-implying task ended without edits and did not claim completion",
+        );
+      } else {
+        score = Math.min(score, 4.0);
+        issues.push(
+          "Write-implying task ended without any successful write/edit/patch tool call",
+        );
+      }
+    } else if (honestStop) {
+      score = Math.min(score, 6.0);
+      issues.push(
+        "Honest no-success stop: final response reported an incomplete outcome",
+      );
+    }
+
+    if (failedVerification && claimsSuccess(lastAssistantText)) {
+      const command = String(
+        failedVerification.toolCall.input?.command ||
+          failedVerification.toolCall.input?.cmd ||
+          failedVerification.toolCall.name,
+      ).slice(0, 120);
+      score = Math.min(score, 5.0);
+      issues.push(
+        `False success after failed verification: final response claimed success after "${command}" failed`,
       );
     }
   }
