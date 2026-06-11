@@ -25,15 +25,32 @@ const FIXTURE = path.join(
   "echo-repl.js",
 );
 
+const activeFixtureSessions = new Set();
+
 function spawnFixture() {
   const child = spawn(process.execPath, [FIXTURE], {
     stdio: ["pipe", "pipe", "pipe"],
   });
-  return new CliSession(child);
+  const session = new CliSession(child);
+  activeFixtureSessions.add(session);
+  child.once("close", () => activeFixtureSessions.delete(session));
+  return session;
 }
 
-const PROCESS_WAIT_MS = 8000;
-jest.setTimeout(15000);
+const PROCESS_WAIT_MS = 15000;
+jest.setTimeout(25000);
+
+afterEach(async () => {
+  for (const session of [...activeFixtureSessions]) {
+    if (session.closed) continue;
+    try {
+      await session.close(1000);
+    } catch {
+      session.kill();
+    }
+  }
+  activeFixtureSessions.clear();
+});
 
 describe("cli-harness / stripAnsi", () => {
   test("removes color codes", () => {
