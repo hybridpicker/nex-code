@@ -2919,7 +2919,7 @@ describe("agent.js", () => {
         getConversationMessages()
           .map((m) => m.content)
           .join("\n"),
-      ).toContain("Do not re-read the same target range");
+      ).toContain("is a duplicate");
     });
 
     it("blocks ask_user after the prompt and target range are sufficient", async () => {
