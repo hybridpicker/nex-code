@@ -53,6 +53,8 @@ The goal is not provider abstraction for its own sake. The goal is to make model
 - **Phase-based execution** that separates planning, implementation, and verification
 - **Multi-provider support** for Ollama Cloud, DeepSeek V4, OpenAI, Anthropic, Gemini, and local Ollama
 - **Tool-integrated execution** across files, shell commands, Git, SSH, Docker, and Kubernetes
+- **Background shells** — dev servers, watchers, and long builds run without timeout via `run_in_background`, polled with `bash_output` and stopped with `kill_shell` while the agent keeps working
+- **Safe targeted edits** — `edit_file` rejects ambiguous matches (with the conflicting line numbers) instead of silently changing every occurrence; `replace_all` opts into bulk renames
 - **Headless and interactive modes** for both conversational use and automated task runs
 - **Sub-agent orchestration** for decomposing larger tasks into parallel workstreams
 - **Inline file preloading** — referenced files ≤8KB are pre-loaded into context, eliminating re-read loops for reasoning models like DeepSeek V4
