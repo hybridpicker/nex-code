@@ -617,6 +617,10 @@ function getToolSpinnerText(name, args) {
     case "spawn_agents":
       return null;
 
+    case "bash_output":
+      return `Polling shell ${args.shell_id || ""}`;
+    case "kill_shell":
+      return `Stopping shell ${args.shell_id || ""}`;
     case "read_file":
       return `Reading ${args.path || "file"}`;
     case "list_directory":

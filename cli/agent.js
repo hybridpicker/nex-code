@@ -942,6 +942,7 @@ const PARALLEL_SAFE = new Set([
   "search_files",
   "glob",
   "grep",
+  "bash_output",
   "web_fetch",
   "web_search",
   "git_status",
@@ -1158,6 +1159,8 @@ async function prepareToolCall(tc) {
     "glob",
     "grep",
     "bash",
+    "bash_output",
+    "kill_shell",
     "git_status",
     "git_diff",
     "git_log",
@@ -6439,6 +6442,13 @@ function clearConversation() {
   try {
     const { cancelAllJobs } = require("./background-jobs");
     cancelAllJobs();
+  } catch {
+    /* ignore */
+  }
+  // Kill background shells — their ids are meaningless in a new conversation
+  try {
+    const { clearShells } = require("./shell-jobs");
+    clearShells();
   } catch {
     /* ignore */
   }

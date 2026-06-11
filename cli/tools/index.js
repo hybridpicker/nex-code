@@ -878,7 +878,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "bash",
       description:
-        "Run shell commands in the project directory. Timeout: 90s. Use for tests, installs, git, builds, servers, and compilers. Do not use for reading/searching files: use read_file, grep, glob, or list_directory instead. Quote paths with spaces. Check exit code; non-zero means failure. Dangerous commands require confirmation.",
+        "Run shell commands in the project directory. Timeout: 90s (foreground only). Use for tests, installs, git, builds, and compilers. For long-running processes (dev servers, watchers, tailing logs) set run_in_background=true — the command keeps running with no timeout while you continue working; poll it with bash_output and stop it with kill_shell. Do not use for reading/searching files: use read_file, grep, glob, or list_directory instead. Quote paths with spaces. Check exit code; non-zero means failure. Dangerous commands require confirmation.",
       parameters: {
         type: "object",
         properties: {
@@ -886,8 +886,54 @@ const TOOL_DEFINITIONS = [
             type: "string",
             description: "The bash command to execute",
           },
+          run_in_background: {
+            type: "boolean",
+            description:
+              "Run without blocking or timeout. Returns a shell_id immediately; read output later with bash_output, terminate with kill_shell. Use for dev servers, watch tasks, and long builds — NOT for quick commands.",
+          },
         },
         required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "bash_output",
+      description:
+        "Read NEW output from a background shell started with bash run_in_background. Returns only output produced since the last bash_output call for that shell, plus its status (running/completed/failed/killed) and exit code once finished. Optionally filter lines with a regex. Do other work between polls instead of calling this in a tight loop.",
+      parameters: {
+        type: "object",
+        properties: {
+          shell_id: {
+            type: "string",
+            description: "Shell id returned by bash (e.g. 'shell-1')",
+          },
+          filter: {
+            type: "string",
+            description:
+              "Optional regex — only output lines matching it are returned (e.g. 'error|warn')",
+          },
+        },
+        required: ["shell_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "kill_shell",
+      description:
+        "Terminate a background shell started with bash run_in_background (SIGTERM to its process group, SIGKILL after 1.5s if needed). Use when a dev server or watcher is no longer needed or a background command hangs. Remaining output stays readable via bash_output.",
+      parameters: {
+        type: "object",
+        properties: {
+          shell_id: {
+            type: "string",
+            description: "Shell id returned by bash (e.g. 'shell-1')",
+          },
+        },
+        required: ["shell_id"],
       },
     },
   },
@@ -2682,6 +2728,23 @@ async function _executeToolInner(name, args, options = {}) {
       const isSSHLogin =
         SSH_INTERACTIVE_RE.test(cmd.trim()) &&
         !SSH_HAS_REMOTE_CMD_RE.test(cmd.trim());
+
+      // Background execution: long-running processes (dev servers, watchers)
+      // run without timeout; output is polled via bash_output.
+      if (args.run_in_background) {
+        if (INTERACTIVE_CMDS.test(cmd.trim()) || isSSHLogin) {
+          return `ERROR: Interactive commands cannot run in the background (they need a TTY). Run it in the foreground instead.`;
+        }
+        const { startShell } = require("../shell-jobs");
+        const started = startShell(cmd, { cwd: safeCwd });
+        if (started.error) return `ERROR: ${started.error}`;
+        if (!options.silent)
+          console.log(
+            `${C.dim}  ▶ background shell ${started.id}: ${cmd.substring(0, 72)}${C.reset}`,
+          );
+        return `Started background shell ${started.id}: ${cmd}\nNo timeout applies. Read new output with bash_output(shell_id="${started.id}"); terminate with kill_shell(shell_id="${started.id}"). Continue with other work while it runs.`;
+      }
+
       if (INTERACTIVE_CMDS.test(cmd.trim()) || isSSHLogin) {
         if (!options.silent)
           console.log(`${C.dim}  ▶ interactive: ${cmd}${C.reset}`);
@@ -2716,6 +2779,16 @@ async function _executeToolInner(name, args, options = {}) {
         const enriched = enrichBashError(rawError, cmd);
         return `EXIT ${e.code || 1}\n${enriched}`;
       }
+    }
+
+    case "bash_output": {
+      const { readShellOutput } = require("../shell-jobs");
+      return readShellOutput(args.shell_id, { filter: args.filter });
+    }
+
+    case "kill_shell": {
+      const { killShell } = require("../shell-jobs");
+      return killShell(args.shell_id);
     }
 
     case "read_file": {

@@ -142,7 +142,7 @@ const WRITE_TOOLS = new Set(["write_file", "edit_file", "patch_file"]);
 // Sub-agent type definitions — control tool access and system prompt suffix
 const SUB_AGENT_TYPES = {
   explore: {
-    allowedTools: new Set(['bash', 'read_file', 'list_directory', 'glob', 'grep', 'search_files', 'web_fetch', 'web_search']),
+    allowedTools: new Set(['bash', 'bash_output', 'kill_shell', 'read_file', 'list_directory', 'glob', 'grep', 'search_files', 'web_fetch', 'web_search']),
     systemSuffix: 'You are an exploration agent. Read and search code only. Do NOT modify any files.',
   },
   review: {
