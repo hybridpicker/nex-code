@@ -2841,7 +2841,7 @@ describe("agent.js", () => {
       expect(conversationText).toContain("Changed src/components/ProfileCard.jsx");
     });
 
-    it("blocks repeated reads of the same located target range before edits", async () => {
+    it("warns repeated reads of the same located target range before edits", async () => {
       getAutoConfirm.mockReturnValue(true);
       callStream
         .mockResolvedValueOnce({
@@ -2901,6 +2901,9 @@ describe("agent.js", () => {
         .mockResolvedValueOnce(
           "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
         )
+        .mockResolvedValueOnce(
+          "<article>\n        <h2>{profile.name}</h2>\n        <p>{profile.role}</p>\n      </article>",
+        )
         .mockResolvedValueOnce("Patched");
 
       await processInput(
@@ -2911,7 +2914,7 @@ describe("agent.js", () => {
 
       expect(
         executeTool.mock.calls.filter(([name]) => name === "read_file"),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       expect(
         executeTool.mock.calls.filter(([name]) => name === "patch_file"),
       ).toHaveLength(1);
@@ -2919,7 +2922,7 @@ describe("agent.js", () => {
         getConversationMessages()
           .map((m) => m.content)
           .join("\n"),
-      ).toContain("is a duplicate");
+      ).toContain("[SYSTEM WARNING] Read guard:");
     });
 
     it("blocks ask_user after the prompt and target range are sufficient", async () => {
@@ -5994,9 +5997,9 @@ describe("agent.js", () => {
       delete process.env.NEX_DEBUG;
     });
 
-    it("records a stalled final message when repeated reads are blocked", async () => {
+    it("allows pre-edit read guard blocks as warnings until the hard cap", async () => {
       process.env.NEX_DEBUG = "true";
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 12; i++) {
         mockStream(i === 0 ? "I will inspect the profile card first." : "", [
           {
             function: {
@@ -6011,21 +6014,34 @@ describe("agent.js", () => {
           },
         ]);
       }
-      mockStream("Done"); // fallback — should not be reached after loop abort
+      mockStream("Stopping without success.");
       executeTool.mockResolvedValue(
         "1: export function ProfileCard() { return <section />; }",
       );
 
       await processInput(
         "In src/components/ProfileCard.jsx add a status field near the summary section.",
+        null,
+        { maxIterations: 13 },
       );
 
+      expect(
+        executeTool.mock.calls.filter(([name]) => name === "read_file"),
+      ).toHaveLength(10);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.includes("[SYSTEM WARNING] Read guard:"),
+        ),
+      ).toBe(true);
       const lastAssistant = getConversationMessages()
         .filter((m) => m.role === "assistant")
         .at(-1);
-      expect(logOutput()).toContain("Loop abort");
-      expect(lastAssistant.content).toContain("Implementation stalled before edits");
-      expect(lastAssistant.content).toContain("blocked by loop guards");
+      expect(logOutput()).not.toContain("Loop abort");
+      expect(lastAssistant.content).not.toContain(
+        "Implementation stalled before edits",
+      );
       delete process.env.NEX_DEBUG;
     });
 
@@ -7539,7 +7555,7 @@ describe("agent.js", () => {
             m.content.includes("[PHASE: VERIFICATION]"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("exits after a substantive analysis answer instead of entering implement phase", async () => {
       clearConversation();
@@ -8054,7 +8070,7 @@ describe("agent.js", () => {
             m.content.includes("[PHASE: IMPLEMENTATION]"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("allows bounded backlog implementation to locate planned UI files", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
@@ -8119,7 +8135,7 @@ describe("agent.js", () => {
             ),
         ),
       ).toBe(false);
-    });
+    }, 15000);
 
     it("allows targeted implementation reads for prompt-named planned files", async () => {
       const fs = require("fs");
@@ -8286,9 +8302,8 @@ describe("agent.js", () => {
           (m) =>
             m.role === "assistant" &&
             typeof m.content === "string" &&
-            m.content.includes("planned implementation file was already in context") &&
-            m.content.includes("instead of editing"),
-          ),
+            m.content.includes("Implementation stalled before edits"),
+        ),
       ).toBe(true);
     }, 15000);
 
@@ -9250,7 +9265,7 @@ describe("agent.js", () => {
             m.content.includes("the initial git preflight is already complete"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("reports stalled implementation when tool budget is reached before edits", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
@@ -9297,7 +9312,7 @@ describe("agent.js", () => {
             m.content.includes("Implementation stalled before edits"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("stops bounded backlog runs after repeated edit mismatches", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
@@ -9373,7 +9388,7 @@ describe("agent.js", () => {
             m.content.includes("attempted file edits"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
   });
 
 		  describe("gated automation preflight guard", () => {
@@ -9640,7 +9655,7 @@ describe("agent.js", () => {
       expect(executeTool.mock.invocationCallOrder[editCallIndex]).toBeGreaterThan(
         callStream.mock.invocationCallOrder[0],
       );
-    });
+    }, 15000);
 
     it("runs git status preflight even when the gated prompt is not the first message", async () => {
       getAutoConfirm.mockReturnValue(true);

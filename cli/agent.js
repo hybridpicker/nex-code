@@ -7628,9 +7628,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
+  let _editAttemptsThisRun = 0; // write/edit/patch calls that reached or were blocked by tool execution
+  let _preEditBlockedLoopNudges = 0; // avoid repeatedly warning on pre-edit blocked loops
   let _scopedNoEditNudges = 0; // headless located-target prose without edits
   let _failedEditFinalNudges = 0; // failed write followed by prose without progress
   let _preexistingFinalNudges = 0; // edited work described as if it already existed
+  const _hasNoEditAttemptYet = () =>
+    _editAttemptsThisRun === 0 &&
+    _editsMadeThisSession === 0 &&
+    filesModified.size === 0 &&
+    _bashModifiedFiles === 0 &&
+    _sessionLastEditFailed.size === 0;
   const startTime = Date.now();
   const _milestone = new MilestoneTracker(MILESTONE_N);
   // ─── Post-edit verification freshness tracking ─────────────────────
@@ -12558,6 +12566,51 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         }
       }
 
+      // ─── Pre-edit read guard softening ─────────────────────────────────────
+      // Run after the full pre-execution guard pipeline so every read_file guard
+      // that produced a BLOCKED result is downgraded consistently. Before the
+      // first edit attempt, and throughout implement phase, reads warn instead
+      // of stopping the run. The only read guard that remains hard here is true
+      // pathology: attempting to read the same file after ten already-approved
+      // reads in this session/batch.
+      {
+        const READ_GUARD_PATHOLOGY_READS = 10;
+        const shouldSoftenReadGuards =
+          _hasNoEditAttemptYet() ||
+          (_phaseEnabled && _currentPhase === "implement");
+        if (shouldSoftenReadGuards) {
+          for (const prep of prepared) {
+            if (prep.canExecute) continue;
+            if (prep.fnName !== "read_file") continue;
+            const blockedText =
+              typeof prep.errorResult?.content === "string"
+                ? prep.errorResult.content
+                : "";
+            if (!blockedText.startsWith("BLOCKED: read_file(")) continue;
+            const guardPath = prep.args?.path;
+            const readCount =
+              (guardPath ? _getLoopCount(fileReadCounts, guardPath) : 0) +
+              (guardPath ? _pendingReadCounts.get(guardPath) || 0 : 0);
+            if (readCount >= READ_GUARD_PATHOLOGY_READS) continue;
+
+            prep.canExecute = true;
+            prep.errorResult = null;
+            prep._guardWarning =
+              blockedText.replace(/^BLOCKED:\s*/, "[SYSTEM WARNING] Read guard: ") +
+              " The read was allowed anyway because no edit has been attempted yet or the run is in the implementation phase. Use this result to edit next.";
+            if (guardPath) {
+              _pendingReadCounts.set(
+                guardPath,
+                (_pendingReadCounts.get(guardPath) || 0) + 1,
+              );
+            }
+            debugLog(
+              `${C.yellow}  ⚠ Read guard softened: ${guardPath || "(unknown path)"}${C.reset}`,
+            );
+          }
+        }
+      }
+
       // ─── Execute with parallel batching (quiet mode: spinner + compact summaries) ───
       const batchOpts = taskProgress
         ? { skipSpinner: true, skipSummaries: true }
@@ -12736,6 +12789,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           preBlockContent.startsWith("PLAN PHASE:") ||
           preBlockContent.startsWith("VERIFY PHASE:")
         ) {
+          if (["edit_file", "patch_file", "write_file"].includes(prep.fnName)) {
+            _editAttemptsThisRun++;
+          }
           if (
             _phaseEnabled &&
             _currentPhase === "verify" &&
@@ -12781,6 +12837,20 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             ? Math.min(LOOP_ABORT_BLOCKS, 3)
             : LOOP_ABORT_BLOCKS;
           if (consecutiveBlocks >= blockAbortLimit) {
+            if (_hasNoEditAttemptYet()) {
+              if (_preEditBlockedLoopNudges < 2) {
+                _preEditBlockedLoopNudges++;
+                const preEditBlockMsg = {
+                  role: "user",
+                  content:
+                    "[SYSTEM WARNING] Several tool calls were blocked before any edit attempt. Do not stop yet. Use the available context to call edit_file, patch_file, or write_file next.",
+                };
+                conversationMessages.push(preEditBlockMsg);
+                apiMessages.push(preEditBlockMsg);
+              }
+              consecutiveBlocks = 0;
+              continue;
+            }
             debugLog(
               `${C.red}  ✖ Loop abort: ${consecutiveBlocks} consecutive blocked calls (pre-execution) — model not heeding BLOCKED messages${C.reset}`,
             );
@@ -12830,6 +12900,9 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !firstLine.startsWith("Command failed") &&
           !firstLine.startsWith("EXIT") &&
           !/old_text not found/i.test(firstLine);
+        if (["write_file", "edit_file", "patch_file"].includes(prep.fnName)) {
+          _editAttemptsThisRun++;
+        }
 
         // Track user-visible git status evidence for final automation reports.
         if (prep.fnName === "git_status" && isOk) {
@@ -14433,6 +14506,14 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               debugLog(
                 `${C.yellow}  ⚠ Scroll warning: "${warnPath.split("/").slice(-2).join("/")}" — ${sectionCount} sections read — use grep instead${C.reset}`,
               );
+            }
+            if (prep._guardWarning) {
+              const guardWarning = {
+                role: "user",
+                content: prep._guardWarning,
+              };
+              conversationMessages.push(guardWarning);
+              apiMessages.push(guardWarning);
             }
             const shortPath = prep.args.path.split("/").slice(-2).join("/");
             // Only apply loop detection to unbounded reads — targeted reads (line_start provided)
