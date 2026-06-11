@@ -129,6 +129,24 @@ describe("benchmark-gate helpers", () => {
     ).toEqual(["missing:latest"]);
   });
 
+  it("treats bare model names as available when their cloud alias is loaded", () => {
+    expect(
+      findUnavailableOllamaModels(
+        ["devstral-small-2:24b", "kimi-k2.6", "gone-model:1b"],
+        ["devstral-small-2:24b-cloud", "kimi-k2.6:cloud"],
+      ),
+    ).toEqual(["gone-model:1b"]);
+  });
+
+  it("treats cloud-suffixed names as available when the bare model is loaded", () => {
+    expect(
+      findUnavailableOllamaModels(
+        ["devstral-small-2:24b-cloud"],
+        ["devstral-small-2:24b"],
+      ),
+    ).toEqual([]);
+  });
+
   it("fails when timeout rate regresses sharply even if score is stable", () => {
     const result = evaluateGateRegression(
       {

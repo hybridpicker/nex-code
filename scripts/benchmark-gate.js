@@ -311,6 +311,15 @@ function findUnavailableOllamaModels(configuredModels, loadedModels) {
   const loaded = new Set(loadedModels);
   return configuredModels.filter((model) => {
     if (loaded.has(model)) return false;
+    // Cloud-hosted models appear in `ollama list` with a "-cloud" suffix
+    // (or ":cloud" tag), but the API accepts the bare name. Treat the bare
+    // name as available when its cloud alias is loaded, and vice versa.
+    if (loaded.has(`${model}-cloud`) || loaded.has(`${model}:cloud`)) {
+      return false;
+    }
+    if (model.endsWith("-cloud") && loaded.has(model.slice(0, -6))) {
+      return false;
+    }
     if (!model.includes(":")) {
       return !loadedModels.some((loadedModel) =>
         loadedModel.startsWith(`${model}:`),
