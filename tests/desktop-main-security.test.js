@@ -585,7 +585,7 @@ describe("desktop main process IPC hardening", () => {
   });
 
   test("scopes Desktop edit diffs to the requested fitness template path", () => {
-    const projectDir = path.join(tmpRoot, "jarvis-agent");
+    const projectDir = path.join(tmpRoot, "sample-agent");
     const templatePath = path.join(projectDir, "web", "templates", "fitness");
     const logsPath = path.join(projectDir, "logs");
     fs.mkdirSync(templatePath, { recursive: true });

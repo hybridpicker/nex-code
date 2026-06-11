@@ -2761,7 +2761,7 @@ For each issue, include:
         const os = require("os");
         const resultsDir =
           process.env.NEX_BENCHMARK_HISTORY_DIR ||
-          path.join(os.homedir(), "Coding", "nex-code-benchmarks", "results");
+          path.join(os.homedir(), ".nex-code", "benchmark-history");
         if (!fs.existsSync(resultsDir)) {
           console.log(
             `${C.yellow}No nightly results at ${resultsDir}${C.reset}`,

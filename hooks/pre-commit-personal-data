@@ -21,8 +21,13 @@ FOUND=0
 while IFS= read -r pattern; do
   # Skip empty lines and comments
   [[ -z "$pattern" || "$pattern" =~ ^# ]] && continue
-  
-  MATCHES=$(git diff --cached -G"$pattern" --name-only 2>/dev/null)
+
+  # Only ADDED lines count — removing personal data must never be blocked.
+  # (-G matches removals too, which would block cleanup commits.)
+  MATCHES=$(git diff --cached --unified=0 2>/dev/null | awk -v pat="$pattern" '
+    /^\+\+\+ b\// { f = substr($0, 7) }
+    /^\+/ && !/^\+\+\+/ && $0 ~ pat { print f }
+  ' | sort -u)
   if [ -n "$MATCHES" ]; then
     echo ""
     echo "╔══════════════════════════════════════════════════════════╗"

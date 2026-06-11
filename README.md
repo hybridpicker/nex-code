@@ -69,7 +69,7 @@ The goal is not provider abstraction for its own sake. The goal is to make model
 
 As of `v0.5.33+`, nex-code handles scoped edits on real-world projects — targeted
 changes to specific file sections — with production reliability. This was validated
-against `jarvis-agent` (a 1400+ file Django/Alpine.js project with 3155-line templates).
+against a large private Django/Alpine.js project (1400+ files, 3000+-line templates).
 
 ### The Problem
 
@@ -96,7 +96,7 @@ because the overlap check always blocked first.
 
 ### Verified
 
-- **CLI**: `deepseek-v4-flash:cloud` (1M context) — 2/2 full successes on test fixture, 1/1 on real `jarvis-agent`
+- **CLI**: `deepseek-v4-flash:cloud` (1M context) — 2/2 full successes on test fixture, 1/1 on the large private Django project
 - **CLI**: `devstral-small-2:24b-cloud` (128K) — now produces scoped edits instead of stalling (was 0/1 before fix)
 - **Desktop E2E**: Clean completion, no loop abort
 - **Test suite**: 3637 tests passing, 5 new regression tests for the deadlock escape

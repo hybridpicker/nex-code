@@ -17,7 +17,7 @@ set -euo pipefail
 
 REPO_DIR="/home/nex-worker/nex-code"
 SYSTEMD_DIR="/etc/systemd/system"
-JARVIS_DIR="$REPO_DIR/scripts/nex-worker"
+WORKER_DIR="$REPO_DIR/scripts/nex-worker"
 
 echo "═══════════════════════════════════════════════════"
 echo "  nex-code NexWorker Setup"
@@ -52,9 +52,9 @@ mkdir -p scripts/benchmark-results
 USER_SYSTEMD="$HOME/.config/systemd/user"
 mkdir -p "$USER_SYSTEMD"
 echo "[setup] Installing systemd user units..."
-cp "$JARVIS_DIR/nex-improve.service" "$USER_SYSTEMD/"
-cp "$JARVIS_DIR/nex-improve.timer" "$USER_SYSTEMD/"
-cp "$JARVIS_DIR/nex-weekly-bench.service" "$USER_SYSTEMD/"
+cp "$WORKER_DIR/nex-improve.service" "$USER_SYSTEMD/"
+cp "$WORKER_DIR/nex-improve.timer" "$USER_SYSTEMD/"
+cp "$WORKER_DIR/nex-weekly-bench.service" "$USER_SYSTEMD/"
 systemctl --user daemon-reload
 
 # Enable lingering so timers run without login

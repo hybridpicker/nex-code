@@ -39,7 +39,7 @@ const CLAUDE_BIN = (() => {
   catch { return null; }
 })();
 
-const SERVER_SSH = process.env.JARVIS_SSH_HOST;
+const SERVER_SSH = process.env.SERVER_SSH_HOST;
 
 // ── Logging ───────────────────────────────────────────────────────────────
 function log(...args) {

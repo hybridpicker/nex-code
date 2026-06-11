@@ -207,7 +207,7 @@ calls → loop abort → zero edits.
 `cli/agent.js`. When escape conditions are met, the overlap loop is skipped entirely.
 The escape is one-time — consumed after first use.
 
-**Impact**: CLI scoped-edit tasks on jarvis-agent (1400+ files) now produce edits
+**Impact**: CLI scoped-edit tasks on a large private Django project (1400+ files) now produce edits
 instead of stalling. Desktop E2E completes cleanly.
 
 #### `567f0c5` — Remaining stall-paths + dist skill loader

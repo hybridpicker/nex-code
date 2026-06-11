@@ -75,14 +75,35 @@ function getFixtureRootCandidates() {
   return [...new Set(roots)];
 }
 
+// Optional local mapping from generic fixture names to real directories.
+// Lives in .nex/ (gitignored) so machine-specific project names never
+// appear in the public repo. Example:
+//   { "server-docs-sample": "Documentation/MyServerDocs" }
+let _sourceAliases = null;
+function getSourceAliases() {
+  if (_sourceAliases !== null) return _sourceAliases;
+  try {
+    _sourceAliases = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "..", ".nex", "benchmark-source-aliases.json"),
+        "utf-8",
+      ),
+    );
+  } catch {
+    _sourceAliases = {};
+  }
+  return _sourceAliases;
+}
+
 function resolveFixtureProjectRoot(sourceProject) {
   if (!sourceProject) {
     throw new Error("sourceProject is required for external benchmark fixtures.");
   }
 
+  const mapped = getSourceAliases()[sourceProject] || sourceProject;
   const attempted = [];
   for (const root of getFixtureRootCandidates()) {
-    const candidate = path.resolve(root, sourceProject);
+    const candidate = path.resolve(root, mapped);
     attempted.push(candidate);
     if (fs.existsSync(candidate)) return candidate;
   }
@@ -1650,9 +1671,9 @@ module.exports = app;
       "Create a firewall-cmd script that opens ports 9011-9023 for webhook services, " +
       "blocks external access to port 5432 (PostgreSQL), and adds rate limiting " +
       "on port 443 (max 1000 req/min). Include verification commands.",
-    sourceProject: "Documentation/AlmaLinux9Server",
+    sourceProject: "server-docs-sample",
     setupFn(tmpDir) {
-      copyFiles("Documentation/AlmaLinux9Server", [
+      copyFiles("server-docs-sample", [
         "00-SERVER-OVERVIEW.md",
         "10-AUTO-DEPLOY.md",
         "11-SERVER-MONITORING.md",
@@ -1685,9 +1706,9 @@ module.exports = app;
       "Create an SSH key rotation script (ssh-rotate.sh) that generates ED25519 keys monthly, " +
       "maintains 2 active keys for zero-downtime rotation, logs all changes to an audit file " +
       "with timestamps, and includes a rollback mechanism. Add a cron job definition.",
-    sourceProject: "Documentation/AlmaLinux9Server",
+    sourceProject: "server-docs-sample",
     setupFn(tmpDir) {
-      copyFiles("Documentation/AlmaLinux9Server", [
+      copyFiles("server-docs-sample", [
         "00-SERVER-OVERVIEW.md",
         "10-AUTO-DEPLOY.md",
       ], tmpDir);
@@ -1766,10 +1787,10 @@ module.exports = app;
       "Analyze the Django migration files in chords/migrations/ and create a migration-audit.py " +
       "script that validates the dependency chain (no orphans, no circular deps), extracts " +
       "schema changes per migration, and outputs a JSON report with field additions/removals.",
-    sourceProject: "chord-library",
+    sourceProject: "chords-backend-sample",
     setupFn(tmpDir) {
-      copyTree("chord-library", "backend/chords/migrations", tmpDir);
-      copyFiles("chord-library", ["backend/chords/models.py"], tmpDir);
+      copyTree("chords-backend-sample", "backend/chords/migrations", tmpDir);
+      copyFiles("chords-backend-sample", ["backend/chords/models.py"], tmpDir);
       const backendRoot = path.join(tmpDir, "backend");
       const sourceChordsDir = path.join(backendRoot, "chords");
       const nestedMigrations = path.join(sourceChordsDir, "migrations");

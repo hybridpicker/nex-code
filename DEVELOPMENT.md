@@ -158,7 +158,7 @@ If merge conflicts occur during the merge from `devel` to `main`:
 
 ## VS Code Extension IPC (`--server` mode)
 
-The VS Code extension at `~/Coding/nex-code-vscode/` spawns nex-code as `nex-code --server`. Communication uses newline-delimited JSON over stdin/stdout. stderr is forwarded to VS Code's Output channel.
+The VS Code extension (`vscode/` in this repo) spawns nex-code as `nex-code --server`. Communication uses newline-delimited JSON over stdin/stdout. stderr is forwarded to VS Code's Output channel.
 
 ### Protocol
 

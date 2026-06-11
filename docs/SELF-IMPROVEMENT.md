@@ -129,9 +129,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now nex-weekly-bench.timer
 ```
 
-On 2026-05-24 the legacy ClawBook LaunchAgent `com.schoensgibl.nex-benchmark` was also unloaded and moved from `~/Library/LaunchAgents/` to `~/Library/LaunchAgents.disabled/` so the Mac-side benchmark notifier does not restart automatically. A separate ClawBook crontab entry that ran `/Users/schoensgibl-lukas/Coding/nex-code-benchmarks/run-benchmark.sh` daily at 06:40 was removed the same day after it posted another `nex-code Benchmark` Matrix message.
+On 2026-05-24 the legacy Mac-side LaunchAgent benchmark notifier was unloaded and disabled so it does not restart automatically. A leftover crontab entry that ran the nightly benchmark script daily at 06:40 was removed the same day after it posted another benchmark notification.
 
-The Jarvis server's `/home/jarvis/scripts/nex-auto-update.sh` keeps the daily npm version check, but its legacy harness refresh and benchmark run block is disabled. This prevents a package update from triggering benchmark notifications through the older server-side path.
+The worker server's auto-update script keeps the daily npm version check, but its legacy harness refresh and benchmark run block is disabled. This prevents a package update from triggering benchmark notifications through the older server-side path.
 
 **Target Discovery** (6 sources, weighted by priority × file importance):
 1. **Empty catch blocks** (priority 10) — highest value, clear fix
@@ -515,7 +515,7 @@ Two guards prevent silent failure modes where the agent does no real work but st
 | webapp-nu | Node | 4 | A11y, audio tests, validation |
 | games-project | Django | 4 | Error handling, models, validators |
 | homemusic | Django | 3 | Security, API tests, ORM |
-| chord-library | Node | 3 | Async errors, schema, transposition |
+| webapp-chords | Node | 3 | Async errors, schema, transposition |
 | webapp-alpha | Django | 3 | XSS, pagination, model tests |
 | webapp-gamma | Django | 3 | Auth, N+1 queries, integration |
 | nex-worker-agent | Node | 3 | Tool errors, routing, memory leaks |

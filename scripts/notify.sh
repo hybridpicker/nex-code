@@ -21,7 +21,7 @@ if curl -sf -o /dev/null http://localhost:3000/matrix/notify \
 fi
 
 # Try via SSH (running on Mac)
-SSH_HOST="${SERVER_SSH_HOST:-${JARVIS_SSH_HOST:-}}"
+SSH_HOST="${SERVER_SSH_HOST:-}"
 if [ -n "$SSH_HOST" ]; then
   PAYLOAD=$(echo "$MESSAGE" | python3 -c 'import json,sys; print(json.dumps({"message": sys.stdin.read().strip()}))')
   TMPFILE=$(mktemp /tmp/nex-notify-XXXXXX.json)

@@ -103,8 +103,8 @@ code `0`.
 
 ## Sandbox
 
-- Original project: `~/Coding/voicing-generator`
-- Sandbox project: `/tmp/nex-desktop-sandbox/voicing-generator`
+- Original project: a local React app (`~/projects/sample-app` in this example)
+- Sandbox project: `/tmp/nex-desktop-sandbox/sample-app`
 - Copy exclusions: `node_modules`, `dist`, `build`, `.env*`, `.nex`,
   `NEX.md`, `CLAUDE.md`, virtualenvs, `__pycache__`, credentials, logs,
   caches, and coverage output.

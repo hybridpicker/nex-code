@@ -63,7 +63,6 @@ const PROJECTS = {
   "webapp-nu":      { path: path.join(HOME, "apps/webapp-nu"),         type: "node" },
   "games-project":  { path: path.join(HOME, "apps/games-project"),     type: "django" },
   "homemusic":      { path: path.join(HOME, "apps/homemusic"),         type: "django" },
-  "chord-library":  { path: path.join(HOME, "apps/chord-library"),     type: "node" },
   "webapp-alpha":        { path: path.join(HOME, "apps/webapp-alpha"),           type: "django" },
   "webapp-gamma":     { path: path.join(HOME, "apps/webapp-gamma"),        type: "django" },
   "webapp-beta":       { path: path.join(HOME, "apps/webapp-beta"),          type: "django" },
