@@ -277,6 +277,29 @@ describe("startServerMode", () => {
     });
   });
 
+  test("does not truncate Desktop completion summaries mid-sentence", async () => {
+    startFresh();
+    const longSummary = [
+      "Completed the requested edit.",
+      "Changed files: web/templates/fitness/index.html.",
+      "Verification: post-edit readback: web/templates/fitness/index.html.",
+      "",
+      "Additional verification skipped: The verification command npm test --silent could not run because project dependencies are missing or broken in this workspace.",
+      "The module '/tmp/example/node_modules/better-sqlite3/build/Release/better_sqlite3.node' was built for a different Node.js version.",
+    ].join("\n");
+    getConversationMessages
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([{ role: "assistant", content: longSummary }]);
+
+    await mockLineHandler('{"type":"chat","id":"msg-long-summary","text":"hello"}');
+
+    const doneMsg = stdoutWrites.find((w) => w.includes('"msg-long-summary"'));
+    const parsed = JSON.parse(doneMsg);
+    expect(parsed.summary).toContain("Additional verification skipped");
+    expect(parsed.summary).toContain("better_sqlite3.node");
+    expect(parsed.summary).not.toMatch(/\bbec$/);
+  });
+
   test("marks missing final assistant output as stalled", async () => {
     startFresh();
     getConversationMessages.mockReturnValueOnce([]).mockReturnValueOnce([]);

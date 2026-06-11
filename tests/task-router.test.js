@@ -98,6 +98,15 @@ describe("task-router.js", () => {
       expect(detectCategory(input).id).toBe("frontend");
     });
 
+    // Scoped edit
+    it.each([
+      'In /profile, put the new value next to <div class="profile-card">Name</div>',
+      'This exact markup needs another line: <span data-state="active">Ready</span>',
+      'Update the shown target block: <section aria-label="Dashboard"></section>',
+    ])("detects scoped-edit from embedded markup: %s", (input) => {
+      expect(detectCategory(input).id).toBe("scoped-edit");
+    });
+
     // Sysadmin
     it.each([
       "Configure nginx reverse proxy",

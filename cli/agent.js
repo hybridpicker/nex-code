@@ -942,6 +942,7 @@ const PARALLEL_SAFE = new Set([
   "search_files",
   "glob",
   "grep",
+  "bash_output",
   "web_fetch",
   "web_search",
   "git_status",
@@ -1158,6 +1159,8 @@ async function prepareToolCall(tc) {
     "glob",
     "grep",
     "bash",
+    "bash_output",
+    "kill_shell",
     "git_status",
     "git_diff",
     "git_log",
@@ -1200,6 +1203,8 @@ async function prepareToolCall(tc) {
     !_PHASE_VERIFY_ALLOWED.has(fnName) &&
     !fnName.startsWith("skill_")
   ) {
+    const isWriteTool =
+      fnName === "write_file" || fnName === "edit_file" || fnName === "patch_file";
     debugLog(
       `${C.yellow}  ✗ ${fnName}: blocked in verify phase (read + bash only)${C.reset}`,
     );
@@ -1208,9 +1213,12 @@ async function prepareToolCall(tc) {
       fnName,
       args: finalArgs,
       canExecute: false,
+      blockedVerifyWrite: isWriteTool,
       errorResult: {
         role: "tool",
-        content: `VERIFY PHASE: '${fnName}' is blocked. Use read_file and bash (for tests/linters) to verify changes. Report PASS or FAIL.`,
+        content: isWriteTool
+          ? `VERIFY PHASE: '${fnName}' is blocked. Verification found a possible issue that requires implementation. Stop using write tools in verification; the controller will switch back to implementation so the next turn can inspect the exact target and fix only if the change is still missing.`
+          : `VERIFY PHASE: '${fnName}' is blocked. Use read_file and bash (for tests/linters) to verify changes. Report PASS or FAIL.`,
         tool_call_id: callId,
       },
     };
@@ -6434,6 +6442,13 @@ function clearConversation() {
   try {
     const { cancelAllJobs } = require("./background-jobs");
     cancelAllJobs();
+  } catch {
+    /* ignore */
+  }
+  // Kill background shells — their ids are meaningless in a new conversation
+  try {
+    const { clearShells } = require("./shell-jobs");
+    clearShells();
   } catch {
     /* ignore */
   }
@@ -12649,8 +12664,37 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         if (
           preBlockContent.startsWith("BLOCKED:") ||
           preBlockContent.startsWith("PLAN MODE:") ||
-          preBlockContent.startsWith("PLAN PHASE:")
+          preBlockContent.startsWith("PLAN PHASE:") ||
+          preBlockContent.startsWith("VERIFY PHASE:")
         ) {
+          if (
+            _phaseEnabled &&
+            _currentPhase === "verify" &&
+            prep.blockedVerifyWrite &&
+            (filesModified.size > 0 || _bashModifiedFiles > 0)
+          ) {
+            _verifyLoopBack++;
+            const loopMsg = {
+              role: "user",
+              content:
+                `[PHASE: RE-IMPLEMENTATION] Verification attempted a write with ${prep.fnName}, which is not allowed in verification.\n\n` +
+                "Inspect the exact modified section first. If the requested change is already present, do not edit; return to verification and report PASS. If it is missing or wrong, make the smallest targeted fix, then verify again.",
+            };
+            _currentPhase = "implement";
+            _phaseModelOverride = getModelForPhase(
+              "implement",
+              _detectedCategoryId,
+            );
+            conversationMessages.push(loopMsg);
+            apiMessages.push(loopMsg);
+            consecutiveBlocks = 0;
+            i = 0;
+            iterLimit = getPhaseBudget("implement");
+            debugLog(
+              `${C.yellow}  ↳ Verify → implement loop-back #${_verifyLoopBack} (blocked write in verify)${C.reset}`,
+            );
+            continue;
+          }
           consecutiveBlocks++;
           if (
             _blockedAfterImplementationRead() &&
@@ -14237,6 +14281,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                   expectedSnippets,
                 )
               ) {
+                if (expectedSnippets.length > 0) {
+                  const evidenceSnippet = expectedSnippets[0].slice(0, 220);
+                  const readbackEvidenceMsg = {
+                    role: "user",
+                    content:
+                      `[SYSTEM] Post-edit readback confirmed that "${prep.args.path}" contains text introduced by the last edit: ` +
+                      `${evidenceSnippet}. Treat the edit as present on disk; do not try to re-add it unless a later exact read or test proves it is wrong.`,
+                  };
+                  conversationMessages.push(readbackEvidenceMsg);
+                  apiMessages.push(readbackEvidenceMsg);
+                }
                 verificationReadsRun.push(prep.args.path);
                 _verificationAtEditSeq = _scopedEditCounter;
                 _postEditVerifyPending = false;

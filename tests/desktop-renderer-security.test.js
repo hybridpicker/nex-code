@@ -17,6 +17,7 @@ function loadRendererScript(relativePath, documentMock) {
     encodeURIComponent,
     decodeURIComponent,
     HTMLElement: function HTMLElement() {},
+    navigator: { clipboard: { writeText: jest.fn(() => Promise.resolve()) } },
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(filePath, "utf8"), context, {
@@ -44,6 +45,22 @@ function createElementStub() {
 }
 
 describe("desktop renderer HTML escaping", () => {
+  test("highlights fenced code blocks without exposing raw HTML", () => {
+    const context = loadRendererScript("desktop/renderer/js/syntax-highlight.js", {
+      addEventListener: jest.fn(),
+      getElementById: jest.fn(() => null),
+    });
+
+    const html = context.parseMarkdownEnhanced(
+      "```js\nconst value = \"<tag>\";\n```",
+    );
+
+    expect(html).toContain("code-block-wrap");
+    expect(html).toContain("hl-keyword");
+    expect(html).toContain("&lt;tag&gt;");
+    expect(html).not.toContain("<tag>");
+  });
+
   test("keeps streamed assistant text in one de-duplicated bubble", () => {
     const context = loadRendererScript("desktop/renderer/js/app.js", {
       addEventListener: jest.fn(),
@@ -241,6 +258,55 @@ describe("desktop renderer HTML escaping", () => {
     const html = elements["timeline-track"].innerHTML;
     expect(html).toContain("conversation-final-card");
     expect(html).toContain("Changed src/components/ProfileCard.jsx.");
+  });
+
+  test("renders inline diffs with escaped metadata and highlighted content", () => {
+    const elements = {
+      "timeline-track": createElementStub(),
+      "timeline": createElementStub(),
+      "task-complete": createElementStub(),
+      "timeline-status-pill": createElementStub(),
+      "timeline-status-text": createElementStub(),
+    };
+    const context = loadRendererScript(
+      "desktop/renderer/js/components/agentic-timeline.js",
+      {
+        getElementById: jest.fn((id) => elements[id] || null),
+      },
+    );
+    context.highlightCode = (code) => code
+      .replace("+new", '<span class="hl-diff-add">+new</span>')
+      .replace("-old", '<span class="hl-diff-del">-old</span>');
+
+    context.initTimelineComponents({
+      sessionState: "running",
+      agenticNodes: [],
+      conversationItems: [
+        {
+          id: "a1",
+          kind: "assistant",
+          text: "",
+          status: "running",
+          timestamp: "10:01",
+          phases: [],
+          diffs: [
+            {
+              tool: '<img src=x onerror="alert(1)">',
+              stat: "file.txt | 2 +-",
+              diff: "diff --git a/file.txt b/file.txt\n-old\n+new",
+              timestamp: "10:02",
+            },
+          ],
+        },
+      ],
+    });
+
+    const html = elements["timeline-track"].innerHTML;
+    expect(html).toContain("inline-diff-wrap");
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("hl-diff-add");
+    expect(html).toContain("file.txt | 2 +-");
+    expect(html).not.toContain("<img");
   });
 
   test("escapes completion banner project and phase text", () => {
@@ -600,6 +666,33 @@ describe("desktop renderer conversation state", () => {
     expect(context.window.AppState.data.testPassed).toBe(2);
     expect(context.window.AppState.data.testFailed).toBe(0);
     expect(context.window.AppState.data.verificationStatus).toBe("passed");
+  });
+
+  test("attaches inline diff entries to the active assistant turn once per hash", () => {
+    const context = loadAppController();
+
+    context.appendConversationItem(
+      context.createConversationItem("assistant", "", {
+        status: "running",
+      }),
+    );
+
+    const first = context.addInlineDiffToConversation({
+      tool: "edit_file",
+      stat: "file.txt | 2 +-",
+      diff: "diff --git a/file.txt b/file.txt\n-old\n+new",
+      diffHash: "same-hash",
+    });
+    const duplicate = context.addInlineDiffToConversation({
+      tool: "edit_file",
+      stat: "file.txt | 2 +-",
+      diff: "diff --git a/file.txt b/file.txt\n-old\n+new",
+      diffHash: "same-hash",
+    });
+
+    expect(first).toMatchObject({ tool: "edit_file", diffHash: "same-hash" });
+    expect(duplicate).toBe(null);
+    expect(context.window.AppState.data.conversationItems[0].diffs).toHaveLength(1);
   });
 
   test("marks running tool actions interrupted on terminal failures", () => {

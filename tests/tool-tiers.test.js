@@ -69,14 +69,16 @@ describe("TIERS definitions", () => {
     expect(TIERS.essential).toContain("list_directory");
   });
 
-  it("standard tier has 21 tools", () => {
-    expect(TIERS.standard).toHaveLength(21);
+  it("standard tier has 23 tools", () => {
+    expect(TIERS.standard).toHaveLength(23);
     expect(TIERS.standard).toContain("glob");
     expect(TIERS.standard).toContain("grep");
     expect(TIERS.standard).toContain("ask_user");
     expect(TIERS.standard).toContain("git_status");
     expect(TIERS.standard).toContain("git_diff");
     expect(TIERS.standard).toContain("git_log");
+    expect(TIERS.standard).toContain("bash_output");
+    expect(TIERS.standard).toContain("kill_shell");
   });
 
   it("full tier is null (all tools)", () => {
@@ -256,7 +258,7 @@ describe("getTierInfo()", () => {
 
     const info = getTierInfo();
     expect(info.tier).toBe("standard");
-    expect(info.toolCount).toBe(21); // 16 + container_list, container_logs, container_exec, container_manage, deploy
+    expect(info.toolCount).toBe(23); // standard tier incl. container tools, deploy, bash_output, kill_shell
   });
 
   it('returns "all" for full tier', () => {

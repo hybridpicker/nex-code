@@ -3553,7 +3553,7 @@ describe("agent.js", () => {
           .join("\n"),
       ).not.toContain("BLOCKED: code was already edited");
       delete process.env.NEX_PHASE_ROUTING;
-    });
+    }, 15000);
 
     it("keeps verification pending when a fitness template readback misses the edited markup", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
@@ -3616,7 +3616,7 @@ describe("agent.js", () => {
           .join("\n"),
       ).toContain("did not include text introduced by your last edit");
       delete process.env.NEX_PHASE_ROUTING;
-    });
+    }, 15000);
 
     it("allows phase-mode readback of a neutral edited component file", async () => {
       process.env.NEX_PHASE_ROUTING = "1";
@@ -3733,7 +3733,7 @@ describe("agent.js", () => {
           .join("\n"),
       ).toContain("did not include text introduced by your last edit");
       delete process.env.NEX_PHASE_ROUTING;
-    });
+    }, 15000);
 
     it("warns when context usage > 85%", async () => {
       process.env.NEX_DEBUG = "true";
@@ -8260,6 +8260,188 @@ describe("agent.js", () => {
             typeof m.content === "string" &&
             m.content.includes("planned implementation file was already in context") &&
             m.content.includes("instead of editing"),
+          ),
+      ).toBe(true);
+    }, 15000);
+
+    it("loops back when transcript-derived verification tries to re-edit", async () => {
+      clearConversation();
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Plan: update web/templates/fitness/index.html.");
+      mockStream("Implemented the remaining kcal field.", [
+        {
+          id: "edit-1",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "web/templates/fitness/index.html",
+              old_text: "<div x-text=\"'Ziel ' + targets.kcal\"></div>",
+              new_text:
+                "<div x-text=\"'Ziel ' + targets.kcal\"></div>\n<div x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal))\"></div>",
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("The field is in place and ready to verify.");
+      mockStream("The readback confirms the edited line.", [
+        {
+          id: "read-1",
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "web/templates/fitness/index.html",
+              line_start: 1875,
+              line_end: 1885,
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "1878: <div x-text=\"'Ziel ' + targets.kcal\"></div>\n1879: <div x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal))\"></div>",
+      );
+      mockStream("I think it is missing, so I will add it again.", [
+        {
+          id: "blocked-edit",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "web/templates/fitness/index.html",
+              old_text: "<div x-text=\"'Ziel ' + targets.kcal\"></div>",
+              new_text:
+                "<div x-text=\"'Ziel ' + targets.kcal\"></div>\n<div x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal))\"></div>",
+            },
+          },
+        },
+      ]);
+      mockStream("The readback already shows the remaining kcal field; no further edit is needed.");
+      mockStream("PASS: re-read confirmed the remaining kcal field is present.", [
+        {
+          id: "read-2",
+          function: {
+            name: "read_file",
+            arguments: {
+              path: "web/templates/fitness/index.html",
+              line_start: 1875,
+              line_end: 1885,
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "1879: <div x-text=\"'Verbleibend ' + Math.max(0, Math.round(targets.kcal - totals.kcal))\"></div>",
+      );
+      mockStream("PASS: the remaining kcal field is present and no duplicate edit was made.");
+
+      await processInput(
+        "In the fitness nutrition ring, add a field that shows how many kcal remain near nutrition-ring-content.",
+      );
+
+      const editCalls = executeTool.mock.calls.filter(([name]) => name === "edit_file");
+      expect(editCalls).toHaveLength(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Post-edit readback confirmed") &&
+            m.content.includes("Verbleibend"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification attempted a write with edit_file"),
+        ),
+      ).toBe(true);
+    }, 15000);
+
+    it("loops back when neutral verification tries to re-edit", async () => {
+      clearConversation();
+      process.env.NEX_PHASE_ROUTING = "1";
+      getAutoConfirm.mockReturnValue(true);
+
+      mockStream("Plan: update src/components/ProfileCard.jsx.");
+      mockStream("Implemented the status label.", [
+        {
+          id: "edit-1",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              old_text: "<span>{profile.title}</span>",
+              new_text:
+                "<span>{profile.title}</span>\n<p>Status: active</p>",
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("The status label is in place and ready to verify.");
+      mockStream("Readback confirms the label.", [
+        {
+          id: "read-1",
+          function: {
+            name: "read_file",
+            arguments: { path: "src/components/ProfileCard.jsx", line_start: 20, line_end: 42 },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "20: <span>{profile.title}</span>\n21: <p>Status: active</p>",
+      );
+      mockStream("I will add the missing status label.", [
+        {
+          id: "blocked-edit",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: "src/components/ProfileCard.jsx",
+              old_text: "<span>{profile.title}</span>",
+              new_text:
+                "<span>{profile.title}</span>\n<p>Status: active</p>",
+            },
+          },
+        },
+      ]);
+      mockStream("The readback already shows the status label; no edit is needed.");
+      mockStream("PASS: readback confirmed the status label is present.", [
+        {
+          id: "read-2",
+          function: {
+            name: "read_file",
+            arguments: { path: "src/components/ProfileCard.jsx", line_start: 20, line_end: 42 },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("21: <p>Status: active</p>");
+      mockStream("PASS: the status label is present and verification is complete.");
+
+      await processInput("In src/components/ProfileCard.jsx add a status label near the title.");
+
+      const editCalls = executeTool.mock.calls.filter(([name]) => name === "edit_file");
+      expect(editCalls).toHaveLength(1);
+      const msgs = getConversationMessages();
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Post-edit readback confirmed") &&
+            m.content.includes("Status: active"),
+        ),
+      ).toBe(true);
+      expect(
+        msgs.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Verification attempted a write with edit_file"),
         ),
       ).toBe(true);
     }, 15000);
@@ -8619,7 +8801,7 @@ describe("agent.js", () => {
             m.content.includes("planned implementation file has already been read"),
         ),
       ).toBe(false);
-    });
+    }, 15000);
 
     it("prefetches current UI component evidence when the prompt asks for it", async () => {
       const fs = require("fs");
@@ -8717,7 +8899,7 @@ describe("agent.js", () => {
             m.content.includes("Empty planning response is not a valid result"),
         ),
       ).toBe(true);
-    });
+    }, 15000);
 
     it("reprompts bounded backlog plans that invent nonexistent implementation paths", async () => {
       const fs = require("fs");

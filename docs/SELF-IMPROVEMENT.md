@@ -47,11 +47,12 @@ Branch flow:
 |---------|--------|------|------------|
 | **MacBook** | `devel` | Manual development + Supervisor (daily 10:00) | local |
 | **AlmaLinux 9** | `auto-improve` | Worker daemon (24/7, every 45 min) | `ssh nex-worker@203.0.113.10` |
-| **DevMachine** | `devel` | Benchmarks (daily 06:40) | `ssh dev-machine` (reverse tunnel via AlmaLinux) |
+| **DevMachine** | `devel` | Manual/on-demand benchmarks | `ssh dev-machine` (reverse tunnel via AlmaLinux) |
 
 - **MacBook** and **DevMachine** stay on `devel` — they consume stable code
 - **AlmaLinux** is the only machine on `auto-improve` — it produces experimental fixes
 - The supervisor merges good `auto-improve` commits into `devel`, which MacBook and DevMachine pull
+- The full real-life benchmark is **not scheduled by default**. Run it manually when needed, or explicitly opt in with `NEX_WEEKLY_BENCH_ENABLED=true` before enabling `nex-weekly-bench.timer`.
 
 ### DevMachine
 
@@ -90,6 +91,47 @@ Every 45 minutes:
 7. Commits if tests pass, marks target as fixed in worker memory
 8. Pushes to `origin/auto-improve`
 9. Logs activity to `~/.nex-code/worker-activity.json`
+
+### Full Benchmark Timer
+
+The full real-life benchmark is intentionally disabled by default to avoid noisy Matrix/ClawBot benchmark notifications and long unattended runs.
+
+Installed unit:
+
+```ini
+# ~/.config/systemd/user/nex-weekly-bench.service
+[Service]
+Environment=NEX_WEEKLY_BENCH_ENABLED=false
+ExecCondition=/bin/sh -c '[ "$NEX_WEEKLY_BENCH_ENABLED" = "true" ]'
+ExecStart=/usr/bin/node /home/nex-worker/nex-code/scripts/benchmark-reallife.js
+```
+
+Default runtime state:
+
+```bash
+systemctl --user disable --now nex-weekly-bench.timer
+systemctl --user is-enabled nex-weekly-bench.timer  # disabled
+systemctl --user is-active nex-weekly-bench.timer   # inactive
+```
+
+To run a one-off benchmark, prefer a manual foreground run:
+
+```bash
+cd ~/nex-code
+node scripts/benchmark-reallife.js
+```
+
+To temporarily restore the scheduled weekly benchmark, edit the user unit or provide an override that sets `NEX_WEEKLY_BENCH_ENABLED=true`, then reload and enable the timer:
+
+```bash
+systemctl --user edit nex-weekly-bench.service
+systemctl --user daemon-reload
+systemctl --user enable --now nex-weekly-bench.timer
+```
+
+On 2026-05-24 the legacy ClawBook LaunchAgent `com.schoensgibl.nex-benchmark` was also unloaded and moved from `~/Library/LaunchAgents/` to `~/Library/LaunchAgents.disabled/` so the Mac-side benchmark notifier does not restart automatically. A separate ClawBook crontab entry that ran `/Users/schoensgibl-lukas/Coding/nex-code-benchmarks/run-benchmark.sh` daily at 06:40 was removed the same day after it posted another `nex-code Benchmark` Matrix message.
+
+The Jarvis server's `/home/jarvis/scripts/nex-auto-update.sh` keeps the daily npm version check, but its legacy harness refresh and benchmark run block is disabled. This prevents a package update from triggering benchmark notifications through the older server-side path.
 
 **Target Discovery** (6 sources, weighted by priority × file importance):
 1. **Empty catch blocks** (priority 10) — highest value, clear fix

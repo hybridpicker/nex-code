@@ -41,6 +41,24 @@ Frontend workflows require browser automation — screenshot capture, DOM inspec
 
 - Status: **Shipped** (v0.3.14) — interactive commands auto-detected and spawned with `stdio:inherit`
 
+### Background Shells (long-running processes)
+
+Dev servers, watchers, and long builds must not block the agent loop or die at the bash timeout.
+
+- Status: **Shipped** (v0.5.35) — `bash run_in_background` + `bash_output` (incremental, regex-filterable polling) + `kill_shell` (process-group termination). 2MB output cap per shell, 8 concurrent max, all shells killed on session clear and exit.
+
+### Edit Reliability and Instant Feedback
+
+Targeted edits must never silently change unintended code, and a broken file should surface immediately.
+
+- Status: **Shipped** (v0.5.35) — `edit_file`/`patch_file` reject ambiguous `old_text` with the conflicting line numbers (`replace_all` opts into bulk renames); every JS/JSON write is parse-checked (`node --check` / `JSON.parse`) with the parser error appended to the tool result; git checkpoints are snapshotted via a temporary index instead of a stash round-trip (no more data-loss window).
+
+### Custom Agent Types
+
+Projects should be able to define their own sub-agents, not just the built-in explore/review/implement.
+
+- Status: **Shipped** (v0.5.35) — `.nex/agents/*.md` with frontmatter (name, description, tools allowlist, default model); the body becomes the agent's system prompt. `spawn_agents` accepts `type`, and task lists persist across CLI restarts via `.nex/tasks.json`.
+
 ---
 
 ## Priority 2 — Medium Impact
@@ -67,11 +85,11 @@ First-class remote server management for AlmaLinux 9 and macOS, plus Docker and 
 
 ## Priority 3 — Nice to Have
 
-| Feature                              | Notes                                                  |
-| ------------------------------------ | ------------------------------------------------------ |
-| Session/cost reports                 | CLI-first summaries of session history and token spend |
-| Multi-repo agent                     | Span agent context across multiple git repos           |
-| Kubernetes tools (`kubectl` wrapper) | First-class K8s workflow support                       |
+| Feature              | Notes                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| Session/cost reports | CLI-first summaries of session history and token spend                                     |
+| Multi-repo agent     | Span agent context across multiple git repos                                               |
+| Kubernetes tools     | **Shipped** — `k8s_pods`, `k8s_logs`, `k8s_exec`, `k8s_apply`, `k8s_rollout` (local or SSH) |
 
 ---
 

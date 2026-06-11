@@ -102,6 +102,9 @@ const CATEGORIES = {
 // bug-fix/feature-add/refactor come after domain categories so "fix Docker container"
 // matches "sysadmin" not "bug-fix", and "add chart component" matches "frontend" not "feature-add".
 const DETECTION_ORDER = ["agentic", "frontend", "scoped-edit", "sysadmin", "data", "bug-fix", "feature-add", "refactor", "coding"];
+const SCOPED_EDIT_SNIPPET_PATTERN = /<([a-z][\w:-]*)(?:\s[^<>]*)?>/i;
+const ROUTE_OR_PATH_PATTERN = /(?:^|\s)\/[\w.-]+(?:\/[\w.-]+)*/;
+const ATTRIBUTE_SNIPPET_PATTERN = /\b(?:class|x-text|data-[\w-]+|aria-[\w-]+)=["'][^"']+["']/i;
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -111,13 +114,23 @@ const DETECTION_ORDER = ["agentic", "frontend", "scoped-edit", "sysadmin", "data
  */
 function detectCategory(input) {
   if (!input || input.length < 8) return null;
+  const text = String(input);
+
+  if (isScopedEditSnippet(text)) return CATEGORIES["scoped-edit"];
 
   for (const id of DETECTION_ORDER) {
     const cat = CATEGORIES[id];
     if (!cat.pattern) return cat; // coding fallback
-    if (cat.pattern.test(input)) return cat;
+    if (cat.pattern.test(text)) return cat;
   }
   return CATEGORIES.coding;
+}
+
+function isScopedEditSnippet(input) {
+  return (
+    SCOPED_EDIT_SNIPPET_PATTERN.test(input) &&
+    (ROUTE_OR_PATH_PATTERN.test(input) || ATTRIBUTE_SNIPPET_PATTERN.test(input))
+  );
 }
 
 // ─── Routing Config ───────────────────────────────────────────────────────────

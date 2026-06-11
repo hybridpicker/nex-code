@@ -12,6 +12,10 @@ const { atomicWrite, withFileLockSync } = require("./filelock");
 // Default permissions: read ops auto, write/bash ask
 const DEFAULT_PERMISSIONS = {
   bash: "ask",
+  // Read-only poll of a shell the agent already started — never prompt
+  bash_output: "allow",
+  // Only terminates shells the agent itself started via run_in_background
+  kill_shell: "allow",
   read_file: "allow",
   write_file: "ask",
   edit_file: "ask",

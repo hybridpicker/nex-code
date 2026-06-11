@@ -794,3 +794,78 @@ irrelevant context that ended up in the response text.
 1. **Tool-arg JSON repair (`wire-protocols.js`)** — `repairToolArgs()` normalises tool call arguments that devstral/qwen3 emit as a JSON string or with trailing commas.
 2. **Error-code propagation (`providers/ollama.js`)** — API errors now carry `err.code` so `classifyError()` in `sub-agent.js` correctly identifies retryable HTTP 502/503 and `ECONNRESET` failures.
 3. **Test-failure re-read bypass (`agent.js`)** — after a test run fails on a recently edited file, the model is allowed one full re-read so it can inspect the actual broken output rather than inventing ghost problems.
+
+---
+
+### 2026-06-11 — Harness parity sprint
+
+Eight commits closing the capability and reliability gaps identified in a
+systematic comparison against Claude Code and Codex. Full Jest suite grew
+from 4,401 to 4,421 tests (127 suites), all green.
+
+#### `3b5a0d1` — Snapshot checkpoints without stashing the working tree
+
+**Problem:** `ensureCheckpoint()` ran `git stash push --include-untracked`
+followed by an immediate `git stash pop` just to move a tag. Between push and
+pop, all uncommitted work vanished from disk; when the pop failed (lock
+contention with parallel processes — observed live with parallel Jest
+workers), the user's changes were silently stranded in a stash. Worse, the
+`nex-checkpoint` tag pointed at HEAD, so the "checkpoint" never contained the
+working tree at all.
+
+**Fix:** Build the snapshot in a temporary index (`GIT_INDEX_FILE` →
+`read-tree HEAD`, `add -A`, `write-tree`, `commit-tree`) and tag the dangling
+commit. The working tree is never touched, and the tag now points at a commit
+that actually contains the pre-edit state — recoverable via
+`git restore --source=nex-checkpoint`.
+
+#### `7b3aabd` — Reject ambiguous edit_file matches
+
+**Problem:** `edit_file`/`patch_file` replaced `old_text` via split/join,
+which changes EVERY occurrence. A non-unique `old_text` silently modified
+locations the model never intended — a classic source of corrupted edits.
+
+**Fix:** Multi-match `old_text` now fails with the occurrence count and line
+numbers; the new `replace_all` parameter opts into bulk replacement (renames).
+Success messages report the replaced count.
+
+#### `63adc79` — Background shells for long-running commands
+
+**Problem:** bash had a hard 90s timeout — dev servers, watchers, and long
+builds either blocked the loop or were killed.
+
+**Fix:** `bash run_in_background` starts the command in its own process group
+via the new `cli/shell-jobs.js` registry; `bash_output` polls incremental
+(optionally regex-filtered) output; `kill_shell` terminates the group
+(SIGTERM → SIGKILL). 2MB buffer cap, 8 concurrent max, shells killed on
+session clear and process exit.
+
+#### `3ac948c` — User-defined subagent types from .nex/agents
+
+**Problem:** Sub-agent types were hardcoded, and the `spawn_agents` schema
+never exposed `type` — the model could not select even the built-in
+explore/review types.
+
+**Fix:** `spawn_agents` accepts `type`; projects define custom types in
+`.nex/agents/*.md` (frontmatter: name, description, tools allowlist or "all",
+default model; body = system prompt suffix). Built-ins win on collision;
+unknown types fail with the list of valid ones.
+
+#### `b9a68e5` — Syntax errors flagged in the edit tool result itself
+
+**Problem:** A broken file was only discovered at the next test run, often
+several tool calls later, after building on top of the damage.
+
+**Fix:** Every JS/CJS/MJS write is parse-checked with `node --check` (no
+execution), JSON with `JSON.parse`; failures append a WARNING with the parser
+message to the write_file/edit_file/patch_file result. JSX-looking files are
+skipped; the check is best-effort and never blocks the write.
+
+#### `9147119` — Task lists persist across CLI restarts
+
+**Problem:** `task_list` state lived only in memory; an interrupted multi-step
+task lost all progress tracking on restart.
+
+**Fix:** The active list is saved atomically to `.nex/tasks.json` on every
+change and reloaded on first access in a new process. Fully finished lists
+are discarded instead of resurrected; corrupt files are ignored.

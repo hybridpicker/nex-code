@@ -18,6 +18,8 @@ const TIERS = {
   essential: ["bash", "read_file", "write_file", "edit_file", "list_directory"],
   standard: [
     "bash",
+    "bash_output",
+    "kill_shell",
     "read_file",
     "write_file",
     "edit_file",

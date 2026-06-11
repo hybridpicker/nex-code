@@ -142,7 +142,7 @@ const WRITE_TOOLS = new Set(["write_file", "edit_file", "patch_file"]);
 // Sub-agent type definitions — control tool access and system prompt suffix
 const SUB_AGENT_TYPES = {
   explore: {
-    allowedTools: new Set(['bash', 'read_file', 'list_directory', 'glob', 'grep', 'search_files', 'web_fetch', 'web_search']),
+    allowedTools: new Set(['bash', 'bash_output', 'kill_shell', 'read_file', 'list_directory', 'glob', 'grep', 'search_files', 'web_fetch', 'web_search']),
     systemSuffix: 'You are an exploration agent. Read and search code only. Do NOT modify any files.',
   },
   review: {
@@ -154,6 +154,84 @@ const SUB_AGENT_TYPES = {
     systemSuffix: '',
   },
 };
+
+// ─── Custom Agent Types (.nex/agents/*.md) ────────────────────
+// Frontmatter: name, description, tools (comma list or "all"), model.
+// The markdown body becomes the agent's system prompt suffix.
+// Built-in types always win on name collision.
+let _customTypesLoaded = false;
+
+function loadCustomAgentTypes(baseDir = process.cwd()) {
+  if (_customTypesLoaded) return SUB_AGENT_TYPES;
+  _customTypesLoaded = true;
+  const fs = require("fs");
+  const path = require("path");
+  const dir = path.join(baseDir, ".nex", "agents");
+  let files = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+  } catch {
+    return SUB_AGENT_TYPES; // no custom agents directory
+  }
+  for (const file of files) {
+    try {
+      const { parseFrontmatter } = require("./brain");
+      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      const { frontmatter: fm, body } = parseFrontmatter(raw);
+      const name = String(fm.name || path.basename(file, ".md")).trim();
+      if (!name) continue;
+      if (SUB_AGENT_TYPES[name] && !SUB_AGENT_TYPES[name].custom) {
+        process.stderr.write(
+          `  [agents] skipping ${file}: "${name}" is a built-in agent type\n`,
+        );
+        continue;
+      }
+      let allowedTools = null;
+      const toolsVal = Array.isArray(fm.tools) ? fm.tools.join(",") : fm.tools;
+      if (toolsVal && String(toolsVal).trim().toLowerCase() !== "all") {
+        allowedTools = new Set(
+          String(toolsVal)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
+      }
+      SUB_AGENT_TYPES[name] = {
+        allowedTools,
+        systemSuffix: (body || "").trim(),
+        description: fm.description ? String(fm.description) : "",
+        model: fm.model ? String(fm.model) : null,
+        custom: true,
+      };
+    } catch {
+      /* skip unreadable agent definition */
+    }
+  }
+  return SUB_AGENT_TYPES;
+}
+
+/** Test helper: drop loaded custom types so they can be re-loaded. */
+function _resetCustomAgentTypes() {
+  _customTypesLoaded = false;
+  for (const [name, def] of Object.entries(SUB_AGENT_TYPES)) {
+    if (def.custom) delete SUB_AGENT_TYPES[name];
+  }
+}
+
+/**
+ * Validate agent type names before spawning. Returns an error string the
+ * model can act on (lists valid types), or null when everything is known.
+ */
+function validateAgentTypes(agents) {
+  loadCustomAgentTypes();
+  for (const a of agents || []) {
+    if (a.type && !SUB_AGENT_TYPES[a.type]) {
+      const known = Object.keys(SUB_AGENT_TYPES).join(", ");
+      return `ERROR: Unknown agent type "${a.type}". Available types: ${known}. Custom types are defined in .nex/agents/*.md (frontmatter: name, description, tools, model; body = system prompt).`;
+    }
+  }
+  return null;
+}
 
 // ─── Task Classification + Model Routing ──────────────────────
 
@@ -310,8 +388,14 @@ ERROR RECOVERY:
 - After 2 failed attempts at the same operation, summarize the issue and stop.`;
 
   // Append type-specific system suffix if agent has a known type
+  loadCustomAgentTypes();
   const typeDef = agentDef.type && SUB_AGENT_TYPES[agentDef.type];
   const typeSuffix = typeDef && typeDef.systemSuffix ? `\n\n${typeDef.systemSuffix}` : '';
+
+  // Custom types can declare a default model; an explicit per-agent model wins
+  if (typeDef && typeDef.model && !agentDef.model) {
+    agentDef = { ...agentDef, model: typeDef.model };
+  }
 
   // Resolve model routing first so we can inject model-specific briefing
   const routing = resolveSubAgentModel(agentDef);
@@ -645,6 +729,9 @@ async function executeSpawnAgents(args, _depth = 0) {
 
   if (agents.length === 0) return "ERROR: No agents specified";
 
+  const typeError = validateAgentTypes(agents);
+  if (typeError) return typeError;
+
   // Visual: depth-1 agents are indented with ↳ to show hierarchy in the terminal
   const labelPrefix = _depth > 0 ? "  \u21b3 " : ""; // '  ↳ '
   const maxTaskLen = _depth > 0 ? 38 : 44;
@@ -755,6 +842,8 @@ async function executeSpawnAgents(args, _depth = 0) {
  */
 async function executeSpawnAgentsBackground(args) {
   const { createJob } = require("./background-jobs");
+  const typeError = validateAgentTypes(args.agents);
+  if (typeError) return typeError;
   const bgAgents = (args.agents || []).filter((a) => a.background);
   const syncAgents = (args.agents || []).filter((a) => !a.background);
 
@@ -787,6 +876,9 @@ module.exports = {
   runSubAgent,
   executeSpawnAgents,
   executeSpawnAgentsBackground,
+  loadCustomAgentTypes,
+  validateAgentTypes,
+  _resetCustomAgentTypes,
   clearAllLocks,
   classifyTask,
   pickModelForTier,
