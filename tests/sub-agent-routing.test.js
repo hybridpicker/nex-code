@@ -437,6 +437,35 @@ describe("executeSpawnAgents() depth guard", () => {
     expect(result).toContain("2");
   });
 
+  it("rejects model-initiated spawn for single-target prompts", async () => {
+    const result = await executeSpawnAgents(
+      { agents: [{ task: "Patch the matcher implementation" }] },
+      0,
+      {
+        currentUserPrompt:
+          "Fix js/tuning-matcher.js and verify with node js/tuning-matcher.js",
+      },
+    );
+
+    expect(result).toContain("spawn_agents is disabled for single-target tasks");
+    expect(callStream).not.toHaveBeenCalled();
+  });
+
+  it("allows spawn when the prompt names multiple targets", async () => {
+    callStream.mockResolvedValue({ content: "Done", tool_calls: [] });
+
+    const result = await executeSpawnAgents(
+      { agents: [{ task: "Update both files" }] },
+      0,
+      {
+        currentUserPrompt: "Update src/api.js and src/worker.js together",
+      },
+    );
+
+    expect(result).toContain("Status: done");
+    expect(callStream).toHaveBeenCalledTimes(1);
+  });
+
   it("returns error at depth 3 as well", async () => {
     const result = await executeSpawnAgents(
       { agents: [{ task: "Review code" }] },

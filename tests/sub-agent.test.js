@@ -38,8 +38,11 @@ jest.mock("../cli/ui", () => ({
 const {
   acquireLock,
   awaitLock,
+  appendSubAgentClaimCorrections,
   clearAllLocks,
   classifyError,
+  extractClaimedEditedPaths,
+  getSingleTargetSpawnGateError,
   isRetryableError,
   getExcludedTools,
   LOCK_TIMEOUT_MS,
@@ -133,6 +136,72 @@ describe("sub-agent utilities", () => {
         const excluded = getExcludedTools(depth);
         expect(excluded.has("ask_user")).toBe(true);
         expect(excluded.has("task_list")).toBe(true);
+      }
+    });
+  });
+
+  describe("spawn_agents single-target gate", () => {
+    test("rejects single-target prompts", () => {
+      expect(
+        getSingleTargetSpawnGateError(
+          "Fix js/tuning-matcher.js and verify with node js/tuning-matcher.js",
+        ),
+      ).toContain("spawn_agents is disabled for single-target tasks");
+    });
+
+    test("allows prompts with multiple target files", () => {
+      expect(
+        getSingleTargetSpawnGateError(
+          "Update src/api.js and src/worker.js together",
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe("sub-agent claim verification", () => {
+    test("extracts file paths from edit claims", () => {
+      expect(
+        extractClaimedEditedPaths(
+          "Created js/tuning-matcher.js and updated `src/app.test.js`.",
+        ),
+      ).toEqual(["js/tuning-matcher.js", "src/app.test.js"]);
+    });
+
+    test("appends correction when claimed file was not changed", () => {
+      const result = appendSubAgentClaimCorrections(
+        {
+          result: "Created js/tuning-matcher.js with the matcher fix.",
+        },
+        Date.now(),
+        process.cwd(),
+      );
+      expect(result.result).toContain("[SYSTEM CORRECTION]");
+      expect(result.result).toContain("js/tuning-matcher.js");
+    });
+
+    test("does not correct claims backed by a fresh file mtime", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nex-claim-"));
+      const targetDir = path.join(tempDir, "src");
+      const target = path.join(targetDir, "changed.js");
+      const runStartedAtMs = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(target, "export const changed = true;\n");
+
+      try {
+        const result = appendSubAgentClaimCorrections(
+          {
+            result: "Updated src/changed.js with the requested behavior.",
+          },
+          runStartedAtMs,
+          tempDir,
+        );
+        expect(result.result).not.toContain("[SYSTEM CORRECTION]");
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
     });
   });

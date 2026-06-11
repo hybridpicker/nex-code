@@ -17,6 +17,8 @@ const { filterToolsForModel, getModelTier } = require("./tool-tiers");
 const { getModelBriefing } = require("./model-profiles");
 const { trackUsage, estimateTokens: _estimateTokens } = require("./costs");
 const { MultiProgress, C } = require("./ui");
+const fsSync = require("fs");
+const path = require("path");
 
 /** Fallback token estimator (~4 chars per token). Works even when costs mock omits estimateTokens. */
 function _estTok(text) {
@@ -236,6 +238,76 @@ function _resetCustomAgentTypes() {
   }
 }
 
+function getSingleTargetSpawnGateError(currentUserPrompt) {
+  const prompt = String(currentUserPrompt || "").trim();
+  if (!prompt) return null;
+
+  let distinctTargets = 0;
+  try {
+    const { countDistinctFileTargets } = require("./orchestrator");
+    distinctTargets = countDistinctFileTargets(prompt);
+  } catch {
+    return null;
+  }
+
+  if (distinctTargets >= 2) return null;
+  return (
+    "ERROR: spawn_agents is disabled for single-target tasks. " +
+    `The current user prompt names ${distinctTargets} distinct file target${distinctTargets === 1 ? "" : "s"}; ` +
+    "do the work directly in this agent instead of delegating to sub-agents."
+  );
+}
+
+const CLAIM_VERB_RE =
+  /\b(?:created?|wrote|written|added|edited|modified|updated|changed|patched|implemented)\b/i;
+const CLAIM_PATH_RE =
+  /(?:^|[\s`"'(])((?:(?:\.{1,2}\/)?[\w@.-]+\/)+[\w@.+-]+\.[A-Za-z][\w-]*|[\w@.+-]+\.(?:[cm]?[jt]sx?|mjs|cjs|json|html|css|scss|sass|vue|svelte|py|rb|go|rs|java|kt|swift|php|cs|cpp|cc|cxx|c|h|hpp|md|mdx|txt|yml|yaml|toml|ini|sh|bash|zsh|sql))(?:$|[\s`"',).;:])/g;
+
+function extractClaimedEditedPaths(text) {
+  const paths = new Set();
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (!CLAIM_VERB_RE.test(line)) continue;
+    CLAIM_PATH_RE.lastIndex = 0;
+    let match;
+    while ((match = CLAIM_PATH_RE.exec(line)) !== null) {
+      paths.add(match[1]);
+    }
+  }
+  return [...paths];
+}
+
+function _resolveClaimedPath(filePath, baseDir = process.cwd()) {
+  const normalized = String(filePath || "").trim();
+  if (!normalized) return null;
+  if (path.isAbsolute(normalized)) return path.normalize(normalized);
+  return path.resolve(baseDir, normalized);
+}
+
+function appendSubAgentClaimCorrections(result, runStartedAtMs, baseDir = process.cwd()) {
+  if (!result || typeof result.result !== "string") return result;
+  const claimedPaths = extractClaimedEditedPaths(result.result);
+  if (claimedPaths.length === 0) return result;
+
+  const unverified = claimedPaths.filter((claimedPath) => {
+    const absPath = _resolveClaimedPath(claimedPath, baseDir);
+    if (!absPath) return true;
+    try {
+      const stat = fsSync.statSync(absPath);
+      return stat.mtimeMs < runStartedAtMs;
+    } catch {
+      return true;
+    }
+  });
+
+  if (unverified.length === 0) return result;
+
+  const correction =
+    "\n\n[SYSTEM CORRECTION] Sub-agent claimed it created or edited " +
+    `${unverified.join(", ")}, but disk did not confirm those file changes during this sub-agent run. ` +
+    "Do not report those files as completed from the sub-agent result; inspect and edit the file directly.";
+  return { ...result, result: result.result + correction };
+}
+
 /**
  * Validate agent type names before spawning. Returns an error string the
  * model can act on (lists valid types), or null when everything is known.
@@ -367,6 +439,7 @@ function resolveSubAgentModel(agentDef) {
  * @returns {{ task: string, status: 'done'|'failed', result: string, toolsUsed: string[], tokensUsed: { input: number, output: number } }}
  */
 async function runSubAgent(agentDef, callbacks = {}, _depth = 0) {
+  const runStartedAtMs = Date.now();
   const depthMaxIter =
     _depth === 0 ? MAX_SUB_ITERATIONS : MAX_REVIEWER_ITERATIONS;
   const maxIter = Math.min(agentDef.max_iterations || 10, depthMaxIter);
@@ -517,17 +590,20 @@ ERROR RECOVERY:
         // Release all locks
         for (const fp of locksHeld) releaseLock(fp);
 
-        return {
-          task: agentDef.task,
-          status: "done",
-          result: content || "(no response)",
-          toolsUsed,
-          tokensUsed,
-          modelSpec:
-            agentProvider && agentModel
-              ? `${agentProvider}:${agentModel}`
-              : null,
-        };
+        return appendSubAgentClaimCorrections(
+          {
+            task: agentDef.task,
+            status: "done",
+            result: content || "(no response)",
+            toolsUsed,
+            tokensUsed,
+            modelSpec:
+              agentProvider && agentModel
+                ? `${agentProvider}:${agentModel}`
+                : null,
+          },
+          runStartedAtMs,
+        );
       }
 
       // Execute tool calls in parallel — lock acquisition is synchronous so
@@ -612,7 +688,9 @@ ERROR RECOVERY:
         // instead of going through the generic executeTool dispatch.
         const execToolOrNested =
           fnName === "spawn_agents"
-            ? executeSpawnAgents(args, _depth + 1)
+            ? executeSpawnAgents(args, _depth + 1, {
+                currentUserPrompt: agentDef._currentUserPrompt,
+              })
             : executeTool(fnName, args, { autoConfirm: true, silent: true });
 
         return execToolOrNested
@@ -702,31 +780,37 @@ ERROR RECOVERY:
       .slice(0, 3)
       .map(([cmd, count]) => `"${cmd}" (failed ${count}×)`);
 
-    return {
-      task: agentDef.task,
-      status: "truncated",
-      abortReason: "iteration_limit",
-      repeatedFailures,
-      result:
-        messages[messages.length - 1]?.content || "(max iterations reached)",
-      toolsUsed,
-      tokensUsed,
-      modelSpec:
-        agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
-    };
+    return appendSubAgentClaimCorrections(
+      {
+        task: agentDef.task,
+        status: "truncated",
+        abortReason: "iteration_limit",
+        repeatedFailures,
+        result:
+          messages[messages.length - 1]?.content || "(max iterations reached)",
+        toolsUsed,
+        tokensUsed,
+        modelSpec:
+          agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
+      },
+      runStartedAtMs,
+    );
   } catch (err) {
     // Release locks on error
     for (const fp of locksHeld) releaseLock(fp);
 
-    return {
-      task: agentDef.task,
-      status: "failed",
-      result: `Error: ${err.message}`,
-      toolsUsed,
-      tokensUsed,
-      modelSpec:
-        agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
-    };
+    return appendSubAgentClaimCorrections(
+      {
+        task: agentDef.task,
+        status: "failed",
+        result: `Error: ${err.message}`,
+        toolsUsed,
+        tokensUsed,
+        modelSpec:
+          agentProvider && agentModel ? `${agentProvider}:${agentModel}` : null,
+      },
+      runStartedAtMs,
+    );
   }
 }
 
@@ -734,13 +818,19 @@ ERROR RECOVERY:
  * Execute spawn_agents tool: run multiple sub-agents in parallel.
  * @param {{ agents: Array<{ task: string, context?: string, max_iterations?: number }> }} args
  * @param {number} _depth - current nesting depth (0 = top-level, 1 = reviewer level)
+ * @param {{ currentUserPrompt?: string }} options
  * @returns {string} Formatted results for the parent LLM
  */
-async function executeSpawnAgents(args, _depth = 0) {
+async function executeSpawnAgents(args, _depth = 0, options = {}) {
   // Hard block: no spawning beyond depth 1
   if (_depth >= 2) {
     return "ERROR: max agent nesting depth (2) reached — reviewer agents cannot spawn further agents.";
   }
+
+  const singleTargetGateError = getSingleTargetSpawnGateError(
+    options.currentUserPrompt,
+  );
+  if (singleTargetGateError) return singleTargetGateError;
 
   const maxAgents = _depth === 0 ? MAX_PARALLEL_AGENTS : MAX_REVIEWER_AGENTS;
   const maxIter = _depth === 0 ? MAX_SUB_ITERATIONS : MAX_REVIEWER_ITERATIONS;
@@ -783,8 +873,14 @@ async function executeSpawnAgents(args, _depth = 0) {
             model: `${r.provider}:${r.model}`,
             _skipLog: true,
             max_iterations: cappedIterations,
+            _currentUserPrompt: options.currentUserPrompt,
           }
-        : { ...agentDef, _skipLog: true, max_iterations: cappedIterations };
+        : {
+            ...agentDef,
+            _skipLog: true,
+            max_iterations: cappedIterations,
+            _currentUserPrompt: options.currentUserPrompt,
+          };
       return runSubAgent(
         defWithRouting,
         {
@@ -861,7 +957,12 @@ async function executeSpawnAgents(args, _depth = 0) {
  * @param {{ agents: Array<{ task: string, context?: string, background?: boolean }> }} args
  * @returns {string} Confirmation string for the parent LLM
  */
-async function executeSpawnAgentsBackground(args) {
+async function executeSpawnAgentsBackground(args, options = {}) {
+  const singleTargetGateError = getSingleTargetSpawnGateError(
+    options.currentUserPrompt,
+  );
+  if (singleTargetGateError) return singleTargetGateError;
+
   const { createJob } = require("./background-jobs");
   const typeError = validateAgentTypes(args.agents);
   if (typeError) return typeError;
@@ -873,6 +974,7 @@ async function executeSpawnAgentsBackground(args) {
     const defWithRouting = r.model
       ? { ...agentDef, model: `${r.provider}:${r.model}`, _skipLog: true }
       : { ...agentDef, _skipLog: true };
+    defWithRouting._currentUserPrompt = options.currentUserPrompt;
     return createJob(defWithRouting);
   });
 
@@ -886,7 +988,7 @@ async function executeSpawnAgentsBackground(args) {
   }
 
   if (syncAgents.length > 0) {
-    const syncResult = await executeSpawnAgents({ agents: syncAgents });
+    const syncResult = await executeSpawnAgents({ agents: syncAgents }, 0, options);
     parts.push(syncResult);
   }
 
@@ -897,6 +999,9 @@ module.exports = {
   runSubAgent,
   executeSpawnAgents,
   executeSpawnAgentsBackground,
+  getSingleTargetSpawnGateError,
+  extractClaimedEditedPaths,
+  appendSubAgentClaimCorrections,
   loadCustomAgentTypes,
   validateAgentTypes,
   _resetCustomAgentTypes,

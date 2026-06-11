@@ -2237,10 +2237,14 @@ async function executeSingleTool(prep, quiet = false) {
 
   let toolResult;
   try {
-    toolResult = await executeToolRouted(prep.fnName, prep.args, {
+    const executeOptions = {
       silent: true,
       autoConfirm: prep.confirmedByUser === true,
-    });
+    };
+    if (prep.fnName === "spawn_agents" && _currentToolUserPrompt) {
+      executeOptions.currentUserPrompt = _currentToolUserPrompt;
+    }
+    toolResult = await executeToolRouted(prep.fnName, prep.args, executeOptions);
   } catch (err) {
     const errorText = `ERROR: ${err?.message || String(err)}`;
     const errorSummary = formatToolSummary(
@@ -2484,6 +2488,7 @@ async function executeBatch(prepared, quiet = false, options = {}) {
 
 // Persistent conversation state
 let conversationMessages = [];
+let _currentToolUserPrompt = "";
 // Sliding window: oldest messages trimmed beyond this limit to prevent unbounded RAM growth.
 // fitToContext() still handles what gets sent to the API — this caps the in-memory store only.
 const MAX_CONVERSATION_HISTORY = 300;
@@ -6995,6 +7000,7 @@ let _turnSilent = false;
  * @param {{ onToken?: Function, onThinkingToken?: Function, onToolStart?: Function, onToolEnd?: Function } | null} [serverHooks]
  */
 async function processInput(userInput, serverHooks = null, opts = {}) {
+  _currentToolUserPrompt = typeof userInput === "string" ? userInput : "";
   // Resolve per-model guard profile at session start
   const _profile = getModelProfile(getActiveModelId());
   STALE_WARN_MS = _profile.staleWarn;

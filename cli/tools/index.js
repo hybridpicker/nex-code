@@ -4270,9 +4270,9 @@ async function _executeToolInner(name, args, options = {}) {
     case "spawn_agents": {
       const { executeSpawnAgents, executeSpawnAgentsBackground } = require("../sub-agent");
       if (args.agents?.some((a) => a.background)) {
-        return executeSpawnAgentsBackground(args);
+        return executeSpawnAgentsBackground(args, options);
       }
-      return executeSpawnAgents(args);
+      return executeSpawnAgents(args, 0, options);
     }
 
     case "switch_model": {
