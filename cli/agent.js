@@ -4600,6 +4600,28 @@ function _buildRequiredVerificationFailureReport(command, verificationResult) {
   );
 }
 
+function _buildRequiredVerificationRepairPrompt(
+  command,
+  verificationResult,
+  repairCycle,
+  maxRepairCycles,
+) {
+  const output = String(verificationResult?.content || "").trim();
+  const firstLine = output.split("\n")[0] || "";
+  const exitMatch = firstLine.match(/^EXIT\s+([^\s]+)/i);
+  const exitCode = exitMatch ? exitMatch[1] : "unknown";
+  const tail = output
+    ? output.split("\n").slice(-24).join("\n").slice(-2000)
+    : "(no output)";
+  return (
+    `[SYSTEM] Required verification failed: ${command}\n\n` +
+    `Exit code: ${exitCode}\n` +
+    `Output tail:\n${tail}\n\n` +
+    `Repair cycle ${repairCycle}/${maxRepairCycles}: read the failure, make a targeted fix, then rerun exactly \`${command}\`. ` +
+    "Do not finalize until that command passes or the repair cycles are exhausted."
+  );
+}
+
 function _formatSuccessfulVerificationEvidence(commands) {
   const seen = new Set();
   return commands
@@ -7804,6 +7826,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let forceFinalAfterBatch = false;
   let boundedBacklogEmptyResponseNudges = 0;
   let requiredVerificationSummaryNudges = 0;
+  const REQUIRED_VERIFICATION_REPAIR_LIMIT = 2;
+  let requiredVerificationRepairCycles = 0;
   let contextPressureWarnedAt = 0; // last context % at which we injected a pressure warning
   const SSH_STORM_WARN = 10; // warn after 10 consecutive ssh_exec calls
   const SSH_STORM_ABORT = 16; // hard abort after 16 consecutive ssh_exec calls
@@ -9688,6 +9712,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             _postEditVerifyNudges = 0;
 
             if (!verificationResult.success) {
+              if (
+                requiredVerificationRepairCycles <
+                  REQUIRED_VERIFICATION_REPAIR_LIMIT &&
+                i < iterLimit - 1
+              ) {
+                requiredVerificationRepairCycles++;
+                const repairMsg = {
+                  role: "user",
+                  content: _buildRequiredVerificationRepairPrompt(
+                    missingRequiredCommand,
+                    verificationResult,
+                    requiredVerificationRepairCycles,
+                    REQUIRED_VERIFICATION_REPAIR_LIMIT,
+                  ),
+                };
+                conversationMessages.push(repairMsg);
+                apiMessages.push(repairMsg);
+                _postEditVerifyPending = true;
+                debugLog(
+                  `${C.yellow}  ↩ Required verification repair cycle ${requiredVerificationRepairCycles}/${REQUIRED_VERIFICATION_REPAIR_LIMIT}: ${missingRequiredCommand}${C.reset}`,
+                );
+                continue;
+              }
               const failureReport = _buildRequiredVerificationFailureReport(
                 missingRequiredCommand,
                 verificationResult,
@@ -12936,6 +12983,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
       }
 
       let _needsPostEditVerifyPrompt = false;
+      let requiredVerificationRepairQueued = null;
       // Track modified and read files
       for (let j = 0; j < prepared.length; j++) {
         const prep = prepared[j];
@@ -13073,6 +13121,29 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           !isOk &&
           prep.fnName === "bash"
         ) {
+          const normalizedFailedCommand = _normalizeVerificationCommand(
+            prep.args?.command || "",
+          );
+          const isRequiredVerification = requiredVerificationCommands.some(
+            (cmd) =>
+              _normalizeVerificationCommand(cmd) === normalizedFailedCommand,
+          );
+          if (
+            isRequiredVerification &&
+            !requiredVerificationRepairQueued &&
+            requiredVerificationRepairCycles <
+              REQUIRED_VERIFICATION_REPAIR_LIMIT &&
+            i < iterLimit - 1
+          ) {
+            requiredVerificationRepairQueued = {
+              command: prep.args?.command || "",
+              verificationResult: {
+                success: false,
+                command: prep.args?.command || "",
+                content: res,
+              },
+            };
+          }
           // Headless auto: abort after consecutive failed verification
           // commands with no edit progress between them.
           const _isVerifyCmd =
@@ -14665,6 +14736,26 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             truncatedSwarmCount = 0;
           }
         }
+      }
+
+      if (requiredVerificationRepairQueued) {
+        requiredVerificationRepairCycles++;
+        const repairMsg = {
+          role: "user",
+          content: _buildRequiredVerificationRepairPrompt(
+            requiredVerificationRepairQueued.command,
+            requiredVerificationRepairQueued.verificationResult,
+            requiredVerificationRepairCycles,
+            REQUIRED_VERIFICATION_REPAIR_LIMIT,
+          ),
+        };
+        conversationMessages.push(repairMsg);
+        apiMessages.push(repairMsg);
+        _postEditVerifyPending = true;
+        debugLog(
+          `${C.yellow}  ↩ Required verification repair cycle ${requiredVerificationRepairCycles}/${REQUIRED_VERIFICATION_REPAIR_LIMIT}: ${requiredVerificationRepairQueued.command}${C.reset}`,
+        );
+        continue;
       }
 
       if (

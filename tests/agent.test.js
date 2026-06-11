@@ -3986,7 +3986,7 @@ describe("agent.js", () => {
       await processInput(
         "Fix the string matcher. Verify your work by running: node js/tuning-matcher.js",
         null,
-        { autoConfirm: true, silent: true, maxIterations: 6 },
+        { autoConfirm: true, silent: true, maxIterations: 3 },
       );
 
       expect(
@@ -4004,6 +4004,131 @@ describe("agent.js", () => {
       expect(finalText).toContain("FAIL inclusive +20 cent boundary");
       expect(finalText).not.toContain("Completed the requested edit");
       expect(finalText).not.toContain("Verification: node test-calc.js (passed)");
+    });
+
+    it("loops back when controller-run required verification fails", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "js/tuning-matcher.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Completed the matcher.");
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nFAIL inclusive +20 cent boundary",
+      );
+      mockStream("Fixing the failed boundary.", [
+        {
+          function: { name: "edit_file", arguments: { path: "js/tuning-matcher.js" } },
+          id: "edit-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running the required verification.", [
+        {
+          function: { name: "bash", arguments: { command: "node js/tuning-matcher.js" } },
+          id: "verify-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS inclusive boundary");
+      mockStream(
+        "Changed files: js/tuning-matcher.js. Verification: node js/tuning-matcher.js (passed).",
+      );
+
+      await processInput(
+        "Fix the string matcher. Verify your work by running: node js/tuning-matcher.js",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      const requiredRuns = executeTool.mock.calls.filter(
+        ([tool, args]) =>
+          tool === "bash" && args.command === "node js/tuning-matcher.js",
+      );
+      expect(requiredRuns).toHaveLength(2);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Required verification failed: node js/tuning-matcher.js") &&
+            m.content.includes("Repair cycle 1/2"),
+        ),
+      ).toBe(true);
+      const finalMessages = getConversationMessages().filter(
+        (m) => m.role === "assistant" && typeof m.content === "string",
+      );
+      const finalText = finalMessages.at(-1)?.content || "";
+      expect(finalText).toContain("Verification: node js/tuning-matcher.js (passed)");
+      expect(finalText).not.toContain("Verification failed");
+    });
+
+    it("loops back when model-run required verification fails", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      mockStream("editing", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/summarizer.js" } },
+          id: "edit-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Running required jest.", [
+        {
+          function: { name: "bash", arguments: { command: "npx jest src/summarizer.test.js" } },
+          id: "verify-1",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "EXIT 1\nTypeError: getMemoryContext is not a function",
+      );
+      mockStream("Fixing the failed import.", [
+        {
+          function: { name: "edit_file", arguments: { path: "src/summarizer.js" } },
+          id: "edit-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Rerunning required jest.", [
+        {
+          function: { name: "bash", arguments: { command: "npx jest src/summarizer.test.js" } },
+          id: "verify-2",
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS summarizer concurrency");
+      mockStream(
+        "Changed files: src/summarizer.js. Verification: npx jest src/summarizer.test.js (passed).",
+      );
+
+      await processInput(
+        "Fix the summarizer concurrency bug. Verify your work by running: npx jest src/summarizer.test.js",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 8 },
+      );
+
+      const requiredRuns = executeTool.mock.calls.filter(
+        ([tool, args]) =>
+          tool === "bash" && args.command === "npx jest src/summarizer.test.js",
+      );
+      expect(requiredRuns).toHaveLength(2);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes("Required verification failed: npx jest src/summarizer.test.js") &&
+            m.content.includes("getMemoryContext"),
+        ),
+      ).toBe(true);
+      const finalMessages = getConversationMessages().filter(
+        (m) => m.role === "assistant" && typeof m.content === "string",
+      );
+      const finalText = finalMessages.at(-1)?.content || "";
+      expect(finalText).toContain(
+        "Verification: npx jest src/summarizer.test.js (passed)",
+      );
+      expect(finalText).not.toContain("Verification failed");
     });
   });
 
