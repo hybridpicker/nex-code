@@ -842,6 +842,36 @@ function validateSystemdUnit(value, label = "service") {
 }
 
 // ─── Tool Definitions (Ollama format) ─────────────────────────
+/**
+ * Count non-overlapping occurrences of needle in haystack (same semantics
+ * as the split/join replacement used by edit_file and patch_file).
+ * @param {string} haystack
+ * @param {string} needle
+ * @returns {number}
+ */
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  return haystack.split(needle).length - 1;
+}
+
+/**
+ * 1-based line numbers where needle occurs (non-overlapping), capped.
+ * @param {string} content
+ * @param {string} needle
+ * @param {number} [max]
+ * @returns {number[]}
+ */
+function matchLineNumbers(content, needle, max = 5) {
+  const lines = [];
+  if (!needle) return lines;
+  let idx = content.indexOf(needle);
+  while (idx !== -1 && lines.length < max) {
+    lines.push(content.slice(0, idx).split("\n").length);
+    idx = content.indexOf(needle, idx + needle.length);
+  }
+  return lines;
+}
+
 const TOOL_DEFINITIONS = [
   {
     type: "function",
@@ -908,7 +938,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "edit_file",
       description:
-        "Replace specific text in a file. ALWAYS call read_file first to get the exact content — edit_file requires the EXACT text including whitespace, indentation, and newlines. Example: edit_file(path='src/config.js', old_text='debug: false', new_text='debug: true'). IMPORTANT: old_text must match byte-for-byte — even a single space or newline difference will cause failure. If the edit fails with 'old_text not found', re-read that region with line_start/line_end then retry. For multiple replacements in one file, prefer patch_file (atomic). For new files, use write_file instead.",
+        "Replace specific text in a file. ALWAYS call read_file first to get the exact content — edit_file requires the EXACT text including whitespace, indentation, and newlines. Example: edit_file(path='src/config.js', old_text='debug: false', new_text='debug: true'). IMPORTANT: old_text must match byte-for-byte — even a single space or newline difference will cause failure. old_text must also be UNIQUE in the file: if it matches more than one location the edit fails — include more surrounding lines to disambiguate, or set replace_all=true to change every occurrence (e.g. renaming a variable). If the edit fails with 'old_text not found', re-read that region with line_start/line_end then retry. For multiple replacements in one file, prefer patch_file (atomic). For new files, use write_file instead.",
       parameters: {
         type: "object",
         properties: {
@@ -919,6 +949,11 @@ const TOOL_DEFINITIONS = [
               "Exact text to find (must match file content precisely)",
           },
           new_text: { type: "string", description: "Replacement text" },
+          replace_all: {
+            type: "boolean",
+            description:
+              "Replace ALL occurrences of old_text. Default false: the edit fails if old_text matches more than one location.",
+          },
         },
         required: ["path", "old_text", "new_text"],
       },
@@ -1058,7 +1093,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "patch_file",
       description:
-        "Apply multiple text replacements to a file atomically. All patches are validated before any are applied — if one fails, none are written. Example: when changing 3 different variables in the same function, use patch_file with an array of 3 { old_text, new_text } objects instead of 3 separate edit_file calls. This ensures either all changes are applied or none are, preventing partial edits. Like edit_file, all old_text values must match exactly.",
+        "Apply multiple text replacements to a file atomically. All patches are validated before any are applied — if one fails, none are written. Example: when changing 3 different variables in the same function, use patch_file with an array of 3 { old_text, new_text } objects instead of 3 separate edit_file calls. This ensures either all changes are applied or none are, preventing partial edits. Like edit_file, all old_text values must match exactly and be unique in the file — set replace_all=true on a patch to change every occurrence of its old_text.",
       parameters: {
         type: "object",
         properties: {
@@ -1072,6 +1107,11 @@ const TOOL_DEFINITIONS = [
               properties: {
                 old_text: { type: "string", description: "Text to find" },
                 new_text: { type: "string", description: "Replacement text" },
+                replace_all: {
+                  type: "boolean",
+                  description:
+                    "Replace ALL occurrences of this patch's old_text. Default false: the patch fails if old_text matches more than one location.",
+                },
               },
               required: ["old_text", "new_text"],
             },
@@ -2948,6 +2988,16 @@ async function _executeToolInner(name, args, options = {}) {
           }
         }
 
+        // Ambiguity guard: split/join replaces EVERY occurrence, so a
+        // non-unique old_text would silently change unintended locations.
+        const occurrences = countOccurrences(content, matchText);
+        if (occurrences > 1 && !args.replace_all) {
+          const lineNums = matchLineNumbers(content, matchText);
+          const lineList =
+            lineNums.join(", ") + (occurrences > lineNums.length ? ", ..." : "");
+          return `ERROR: old_text matches ${occurrences} locations in ${fp} (lines ${lineList}). The edit is ambiguous — include more surrounding lines in old_text to pinpoint ONE location, or set replace_all=true to intentionally change all ${occurrences} occurrences.`;
+        }
+
         if (!options.autoConfirm) {
           editProgress.update({
             message: "Previewing edit",
@@ -2980,7 +3030,11 @@ async function _executeToolInner(name, args, options = {}) {
           await fs.chmod(fp, 0o755);
         }
         recordChange("edit_file", fp, content, updated);
-        return fuzzyMatched ? `Edited: ${fp} (fuzzy match)` : `Edited: ${fp}`;
+        const occurrenceNote =
+          occurrences > 1 ? ` (replaced ${occurrences} occurrences)` : "";
+        return fuzzyMatched
+          ? `Edited: ${fp} (fuzzy match)${occurrenceNote}`
+          : `Edited: ${fp}${occurrenceNote}`;
       } finally {
         editProgress.stop();
       }
@@ -3409,7 +3463,7 @@ async function _executeToolInner(name, args, options = {}) {
             detail: `${path.relative(process.cwd(), fp)}  patch ${i + 1}/${patches.length}`,
             message: "Matching patches",
           });
-          const { old_text, new_text } = patches[i];
+          const { old_text, new_text, replace_all } = patches[i];
           if (content.includes(old_text)) {
             resolvedPatches.push({ old_text, new_text });
           } else if (patchEditMode === "strict") {
@@ -3439,6 +3493,18 @@ async function _executeToolInner(name, args, options = {}) {
                 return `ERROR: Patch ${i + 1} old_text not found in ${fp}`;
               }
             }
+          }
+
+          // Ambiguity guard: every branch above either pushed a resolved
+          // patch or returned. split/join replaces EVERY occurrence, so a
+          // non-unique old_text would silently change unintended locations.
+          const resolved = resolvedPatches[resolvedPatches.length - 1];
+          const occ = countOccurrences(content, resolved.old_text);
+          if (occ > 1 && !replace_all) {
+            const lineNums = matchLineNumbers(content, resolved.old_text);
+            const lineList =
+              lineNums.join(", ") + (occ > lineNums.length ? ", ..." : "");
+            return `ERROR: Patch ${i + 1} old_text matches ${occ} locations in ${fp} (lines ${lineList}). Include more surrounding lines in old_text to pinpoint ONE location, or set replace_all=true on this patch to intentionally change all ${occ} occurrences. No patches were applied (atomic).`;
           }
         }
 
