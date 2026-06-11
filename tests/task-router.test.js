@@ -20,6 +20,7 @@ afterAll(() => {
 let CATEGORIES, DETECTION_ORDER, detectCategory, getModelForCategory;
 let saveRoutingConfig, loadRoutingConfig, ROUTING_CONFIG_PATH;
 let getModelForPhase, getPhaseBudget, isPhaseRoutingEnabled, DEFAULT_PHASE_BUDGETS;
+let getStrongestLoadedCoder, getEscalationModel;
 
 beforeAll(() => {
   const mod = require("../cli/task-router");
@@ -31,6 +32,8 @@ beforeAll(() => {
   loadRoutingConfig = mod.loadRoutingConfig;
   ROUTING_CONFIG_PATH = mod.ROUTING_CONFIG_PATH;
   getModelForPhase = mod.getModelForPhase;
+  getStrongestLoadedCoder = mod.getStrongestLoadedCoder;
+  getEscalationModel = mod.getEscalationModel;
   getPhaseBudget = mod.getPhaseBudget;
   isPhaseRoutingEnabled = mod.isPhaseRoutingEnabled;
   DEFAULT_PHASE_BUDGETS = mod.DEFAULT_PHASE_BUDGETS;
@@ -202,6 +205,8 @@ describe("task-router.js", () => {
 
   // ─── getModelForCategory ──────────────────────────────────────────
   describe("getModelForCategory()", () => {
+    let configuredProvidersSpy;
+
     beforeEach(() => {
       // Clean env and config
       delete process.env.NEX_ROUTE_FRONTEND;
@@ -211,6 +216,15 @@ describe("task-router.js", () => {
       const dir = path.dirname(ROUTING_CONFIG_PATH);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(ROUTING_CONFIG_PATH, "{}");
+      configuredProvidersSpy = jest.spyOn(
+        require("../cli/providers/registry"),
+        "getConfiguredProviders",
+      );
+      configuredProvidersSpy.mockReturnValue([]);
+    });
+
+    afterEach(() => {
+      configuredProvidersSpy.mockRestore();
     });
 
     it("returns null when no config or env var", () => {
@@ -227,6 +241,20 @@ describe("task-router.js", () => {
     it("returns config value when no env var", () => {
       saveRoutingConfig({ sysadmin: "sysadmin-model" });
       expect(getModelForCategory("sysadmin")).toBe("sysadmin-model");
+    });
+
+    it("upgrades implementation categories to the strongest loaded coder", () => {
+      configuredProvidersSpy.mockReturnValue([
+        {
+          name: "ollama",
+          models: [
+            { id: "devstral-small-2:24b" },
+            { id: "qwen3-coder:480b" },
+          ],
+        },
+      ]);
+      saveRoutingConfig({ coding: "devstral-small-2:24b" });
+      expect(getModelForCategory("coding")).toBe("qwen3-coder:480b");
     });
 
     it("falls back to a large-context model when scoped-edit has no route", () => {
@@ -260,6 +288,7 @@ describe("task-router.js", () => {
   // ─── getModelForPhase ─────────────────────────────────────────────
   describe("getModelForPhase()", () => {
     let registryMock;
+    let configuredProvidersSpy;
 
     beforeEach(() => {
       delete process.env.NEX_PHASE_ROUTING;
@@ -275,11 +304,17 @@ describe("task-router.js", () => {
       } catch {
         registryMock = null;
       }
+      configuredProvidersSpy = jest.spyOn(
+        require("../cli/providers/registry"),
+        "getConfiguredProviders",
+      );
+      configuredProvidersSpy.mockReturnValue([]);
     });
 
     afterEach(() => {
       delete process.env.NEX_PHASE_ROUTING;
       if (registryMock) registryMock.mockRestore();
+      configuredProvidersSpy.mockRestore();
     });
 
     it("returns phase model when phases config exists", () => {
@@ -308,6 +343,7 @@ describe("task-router.js", () => {
     it("uses builtin defaults when provider is ollama", () => {
       if (registryMock) registryMock.mockReturnValue("ollama");
       expect(getModelForPhase("plan", "coding")).toBe("qwen3-coder:480b");
+      expect(getModelForPhase("implement", "coding")).toBe("qwen3-coder:480b");
       expect(getModelForPhase("verify", "coding")).toBe("devstral-small-2:24b");
     });
 
@@ -322,6 +358,49 @@ describe("task-router.js", () => {
       if (registryMock) registryMock.mockReturnValue("ollama");
       saveRoutingConfig({ phases: { plan: "custom-plan-model" } });
       expect(getModelForPhase("plan", "coding")).toBe("custom-plan-model");
+    });
+  });
+
+  describe("model escalation", () => {
+    let configuredProvidersSpy;
+
+    beforeEach(() => {
+      configuredProvidersSpy = jest.spyOn(
+        require("../cli/providers/registry"),
+        "getConfiguredProviders",
+      );
+    });
+
+    afterEach(() => {
+      configuredProvidersSpy.mockRestore();
+    });
+
+    it("finds the strongest loaded coder from configured models", () => {
+      configuredProvidersSpy.mockReturnValue([
+        {
+          name: "ollama",
+          models: [
+            { id: "devstral-2:123b" },
+            { id: "qwen3-coder:480b" },
+          ],
+        },
+      ]);
+      expect(getStrongestLoadedCoder()).toBe("qwen3-coder:480b");
+    });
+
+    it("escalates from a small model to the next loaded coder", () => {
+      configuredProvidersSpy.mockReturnValue([
+        {
+          name: "ollama",
+          models: [
+            { id: "devstral-small-2:24b" },
+            { id: "devstral-2:123b" },
+          ],
+        },
+      ]);
+      expect(getEscalationModel("devstral-small-2:24b")).toBe(
+        "devstral-2:123b",
+      );
     });
   });
 

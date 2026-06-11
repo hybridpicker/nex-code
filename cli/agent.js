@@ -37,6 +37,7 @@ const {
 const {
   detectCategory,
   getModelForPhase,
+  getEscalationModel,
   getPhaseBudget,
   isPhaseRoutingEnabled,
 } = require("./task-router");
@@ -2614,6 +2615,7 @@ function _hasForcedModelOverride() {
   return !!String(process.env.NEX_FORCE_MODEL || "").trim();
 }
 let _consecutiveNoToolCalls = 0; // auto-escalate to stronger model if model produces no tool calls
+let _modelEscalationUsed = false; // retry one failed/empty implementation attempt on a stronger model
 let _readOnlyToolStreakSaved = 0; // saved streak value for stagnation persistence messages
 let _postEditVerifyPending = false; // require a narrow verification step after successful writes
 let _postEditVerifyNudges = 0;
@@ -6460,6 +6462,7 @@ function _resetSessionTracking() {
   _gitPushRaw = "";
   _lastGitStatusEvidence = "";
   _lastGitStatusCommand = "";
+  _modelEscalationUsed = false;
   _lastCompressionMsg = "";
   _compressionMsgCount = 0;
 }
@@ -9370,6 +9373,32 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       // No tool calls → response complete (or nudge if empty after tools)
       if (!tool_calls || tool_calls.length === 0) {
+        const hasText =
+          (content || "").trim().length > 0 || streamedText.trim().length > 0;
+        if (
+          getAutoConfirm() &&
+          !hasText &&
+          !_modelEscalationUsed &&
+          totalToolCalls === 0 &&
+          filesModified.size === 0 &&
+          _bashModifiedFiles === 0 &&
+          !_stickyAutomationWorkflow &&
+          !_boundedBacklogPlanActive &&
+          !(_phaseEnabled && _currentPhase === "plan") &&
+          !_hasForcedModelOverride()
+        ) {
+          const currentModel = _phaseModelOverride || getActiveModelId();
+          const strongerModel = getEscalationModel(currentModel);
+          if (strongerModel && strongerModel !== currentModel) {
+            _modelEscalationUsed = true;
+            _phaseModelOverride = strongerModel;
+            setActiveModelForSpinner(strongerModel);
+            debugLog(
+              `${C.yellow}  Empty first attempt; retrying with ${strongerModel}${C.reset}`,
+            );
+            continue;
+          }
+        }
         // Auto-escalate: if model produces 0 tool calls for 3 consecutive turns,
         // switch to a stronger model. Common with 24B models that silently fail
         // on complex tasks instead of calling tools.
@@ -9399,8 +9428,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             continue;
           }
         }
-        const hasText =
-          (content || "").trim().length > 0 || streamedText.trim().length > 0;
         const serverModeRequiresLocatedEdit = !!opts.serverMode;
         if (
           (getAutoConfirm() || opts.autoConfirm || serverModeRequiresLocatedEdit) &&

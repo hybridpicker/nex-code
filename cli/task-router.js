@@ -105,6 +105,34 @@ const DETECTION_ORDER = ["agentic", "frontend", "scoped-edit", "sysadmin", "data
 const SCOPED_EDIT_SNIPPET_PATTERN = /<([a-z][\w:-]*)(?:\s[^<>]*)?>/i;
 const ROUTE_OR_PATH_PATTERN = /(?:^|\s)\/[\w.-]+(?:\/[\w.-]+)*/;
 const ATTRIBUTE_SNIPPET_PATTERN = /\b(?:class|x-text|data-[\w-]+|aria-[\w-]+)=["'][^"']+["']/i;
+const IMPLEMENTATION_CATEGORIES = new Set([
+  "agentic",
+  "coding",
+  "feature-add",
+  "bug-fix",
+  "refactor",
+  "frontend",
+  "data",
+  "scoped-edit",
+]);
+const STRONG_CODER_PREFERENCE = [
+  "qwen3-coder:480b-cloud",
+  "qwen3-coder:480b",
+  "qwen3-coder-next",
+  "devstral-2:123b-cloud",
+  "devstral-2:123b",
+  "deepseek-v4-pro:cloud",
+];
+const ESCALATION_LADDER = [
+  "devstral-small-2:24b",
+  "deepseek-v4-flash:cloud",
+  "qwen3.5:35b-a3b",
+  "devstral-2:123b",
+  "devstral-2:123b-cloud",
+  "qwen3-coder-next",
+  "qwen3-coder:480b",
+  "qwen3-coder:480b-cloud",
+];
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -177,7 +205,7 @@ function getModelForCategory(categoryId) {
     try {
       const { getFitnessRecommendedModel } = require("./model-fitness");
       const fitnessPick = getFitnessRecommendedModel(categoryId, configuredModel);
-      if (fitnessPick) return fitnessPick;
+      if (fitnessPick) return _applyImplementationFloor(categoryId, fitnessPick);
     } catch { /* model-fitness not available or no data yet */ }
   }
 
@@ -196,7 +224,88 @@ function getModelForCategory(categoryId) {
     } catch { /* ollama provider not available */ }
   }
 
-  return configuredModel;
+  return _applyImplementationFloor(categoryId, configuredModel);
+}
+
+function _applyImplementationFloor(categoryId, modelId) {
+  if (!IMPLEMENTATION_CATEGORIES.has(categoryId)) return modelId || null;
+  if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
+  if (modelId && _isStrongCoder(modelId)) return modelId;
+  return getStrongestLoadedCoder() || modelId || null;
+}
+
+function _isStrongCoder(modelId) {
+  const raw = String(modelId || "");
+  return STRONG_CODER_PREFERENCE.some(
+    (candidate) =>
+      raw === candidate ||
+      raw.endsWith(`:${candidate}`) ||
+      _stripCloudAlias(raw) === _stripCloudAlias(candidate),
+  );
+}
+
+function _stripCloudAlias(modelId) {
+  return String(modelId || "").replace(/-cloud\b/g, "").replace(/:cloud\b/g, "");
+}
+
+function _getConfiguredModelIds() {
+  try {
+    const { getConfiguredProviders } = require("./providers/registry");
+    return getConfiguredProviders()
+      .flatMap((provider) => provider.models || [])
+      .map((model) => model.id)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function _modelIsConfigured(candidate, configuredIds) {
+  return _resolveConfiguredModel(candidate, configuredIds) !== null;
+}
+
+function _resolveConfiguredModel(candidate, configuredIds) {
+  if (configuredIds.length === 0) return null;
+  const normalizedCandidate = _stripCloudAlias(candidate);
+  for (const id of configuredIds) {
+    const normalizedId = _stripCloudAlias(id);
+    if (
+      id === candidate ||
+      normalizedId === normalizedCandidate ||
+      candidate.endsWith(`:${id}`) ||
+      id.endsWith(`:${candidate}`)
+    ) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function getStrongestLoadedCoder() {
+  const configuredIds = _getConfiguredModelIds();
+  for (const candidate of STRONG_CODER_PREFERENCE) {
+    const configured = _resolveConfiguredModel(candidate, configuredIds);
+    if (configured) return configured;
+  }
+  return null;
+}
+
+function getEscalationModel(currentModel) {
+  const current = String(currentModel || "");
+  const configuredIds = _getConfiguredModelIds();
+  const currentIndex = ESCALATION_LADDER.findIndex(
+    (candidate) =>
+      candidate === current ||
+      _stripCloudAlias(candidate) === _stripCloudAlias(current) ||
+      current.endsWith(`:${candidate}`),
+  );
+  const start = currentIndex >= 0 ? currentIndex + 1 : 0;
+  for (let i = start; i < ESCALATION_LADDER.length; i++) {
+    const candidate = ESCALATION_LADDER[i];
+    const configured = _resolveConfiguredModel(candidate, configuredIds);
+    if (configured) return configured;
+  }
+  return getStrongestLoadedCoder();
 }
 
 // Category → USE_CASE mapping for fallback model selection
@@ -238,7 +347,7 @@ const DEFAULT_PHASE_BUDGETS = { explore: 10, plan: 10, implement: 35, verify: 8 
 const BUILTIN_PHASE_DEFAULTS = {
   explore: "devstral-small-2:24b", // fast, low-reasoning, high-throughput search
   plan: "qwen3-coder:480b",       // 256K context, strong reasoning
-  implement: null,                  // null = use active model (already best for coding)
+  implement: "qwen3-coder:480b",   // implementation gets a strong coder by default
   verify: "devstral-small-2:24b",  // fast, good enough for test/lint checks
   // Optional thinking-model overrides (set NEX_PHASE_PLAN_MODEL=kimi-k2-thinking to use):
   // plan: "kimi-k2-thinking" — reasoning model for complex planning tasks
@@ -292,8 +401,13 @@ function getModelForPhase(phase, categoryId) {
   // Hard override (e.g. --gemini): always use the forced model
   if (process.env.NEX_FORCE_MODEL) return process.env.NEX_FORCE_MODEL;
   const phases = _resolvePhaseConfig();
-  if (phases?.[phase]) return phases[phase];
+  if (phases?.[phase]) {
+    return phase === "implement"
+      ? _applyImplementationFloor(categoryId || "coding", phases[phase])
+      : phases[phase];
+  }
   // null in builtin defaults means "use active model" — fall through to category
+  if (phase === "implement") return _applyImplementationFloor(categoryId || "coding", null);
   return categoryId ? getModelForCategory(categoryId) : null;
 }
 
@@ -384,6 +498,8 @@ module.exports = {
   detectCategory,
   getModelForCategory,
   getModelForPhase,
+  getStrongestLoadedCoder,
+  getEscalationModel,
   getPhaseBudget,
   isPhaseRoutingEnabled,
   DEFAULT_PHASE_BUDGETS,
