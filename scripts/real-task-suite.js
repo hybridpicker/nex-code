@@ -166,8 +166,15 @@ function changedFiles(dir, baselineSha) {
     .map((l) => l.slice(3).trim());
   const diff = sh(`git diff --name-only ${baselineSha}..HEAD 2>/dev/null`, { cwd: dir });
   const fromCommits = (diff.stdout || "").split("\n").filter(Boolean);
+  // Exclude the agent's own runtime artifacts (.nex session/audit/index dirs
+  // at any depth) — counting them as "files changed" produced fake passes on
+  // tasks where the agent changed nothing but the pre-existing tests passed.
+  const isArtifact = (f) =>
+    f.startsWith("node_modules") ||
+    f === ".nex" ||
+    f.split("/").includes(".nex");
   return [...new Set([...fromStatus, ...fromCommits])].filter(
-    (f) => f && !f.startsWith("node_modules"),
+    (f) => f && !isArtifact(f),
   );
 }
 
