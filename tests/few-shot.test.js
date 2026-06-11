@@ -1,6 +1,9 @@
 "use strict";
 
-const { getFewShotForInput } = require("../cli/few-shot");
+const {
+  getFewShotForInput,
+  loadExampleForModel,
+} = require("../cli/few-shot");
 
 describe("few-shot example injection", () => {
   const originalFewShot = process.env.NEX_FEW_SHOT;
@@ -24,6 +27,15 @@ describe("few-shot example injection", () => {
     ).toBeNull();
   });
 
+  test("does not inject model examples into read-only inspection tasks", () => {
+    expect(
+      getFewShotForInput(
+        "Inspect package.json and summarize the available test scripts without changes.",
+        "qwen3-coder:480b",
+      ),
+    ).toBeNull();
+  });
+
   test("does not inject generic coding examples for catch-all tasks", () => {
     expect(
       getFewShotForInput(
@@ -37,5 +49,24 @@ describe("few-shot example injection", () => {
 
     expect(fewShot).toBeTruthy();
     expect(fewShot.user).toMatch(/handler|crash|throws|fix/i);
+  });
+
+  test("uses qwen coder model examples for edit recovery and dev servers", () => {
+    const fewShot = getFewShotForInput(
+      "Fix the parser crash and verify the related test.",
+      "qwen3-coder:480b-cloud",
+    );
+
+    expect(fewShot).toBeTruthy();
+    expect(fewShot.assistant).toContain("edit_file ambiguity error");
+    expect(fewShot.assistant).toContain("run_in_background=true");
+    expect(fewShot.assistant).toContain("bash_output");
+  });
+
+  test("loads model examples by family key", () => {
+    const fewShot = loadExampleForModel("devstral-small-2:24b");
+
+    expect(fewShot).toBeTruthy();
+    expect(fewShot.assistant).toContain("longer unique old_text");
   });
 });

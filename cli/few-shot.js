@@ -4,11 +4,14 @@
  * cli/few-shot.js — Dynamic few-shot example injection
  *
  * Selects a short "correct approach" example based on the detected task category
- * and injects it as a synthetic user/assistant exchange before the first LLM turn.
+ * or active model and injects it as a synthetic user/assistant exchange before
+ * the first LLM turn.
  *
- * Load priority (per category):
- *   1. ~/.nex-code/examples/<category>.md  — private, user-specific (not in repo)
- *   2. <package>/examples/<category>.md    — generic bundled fallback (public)
+ * Load priority:
+ *   1. ~/.nex-code/examples/models/<model>.md - private model-specific
+ *   2. <package>/examples/models/<model>.md   - bundled model-specific
+ *   3. ~/.nex-code/examples/<category>.md      - private category-specific
+ *   4. <package>/examples/<category>.md        - bundled category-specific
  *
  * Private examples can be promoted from high-scoring sessions via:
  *   nex-code --extract-examples  (or scripts/extract-examples.js)
@@ -29,6 +32,48 @@ const PRIVATE_EXAMPLES_DIR = path.join(os.homedir(), ".nex-code", "examples");
 
 // Bundled generic examples shipped with nex-code (safe for public repo)
 const BUNDLED_EXAMPLES_DIR = path.join(__dirname, "..", "examples");
+const MODEL_EXAMPLES_SUBDIR = "models";
+
+const WRITE_INTENT_RE =
+  /\b(add|create|implement|fix|patch|update|change|modify|edit|refactor|write|build|remove|rename|replace|migrate|wire|integrate)\b/i;
+
+function _hasWriteIntent(userInput) {
+  const stripped = String(userInput || "").replace(
+    /\b(?:do not|don't|without|no)\s+(?:edit|change|modify|write|fix|update|create|add)(?:s|ing)?\b/gi,
+    "",
+  );
+  return WRITE_INTENT_RE.test(stripped);
+}
+
+function _isReadOnlyInput(userInput) {
+  const text = String(userInput || "");
+  if (_hasWriteIntent(text)) return false;
+  return /\b(read|inspect|summari[sz]e|describe|explain|tell me|review)\b/i.test(
+    text,
+  );
+}
+
+function _modelExampleKeys(modelId) {
+  const raw = String(modelId || "").trim().toLowerCase();
+  if (!raw) return [];
+
+  const keys = new Set();
+  const addKey = (value) => {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/(?:-cloud|:cloud)\b/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    if (normalized) keys.add(normalized);
+  };
+
+  addKey(raw);
+  addKey(raw.replace(/^[a-z0-9_-]+:/, ""));
+  addKey(raw.split(":")[0]);
+  addKey(raw.replace(/:.*$/, ""));
+  return [...keys];
+}
 
 /**
  * Parse a simple YAML-ish example file.
@@ -103,18 +148,42 @@ function loadExampleForCategory(categoryId) {
 }
 
 /**
+ * Load the example for a given model.
+ * Tries private dir first, falls back to bundled.
+ * @param {string} modelId
+ * @returns {{ user: string, assistant: string } | null}
+ */
+function loadExampleForModel(modelId) {
+  for (const key of _modelExampleKeys(modelId)) {
+    const filename = `${key}.md`;
+    for (const root of [PRIVATE_EXAMPLES_DIR, BUNDLED_EXAMPLES_DIR]) {
+      const examplePath = path.join(root, MODEL_EXAMPLES_SUBDIR, filename);
+      if (!fs.existsSync(examplePath)) continue;
+      const parsed = _parseExampleFile(examplePath);
+      if (parsed) return parsed;
+    }
+  }
+  return null;
+}
+
+/**
  * Get the few-shot example pair for a user's input message.
  * Returns null if no example exists, input is too short, or NEX_FEW_SHOT=0.
  *
  * @param {string} userInput
+ * @param {string} [modelId]
  * @returns {{ user: string, assistant: string } | null}
  */
-function getFewShotForInput(userInput) {
+function getFewShotForInput(userInput, modelId = null) {
   if (process.env.NEX_FEW_SHOT === "0") return null;
   if (!userInput || userInput.length < 8) return null;
+  if (_isReadOnlyInput(userInput)) return null;
 
   const category = detectCategory(userInput);
   if (!category) return null;
+
+  const modelExample = loadExampleForModel(modelId);
+  if (modelExample) return modelExample;
 
   // The "coding" category is a catch-all fallback. It can match short or
   // non-English implementation prompts where a generic example is more likely
@@ -136,6 +205,10 @@ function listAvailableExamples() {
     try {
       for (const f of fs.readdirSync(dir)) {
         if (f.endsWith(".md")) seen.add(f.replace(".md", ""));
+      }
+      const modelDir = path.join(dir, MODEL_EXAMPLES_SUBDIR);
+      for (const f of fs.readdirSync(modelDir)) {
+        if (f.endsWith(".md")) seen.add(`models/${f.replace(".md", "")}`);
       }
     } catch {
       /* dir may not exist */
@@ -175,8 +248,10 @@ ${example.assistant
 module.exports = {
   getFewShotForInput,
   loadExampleForCategory,
+  loadExampleForModel,
   listAvailableExamples,
   savePrivateExample,
   PRIVATE_EXAMPLES_DIR,
   BUNDLED_EXAMPLES_DIR,
+  MODEL_EXAMPLES_SUBDIR,
 };

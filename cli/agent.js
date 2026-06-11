@@ -7314,6 +7314,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   if (isFirstMessage && !_isAutomationWorkflowPrompt) {
     const fewShot = getFewShotForInput(
       typeof userInput === "string" ? userInput : "",
+      getActiveModelId(),
     );
     if (fewShot) {
       apiMessages = [
