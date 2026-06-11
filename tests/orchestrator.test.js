@@ -48,6 +48,7 @@ const {
   decompose,
   synthesize,
   detectComplexPrompt,
+  countDistinctFileTargets,
   extractJSON,
   createSemaphore,
   DECOMPOSE_PROMPT,
@@ -206,14 +207,16 @@ describe("detectComplexPrompt", () => {
 
   test("numbered list with 4 items is complex", () => {
     const prompt =
-      "1. Fix login bug\n2. Update the API docs\n3. Refactor the auth module\n4. Add dark mode";
+      "1. Fix src/auth/login.js\n2. Update docs/api.md\n3. Refactor cli/router.js\n4. Add web/theme.css";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(4);
+    expect(r.distinctTargets).toBeGreaterThanOrEqual(2);
   });
 
   test("three numbered items is complex", () => {
-    const prompt = "1. Fix bug A\n2. Fix bug B\n3. Fix bug C";
+    const prompt =
+      "1. Fix src/login.js\n2. Fix src/logout.js\n3. Fix src/signup.js";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
@@ -221,7 +224,7 @@ describe("detectComplexPrompt", () => {
 
   test("semicolon-separated goals", () => {
     const prompt =
-      "fix the login page rendering; update the API response format; refactor the auth middleware";
+      "fix web/login.jsx rendering; update src/api/response.js format; refactor src/auth/middleware.js";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
@@ -229,16 +232,31 @@ describe("detectComplexPrompt", () => {
 
   test("transition keywords (also, additionally)", () => {
     const prompt =
-      "Fix the login bug, also add dark mode support, and fix the broken search, and update the docs";
+      "Fix src/login.js, also add web/theme.css support, and fix src/search.js, and update docs/search.md";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
   });
 
   test("bullet points", () => {
-    const prompt = "- Fix login bug\n- Update API docs\n- Refactor auth module";
+    const prompt = "- Fix src/login.js\n- Update docs/api.md\n- Refactor src/auth.js";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
+  });
+
+  test("single-file multi-requirement task is not complex", () => {
+    const prompt =
+      "In src/utils/timingFeel.test.js: 1. add boundary tests 2. add determinism tests 3. cover all tracks";
+    const r = detectComplexPrompt(prompt);
+    expect(r.isComplex).toBe(false);
+    expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
+    expect(r.distinctTargets).toBe(1);
+  });
+
+  test("module and matching test file count as one target", () => {
+    const prompt =
+      "Update src/components/ProfileCard.jsx and src/components/ProfileCard.test.jsx, then run tests.";
+    expect(countDistinctFileTargets(prompt)).toBe(1);
   });
 
   test("two numbered items is not complex (threshold is 3)", () => {
@@ -272,7 +290,7 @@ describe("detectComplexPrompt", () => {
     process.env.NEX_ORCHESTRATE_THRESHOLD = "2";
     jest.resetModules();
     const { detectComplexPrompt: dcp2 } = require("../cli/orchestrator");
-    const prompt = "1. Fix login\n2. Fix logout";
+    const prompt = "1. Fix src/login.js\n2. Fix src/logout.js";
     const r = dcp2(prompt);
     expect(r.isComplex).toBe(true);
     if (original === undefined) {
@@ -288,7 +306,7 @@ describe("detectComplexPrompt", () => {
     process.env.NEX_ORCHESTRATE_THRESHOLD = "5";
     jest.resetModules();
     const { detectComplexPrompt: dcp5 } = require("../cli/orchestrator");
-    const prompt = "1. Fix login\n2. Fix logout\n3. Fix signup";
+    const prompt = "1. Fix src/login.js\n2. Fix src/logout.js\n3. Fix src/signup.js";
     const r = dcp5(prompt);
     expect(r.isComplex).toBe(false);
     if (original === undefined) {
@@ -329,7 +347,7 @@ describe("Auto-Orchestrate", () => {
   });
 
   test("detects complex prompt with 3+ goals for auto-orchestration", () => {
-    const prompt = "1. Fix login\n2. Fix logout\n3. Fix signup";
+    const prompt = "1. Fix src/login.js\n2. Fix src/logout.js\n3. Fix src/signup.js";
     const r = detectComplexPrompt(prompt);
     expect(r.isComplex).toBe(true);
     expect(r.estimatedGoals).toBeGreaterThanOrEqual(3);
@@ -341,7 +359,7 @@ describe("Auto-Orchestrate", () => {
     process.env.NEX_ORCHESTRATE_THRESHOLD = "2";
     jest.resetModules();
     const { detectComplexPrompt: dcp } = require("../cli/orchestrator");
-    const prompt = "1. Fix the login bug\n2. Add dark mode support";
+    const prompt = "1. Fix src/login.js\n2. Add web/theme.css support";
     const r = dcp(prompt);
     expect(r.isComplex).toBe(true);
     jest.resetModules();
@@ -366,10 +384,10 @@ describe("Auto-Orchestrate", () => {
     jest.resetModules();
     const { detectComplexPrompt: dcp } = require("../cli/orchestrator");
     // 2 goals — not complex at default threshold 3
-    const notComplex = dcp("1. Fix login\n2. Fix logout");
+    const notComplex = dcp("1. Fix src/login.js\n2. Fix src/logout.js");
     expect(notComplex.isComplex).toBe(false);
     // 3 goals — complex at default threshold 3
-    const complex = dcp("1. Fix login\n2. Fix logout\n3. Fix signup");
+    const complex = dcp("1. Fix src/login.js\n2. Fix src/logout.js\n3. Fix src/signup.js");
     expect(complex.isComplex).toBe(true);
     jest.resetModules();
   });

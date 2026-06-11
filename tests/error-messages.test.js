@@ -422,10 +422,9 @@ const x = 5;`;
 
     test("file locked error should suggest alternatives", () => {
       const error =
-        "ERROR: File 'src/app.js' is locked by another sub-agent. Try a different approach or skip this file.";
-      expect(error).toContain("locked by another sub-agent");
-      expect(error).toContain("Try a different approach");
-      expect(error).toContain("skip this file");
+        "ERROR: File 'src/app.js' stayed locked for 60s. Retry after the current writer finishes.";
+      expect(error).toContain("stayed locked");
+      expect(error).toContain("Retry after the current writer finishes");
     });
 
     test("no agents specified error should be clear", () => {

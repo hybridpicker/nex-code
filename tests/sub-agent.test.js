@@ -36,26 +36,15 @@ jest.mock("../cli/ui", () => ({
 }));
 
 const {
+  acquireLock,
+  awaitLock,
   clearAllLocks,
   classifyError,
   isRetryableError,
   getExcludedTools,
   LOCK_TIMEOUT_MS,
+  LOCK_WAIT_MS,
 } = require("../cli/sub-agent");
-
-// acquireLock and releaseLock are not exported directly — access via the module internals
-// We test locking through clearAllLocks + the exported helpers
-// Actually, let's check — they may be accessible via require
-let acquireLock, releaseLock;
-try {
-  // These are internal but used via executeSpawnAgents; test via the exported clearAllLocks
-  // and re-require to get fresh state
-  const mod = require("../cli/sub-agent");
-  acquireLock = mod.acquireLock || null;
-  releaseLock = mod.releaseLock || null;
-} catch {
-  // not exported
-}
 
 describe("sub-agent utilities", () => {
   // ─── Constants ──────────────────────────────────────────────
@@ -64,6 +53,7 @@ describe("sub-agent utilities", () => {
       // Not exported directly but we can verify via module source
       // LOCK_TIMEOUT_MS IS exported
       expect(LOCK_TIMEOUT_MS).toBe(10 * 60 * 1000);
+      expect(LOCK_WAIT_MS).toBe(60 * 1000);
     });
   });
 
@@ -151,6 +141,17 @@ describe("sub-agent utilities", () => {
   describe("clearAllLocks", () => {
     test("clearAllLocks does not throw", () => {
       expect(() => clearAllLocks()).not.toThrow();
+    });
+
+    test("awaitLock waits for an active writer instead of failing immediately", async () => {
+      const filePath = "/tmp/nex-sub-agent-lock-wait.js";
+      expect(acquireLock(filePath, "agent-a")).toBe(true);
+      const pending = awaitLock(filePath, "agent-b", {
+        timeoutMs: 1000,
+        retryMs: 5,
+      });
+      setTimeout(() => clearAllLocks(), 20);
+      await expect(pending).resolves.toBe(true);
     });
   });
 

@@ -357,6 +357,9 @@ const {
   _pathMatchesScope,
   _isDependencyMutationCommand,
   _masksCommandFailure,
+  _extractCommandRunnerName,
+  _isRunnerVersionProbe,
+  _detectVerificationSetupFailure,
   _scopeAllowsDependencyMutation,
   _looksLikeCommentedOutCode,
   _detectAddedCommentedOutCode,
@@ -4229,6 +4232,31 @@ describe("agent.js", () => {
       expect(_masksCommandFailure("npm test || exit 0")).toBe(true);
       expect(_masksCommandFailure("set +e; npm run lint")).toBe(true);
       expect(_masksCommandFailure("npm run lint")).toBe(false);
+    });
+
+    it("refutes setup-failure claims when the runner version probe succeeded", () => {
+      expect(_isRunnerVersionProbe("npx vitest --version")).toBe(true);
+      expect(_extractCommandRunnerName("npx vitest run src/foo.test.js")).toBe(
+        "vitest",
+      );
+      const output = [
+        "EXIT 1",
+        "Error: Cannot find module '/tmp/project/node_modules/vitest/dist/index.js'",
+      ].join("\n");
+
+      expect(
+        _detectVerificationSetupFailure(
+          "npx vitest run src/foo.test.js",
+          output,
+        ),
+      ).toContain("dependencies are missing or broken");
+      expect(
+        _detectVerificationSetupFailure(
+          "npx vitest run src/foo.test.js",
+          output,
+          new Set(["vitest"]),
+        ),
+      ).toBe("");
     });
 
     it("detects newly added commented-out code in source diffs", () => {

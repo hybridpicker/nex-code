@@ -33,6 +33,11 @@ const MAX_CHAT_RETRIES = parseInt(process.env.NEX_MAX_CHAT_RETRIES || "3", 10);
 // Depth-1 agents (reviewers) get fewer iterations to stay lightweight
 const MAX_REVIEWER_ITERATIONS = 8;
 const MAX_REVIEWER_AGENTS = 2;
+const LOCK_WAIT_MS = parseInt(process.env.NEX_LOCK_WAIT_MS || "60000", 10);
+const LOCK_WAIT_RETRY_MS = parseInt(
+  process.env.NEX_LOCK_WAIT_RETRY_MS || "100",
+  10,
+);
 
 // ─── File Locking ─────────────────────────────────────────────
 // Map<filePath, {agentId, timestamp}> — allows same agent to re-lock its own files
@@ -55,6 +60,19 @@ function releaseLock(filePath) {
 
 function clearAllLocks() {
   lockedFiles.clear();
+}
+
+async function awaitLock(
+  filePath,
+  agentId,
+  { timeoutMs = LOCK_WAIT_MS, retryMs = LOCK_WAIT_RETRY_MS } = {},
+) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (acquireLock(filePath, agentId)) return true;
+    await new Promise((resolve) => setTimeout(resolve, retryMs));
+  }
+  return acquireLock(filePath, agentId);
 }
 
 // ─── Error Classification & Retry Logic ─────────────────────────────────────
@@ -516,7 +534,7 @@ ERROR RECOVERY:
       // write-tool locking stays atomic even with concurrent execution.
       // Map-first: track which files are edited in this batch to block within-batch re-edits.
       const _batchSubEditPaths = new Set();
-      const toolResultPromises = tool_calls.map((tc) => {
+      const toolResultPromises = tool_calls.map(async (tc) => {
         const fnName = tc.function.name;
         const args = parseToolArgs(tc.function.arguments);
         const callId =
@@ -569,10 +587,13 @@ ERROR RECOVERY:
             }
           }
 
-          if (locksHeld.has(fp) || !acquireLock(fp, agentId)) {
+          const lockAcquired = locksHeld.has(fp)
+            ? false
+            : await awaitLock(fp, agentId);
+          if (!lockAcquired) {
             return Promise.resolve({
               role: "tool",
-              content: `ERROR: File '${args.path}' is locked by another operation. Try a different approach or skip this file.`,
+              content: `ERROR: File '${args.path}' stayed locked for ${Math.round(LOCK_WAIT_MS / 1000)}s. Retry after the current writer finishes.`,
               tool_call_id: callId,
             });
           }
@@ -880,6 +901,9 @@ module.exports = {
   validateAgentTypes,
   _resetCustomAgentTypes,
   clearAllLocks,
+  acquireLock,
+  releaseLock,
+  awaitLock,
   classifyTask,
   pickModelForTier,
   resolveSubAgentModel,
@@ -888,5 +912,6 @@ module.exports = {
   callWithRetry,
   getExcludedTools,
   LOCK_TIMEOUT_MS,
+  LOCK_WAIT_MS,
   SUB_AGENT_TYPES,
 };

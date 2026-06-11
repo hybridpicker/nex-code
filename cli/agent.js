@@ -1581,10 +1581,42 @@ function _masksCommandFailure(command) {
   );
 }
 
-function _detectVerificationSetupFailure(command, output) {
+function _extractCommandRunnerName(command) {
+  const cmd = String(command || "").trim();
+  if (!cmd) return "";
+  const npxMatch = cmd.match(/\bnpx\s+(?:--yes\s+)?([A-Za-z0-9_.@/-]+)/i);
+  if (npxMatch) return npxMatch[1].split("/").pop().toLowerCase();
+  const npmRunMatch = cmd.match(/\bnpm\s+run\s+([A-Za-z0-9:_-]+)/i);
+  if (npmRunMatch) {
+    const script = npmRunMatch[1].toLowerCase();
+    if (script.includes("test")) return "test";
+    if (script.includes("lint")) return "lint";
+    if (script.includes("build")) return "build";
+    return script;
+  }
+  const directMatch = cmd.match(
+    /(?:^|&&|\|\||;)\s*([A-Za-z0-9_.@/-]+)\s+(?:run\s+)?(?:--)?(?:version|-v)\b/i,
+  );
+  if (directMatch) return directMatch[1].split("/").pop().toLowerCase();
+  const known = cmd.match(/\b(vitest|jest|eslint|vite|tsc|typescript|webpack|babel)\b/i);
+  return known ? known[1].toLowerCase() : "";
+}
+
+function _isRunnerVersionProbe(command) {
+  const cmd = String(command || "");
+  return (
+    /\b(?:vitest|jest|eslint|vite|tsc|typescript|webpack|babel)\b[\s\S]{0,80}\b(?:--version|-v|version)\b/i.test(
+      cmd,
+    ) || /\bnpx\s+(?:--yes\s+)?(?:vitest|jest|eslint|vite|tsc|typescript|webpack|babel)\s+(?:--version|-v|version)\b/i.test(cmd)
+  );
+}
+
+function _detectVerificationSetupFailure(command, output, successfulRunnerProbes = new Set()) {
   const cmd = String(command || "").trim();
   const text = String(output || "");
   if (!cmd || !text) return "";
+  const runner = _extractCommandRunnerName(cmd);
+  if (runner && successfulRunnerProbes.has(runner)) return "";
   const looksMissingTool =
     /\b(?:eslint|vite|vitest|jest|tsc|typescript|webpack|babel)\b.*\b(?:command not found|not found)\b/i.test(
       text,
@@ -2588,6 +2620,7 @@ let _postEditVerifyNudges = 0;
 let _consecutiveFailedVerifications = 0; // headless auto: abort after 3+ failed verifications with no edit progress
 let _verificationRetryStreak = 0; // block re-running failed required verifications until an edit is made
 let _detectedCategoryId = null; // task category detected on first user message
+const _successfulRunnerProbes = new Set(); // runner names whose --version probe succeeded
 let _planTodos = []; // structured action items from plan phase [{file, action, done}]
 const _freshlyWrittenFiles = new Set(); // files just written — allow one immediate read/edit follow-up
 const _editedFileExpectedSnippets = new Map(); // path -> snippets that should appear in readback
@@ -4167,12 +4200,19 @@ function _blockRepeatedLocatedTargetRead(prep, locatedTarget, taskText) {
   );
   if (!alreadyRead) return false;
 
+  const blockKey = `${readPath}:${start}-${end}`;
+  const blockCount = _incLoopCount(_sessionRangeBlockCounts, blockKey);
+  if (_editsMadeThisSession === 0 && blockCount <= 2) {
+    prep._locatedTargetRereadWarn = { readPath, start, end };
+    return false;
+  }
+
   prep.canExecute = false;
   prep.errorResult = {
     role: "tool",
     content:
       `BLOCKED: ${readPath} lines ${start}-${end} were already read and the target is located. ` +
-      "Do not re-read the same target range. Make the scoped change now with edit_file or patch_file using exact old_text from the existing context.",
+      "Make the scoped change now with edit_file or patch_file using exact old_text from the existing context.",
     tool_call_id: prep.callId,
   };
   return true;
@@ -6343,6 +6383,7 @@ function _resetSessionTracking() {
   _sessionReReadBlockShown.clear();
   _sessionRangeBlockCounts.clear();
   _editedFileExpectedSnippets.clear();
+  _successfulRunnerProbes.clear();
   _sessionDupeToolCounts.clear();
   _postCompressionReadRecovery.clear();
   _commentedOutCodeNudges.clear();
@@ -12788,6 +12829,10 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
                 /\bWriting objects\b/i.test(_gitPushRaw));
             if (pushSucceeded) _gitPushDetected = true;
           }
+          if (isOk && _isRunnerVersionProbe(cmd)) {
+            const runner = _extractCommandRunnerName(cmd);
+            if (runner) _successfulRunnerProbes.add(runner);
+          }
         }
         // Track edit_file failures (old_text not found) so re-read block can exempt targeted re-reads
         if (
@@ -12812,6 +12857,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           const setupFailure = _detectVerificationSetupFailure(
             prep.args?.command || "",
             res,
+            _successfulRunnerProbes,
           );
           if (setupFailure) {
             const normalizedFailedCommand = _normalizeVerificationCommand(
@@ -13512,7 +13558,13 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
               apiMessages.push(_timeMsg);
             }
           }
-          if (_hardBlockActive && READ_ONLY_TOOLS.includes(prep.fnName)) {
+          const _noEditAttemptYet =
+            _editsMadeThisSession === 0 && _sessionLastEditFailed.size === 0;
+          if (
+            _hardBlockActive &&
+            READ_ONLY_TOOLS.includes(prep.fnName) &&
+            !_noEditAttemptYet
+          ) {
             const _blockReason = _rootCauseDetected
               ? `root cause already identified (${_rootCauseSummary})`
               : _readsSinceCapFired >= INVESTIGATION_GRACE
@@ -14266,6 +14318,17 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           progressMadeThisPass = true;
         }
         if (isOk && prep.fnName === "read_file") {
+          if (prep._locatedTargetRereadWarn) {
+            const { readPath, start, end } = prep._locatedTargetRereadWarn;
+            const msg = {
+              role: "user",
+              content:
+                `[SYSTEM WARNING] ${readPath} lines ${start}-${end} were already read and the target is located. ` +
+                "Use the current context to edit next; repeated identical reads will be blocked.",
+            };
+            conversationMessages.push(msg);
+            apiMessages.push(msg);
+          }
           if (prep.args && prep.args.path) {
             filesRead.add(prep.args.path);
             if (
@@ -15114,7 +15177,8 @@ function _shouldAutoOrchestrate(autoOrch, complexity, threshold, planModeActive 
     autoOrch &&
     complexity &&
     complexity.isComplex &&
-    complexity.estimatedGoals >= threshold
+    complexity.estimatedGoals >= threshold &&
+    (complexity.distinctTargets || 0) >= 2
   );
 }
 
@@ -15159,6 +15223,9 @@ module.exports = {
   _pathMatchesScope,
   _isDependencyMutationCommand,
   _masksCommandFailure,
+  _extractCommandRunnerName,
+  _isRunnerVersionProbe,
+  _detectVerificationSetupFailure,
   _scopeAllowsDependencyMutation,
   _isSourceLikePath,
   _isMarkupLikePath,

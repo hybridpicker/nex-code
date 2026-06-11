@@ -151,7 +151,12 @@ function createSemaphore(limit) {
  */
 function detectComplexPrompt(prompt) {
   if (!prompt || typeof prompt !== "string") {
-    return { isComplex: false, estimatedGoals: 0, reason: "empty" };
+    return {
+      isComplex: false,
+      estimatedGoals: 0,
+      distinctTargets: 0,
+      reason: "empty",
+    };
   }
 
   let goals = 0;
@@ -196,17 +201,61 @@ function detectComplexPrompt(prompt) {
     return {
       isComplex: false,
       estimatedGoals: goals,
+      distinctTargets: countDistinctFileTargets(prompt),
       reason: `critical path workflow: ${criticalPath.reason}`,
     };
   }
 
   const threshold = parseInt(process.env.NEX_ORCHESTRATE_THRESHOLD || "3", 10);
-  const isComplex = goals >= threshold;
+  const distinctTargets = countDistinctFileTargets(prompt);
+  const isComplex = goals >= threshold && distinctTargets >= 2;
   return {
     isComplex,
     estimatedGoals: goals,
-    reason: reasons.length > 0 ? reasons.join(", ") : "single goal",
+    distinctTargets,
+    reason:
+      reasons.length > 0
+        ? `${reasons.join(", ")}; ${distinctTargets} distinct target${distinctTargets === 1 ? "" : "s"}`
+        : "single goal",
   };
+}
+
+function countDistinctFileTargets(prompt) {
+  const targets = extractTaskTargets(prompt);
+  return new Set(targets.map(normalizeTaskTarget).filter(Boolean)).size;
+}
+
+function extractTaskTargets(prompt) {
+  const text = String(prompt || "");
+  const targets = [];
+  const pathRe =
+    /(?:^|[\s`"'(])((?:(?:\.{1,2}\/)?[\w@.-]+\/)+[\w@.+-]+\.[A-Za-z][\w-]*|[\w@.+-]+\.(?:[cm]?[jt]sx?|mjs|cjs|json|html|css|scss|sass|vue|svelte|py|rb|go|rs|java|kt|swift|php|cs|cpp|cc|cxx|c|h|hpp|md|mdx|txt|yml|yaml|toml|ini|sh|bash|zsh|sql))(?:$|[\s`"',).;:])/g;
+  let match;
+  while ((match = pathRe.exec(text)) !== null) {
+    targets.push(match[1]);
+  }
+
+  const moduleRe =
+    /\b([a-z][\w-]{2,})\s+(module|service|component|route|page|screen|template|worker|job|handler|controller|middleware|package)\b/gi;
+  while ((match = moduleRe.exec(text)) !== null) {
+    targets.push(`${match[1]}-${match[2]}`);
+  }
+  return targets;
+}
+
+function normalizeTaskTarget(target) {
+  let value = String(target || "")
+    .trim()
+    .replace(/^[`"'(]+|[`"',).;:]+$/g, "")
+    .replace(/\\/g, "/");
+  if (!value) return "";
+  const parts = value.split("/").filter(Boolean);
+  value = parts[parts.length - 1] || value;
+  value = value
+    .replace(/\.(?:[cm]?[jt]sx?|mjs|cjs|json|html|css|scss|sass|vue|svelte|py|rb|go|rs|java|kt|swift|php|cs|cpp|cc|cxx|c|h|hpp|md|mdx|txt|yml|yaml|toml|ini|sh|bash|zsh|sql)$/i, "")
+    .replace(/\.(?:test|spec|stories|story|fixture|mock|mocks)$/i, "")
+    .replace(/(?:[-_.](?:test|spec|stories|story|fixture|mock|mocks))$/i, "");
+  return value.toLowerCase();
 }
 
 /**
@@ -1146,6 +1195,8 @@ module.exports = {
   shouldSuppressCommit,
   detectComplexPrompt,
   detectCriticalPathPrompt,
+  countDistinctFileTargets,
+  extractTaskTargets,
   extractJSON,
   createSemaphore,
   DECOMPOSE_PROMPT,
