@@ -4065,6 +4065,123 @@ describe("agent.js", () => {
       expect(finalText).not.toContain("Verification failed");
     });
 
+    it("resets blocked-call streaks and allows rereads during required verification repair", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      const targetPath = "src/lib/request-handler.js";
+      const supportPath = "tests/request-handler.test.js";
+      const verifyCommand = "node src/lib/request-handler.test.js";
+      const readCall = (id, path = targetPath) => ({
+        id,
+        function: { name: "read_file", arguments: { path } },
+      });
+
+      mockStream("Reading the handler and its focused test before editing.", [
+        readCall("read-initial"),
+        readCall("read-test", supportPath),
+      ]);
+      executeTool
+        .mockResolvedValueOnce(
+          "1: export function handleRequest(req) {\n2:   return req.status;\n3: }",
+        )
+        .mockResolvedValueOnce(
+          "1: expect(handleRequest({})).toBe(200);",
+        );
+      mockStream("Editing the handler.", [
+        {
+          id: "edit-1",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: targetPath,
+              old_text: "return req.status;",
+              new_text: "return req.status || 200;",
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Reading back the edited handler.", [readCall("readback-target")]);
+      executeTool.mockResolvedValueOnce(
+        "1: export function handleRequest(req) {\n2:   return req.status || 200;\n3: }",
+      );
+      mockStream("Rereading stale context before running verification.", [
+        readCall("blocked-read-1", supportPath),
+        readCall("blocked-read-2", supportPath),
+        readCall("blocked-read-3", supportPath),
+        readCall("blocked-read-4", supportPath),
+        {
+          id: "verify-1",
+          function: { name: "bash", arguments: { command: verifyCommand } },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("EXIT 1\nFAIL default status");
+      mockStream("Checking the directory and rereading the failure context.", [
+        {
+          id: "blocked-ls",
+          function: { name: "bash", arguments: { command: "ls src" } },
+        },
+        readCall("repair-read", supportPath),
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "1: expect(handleRequest({})).toBe(200);",
+      );
+      mockStream("Repairing the failed default.", [
+        {
+          id: "edit-2",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: targetPath,
+              old_text: "return req.status || 200;",
+              new_text: "return req.status ?? 200;",
+            },
+          },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("OK");
+      mockStream("Rerunning required verification.", [
+        {
+          id: "verify-2",
+          function: { name: "bash", arguments: { command: verifyCommand } },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce("PASS default status");
+      mockStream(
+        `Changed files: ${targetPath}. Verification: ${verifyCommand} (passed).`,
+      );
+
+      await processInput(
+        `Fix the default request status. Verify your work by running: ${verifyCommand}`,
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 10 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) => tool === "read_file" && args.path === supportPath,
+        ),
+      ).toHaveLength(2);
+      expect(
+        executeTool.mock.calls.some(
+          ([tool, args]) => tool === "bash" && args.command === "ls src",
+        ),
+      ).toBe(false);
+      expect(
+        getConversationMessages().some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.includes(`Required verification failed: ${verifyCommand}`),
+        ),
+      ).toBe(true);
+      const finalMessages = getConversationMessages().filter(
+        (m) => m.role === "assistant" && typeof m.content === "string",
+      );
+      const finalText = finalMessages.at(-1)?.content || "";
+      expect(finalText).toContain(`Verification: ${verifyCommand} (passed)`);
+      expect(finalText).not.toContain("Implementation stalled before edits");
+    });
+
     it("loops back when model-run required verification fails", async () => {
       getAutoConfirm.mockReturnValue(true);
       mockStream("editing", [
@@ -6223,6 +6340,66 @@ describe("agent.js", () => {
         "Implementation stalled before edits",
       );
       delete process.env.NEX_DEBUG;
+    });
+
+    it("keeps pre-blocked edits from disabling pre-edit read guard softening", async () => {
+      getAutoConfirm.mockReturnValue(true);
+      const targetPath = "src/components/ProfileCard.jsx";
+      mockStream("Reading the profile card.", [
+        {
+          id: "read-initial",
+          function: { name: "read_file", arguments: { path: targetPath } },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "1: export function ProfileCard() {\n2:   return <span>{profile.title}</span>;\n3: }",
+      );
+      mockStream("Trying an edit with a stale anchor.", [
+        {
+          id: "blocked-edit",
+          function: {
+            name: "edit_file",
+            arguments: {
+              path: targetPath,
+              old_text: "<footer />",
+              new_text: "<footer />\n<p>Status: active</p>",
+            },
+          },
+        },
+      ]);
+      mockStream("Rereading after the blocked edit.", [
+        {
+          id: "read-after-block",
+          function: { name: "read_file", arguments: { path: targetPath } },
+        },
+      ]);
+      executeTool.mockResolvedValueOnce(
+        "1: export function ProfileCard() {\n2:   return <span>{profile.title}</span>;\n3: }",
+      );
+      mockStream("Stopping without success.");
+
+      await processInput(
+        "In src/components/ProfileCard.jsx add a status line near the profile title.",
+        null,
+        { autoConfirm: true, silent: true, maxIterations: 4 },
+      );
+
+      expect(
+        executeTool.mock.calls.filter(
+          ([tool, args]) => tool === "read_file" && args.path === targetPath,
+        ),
+      ).toHaveLength(2);
+      expect(
+        executeTool.mock.calls.some(
+          ([tool, args]) => tool === "edit_file" && args.path === targetPath,
+        ),
+      ).toBe(false);
+      const transcript = getConversationMessages()
+        .map((m) => m.content)
+        .join("\n");
+      expect(transcript).toContain("BLOCKED: the proposed old_text");
+      expect(transcript).toContain("[SYSTEM WARNING] Read guard:");
+      expect(transcript).not.toContain("Implementation stalled before edits");
     });
 
     it("warns after consecutive tool errors", async () => {

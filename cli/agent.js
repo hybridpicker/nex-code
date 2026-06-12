@@ -7700,7 +7700,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
   let _filesModifiedAtStreakStart = 0; // snapshot of filesModified.size when streak begins
   let _consecutiveEmptySearches = 0; // consecutive grep/search/glob calls that returned no results
   let _bashModifiedFiles = 0; // successful bash/ssh_exec commands that likely wrote files
-  let _editAttemptsThisRun = 0; // write/edit/patch calls that reached or were blocked by tool execution
+  let _editAttemptsThisRun = 0; // write/edit/patch calls that reached tool execution
   let _preEditBlockedLoopNudges = 0; // avoid repeatedly warning on pre-edit blocked loops
   let _scopedNoEditNudges = 0; // headless located-target prose without edits
   let _failedEditFinalNudges = 0; // failed write followed by prose without progress
@@ -12676,7 +12676,8 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
         const READ_GUARD_PATHOLOGY_READS = 10;
         const shouldSoftenReadGuards =
           _hasNoEditAttemptYet() ||
-          (_phaseEnabled && _currentPhase === "implement");
+          (_phaseEnabled && _currentPhase === "implement") ||
+          requiredVerificationRepairCycles > 0;
         if (shouldSoftenReadGuards) {
           for (const prep of prepared) {
             if (prep.canExecute) continue;
@@ -12696,7 +12697,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
             prep.errorResult = null;
             prep._guardWarning =
               blockedText.replace(/^BLOCKED:\s*/, "[SYSTEM WARNING] Read guard: ") +
-              " The read was allowed anyway because no edit has been attempted yet or the run is in the implementation phase. Use this result to edit next.";
+              " The read was allowed anyway because no edit has been attempted yet, the run is in the implementation phase, or a required-verification repair cycle is active. Use this result to edit next.";
             if (guardPath) {
               _pendingReadCounts.set(
                 guardPath,
@@ -12888,9 +12889,6 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
           preBlockContent.startsWith("PLAN PHASE:") ||
           preBlockContent.startsWith("VERIFY PHASE:")
         ) {
-          if (["edit_file", "patch_file", "write_file"].includes(prep.fnName)) {
-            _editAttemptsThisRun++;
-          }
           if (
             _phaseEnabled &&
             _currentPhase === "verify" &&
@@ -14740,6 +14738,7 @@ async function processInput(userInput, serverHooks = null, opts = {}) {
 
       if (requiredVerificationRepairQueued) {
         requiredVerificationRepairCycles++;
+        consecutiveBlocks = 0;
         const repairMsg = {
           role: "user",
           content: _buildRequiredVerificationRepairPrompt(
